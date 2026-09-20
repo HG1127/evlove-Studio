@@ -8,8 +8,10 @@ function value(...items:Array<string|undefined>) {
 
 export function getServerSupabaseConfig():SupabaseBackendConfig {
   const url=value(process.env.SUPABASE_URL,process.env.VITE_SUPABASE_URL);
+  // Deliberately ignore SUPABASE_SERVICE_ROLE_KEY. Evolution OS currently uses the
+  // publishable/anon contract for its server data plane as well, matching the internal-MVP
+  // migration grants without silently bypassing future RLS.
   const key=value(
-    process.env.SUPABASE_SERVICE_ROLE_KEY,
     process.env.SUPABASE_PUBLISHABLE_KEY,
     process.env.VITE_SUPABASE_ANON_KEY,
   );

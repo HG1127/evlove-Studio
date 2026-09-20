@@ -2,6 +2,8 @@
 
 P0-1 uses Supabase as the production data foundation. Do **not** put a Supabase service-role key in any `VITE_*` variable.
 
+Evolution OS also deliberately ignores `SUPABASE_SERVICE_ROLE_KEY` in its current server data plane. Server reads use `SUPABASE_PUBLISHABLE_KEY` (or the internal-MVP `VITE_SUPABASE_ANON_KEY`) so a leftover service-role variable cannot silently bypass future RLS.
+
 Configure the Vite/Vercel environment with:
 
 ```text
