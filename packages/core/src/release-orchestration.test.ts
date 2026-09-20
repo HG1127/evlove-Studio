@@ -12,6 +12,7 @@ function fixture(){
     candidates:[candidate],
     searchChampion:{candidate},
     gates:[{id:"release-ready",status:"approved"}],
+    campaign:{status:"running"},
     release:{status:"idle",candidateId:"C1",deploymentId:"dpl-preview",trafficPercent:0,kpis:[],evidenceMode:"none",history:[]},
   } as unknown as EvolveProject;
   return {project,candidate};

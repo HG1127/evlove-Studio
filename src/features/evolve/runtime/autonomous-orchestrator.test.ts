@@ -380,9 +380,12 @@ describe("autonomous orchestrator", () => {
     const needsBinding=deriveAutonomousDecision(base);
     expect(needsBinding.action).toBe("wait-human");
     expect(needsBinding.attention?.title).toContain("Preview Deployment");
-    base.release={...base.release,candidateId:candidate.id,deploymentId:"dpl-preview"};
+    base.release={...base.release,candidateId:candidate.id,deploymentId:"dpl-preview",recovery:{status:"pending",action:"promote",reason:"provider timeout",at:"2026-09-20T15:00:00Z"}};
     base.campaign={...base.campaign,status:"paused",stopReason:"[server-release-provider-pending] promote 结果不确定"};
+    expect(deriveAutonomousDecision(base).action).toBe("reconcile-release");
+    base.release={...base.release,recovery:{status:"manual-check",action:"promote",reason:"Production unknown",at:"2026-09-20T15:00:00Z",lastObservedAt:"2026-09-20T15:05:00Z"}};
     expect(deriveAutonomousDecision(base).action).toBe("wait-human");
+    base.release={...base.release,recovery:undefined};
     base.campaign={...base.campaign,status:"idle",stopReason:undefined};
     expect(deriveAutonomousDecision(base).action).toBe("run-release");
     const previewPlan=buildServerHarnessPlan(base);

@@ -33,6 +33,10 @@ export function nextDurableReleaseAction(project:EvolveProject):DurableReleaseAc
   if(project.release.candidateId!==candidate.id||!project.release.deploymentId)return undefined;
 
   if(project.release.status==="idle")return "shadow";
+  if(project.release.status==="promoted"
+    &&project.release.recovery?.status==="reconciled"
+    &&project.release.recovery.action==="rollback"
+    &&project.release.stableDeploymentId)return "rollback";
   if(project.release.status==="shadow"){
     return project.release.evidenceMode==="live"
       &&project.release.healthy===true
@@ -72,7 +76,17 @@ export function applyReleaseResultToProject(args:{
     &&args.project.release.deploymentId===args.result.deploymentId
     &&args.project.release.observedAt===args.result.observedAt
     &&args.project.release.evidenceMode==="live"){
-    return args.project;
+    const recovering=Boolean(args.project.release.recovery)
+      ||(args.project.campaign.stopReason??"").startsWith("[server-release-");
+    if(!recovering)return args.project;
+    return {
+      ...args.project,
+      release:{...args.project.release,recovery:undefined},
+      campaign:(args.project.campaign.stopReason??"").startsWith("[server-release-")
+        ?{...args.project.campaign,status:"running",stopReason:undefined}
+        :args.project.campaign,
+      updatedAt:at,
+    };
   }
 
   const successfulPromote=effective==="promote"
@@ -111,8 +125,12 @@ export function applyReleaseResultToProject(args:{
       observedAt:args.result.observedAt,
       sampleSize:args.result.sampleSize,
       windowMinutes:args.result.windowMinutes,
+      recovery:undefined,
       history:[...args.project.release.history,{at,action:effective,note:args.requestedAction===effective?args.result.note:`${args.requestedAction} → ${effective}：${args.result.note}`}],
     },
+    campaign:(args.project.campaign.stopReason??"").startsWith("[server-release-")
+      ?{...args.project.campaign,status:"running",stopReason:undefined}
+      :args.project.campaign,
     stage:successfulPromote||successfulRollback?"learning":"release",
     updatedAt:at,
   };

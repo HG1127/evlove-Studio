@@ -9,6 +9,8 @@ export function projectHasLiveReleaseDecision(project:EvolveProject){
   if(!projectHasOnlineReleaseTarget(project))return false;
   const currentCandidateId=project.experimentRun.winnerId??project.searchChampion?.candidate?.id;
   if(!currentCandidateId||project.release.candidateId!==currentCandidateId)return false;
+  if(project.release.recovery?.status==="pending"||project.release.recovery?.status==="manual-check")return false;
+  if(project.release.recovery?.action==="rollback"&&project.release.status!=="rolled-back")return false;
   if(project.release.evidenceMode!=="live")return false;
   if(!["promoted","rolled-back"].includes(project.release.status))return false;
   return project.release.healthy===true&&project.release.observationStatus==="healthy";
@@ -39,5 +41,6 @@ export function beginReleaseCycle(release:ReleaseState,candidateId:string):Relea
     observedAt:undefined,
     sampleSize:undefined,
     windowMinutes:undefined,
+    recovery:undefined,
   };
 }

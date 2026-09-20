@@ -734,6 +734,13 @@ export const ReleaseStateSchema = z.object({
   observedAt: z.string().optional(),
   sampleSize: z.number().int().min(0).optional(),
   windowMinutes: z.number().min(0).optional(),
+  recovery: z.object({
+    status: z.enum(["pending", "manual-check", "reconciled"]),
+    action: z.enum(["shadow", "promote", "rollback"]).optional(),
+    reason: z.string(),
+    at: z.string(),
+    lastObservedAt: z.string().optional(),
+  }).optional(),
   history: z.array(z.object({ at: z.string(), action: z.string(), note: z.string() })).default([]),
 });
 export type ReleaseState = z.infer<typeof ReleaseStateSchema>;

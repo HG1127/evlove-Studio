@@ -25,6 +25,7 @@ export type AutonomousAction =
   | "run-campaign"
   | "package"
   | "run-release"
+  | "reconcile-release"
   | "distill"
   | "next-queue"
   | "complete"
@@ -266,14 +267,21 @@ export function deriveAutonomousDecision(project: EvolveProject): AutonomousDeci
   if (deliveryReadiness(project).ready && acceptedOutput) {
     const onlineRelease = projectHasOnlineReleaseTarget(project);
     if (onlineRelease && !projectHasLiveReleaseDecision(project)) {
-      const uncertainReleasePause=project.campaign.status==="paused"
-        &&/\[server-release-(?:provider-pending|receipt-invalid|rollback-unhealthy|rollback-unavailable|preview-unhealthy)\]/.test(project.campaign.stopReason??"");
-      if(uncertainReleasePause){
+      if(project.release.recovery?.status==="pending"
+        &&project.releaseTarget?.provider==="vercel"
+        &&projectReleaseMode(project)==="preview-promote"){
+        return {
+          action:"reconcile-release",
+          reason:"Release 上一步结果需要恢复；先只读核对 Vercel 当前 Production / Preview 真相，再决定是否继续生产动作。",
+          stage:"release",
+        };
+      }
+      if(project.release.recovery?.status==="manual-check"){
         const request=attention({
           type:"capability",title:"线上 Release 需要人工核对后再继续",
-          reason:project.campaign.stopReason??"线上 Release 结果存在不确定性，已停止自动推进。",
+          reason:project.release.recovery.reason,
           stage:"release",riskLevel:"high",blocking:true,questions:[],criterionIds:[],
-          suggestedAction:"先核对 Vercel Production / Preview 实际状态；确认后可在发布控制中手动执行对应动作，成功回执会解除该暂停，再继续 Durable Workflow。",
+          suggestedAction:"在发布控制中查看当前 Production / Preview 实际状态；可再次执行“核对线上状态”，或在确认目标后手动完成对应 Release 动作。系统不会自动猜测未知 Deployment。",
         });
         return {action:"wait-human",reason:request.reason,stage:request.stage,attention:request};
       }

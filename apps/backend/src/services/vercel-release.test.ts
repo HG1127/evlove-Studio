@@ -4,6 +4,7 @@ import {
   checkVercelReleaseHealth,
   executeVercelReleaseAction,
   getVercelReleaseCapabilities,
+  observeVercelReleaseReality,
 } from "./vercel-release";
 
 const KEYS=[
@@ -110,6 +111,32 @@ describe("Vercel release provider",()=>{
     });
     expect(result.ok).toBe(true);
     expect(result.stableDeploymentId).toBe("dpl_stable");
+    expect(fetchMock.mock.calls.some(([,init])=>init?.method==="POST")).toBe(false);
+  });
+
+  it("observes Production and bound Preview without any release write",async()=>{
+    process.env.VERCEL_RELEASE_TOKEN="test_release_token";
+    const fetchMock=vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
+      const url=String(input);
+      if(init?.method==="POST")throw new Error("observation must be read-only");
+      if(url.includes("/v13/deployments/evolution-test.vercel.app")){
+        return new Response(JSON.stringify({uid:"dpl_prod",url:"evolution-test.vercel.app",readyState:"READY",target:"production"}),{status:200});
+      }
+      if(url.includes("/v13/deployments/dpl_preview")){
+        return new Response(JSON.stringify({uid:"dpl_preview",url:"candidate.vercel.app",readyState:"READY",target:"preview"}),{status:200});
+      }
+      if(url.startsWith("https://evolution-test.vercel.app")||url.startsWith("https://candidate.vercel.app")){
+        return new Response("ok",{status:200});
+      }
+      throw new Error("unexpected URL "+url);
+    });
+    vi.stubGlobal("fetch",fetchMock);
+    const result=await observeVercelReleaseReality({boundDeploymentId:"dpl_preview",healthPath:"/"});
+    expect(result.productionDeployment?.id).toBe("dpl_prod");
+    expect(result.boundDeployment?.id).toBe("dpl_preview");
+    expect(result.productionHealth.ready).toBe(true);
+    expect(result.boundHealth?.ready).toBe(true);
+    expect(result.errors).toEqual([]);
     expect(fetchMock.mock.calls.some(([,init])=>init?.method==="POST")).toBe(false);
   });
 });

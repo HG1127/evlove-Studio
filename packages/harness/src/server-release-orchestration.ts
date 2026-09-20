@@ -26,20 +26,36 @@ export type ServerReleaseOutcome={
   reason:string;
 };
 
-function pause(project:EvolveProject,reason:string):ServerReleaseOutcome{
+function pause(
+  project:EvolveProject,
+  reason:string,
+  recovery?:{status:"pending"|"manual-check";action?:DurableReleaseAction},
+):ServerReleaseOutcome{
+  const at=new Date().toISOString();
   return {
     control:"stop",
     project:{
       ...project,
       stage:"release",
+      release:recovery?{
+        ...project.release,
+        recovery:{
+          status:recovery.status,
+          action:recovery.action,
+          reason,
+          at,
+          lastObservedAt:project.release.recovery?.lastObservedAt,
+        },
+      }:project.release,
       campaign:{
         ...project.campaign,
         status:"paused",
         stopReason:reason,
         schedule:{...project.campaign.schedule,enabled:false,nextRunAt:undefined},
       },
-      updatedAt:new Date().toISOString(),
+      updatedAt:at,
     },
+    action:recovery?.action,
     terminal:false,
     reason,
   };
@@ -61,10 +77,10 @@ export async function runServerReleaseOrchestration(
       return {control:"continue",project,terminal:true,reason:"线上 Release 已有真实终态证据。"};
     }
     if(project.release.status==="shadow"&&project.release.healthy===false){
-      return pause(project,"[server-release-preview-unhealthy] Preview Health Gate 未通过；Production 未切换，保留稳定版本与当前 Candidate 证据。");
+      return pause(project,"[server-release-preview-unhealthy] Preview Health Gate 未通过；Production 未切换，保留稳定版本与当前 Candidate 证据。",{status:"pending",action:"shadow"});
     }
     if(project.release.status==="promoted"&&project.release.healthy===false&&!project.release.stableDeploymentId){
-      return pause(project,"[server-release-rollback-unavailable] Production Health 异常但缺少 stableDeploymentId；禁止自动猜测回滚目标。");
+      return pause(project,"[server-release-rollback-unavailable] Production Health 异常但缺少 stableDeploymentId；禁止自动猜测回滚目标。",{status:"manual-check",action:"promote"});
     }
     return pause(project,"[server-release-binding-pending] 需要显式绑定当前 Candidate 的 READY Preview Deployment，或当前 Release 状态暂不支持自动推进。");
   }
@@ -81,7 +97,7 @@ export async function runServerReleaseOrchestration(
       artifactHashes:action==="rollback"?[]:expectedReleaseArtifactHashes(candidate),
     });
   }catch(error){
-    return pause(project,`[server-release-provider-pending] ${action} 执行结果未能可靠结算：${error instanceof Error?error.message:String(error)}。禁止自动重试生产副作用，请先核对 Production 状态。`);
+    return pause(project,`[server-release-provider-pending] ${action} 执行结果未能可靠结算：${error instanceof Error?error.message:String(error)}。禁止自动重试生产副作用，请先核对 Production 状态。`,{status:"pending",action});
   }
 
   let updated:EvolveProject;
@@ -94,20 +110,20 @@ export async function runServerReleaseOrchestration(
       at:options?.now?.()??new Date().toISOString(),
     });
   }catch(error){
-    return pause(project,`[server-release-receipt-invalid] Provider 回执无法绑定 exact Candidate：${error instanceof Error?error.message:String(error)}`);
+    return pause(project,`[server-release-receipt-invalid] Provider 回执无法绑定 exact Candidate：${error instanceof Error?error.message:String(error)}`,{status:"manual-check",action});
   }
 
   if(action==="shadow"&&(!receipt.ok||receipt.healthy!==true||receipt.observationStatus!=="healthy")){
-    return pause(updated,"[server-release-preview-unhealthy] Preview Health Gate 未通过；没有切换 Production。");
+    return pause(updated,"[server-release-preview-unhealthy] Preview Health Gate 未通过；没有切换 Production。",{status:"pending",action:"shadow"});
   }
   if(action==="promote"&&(!receipt.ok||receipt.healthy!==true||receipt.observationStatus!=="healthy")){
     if(updated.release.stableDeploymentId){
       return {control:"continue",project:updated,action,terminal:false,reason:"Promote 后 Production Health 未通过；已保存真实状态，下一 Durable Step 将回滚 stable Deployment。"};
     }
-    return pause(updated,"[server-release-rollback-unavailable] Promote 后 Production Health 未通过且缺少 stableDeploymentId。");
+    return pause(updated,"[server-release-rollback-unavailable] Promote 后 Production Health 未通过且缺少 stableDeploymentId。",{status:"manual-check",action:"promote"});
   }
   if(action==="rollback"&&(!receipt.ok||receipt.healthy!==true||receipt.observationStatus!=="healthy")){
-    return pause(updated,"[server-release-rollback-unhealthy] Rollback 已执行但 Production Health 尚未确认；禁止宣称已安全恢复。");
+    return pause(updated,"[server-release-rollback-unhealthy] Rollback 已执行但 Production Health 尚未确认；禁止宣称已安全恢复。",{status:"pending",action:"rollback"});
   }
 
   return {

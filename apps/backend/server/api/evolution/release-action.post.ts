@@ -1,5 +1,5 @@
 import { createError, defineEventHandler, readBody } from "nitro/h3";
-import { VercelReleaseActionRequestSchema, VercelReleaseActionResponseSchema } from "@evolution/contracts";
+import { createEvolutionEvent, VercelReleaseActionRequestSchema, VercelReleaseActionResponseSchema } from "@evolution/contracts";
 import { applyReleaseResultToProject } from "@evolution/core";
 import { getServerVercelReleaseConfig } from "../../../src/server-env";
 import { getServerProductionRuntime } from "../../../src/services/production-runtime";
@@ -66,15 +66,44 @@ export default defineEventHandler(async(event)=>{
   }
   if(input.action==="rollback"&&!deploymentId)fail(409,"Rollback 缺少稳定 Deployment ID");
 
+  let result;
   try{
-    const result=VercelReleaseActionResponseSchema.parse(await executeVercelReleaseAction({
+    result=VercelReleaseActionResponseSchema.parse(await executeVercelReleaseAction({
       action:input.action,
       deploymentId,
       stableDeploymentId:mission.release.stableDeploymentId,
       healthPath:releaseTarget.healthPath,
       artifactHashes,
     }));
+  }catch(error){
+    const code=(error as {code?:string}).code;
+    if(code==="VERCEL_RELEASE_CREDENTIAL_REQUIRED")fail(503,"Vercel Release 写操作尚未授权：需要 VERCEL_RELEASE_TOKEN");
+    if(code==="VERCEL_ROLLING_RELEASE_NOT_ENABLED")fail(409,error instanceof Error?error.message:String(error));
     if(input.action==="shadow"||input.action==="promote"||input.action==="rollback"){
+      const at=new Date().toISOString();
+      const reason=`[server-release-provider-pending] ${input.action} 结果未能可靠结算：${error instanceof Error?error.message:String(error)}`;
+      const recoveryMission={
+        ...mission,
+        stage:"release" as const,
+        release:{
+          ...mission.release,
+          recovery:{status:"pending" as const,action:input.action,reason,at},
+        },
+        campaign:{...mission.campaign,status:"paused" as const,stopReason:reason},
+        updatedAt:at,
+      };
+      await runtime.missions.save(recoveryMission);
+      await runtime.events.append(createEvolutionEvent({
+        missionId:mission.id,
+        type:"ReleaseChanged",
+        source:"manual-release-api",
+        payload:{requestedAction:input.action,candidateId:candidate.id,deploymentId,stableDeploymentId:mission.release.stableDeploymentId,recovery:recoveryMission.release.recovery,reason},
+      })).catch(()=>undefined);
+    }
+    throw error;
+  }
+  if(input.action==="shadow"||input.action==="promote"||input.action==="rollback"){
+    try{
       const updated=applyReleaseResultToProject({
         project:mission,
         candidate,
@@ -83,12 +112,43 @@ export default defineEventHandler(async(event)=>{
         at:result.observedAt??new Date().toISOString(),
       });
       await runtime.missions.save(updated);
+      await runtime.events.append(createEvolutionEvent({
+        missionId:mission.id,
+        type:"ReleaseChanged",
+        source:"manual-release-api",
+        payload:{
+          requestedAction:input.action,
+          effectiveAction:result.effectiveAction,
+          candidateId:candidate.id,
+          deploymentId:updated.release.deploymentId,
+          stableDeploymentId:updated.release.stableDeploymentId,
+          artifactHashes:updated.release.artifactHashes,
+          evidenceMode:updated.release.evidenceMode,
+          observedAt:updated.release.observedAt,
+          healthy:updated.release.healthy,
+          observationStatus:updated.release.observationStatus,
+          reason:result.note,
+        },
+      })).catch(()=>undefined);
+    }catch(error){
+      const at=new Date().toISOString();
+      const reason=`Provider 回执无法绑定 exact Candidate：${error instanceof Error?error.message:String(error)}`;
+      const recoveryMission={
+        ...mission,
+        stage:"release" as const,
+        release:{...mission.release,recovery:{status:"manual-check" as const,action:input.action,reason,at,lastObservedAt:result.observedAt}},
+        campaign:{...mission.campaign,status:"paused" as const,stopReason:`[server-release-manual-check] ${reason}`},
+        updatedAt:at,
+      };
+      await runtime.missions.save(recoveryMission);
+      await runtime.events.append(createEvolutionEvent({
+        missionId:mission.id,
+        type:"ReleaseChanged",
+        source:"manual-release-api",
+        payload:{requestedAction:input.action,candidateId:candidate.id,deploymentId:result.deploymentId,stableDeploymentId:result.stableDeploymentId,artifactHashes:result.artifactHashes,evidenceMode:result.evidenceMode,observedAt:result.observedAt,recovery:recoveryMission.release.recovery,reason},
+      })).catch(()=>undefined);
+      throw error;
     }
-    return result;
-  }catch(error){
-    const code=(error as {code?:string}).code;
-    if(code==="VERCEL_RELEASE_CREDENTIAL_REQUIRED")fail(503,"Vercel Release 写操作尚未授权：需要 VERCEL_RELEASE_TOKEN");
-    if(code==="VERCEL_ROLLING_RELEASE_NOT_ENABLED")fail(409,error instanceof Error?error.message:String(error));
-    throw error;
   }
+  return result;
 });

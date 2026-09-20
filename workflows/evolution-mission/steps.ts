@@ -21,6 +21,7 @@ import { runServerMissionExperiment } from "../../apps/backend/src/services/serv
 import { runServerMissionHoldout } from "../../apps/backend/src/services/server-holdout";
 import { runServerMissionArtifactAcceptance } from "../../apps/backend/src/services/server-artifact-acceptance";
 import { runServerMissionRelease } from "../../apps/backend/src/services/server-release-orchestration";
+import { runServerMissionReleaseReconciliation } from "../../apps/backend/src/services/server-release-reconciliation";
 import { serverAiConfigured } from "../../apps/backend/src/server-env";
 
 function controlJob(input:EvolutionWorkflowRunInput,args:{
@@ -773,6 +774,31 @@ export async function executeServerControlStep(
         reason:releaseOutcome.reason,
       },
     }));
+    await runtime.events.append(createEvolutionEvent({
+      id:`evt-${input.controlJobId}-release-audit-${iteration}-${releaseOutcome.action??"blocked"}`,
+      missionId:input.missionId,
+      jobId:input.controlJobId,
+      checkpointId:plan.checkpoint.id,
+      type:"ReleaseChanged",
+      source:"vercel-workflow-release-audit",
+      payload:{
+        requestedAction:releaseOutcome.action,
+        effectiveAction:releaseOutcome.project.release.recovery
+          ?undefined
+          :releaseOutcome.project.release.history.at(-1)?.action,
+        releaseStatus:releaseOutcome.project.release.status,
+        candidateId:releaseOutcome.project.release.candidateId,
+        deploymentId:releaseOutcome.project.release.deploymentId,
+        stableDeploymentId:releaseOutcome.project.release.stableDeploymentId,
+        artifactHashes:releaseOutcome.project.release.artifactHashes,
+        evidenceMode:releaseOutcome.project.release.evidenceMode,
+        observedAt:releaseOutcome.project.release.observedAt,
+        healthy:releaseOutcome.project.release.healthy,
+        observationStatus:releaseOutcome.project.release.observationStatus,
+        recovery:releaseOutcome.project.release.recovery,
+        reason:releaseOutcome.reason,
+      },
+    }));
     if(releaseOutcome.control==="stop"){
       await runtime.jobs.put(controlJob(input,{
         status:"waiting",
@@ -788,6 +814,54 @@ export async function executeServerControlStep(
       status:"running",
       startedAt:input.requestedAt,
       progress:{percent:releaseOutcome.terminal?94:90,detail:releaseOutcome.reason.slice(0,240)},
+    }));
+    return {control:"continue"};
+  }
+
+  if(action==="reconcile-release"){
+    const reconcileOutcome=await runServerMissionReleaseReconciliation(mission);
+    await runtime.missions.save(reconcileOutcome.project);
+    await runtime.events.append(createEvolutionEvent({
+      id:`evt-${input.controlJobId}-release-reconcile-${iteration}`,
+      missionId:input.missionId,
+      jobId:input.controlJobId,
+      checkpointId:plan.checkpoint.id,
+      type:"ReleaseChanged",
+      source:"vercel-workflow-release-reconcile",
+      payload:{
+        disposition:reconcileOutcome.disposition,
+        releaseStatus:reconcileOutcome.project.release.status,
+        candidateId:reconcileOutcome.project.release.candidateId,
+        deploymentId:reconcileOutcome.project.release.deploymentId,
+        stableDeploymentId:reconcileOutcome.project.release.stableDeploymentId,
+        artifactHashes:reconcileOutcome.project.release.artifactHashes,
+        evidenceMode:reconcileOutcome.project.release.evidenceMode,
+        observedAt:reconcileOutcome.project.release.observedAt,
+        recovery:reconcileOutcome.project.release.recovery,
+        productionDeploymentId:reconcileOutcome.observation.productionDeployment?.id,
+        boundDeploymentId:reconcileOutcome.observation.boundDeployment?.id,
+        productionHealthReady:reconcileOutcome.observation.productionHealth.ready,
+        boundHealthReady:reconcileOutcome.observation.boundHealth?.ready,
+        checkedAt:reconcileOutcome.observation.checkedAt,
+        observationErrors:reconcileOutcome.observation.errors,
+        reason:reconcileOutcome.reason,
+      },
+    }));
+    if(reconcileOutcome.control==="stop"){
+      await runtime.jobs.put(controlJob(input,{
+        status:"waiting",
+        startedAt:input.requestedAt,
+        progress:{percent:89,detail:reconcileOutcome.reason.slice(0,240)},
+      }));
+      return {control:"stop",result:result(input,{
+        status:"waiting-human",iterations:iteration+1,nextAction:action,
+        checkpointId:plan.checkpoint.id,reason:reconcileOutcome.reason,
+      })};
+    }
+    await runtime.jobs.put(controlJob(input,{
+      status:"running",
+      startedAt:input.requestedAt,
+      progress:{percent:reconcileOutcome.disposition==="terminal-live-decision"?94:90,detail:reconcileOutcome.reason.slice(0,240)},
     }));
     return {control:"continue"};
   }

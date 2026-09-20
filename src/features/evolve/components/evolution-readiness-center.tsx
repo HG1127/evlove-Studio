@@ -468,7 +468,7 @@ export function EvolutionReadinessCenter() {
                 <Button size="sm" variant="secondary" onClick={refreshWorkflow} disabled={workflowCheck.busy}><RefreshCcw className={`size-3.5 ${workflowCheck.busy ? "animate-spin" : ""}`} />检测 Workflow</Button>
               </div>
             </div>
-            <div className="mt-3 grid grid-cols-2 gap-2 text-[10px] sm:grid-cols-4 xl:grid-cols-8">
+            <div className="mt-3 grid grid-cols-2 gap-2 text-[10px] sm:grid-cols-4 xl:grid-cols-9">
               <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>durable</b><div className={workflowCheck.capabilities?.durable ? "text-emerald-600" : "text-slate-400"}>{workflowCheck.capabilities?.durable ? "READY" : "—"}</div></div>
               <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>server AI</b><div className={workflowCheck.capabilities?.serverAi ? "text-emerald-600" : "text-amber-600"}>{workflowCheck.capabilities?.serverAi ? "READY" : "NOT CONFIGURED"}</div></div>
               <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>server actions</b><div className="text-sky-600">{workflowCheck.capabilities?.serverNativeActions.length ?? 0}</div></div>
@@ -477,6 +477,7 @@ export function EvolutionReadinessCenter() {
               <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>blocked</b><div className={workflowCheck.capabilities?.blockedActions.length ? "text-amber-600" : "text-emerald-600"}>{workflowCheck.capabilities?.blockedActions.map((item)=>item.action).join(" / ") || "NONE"}</div></div>
               <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>offline closure</b><div className={workflowCheck.capabilities?.closure.offlineFullAuto ? "text-emerald-600" : "text-amber-600"}>{workflowCheck.capabilities?.closure.offlineFullAuto ? "FULL AUTO" : workflowCheck.capabilities?.closure.codeReady ? "CODE READY" : "BLOCKED"}</div></div>
               <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>online closure</b><div className={workflowCheck.capabilities?.closure.onlineFullAuto || workflowCheck.capabilities?.closure.onlinePostApprovalAuto ? "text-emerald-600" : "text-amber-600"}>{workflowCheck.capabilities?.closure.onlineFullAuto ? "FULL AUTO" : workflowCheck.capabilities?.closure.onlinePostApprovalAuto ? "POST-APPROVAL AUTO" : workflowCheck.capabilities?.closure.externalCapabilityBlocked.map((item)=>item.capability).join(" / ") || "BLOCKED"}</div></div>
+              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>release recovery</b><div className={workflowCheck.capabilities?.closure.releaseReconciliationReady ? "text-emerald-600" : "text-amber-600"}>{workflowCheck.capabilities?.closure.releaseReconciliationReady ? "READY" : "BLOCKED"}</div></div>
             </div>
           </div>
           <div className="rounded-xl border bg-white p-3">

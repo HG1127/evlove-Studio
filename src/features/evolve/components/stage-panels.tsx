@@ -991,6 +991,23 @@ function ReleasePanel({ runtime }: { runtime: ProjectRuntime }) {
       setReleaseProviderBusy(false);
     }
   };
+  const reconcileReleaseReality = async () => {
+    setReleaseProviderBusy(true);
+    setReleaseProviderError("");
+    try {
+      await runtime.reconcileRelease();
+      const health = await checkServerVercelReleaseHealth();
+      setReleaseHealth(health);
+      if (releaseCaps?.writeEnabled) {
+        const deployments = await listServerVercelDeployments();
+        if (deployments.available) setReleaseDeployments(deployments.deployments);
+      }
+    } catch (error) {
+      setReleaseProviderError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setReleaseProviderBusy(false);
+    }
+  };
   const releaseWriteReady = !vercelRelease || Boolean(releaseCaps?.writeEnabled);
   const readyPreviewDeployments = releaseDeployments.filter((deployment) => deployment.state === "READY" && deployment.target !== "production");
   const releaseDeploymentBound = !previewPromote
@@ -1005,6 +1022,8 @@ function ReleasePanel({ runtime }: { runtime: ProjectRuntime }) {
     <SectionTitle eyebrow="第 5 步 · 安全交付" title="需要上线时，逐步放量" desc="文件成果可以直接领取；只有需要在线运行的成果，才需要从后台观察开始逐步放量，并随时保留回滚能力。" />
     {!liveRelease&&<div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm leading-6 text-sky-900"><b>当前没有连接独立发布平台。</b> 已验收文件仍可直接领取；如果这个项目需要部署到当前 Vercel Project，可以单独连接 Release Target，不会改变现有验证 Target。<div className="mt-3"><Button size="sm" variant="secondary" disabled={releaseProviderBusy} onClick={()=>void connectVercelRelease()}><PlugZap className="size-3.5"/>{releaseProviderBusy?"正在检测…":"连接当前 Vercel Release"}</Button></div>{releaseProviderError&&<div className="mt-2 text-xs text-rose-700">{releaseProviderError}</div>}</div>}
     {vercelRelease&&<div className="rounded-2xl border border-indigo-200 bg-indigo-50/60 p-4 text-sm leading-6 text-indigo-900"><div className="flex flex-wrap items-center gap-2"><b>{p.releaseTarget?.label}</b><Badge className={releaseHealth?.ready?"border-emerald-200 bg-emerald-50 text-emerald-700":"border-amber-200 bg-amber-50 text-amber-700"}>{releaseHealth?.ready?"Production Health READY":"Health 未确认"}</Badge><Badge className={releaseWriteReady?"border-emerald-200 bg-emerald-50 text-emerald-700":"border-amber-200 bg-amber-50 text-amber-700"}>{releaseWriteReady?"Release Write READY":"Read-only"}</Badge></div><p className="mt-2 text-xs text-indigo-700">{previewPromote?"当前 Vercel 方案使用 Preview → Production Promote；不会伪造 5% / 20% / 50% 流量。":"当前发布平台使用渐进式发布。"}{!releaseWriteReady?" Promote / Rollback 需要单独配置 VERCEL_RELEASE_TOKEN；当前仍可做真实 Production 健康观测。":""}</p>{releaseWriteReady&&previewPromote&&p.release.status==="idle"&&<div className="mt-3 rounded-xl border border-indigo-200 bg-white/80 p-3"><div className="text-xs font-semibold">绑定当前 Winner 的 Preview Deployment</div><select className="mt-2 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs" value={p.release.deploymentId??""} onChange={(event)=>{try{if(event.target.value)runtime.bindReleaseDeployment(event.target.value);setReleaseProviderError("");}catch(error){setReleaseProviderError(error instanceof Error?error.message:String(error));}}}><option value="">请选择 READY Preview</option>{readyPreviewDeployments.map((deployment)=><option key={deployment.id} value={deployment.id}>{deployment.id} · {new URL(deployment.url).hostname}</option>)}</select><p className="mt-2 text-[11px] text-indigo-600">{p.release.deploymentId&&p.release.candidateId===runtime.winner?.id?"已绑定当前 Release Candidate；Preview Gate 只会验证这个 Deployment。":readyPreviewDeployments.length?"请选择与当前 Candidate 对应的 Preview，系统不会自动猜。":"当前没有 READY Preview Deployment。"}</p></div>}</div>}
+    {vercelRelease&&p.release.deploymentId&&<div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-indigo-200 bg-indigo-50/60 px-4 py-3 text-xs text-indigo-900"><div>{p.release.observedAt?"最近 Mission 观测："+new Date(p.release.observedAt).toLocaleString("zh-CN"):"尚未写入 Mission 级线上观测"}</div><Button size="sm" variant="secondary" disabled={releaseProviderBusy||!releaseWriteReady} onClick={()=>void reconcileReleaseReality()}><RefreshCcw className="size-3.5"/>核对线上状态</Button></div>}
+    {vercelRelease&&p.release.recovery&&<div className={cn("rounded-2xl border p-4 text-xs leading-5",p.release.recovery.status==="manual-check"?"border-rose-200 bg-rose-50 text-rose-900":"border-amber-200 bg-amber-50 text-amber-900")}><div className="flex flex-wrap items-center gap-2"><b>Release Recovery</b><Badge>{p.release.recovery.status}</Badge>{p.release.recovery.action&&<Badge>{p.release.recovery.action}</Badge>}</div><p className="mt-2">{p.release.recovery.reason}</p><div className="mt-2 text-[11px] opacity-70">开始：{new Date(p.release.recovery.at).toLocaleString("zh-CN")}{p.release.recovery.lastObservedAt?" · 最近核对 "+new Date(p.release.recovery.lastObservedAt).toLocaleString("zh-CN"):""}</div></div>}
     {(releasedVersion || challenging) && <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50/60 px-4 py-3 text-xs text-emerald-900">
       <Rocket className="size-4 shrink-0 text-emerald-600" />
       {p.release.status === "promoted" && releasedVersion && <><span className="font-bold">在产 {releasedVersion.label} · {releasedVersion.candidateTitle ?? "历史候选"}</span><span className="text-emerald-700">发布于 {new Date(releasedVersion.releasedAt!).toLocaleString("zh-CN")}</span><span className="ml-auto text-emerald-700">当前在产</span></>}

@@ -64,6 +64,7 @@ import { createHarnessActionExecutor } from "@evolution/harness";
 import { getProductionRuntime, productionRuntimeMode } from "./production-runtime";
 import { shouldUseServerAutoPilot, startServerEvolutionWorkflow } from "./server-workflow-client";
 import { classifyRuntimeFailure, retryDelayMs } from "./failure-router";
+import { reconcileServerVercelRelease } from "./server-release-client";
 import { withProjectAiProfile } from "../ai/service";
 import { automaticEvidenceKey, ensureAutomaticEvidence } from "./automatic-evidence";
 
@@ -1141,6 +1142,19 @@ export function useProjectRuntime(initialProject: EvolveProject) {
     return result;
   }, [commit, project, run, winner]);
 
+  const reconcileRelease = useCallback(async () => {
+    const missionId=projectRef.current.id;
+    const response=await run("核对线上 Release 状态",()=>reconcileServerVercelRelease(missionId));
+    const persisted=await getProductionRuntime().missions.get(missionId).catch(()=>undefined);
+    if(persisted){
+      commit(persisted);
+      setStage(persisted.stage);
+    }
+    setStatus({busy:false,message:response.reason});
+    pushActivity(`Release Reconcile · ${response.disposition} · ${response.reason}`,undefined,projectId);
+    return response;
+  },[commit,projectId,run,setStatus]);
+
   const distill = useCallback(async () => {
     const current = projectRef.current;
     const winnerId = current.experimentRun.winnerId ?? current.searchChampion?.candidate?.id;
@@ -2069,6 +2083,10 @@ export function useProjectRuntime(initialProject: EvolveProject) {
         await releaseAction(action);
         return {control:"continue"};
       },
+      "reconcile-release": async () => {
+        await reconcileRelease();
+        return {control:"continue"};
+      },
       distill: async () => { await distill(); },
       "next-queue": async () => { await generateNextQueue(); },
       "wait-human": async (plan) => {
@@ -2187,7 +2205,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
       setStatus({ busy: false, error: message });
       pushActivity(`Harness Failure Router · ${failure.action} · ${failure.disposition.reason}：${message}`, undefined, projectId);
     }
-  }, [commit, compileAcceptanceRubric, deepenUnderstanding, distill, executeValidation, finishAutonomousSuccess, generateEvalSuite, generateNextQueue, materializeOutputs, projectId, releaseAction, runCampaign, setStatus]);
+  }, [commit, compileAcceptanceRubric, deepenUnderstanding, distill, executeValidation, finishAutonomousSuccess, generateEvalSuite, generateNextQueue, materializeOutputs, projectId, reconcileRelease, releaseAction, runCampaign, setStatus]);
 
 
   /**
@@ -2424,6 +2442,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
     retryFailedValidation,
     retryFailedExperiment,
     releaseAction,
+    reconcileRelease,
     distill,
     generateNextQueue,
     startNextRound,

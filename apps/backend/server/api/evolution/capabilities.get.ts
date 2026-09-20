@@ -4,7 +4,7 @@ import { serverAiConfigured, vercelReleaseWriteConfigured } from "../../../src/s
 
 const CONTROL_ACTIONS=["adopt-defaults","approve-contract","wait-human","complete","package"] as const;
 const AI_ACTIONS=["understand","compile-contract","build-eval","distill","next-queue"] as const;
-const CONDITIONAL_ACTIONS:string[]=["revalidate","run-campaign","run-release"];
+const CONDITIONAL_ACTIONS:string[]=["revalidate","run-campaign","run-release","reconcile-release"];
 const MIGRATION_PENDING_ACTIONS:string[]=[];
 
 export default defineEventHandler(()=>{
@@ -15,7 +15,10 @@ export default defineEventHandler(()=>{
       ...AI_ACTIONS.map((action)=>({action,reason:"server-ai-not-configured"})),
       {action:"run-campaign",reason:"server-ai-not-configured"},
     ]:[]),
-    ...(!releaseWrite?[{action:"run-release",reason:"vercel-release-credential-required"}]:[]),
+    ...(!releaseWrite?[
+      {action:"run-release",reason:"vercel-release-credential-required"},
+      {action:"reconcile-release",reason:"vercel-release-credential-required"},
+    ]:[]),
   ];
   const configBlocked=[
     ...(!ai?[{capability:"server-ai",reason:"server-ai-not-configured"}]:[]),
@@ -28,13 +31,14 @@ export default defineEventHandler(()=>{
   const codeReady=MIGRATION_PENDING_ACTIONS.length===0;
   const offlineFullAuto=codeReady&&ai;
   const releaseOrchestrationReady=true;
-  const onlinePostApprovalAuto=offlineFullAuto&&releaseWrite&&releaseOrchestrationReady;
+  const releaseReconciliationReady=releaseWrite;
+  const onlinePostApprovalAuto=offlineFullAuto&&releaseWrite&&releaseOrchestrationReady&&releaseReconciliationReady;
   const onlineFullAuto=onlinePostApprovalAuto&&externalCapabilityBlocked.length===0;
   const serverNativeActions=[
     ...CONTROL_ACTIONS,
     ...(ai?AI_ACTIONS:[]),
     ...(ai?["campaign-baseline","campaign-experiment","campaign-holdout","campaign-artifact-acceptance"]:[]),
-    ...(releaseWrite?["run-release"]:[]),
+    ...(releaseWrite?["run-release","reconcile-release"]:[]),
   ];
   return EvolutionWorkflowCapabilitiesSchema.parse({
     available:true,
@@ -46,6 +50,7 @@ export default defineEventHandler(()=>{
       offlineFullAuto,
       onlineFullAuto,
       releaseOrchestrationReady,
+      releaseReconciliationReady,
       onlinePostApprovalAuto,
       configBlocked,
       externalCapabilityBlocked,

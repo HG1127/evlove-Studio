@@ -4,11 +4,13 @@ import {
   VercelReleaseCapabilitiesSchema,
   VercelReleaseDeploymentsSchema,
   VercelReleaseHealthSchema,
+  VercelReleaseObservationSchema,
   type VercelDeploymentSummary,
   type VercelReleaseAction,
   type VercelReleaseActionResponse,
   type VercelReleaseCapabilities,
   type VercelReleaseHealth,
+  type VercelReleaseObservation,
 } from "@evolution/contracts";
 import { getServerVercelReleaseConfig } from "../server-env";
 
@@ -163,6 +165,39 @@ async function currentProductionDeployment(){
   if(!config.productionUrl)return undefined;
   try{return await getDeployment(config.productionUrl);}
   catch{return undefined;}
+}
+
+export async function observeVercelReleaseReality(args?:{
+  boundDeploymentId?:string;
+  healthPath?:string;
+}):Promise<VercelReleaseObservation>{
+  const config=getServerVercelReleaseConfig();
+  const errors:string[]=[];
+  let productionDeployment:VercelDeploymentSummary|undefined;
+  let boundDeployment:VercelDeploymentSummary|undefined;
+  if(config.productionUrl){
+    try{productionDeployment=await getDeployment(config.productionUrl);}
+    catch(error){errors.push(`production-deployment: ${error instanceof Error?error.message:String(error)}`);}
+  }else{
+    errors.push("production-deployment: production URL not configured");
+  }
+  if(args?.boundDeploymentId){
+    try{boundDeployment=await getDeployment(args.boundDeploymentId);}
+    catch(error){errors.push(`bound-deployment: ${error instanceof Error?error.message:String(error)}`);}
+  }
+  const productionHealth=await checkVercelReleaseHealth({url:config.productionUrl,healthPath:args?.healthPath});
+  const boundHealth=boundDeployment
+    ?await checkVercelReleaseHealth({url:boundDeployment.url,healthPath:args?.healthPath})
+    :undefined;
+  return VercelReleaseObservationSchema.parse({
+    provider:"vercel",
+    checkedAt:new Date().toISOString(),
+    productionDeployment,
+    boundDeployment,
+    productionHealth,
+    boundHealth,
+    errors,
+  });
 }
 
 export async function listVercelReleaseDeployments(){

@@ -54,6 +54,31 @@ export const VercelReleaseDeploymentsSchema=z.object({
 });
 export type VercelReleaseDeployments=z.infer<typeof VercelReleaseDeploymentsSchema>;
 
+export const VercelReleaseObservationSchema=z.object({
+  provider:z.literal("vercel").default("vercel"),
+  checkedAt:z.string(),
+  productionDeployment:VercelDeploymentSummarySchema.optional(),
+  boundDeployment:VercelDeploymentSummarySchema.optional(),
+  productionHealth:VercelReleaseHealthSchema,
+  boundHealth:VercelReleaseHealthSchema.optional(),
+  errors:z.array(z.string()).default([]),
+});
+export type VercelReleaseObservation=z.infer<typeof VercelReleaseObservationSchema>;
+
+export const VercelReleaseReconcileRequestSchema=z.object({
+  missionId:z.string().min(1),
+});
+export type VercelReleaseReconcileRequest=z.infer<typeof VercelReleaseReconcileRequestSchema>;
+
+export const VercelReleaseReconcileResponseSchema=z.object({
+  disposition:z.enum(["safe-to-resume","terminal-live-decision","manual-check"]),
+  reason:z.string(),
+  observation:VercelReleaseObservationSchema,
+  releaseStatus:z.enum(["idle","shadow","canary-5","canary-20","canary-50","promoted","rolled-back"]),
+  recoveryStatus:z.enum(["pending","manual-check","reconciled"]).optional(),
+});
+export type VercelReleaseReconcileResponse=z.infer<typeof VercelReleaseReconcileResponseSchema>;
+
 export const VercelReleaseActionRequestSchema=z.object({
   missionId:z.string().min(1),
   candidateId:z.string().min(1),
