@@ -142,8 +142,9 @@ function capabilityPause(project: EvolveProject, reason: string, stage: EvolvePr
 /**
  * Advance exactly one durable Campaign preparation phase.
  *
- * Baseline execution, Candidate build/experiment, Hidden Validation and Artifact Acceptance remain
- * separate capabilities. This function never fabricates those results; it stops at their boundary.
+ * Baseline execution, Candidate build/experiment, Hidden Validation and Artifact Acceptance are
+ * separate capabilities. This function owns only Problem → Diagnosis → Plan and hands a durable
+ * Plan checkpoint to the next Server Experiment step.
  */
 export async function advanceServerCampaignPreparation(
   inputProject: EvolveProject,
@@ -351,17 +352,21 @@ export async function advanceServerCampaignPreparation(
       const reason = "[server-campaign-experiment-approval] Experiment Ready 等待人工确认；Server 已保留 Candidate 与 Plan 断点。";
       return { control: "stop", phase: "plan", project: capabilityPause(project, reason, "plan", now), reason, candidateCount: candidates.length, ungroundedCount: grounded.ungroundedCount };
     }
-    const reason = "[server-campaign-experiment-pending] Problem → Diagnosis → Plan 已由 Durable Workflow 完成；Candidate Build / Experiment / Holdout / Gate F 仍待服务端迁移。";
     return {
-      control: "stop",
+      control: "continue",
       phase: "experiment",
-      project: capabilityPause(project, reason, "plan", now),
-      reason,
+      project,
+      reason: `Round ${round} Server Plan 已完成且 Experiment Ready 已批准；进入 Server Candidate Build / Experiment。`,
       candidateCount: candidates.length,
       ungroundedCount: grounded.ungroundedCount,
     };
   }
 
-  const reason = "[server-campaign-experiment-pending] Server Campaign Planning 断点已完成；等待 Candidate Build / Experiment / Holdout / Gate F 服务端能力。";
-  return { control: "stop", phase: "experiment", project: capabilityPause(project, reason, "plan", now), reason, candidateCount: project.selectedCandidateIds.length };
+  return {
+    control: "continue",
+    phase: "experiment",
+    project,
+    reason: "Server Campaign Plan checkpoint 已就绪；进入 Server Candidate Build / Experiment。",
+    candidateCount: project.selectedCandidateIds.length,
+  };
 }

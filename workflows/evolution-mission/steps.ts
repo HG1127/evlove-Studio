@@ -17,6 +17,7 @@ import {
 import { getServerProductionRuntime } from "../../apps/backend/src/services/production-runtime";
 import { runServerAi } from "../../apps/backend/src/services/ai-gateway";
 import { runServerMissionBaseline } from "../../apps/backend/src/services/server-baseline";
+import { runServerMissionExperiment } from "../../apps/backend/src/services/server-experiment";
 import { serverAiConfigured } from "../../apps/backend/src/server-env";
 
 function controlJob(input:EvolutionWorkflowRunInput,args:{
@@ -392,6 +393,85 @@ export async function executeServerControlStep(
       }));
     }
 
+    const round=campaignMission.campaign.currentRound+1;
+    const campaignCheckpoint=campaignMission.campaign.checkpoint;
+    if(campaignCheckpoint?.round===round
+      && campaignCheckpoint.completedPhase==="experiment"
+      && campaignMission.experimentRun.status==="completed"
+      && (campaignMission.experimentRun.winnerId||campaignMission.experimentRun.pendingEvidenceCandidateId)){
+      const candidateId=campaignMission.experimentRun.winnerId??campaignMission.experimentRun.pendingEvidenceCandidateId;
+      const reason=`[server-campaign-holdout-pending] Server Experiment 已完成并冻结 Candidate ${candidateId}；等待 Hidden Holdout / Artifact Acceptance Server Step。`;
+      const paused={
+        ...campaignMission,
+        campaign:{
+          ...campaignMission.campaign,
+          status:"paused" as const,
+          stopReason:reason,
+          schedule:{...campaignMission.campaign.schedule,enabled:false,nextRunAt:undefined},
+        },
+        stage:"experiment" as const,
+        updatedAt:now,
+      };
+      await runtime.missions.save(paused);
+      await runtime.jobs.put(controlJob(input,{
+        status:"waiting",
+        startedAt:input.requestedAt,
+        progress:{percent:68,detail:reason},
+      }));
+      await runtime.events.append(createEvolutionEvent({
+        id:`evt-${input.controlJobId}-campaign-holdout-pending-${iteration}`,
+        missionId:input.missionId,jobId:input.controlJobId,checkpointId:plan.checkpoint.id,
+        type:"JobProgress",source:"vercel-workflow-control",
+        payload:{action,serverNative:true,conditional:true,phase:"holdout",candidateId,reason},
+      }));
+      return {control:"stop",result:result(input,{
+        status:"waiting-action",iterations:iteration+1,nextAction:action,
+        checkpointId:plan.checkpoint.id,reason,
+      })};
+    }
+
+    if(campaignCheckpoint?.round===round&&campaignCheckpoint.completedPhase==="plan"){
+      const experimentOutcome=await runServerMissionExperiment(campaignMission);
+      campaignMission=experimentOutcome.project;
+      await runtime.missions.save(campaignMission);
+      await runtime.events.append(createEvolutionEvent({
+        id:`evt-${input.controlJobId}-campaign-experiment-${iteration}`,
+        missionId:input.missionId,jobId:input.controlJobId,checkpointId:plan.checkpoint.id,
+        type:experimentOutcome.control==="continue"?"ActionCompleted":"JobProgress",
+        source:"vercel-workflow-control",
+        payload:{
+          action,
+          phase:"experiment",
+          serverNative:true,
+          readyForHoldout:experimentOutcome.readyForHoldout,
+          winnerId:experimentOutcome.winnerId,
+          pendingEvidenceCandidateId:experimentOutcome.pendingEvidenceCandidateId,
+          builtCount:experimentOutcome.builtCount,
+          buildFailureCount:experimentOutcome.buildFailureCount,
+          reason:experimentOutcome.reason,
+        },
+      }));
+      if(experimentOutcome.control==="stop"){
+        await runtime.jobs.put(controlJob(input,{
+          status:"waiting",
+          startedAt:input.requestedAt,
+          progress:{percent:60,detail:experimentOutcome.reason.slice(0,240)},
+        }));
+        return {control:"stop",result:result(input,{
+          status:"waiting-action",iterations:iteration+1,nextAction:action,
+          checkpointId:plan.checkpoint.id,reason:experimentOutcome.reason,
+        })};
+      }
+      await runtime.jobs.put(controlJob(input,{
+        status:"running",
+        startedAt:input.requestedAt,
+        progress:{
+          percent:experimentOutcome.readyForHoldout?64:58,
+          detail:experimentOutcome.reason.slice(0,240),
+        },
+      }));
+      return {control:"continue"};
+    }
     const outcome=await advanceServerCampaignPreparation(campaignMission,{
       problemAnalysis:(payload)=>runServerAi("problem-analysis",payload),
       diagnose:(payload)=>runServerAi("diagnose",payload),

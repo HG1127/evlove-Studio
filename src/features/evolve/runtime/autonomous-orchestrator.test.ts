@@ -182,7 +182,7 @@ describe("autonomous orchestrator", () => {
     expect(request?.suggestedAction).toContain("无需重新生成成果");
   });
 
-  it("classifies a persisted Server Campaign migration boundary as capability instead of a generic limit", () => {
+  it("automatically retries the legacy Server Experiment migration boundary", () => {
     const p = project({
       campaign: {
         ...demoProject.campaign,
@@ -192,10 +192,37 @@ describe("autonomous orchestrator", () => {
       stage: "plan",
       attentionRequests: [],
     });
+    expect(deriveAttentionRequest(p)).toBeUndefined();
+  });
+
+  it("classifies a Server Experiment build failure as capability instead of a generic limit", () => {
+    const p = project({
+      campaign: {
+        ...demoProject.campaign,
+        status: "paused",
+        stopReason: "[server-campaign-experiment-build-pending] Candidate Builder 暂不能生成实际文件",
+      },
+      stage: "experiment",
+      attentionRequests: [],
+    });
     const request = deriveAttentionRequest(p);
     expect(request?.type).toBe("capability");
-    expect(request?.title).toContain("Server Campaign");
-    expect(request?.suggestedAction).toContain("断点");
+    expect(request?.reason).toContain("experiment-build-pending");
+  });
+
+  it("classifies the new Hidden Holdout migration boundary as capability", () => {
+    const p = project({
+      campaign: {
+        ...demoProject.campaign,
+        status: "paused",
+        stopReason: "[server-campaign-holdout-pending] Server Experiment 已完成；等待 Hidden Holdout",
+      },
+      stage: "experiment",
+      attentionRequests: [],
+    });
+    const request = deriveAttentionRequest(p);
+    expect(request?.type).toBe("capability");
+    expect(request?.reason).toContain("holdout-pending");
   });
 
   it("automatically retries the legacy server baseline migration pause under the new server baseline capability", () => {

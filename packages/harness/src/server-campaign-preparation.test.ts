@@ -32,7 +32,7 @@ function fixture(): EvolveProject {
 }
 
 describe("server campaign preparation",()=>{
-  it("advances problem -> diagnosis -> plan and stops before unmigrated experiment execution",async()=>{
+  it("advances problem -> diagnosis -> plan and hands off to Server Experiment",async()=>{
     const ai={
       problemAnalysis:async()=>({problems:[{id:"P",title:"流程缺口",impact:90,severity:"high" as const,status:"recommended" as const,summary:"流程未闭环",rootCause:"缺少证据闭环",evidence:["当前文本存在流程缺口"],evidenceRefs:[],confidence:0.9,affectedComponent:"source"}],recommendedProblemId:"P",summary:"问题"}),
       diagnose:async()=>({problemId:"P",rootCause:"缺少证据闭环",summary:"根因",affectedComponent:"source",confidence:0.9,evidence:["当前文本存在流程缺口"],evidenceRefs:[],counterEvidence:[],falsifier:"补齐后仍失败",suggestedScopes:["prompt" as const],trace:[]}),
@@ -51,8 +51,9 @@ describe("server campaign preparation",()=>{
     expect(second.project.diagnosis?.evidenceRefs.some((ref)=>ref.verified)).toBe(true);
 
     const third=await advanceServerCampaignPreparation(second.project,ai,{now:at});
-    expect(third).toMatchObject({control:"stop",phase:"experiment",candidateCount:1});
-    expect(third.project.campaign.stopReason).toContain("server-campaign-experiment-pending");
+    expect(third).toMatchObject({control:"continue",phase:"experiment",candidateCount:1});
+    expect(third.project.campaign.stopReason).toBeUndefined();
+    expect(third.project.campaign.checkpoint).toMatchObject({round:1,completedPhase:"plan"});
     expect(third.project.gates.find((gate)=>gate.id==="experiment-ready")?.status).toBe("approved");
     expect(third.project.candidates[0]?.status).toBe("draft");
   });

@@ -1,6 +1,7 @@
 import { Output, generateText, gateway } from "ai";
 import type { ZodType } from "zod";
 import {
+  BuildCandidateAiResultSchema,
   DistillAiResultSchema,
   DiagnosisAiResultSchema,
   EvalSuiteAiResultSchema,
@@ -12,6 +13,7 @@ import {
   RubricAiResultSchema,
   UnderstandAiResultSchema,
   jsonSchemas,
+  type BuildCandidateAiResult,
   type DistillAiResult,
   type DiagnosisAiResult,
   type EvalSuiteAiResult,
@@ -25,7 +27,7 @@ import {
 } from "@evolution/contracts";
 import { getServerAiConfig } from "../server-env";
 
-export type ServerAiOperation="understand"|"rubric"|"eval-suite"|"execute-artifact-batch"|"evaluate"|"problem-analysis"|"diagnose"|"plan"|"distill"|"next-queue";
+export type ServerAiOperation="understand"|"rubric"|"eval-suite"|"build-candidate"|"execute-artifact-batch"|"evaluate"|"problem-analysis"|"diagnose"|"plan"|"distill"|"next-queue";
 
 type StructuredSchema={name:string;schema:Record<string,unknown>};
 type Contract<T>={schema:StructuredSchema;parser:ZodType<T>;instruction:string};
@@ -40,6 +42,7 @@ const SYSTEM=[
 function contract(operation:"understand"):Contract<UnderstandAiResult>;
 function contract(operation:"rubric"):Contract<RubricAiResult>;
 function contract(operation:"eval-suite"):Contract<EvalSuiteAiResult>;
+function contract(operation:"build-candidate"):Contract<BuildCandidateAiResult>;
 function contract(operation:"execute-artifact-batch"):Contract<ExecuteArtifactBatchAiResult>;
 function contract(operation:"evaluate"):Contract<EvaluateAiResult>;
 function contract(operation:"problem-analysis"):Contract<ProblemAnalysisAiResult>;
@@ -47,7 +50,7 @@ function contract(operation:"diagnose"):Contract<DiagnosisAiResult>;
 function contract(operation:"plan"):Contract<PlanAiResult>;
 function contract(operation:"distill"):Contract<DistillAiResult>;
 function contract(operation:"next-queue"):Contract<NextQueueAiResult>;
-function contract(operation:ServerAiOperation):Contract<UnderstandAiResult|RubricAiResult|EvalSuiteAiResult|ExecuteArtifactBatchAiResult|EvaluateAiResult|ProblemAnalysisAiResult|DiagnosisAiResult|PlanAiResult|DistillAiResult|NextQueueAiResult>{
+function contract(operation:ServerAiOperation):Contract<UnderstandAiResult|RubricAiResult|EvalSuiteAiResult|BuildCandidateAiResult|ExecuteArtifactBatchAiResult|EvaluateAiResult|ProblemAnalysisAiResult|DiagnosisAiResult|PlanAiResult|DistillAiResult|NextQueueAiResult>{
   if(operation==="understand")return{
     schema:jsonSchemas.understand,
     parser:UnderstandAiResultSchema,
@@ -62,6 +65,11 @@ function contract(operation:ServerAiOperation):Contract<UnderstandAiResult|Rubri
     schema:jsonSchemas.evalSuite,
     parser:EvalSuiteAiResultSchema,
     instruction:"Create a compact discriminative Eval Suite mapped to the supplied Acceptance Rubric. Every test must include criterionIds, executionMode and evidenceScope. Cover every criterion and every hard gate in hidden holdout. Do not invent selectors or runtime capabilities.",
+  };
+  if(operation==="build-candidate")return{
+    schema:jsonSchemas.buildCandidate,
+    parser:BuildCandidateAiResultSchema,
+    instruction:"Construct the exact Candidate artifacts from the supplied CURRENT target version and Candidate plan. Return exactly one artifact per target sourceArtifactId and no extras. Text/HTML/Markdown must be a complete usable artifact, not a patch explanation. For codebase/package targets return JSON content {kind:'codebase',overlay:true,files:[{path,content}],deletions:[path]} containing only real changed/deleted files; the server will merge them onto the actual frozen current ZIP. Preserve protected scope and untouched behavior. Do not claim tests passed.",
   };
   if(operation==="execute-artifact-batch")return{
     schema:jsonSchemas.executeArtifactBatch,
@@ -215,6 +223,7 @@ async function structured<T>(payload:unknown,schema:Contract<T>):Promise<T>{
 export function runServerAi(operation:"understand",payload:unknown):Promise<UnderstandAiResult>;
 export function runServerAi(operation:"rubric",payload:unknown):Promise<RubricAiResult>;
 export function runServerAi(operation:"eval-suite",payload:unknown):Promise<EvalSuiteAiResult>;
+export function runServerAi(operation:"build-candidate",payload:unknown):Promise<BuildCandidateAiResult>;
 export function runServerAi(operation:"execute-artifact-batch",payload:unknown):Promise<ExecuteArtifactBatchAiResult>;
 export function runServerAi(operation:"evaluate",payload:unknown):Promise<EvaluateAiResult>;
 export function runServerAi(operation:"problem-analysis",payload:unknown):Promise<ProblemAnalysisAiResult>;
@@ -226,6 +235,7 @@ export function runServerAi(operation:ServerAiOperation,payload:unknown){
   if(operation==="understand")return structured(payload,contract("understand"));
   if(operation==="rubric")return structured(payload,contract("rubric"));
   if(operation==="eval-suite")return structured(payload,contract("eval-suite"));
+  if(operation==="build-candidate")return structured(payload,contract("build-candidate"));
   if(operation==="execute-artifact-batch")return structured(payload,contract("execute-artifact-batch"));
   if(operation==="evaluate")return structured(payload,contract("evaluate"));
   if(operation==="problem-analysis")return structured(payload,contract("problem-analysis"));

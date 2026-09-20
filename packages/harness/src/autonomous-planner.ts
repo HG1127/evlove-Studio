@@ -160,8 +160,12 @@ export function deriveAttentionRequest(project: EvolveProject): AttentionRequest
     && (project.campaign.stopReason ?? "").includes("[server-campaign-baseline-pending]");
   if (staleServerBaselinePause) return undefined;
 
+  const staleServerExperimentPause = project.campaign.status === "paused"
+    && (project.campaign.stopReason ?? "").includes("[server-campaign-experiment-pending]");
+  if (staleServerExperimentPause) return undefined;
+
   const serverCampaignCapabilityPending = project.campaign.status === "paused"
-    && /\[server-campaign-(?:ai-pending|baseline-evidence-pending|baseline-judge-pending|contract-pending|diagnosis-pending|plan-grounding-pending|experiment-pending)\]/.test(project.campaign.stopReason ?? "");
+    && /\[server-campaign-(?:ai-pending|baseline-evidence-pending|baseline-judge-pending|contract-pending|diagnosis-pending|plan-grounding-pending|experiment-build-pending|experiment-judge-pending|holdout-pending)\]/.test(project.campaign.stopReason ?? "");
   if (serverCampaignCapabilityPending) {
     return attention({
       type: "capability",
