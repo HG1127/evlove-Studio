@@ -1,6 +1,8 @@
 import {
+  computeSearchFitness,
   estimateRoundCost,
   materializeChampionOutputs as coreMaterializeChampionOutputs,
+  updateSearchChampion,
 } from "@evolution/core";
 export {
   campaignGoalSatisfied,
@@ -31,31 +33,8 @@ export type FitnessBreakdown = {
   safetyPenalty: number;
 };
 
-function clamp(value: number, min = 0, max = 100) {
-  return Math.max(min, Math.min(max, value));
-}
-
 export function computeFitness(evaluation: EvaluationResult, baseline?: EvaluationResult, acceptance?: EvolveProject["artifactAcceptance"]): FitnessBreakdown {
-  const genericQuality = evaluation.accuracy * 0.28
-    + evaluation.evidence * 0.22
-    + evaluation.riskCoverage * 0.15
-    + evaluation.completeness * 0.20
-    + (evaluation.safety === "PASS" ? 15 : evaluation.safety === "REVIEW" ? 4 : -50);
-  // V2.2: Project-specific Rubric is the optimization objective. Generic quality is a
-  // secondary regularizer; Gate F acceptance becomes the final deliverable-quality term.
-  const rubricQuality = evaluation.rubricScore ?? genericQuality;
-  const acceptanceScore = acceptance?.status === "passed" ? acceptance.overallScore : undefined;
-  const quality = acceptanceScore === undefined
-    ? rubricQuality * 0.84 + genericQuality * 0.16
-    : rubricQuality * 0.65 + acceptanceScore * 0.25 + genericQuality * 0.10;
-
-  const costRatio = baseline?.averageCost && baseline.averageCost > 0 ? evaluation.averageCost / baseline.averageCost : 1;
-  const latencyRatio = baseline?.averageLatencyMs && baseline.averageLatencyMs > 0 ? evaluation.averageLatencyMs / baseline.averageLatencyMs : 1;
-  const costPenalty = Math.max(0, costRatio - 1) * 9;
-  const latencyPenalty = Math.max(0, latencyRatio - 1) * 6;
-  const artifactPenalty = acceptance && (!acceptance.hardGatePass || acceptance.status === "failed") ? 100 : 0;
-  const safetyPenalty = evaluation.safety === "FAIL" ? 100 : evaluation.safety === "REVIEW" ? 8 : 0;
-  return { score: clamp(quality - costPenalty - latencyPenalty - safetyPenalty - artifactPenalty), quality, costPenalty, latencyPenalty, safetyPenalty: safetyPenalty + artifactPenalty };
+  return computeSearchFitness(evaluation,baseline,acceptance);
 }
 
 export function candidateNiche(candidate: Candidate, evaluation?: EvaluationResult) {
@@ -232,38 +211,7 @@ export function maybeUpdateSearchChampion(args: {
   parentVersionId: string;
   minImprovement: number;
 }): { champion?: SearchChampion; changed: boolean; improvement: number } {
-  if (!args.winner || !args.validation.evaluation || args.validation.recommendation !== "release" || args.artifactAcceptance?.status !== "passed") return { champion: args.current, changed: false, improvement: 0 };
-  if (args.validation.status !== "completed" || !args.artifactAcceptance.hardGatePass || args.artifactAcceptance.candidateId !== args.winner.id) return { champion: args.current, changed: false, improvement: 0 };
-  // 演示启发式评出的盲测分数不是真实证据：禁止据此替换 Search Champion。
-  if (args.validation.evaluation.demoJudged) return { champion: args.current, changed: false, improvement: 0 };
-  const score = computeFitness(args.validation.evaluation, args.baseline, args.artifactAcceptance).score;
-  const previous = args.current?.score;
-  const improvement = previous === undefined ? score : score - previous;
-  if (previous !== undefined && improvement < args.minImprovement) {
-    // Pareto 例外：总分没到最小提升线，但新候选在效果/成本/延迟/安全上全面不劣且至少一项更优时仍替换，
-    // 避免标量化阈值挡住多目标意义上的真实改进。
-    const currentEval = args.current?.evaluation;
-    if (!(currentEval && dominates(args.validation.evaluation, currentEval))) return { champion: args.current, changed: false, improvement };
-  }
-  const cumulativePatches = [...(args.current?.patches ?? []), ...args.winner.patches].filter((patch, index, all) => all.findIndex((item) => item.id === patch.id) === index);
-  return {
-    champion: {
-      id: `champion-r${args.round}-${args.winner.id}`,
-      versionLabel: `S${args.round}`,
-      round: args.round,
-      score: Number(score.toFixed(2)),
-      candidate: args.winner,
-      evaluation: args.validation.evaluation,
-      validation: args.validation,
-      artifactAcceptance: args.artifactAcceptance,
-      patches: cumulativePatches,
-      parentVersionId: args.parentVersionId,
-      reason: previous === undefined ? "首个通过 Hidden Validation 的 Search Champion" : `基于 ${args.current?.versionLabel ?? args.parentVersionId} 累积进化，较上一 Search Champion 提升 ${improvement.toFixed(2)} 分`,
-      selectedAt: new Date().toISOString(),
-    },
-    changed: true,
-    improvement,
-  };
+  return updateSearchChampion(args);
 }
 
 export function buildRoundRecord(args: {

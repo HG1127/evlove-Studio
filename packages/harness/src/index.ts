@@ -10,3 +10,4 @@ export * from "./server-baseline";
 export * from "./server-experiment";
 export * from "./server-current-artifact-runner";
 export * from "./server-holdout";
+export * from "./server-artifact-acceptance";

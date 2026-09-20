@@ -19,6 +19,7 @@ import { runServerAi } from "../../apps/backend/src/services/ai-gateway";
 import { runServerMissionBaseline } from "../../apps/backend/src/services/server-baseline";
 import { runServerMissionExperiment } from "../../apps/backend/src/services/server-experiment";
 import { runServerMissionHoldout } from "../../apps/backend/src/services/server-holdout";
+import { runServerMissionArtifactAcceptance } from "../../apps/backend/src/services/server-artifact-acceptance";
 import { serverAiConfigured } from "../../apps/backend/src/server-env";
 
 function controlJob(input:EvolutionWorkflowRunInput,args:{
@@ -438,35 +439,42 @@ export async function executeServerControlStep(
     if(campaignCheckpoint?.round===round
       && campaignCheckpoint.completedPhase==="validation"
       && campaignMission.validationRun.status==="completed"){
-      const candidateId=campaignMission.validationRun.candidateId??campaignMission.experimentRun.winnerId??campaignMission.experimentRun.pendingEvidenceCandidateId;
-      const reason=`[server-campaign-artifact-acceptance-pending] Server Hidden Holdout 已完成 Candidate ${candidateId??"unknown"}；等待 Artifact Acceptance / Repair Server Step。`;
-      const paused={
-        ...campaignMission,
-        campaign:{
-          ...campaignMission.campaign,
-          status:"paused" as const,
-          stopReason:reason,
-          schedule:{...campaignMission.campaign.schedule,enabled:false,nextRunAt:undefined},
-        },
-        stage:"validation" as const,
-        updatedAt:now,
-      };
-      await runtime.missions.save(paused);
-      await runtime.jobs.put(controlJob(input,{
-        status:"waiting",
-        startedAt:input.requestedAt,
-        progress:{percent:78,detail:reason},
-      }));
+      const acceptanceOutcome=await runServerMissionArtifactAcceptance(campaignMission);
+      campaignMission=acceptanceOutcome.project;
+      await runtime.missions.save(campaignMission);
       await runtime.events.append(createEvolutionEvent({
-        id:`evt-${input.controlJobId}-campaign-artifact-acceptance-pending-${iteration}`,
+        id:`evt-${input.controlJobId}-campaign-artifact-acceptance-${iteration}`,
         missionId:input.missionId,jobId:input.controlJobId,checkpointId:plan.checkpoint.id,
-        type:"JobProgress",source:"vercel-workflow-control",
-        payload:{action,serverNative:true,conditional:true,phase:"artifact-acceptance",candidateId,reason},
+        type:acceptanceOutcome.control==="continue"?"ActionCompleted":"JobProgress",source:"vercel-workflow-control",
+        payload:{
+          action,
+          serverNative:true,
+          conditional:true,
+          phase:"artifact-acceptance",
+          accepted:acceptanceOutcome.accepted,
+          repaired:acceptanceOutcome.repaired,
+          championChanged:acceptanceOutcome.championChanged,
+          candidateId:campaignMission.artifactAcceptance.candidateId??campaignMission.validationRun.candidateId,
+          reason:acceptanceOutcome.reason,
+        },
       }));
-      return {control:"stop",result:result(input,{
-        status:"waiting-action",iterations:iteration+1,nextAction:action,
-        checkpointId:plan.checkpoint.id,reason,
-      })};
+      if(acceptanceOutcome.control==="stop"){
+        await runtime.jobs.put(controlJob(input,{
+          status:"waiting",
+          startedAt:input.requestedAt,
+          progress:{percent:80,detail:acceptanceOutcome.reason.slice(0,240)},
+        }));
+        return {control:"stop",result:result(input,{
+          status:"waiting-action",iterations:iteration+1,nextAction:action,
+          checkpointId:plan.checkpoint.id,reason:acceptanceOutcome.reason,
+        })};
+      }
+      await runtime.jobs.put(controlJob(input,{
+        status:"running",
+        startedAt:input.requestedAt,
+        progress:{percent:acceptanceOutcome.accepted?86:80,detail:acceptanceOutcome.reason.slice(0,240)},
+      }));
+      return {control:"continue"};
     }
 
     if(campaignCheckpoint?.round===round&&campaignCheckpoint.completedPhase==="plan"){

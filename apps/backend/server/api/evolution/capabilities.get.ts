@@ -5,7 +5,7 @@ import { serverAiConfigured } from "../../../src/server-env";
 const CONTROL_ACTIONS=["adopt-defaults","approve-contract","wait-human","complete","package"] as const;
 const AI_ACTIONS=["understand","compile-contract","build-eval","distill","next-queue"] as const;
 const CONDITIONAL_ACTIONS:string[]=["revalidate","run-campaign"];
-const MIGRATION_PENDING_ACTIONS:string[]=["campaign-artifact-acceptance"];
+const MIGRATION_PENDING_ACTIONS:string[]=[];
 
 export default defineEventHandler(()=>{
   const ai=serverAiConfigured();
@@ -16,7 +16,7 @@ export default defineEventHandler(()=>{
   const serverNativeActions=[
     ...CONTROL_ACTIONS,
     ...(ai?AI_ACTIONS:[]),
-    ...(ai?["campaign-baseline","campaign-experiment","campaign-holdout"]:[]),
+    ...(ai?["campaign-baseline","campaign-experiment","campaign-holdout","campaign-artifact-acceptance"]:[]),
   ];
   return EvolutionWorkflowCapabilitiesSchema.parse({
     available:true,

@@ -238,7 +238,7 @@ describe("autonomous orchestrator", () => {
     expect(request?.reason).toContain("holdout-evidence-pending");
   });
 
-  it("classifies Artifact Acceptance migration boundary as capability", () => {
+  it("automatically retries the legacy Artifact Acceptance migration boundary", () => {
     const p = project({
       campaign: {
         ...demoProject.campaign,
@@ -248,9 +248,22 @@ describe("autonomous orchestrator", () => {
       stage: "validation",
       attentionRequests: [],
     });
+    expect(deriveAttentionRequest(p)).toBeUndefined();
+  });
+
+  it("classifies a real Artifact Acceptance evidence gap as capability", () => {
+    const p = project({
+      campaign: {
+        ...demoProject.campaign,
+        status: "paused",
+        stopReason: "[server-campaign-artifact-acceptance-evidence-pending] frozen blob unavailable",
+      },
+      stage: "validation",
+      attentionRequests: [],
+    });
     const request = deriveAttentionRequest(p);
     expect(request?.type).toBe("capability");
-    expect(request?.reason).toContain("artifact-acceptance-pending");
+    expect(request?.reason).toContain("artifact-acceptance-evidence-pending");
   });
 
   it("automatically retries the legacy server baseline migration pause under the new server baseline capability", () => {

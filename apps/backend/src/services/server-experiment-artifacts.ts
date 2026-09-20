@@ -264,6 +264,51 @@ async function materializeSnapshot(
   return { ...snapshot, frozenArtifact };
 }
 
+export async function materializeServerCandidateArtifacts(
+  project:EvolveProject,
+  candidate:Candidate,
+  artifacts:Array<{sourceArtifactId:string;name:string;mimeType:string;content:string;notes?:string[];buildMode?:"ai-full"|"deterministic"|"external-target"}>,
+  summary:string,
+):Promise<Candidate>{
+  const targets=project.sourceArtifacts.filter((artifact)=>artifact.role==="target");
+  const bySource=new Map(artifacts.map((artifact)=>[artifact.sourceArtifactId,artifact]));
+  if(artifacts.length!==targets.length||targets.some((target)=>!bySource.has(target.id))){
+    throw new Error(`Server Artifact Builder 返回 ${artifacts.length} 个成果，但当前有 ${targets.length} 个 Target；禁止遗漏、重复或额外成果。`);
+  }
+  const snapshots:CandidateArtifactSnapshot[]=[];
+  for(const [index,source] of targets.entries()){
+    const artifact=bySource.get(source.id)!;
+    const code=source.artifactKind==="codebase"
+      ||source.extension.toLowerCase()==="zip"
+      ||source.artifactDescriptor?.family==="codebase"
+      ||source.artifactDescriptor?.family==="package";
+    const parent=currentParentSnapshot(project,source.id);
+    const snapshotContent=code?composeServerCodebaseOverlay(parent?.content,artifact.content):artifact.content;
+    const snapshot:CandidateArtifactSnapshot={
+      id:`server-candidate-${candidate.id}-${source.id}-${index}`,
+      sourceArtifactId:source.id,
+      name:artifact.name||source.name,
+      mimeType:artifact.mimeType||source.mimeType,
+      content:snapshotContent,
+      contentHash:await sha256Text(snapshotContent),
+      buildMode:artifact.buildMode??"ai-full",
+      notes:[...(artifact.notes??[]),"Durable Workflow Server Materializer：实际文件已物化并冻结。"],
+      createdAt:new Date().toISOString(),
+    };
+    const parentText=parent?.content??source.textContent??"";
+    if(!code&&artifact.content.trim()===parentText.trim()){
+      throw new Error(`${source.name} Candidate 与当前父代完全相同，没有产生可验证变异。`);
+    }
+    snapshots.push(await materializeSnapshot(project,source,snapshot,artifact.content));
+  }
+  return CandidateSchema.parse({
+    ...candidate,
+    artifactSnapshots:snapshots,
+    artifactBuildStatus:"ready",
+    artifactBuildSummary:`${snapshots.length} 份 Candidate 实际文件已在 Server 物化、持久化并绑定 SHA-256；${summary}`,
+  });
+}
+
 export async function buildServerExperimentCandidate(project: EvolveProject, candidate: Candidate): Promise<Candidate> {
   const targets = project.sourceArtifacts.filter((artifact) => artifact.role === "target");
   if (!targets.length) throw new Error("Mission 没有 Target Source Artifact。");
@@ -294,41 +339,5 @@ export async function buildServerExperimentCandidate(project: EvolveProject, can
     },
     outputInstruction: "Return exactly one artifact for every currentTargets item. For text/html/md/json return the COMPLETE evolved file. For codebase/package return content as JSON {kind:'codebase',overlay:true,files:[{path,content}],deletions:[path]} with actual changed/deleted files only; never return prose or fake test results. sourceArtifactId must exactly match currentTargets.id.",
   });
-  const bySource = new Map(response.artifacts.map((artifact) => [artifact.sourceArtifactId, artifact]));
-  if (response.artifacts.length !== targets.length || targets.some((target) => !bySource.has(target.id))) {
-    throw new Error(`Candidate Builder 返回 ${response.artifacts.length} 个成果，但当前有 ${targets.length} 个 Target；禁止遗漏或额外成果。`);
-  }
-  const snapshots: CandidateArtifactSnapshot[] = [];
-  for (const [index, source] of targets.entries()) {
-    const artifact = bySource.get(source.id)!;
-    const code = source.artifactKind === "codebase"
-      || source.extension.toLowerCase() === "zip"
-      || source.artifactDescriptor?.family === "codebase"
-      || source.artifactDescriptor?.family === "package";
-    const parent = currentParentSnapshot(project, source.id);
-    const snapshotContent = code ? composeServerCodebaseOverlay(parent?.content, artifact.content) : artifact.content;
-    const contentHash = await sha256Text(snapshotContent);
-    const snapshot: CandidateArtifactSnapshot = {
-      id: `server-candidate-${candidate.id}-${source.id}-${index}`,
-      sourceArtifactId: source.id,
-      name: source.name,
-      mimeType: source.mimeType,
-      content: snapshotContent,
-      contentHash,
-      buildMode: artifact.buildMode ?? "ai-full",
-      notes: [...artifact.notes, "Durable Workflow Server Builder：实际文件由 Server Materializer 生成并冻结。"],
-      createdAt: new Date().toISOString(),
-    };
-    const parentText = parent?.content ?? source.textContent ?? "";
-    if (!code && artifact.content.trim() === parentText.trim()) {
-      throw new Error(`${source.name} Candidate 与当前父代完全相同，没有产生可验证变异。`);
-    }
-    snapshots.push(await materializeSnapshot(project, source, snapshot, artifact.content));
-  }
-  return CandidateSchema.parse({
-    ...candidate,
-    artifactSnapshots: snapshots,
-    artifactBuildStatus: "ready",
-    artifactBuildSummary: `${snapshots.length} 份 Candidate 实际文件已在 Server 物化、持久化并绑定 SHA-256；${response.summary}`,
-  });
+  return materializeServerCandidateArtifacts(project,candidate,response.artifacts,response.summary);
 }
