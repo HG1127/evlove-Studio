@@ -3,7 +3,7 @@ import { demoProject } from "../data/mock-project";
 import { CandidateArtifactSnapshotSchema, CandidateSchema } from "../schemas";
 import { evidenceFingerprint } from "./evidence-binding";
 import type { EvolveProject } from "../schemas";
-import { deriveAutonomousDecision, LOCAL_REVIEW_CONTRACT_VERSION, reconcileAttentionRequest } from "./autonomous-orchestrator";
+import { deriveAttentionRequest, deriveAutonomousDecision, LOCAL_REVIEW_CONTRACT_VERSION, reconcileAttentionRequest } from "./autonomous-orchestrator";
 
 function project(patch: Partial<EvolveProject> = {}): EvolveProject {
   return { ...demoProject, ...patch } as EvolveProject;
@@ -164,6 +164,22 @@ describe("autonomous orchestrator", () => {
     expect(decision.attention?.type).toBe("capability");
     expect(decision.attention?.title).toContain("AI 评审连接");
     expect(decision.attention?.criterionIds).toEqual([]);
+  });
+
+  it("does not reopen a campaign after server deterministic revalidation pauses for Release Review", () => {
+    const p = project({
+      campaign: {
+        ...demoProject.campaign,
+        status: "paused",
+        stopReason: "[server-release-review-required] Durable Workflow 已补齐全部确定性 Roundtrip 证据；最终 Release Review 仍需独立评审能力。",
+      },
+      attentionRequests: [],
+    });
+    const request = deriveAttentionRequest(p);
+    expect(request?.type).toBe("capability");
+    expect(request?.title).toContain("Release Review");
+    expect(request?.stage).toBe("validation");
+    expect(request?.suggestedAction).toContain("无需重新生成成果");
   });
 
   it("continues old offline completed artifacts through Lesson and Next Queue before declaring complete", () => {

@@ -6,9 +6,10 @@ import {
   type EvolutionWorkflowResult,
   type EvolutionWorkflowRunInput,
 } from "@evolution/contracts";
-import { mapTestsToRubric, materializeAcceptedChampionPackage, normalizeAcceptanceRubric, normalizeEvalSuiteForProject, resetDownstream, rubricSuiteCoverage, rubricValidation } from "@evolution/core";
+import { applyDeterministicRoundtripEvidence, mapTestsToRubric, materializeAcceptedChampionPackage, normalizeAcceptanceRubric, normalizeEvalSuiteForProject, resetDownstream, rubricSuiteCoverage, rubricValidation } from "@evolution/core";
 import {
   buildServerHarnessPlan,
+  normalizeLocallyVerifiableCandidateRuns,
   reconcileAttentionRequest,
   type ServerHarnessPlan,
 } from "@evolution/harness";
@@ -316,6 +317,110 @@ export async function executeServerControlStep(
     return {control:"continue"};
   }
 
+  if(action==="revalidate"){
+    const candidateId=mission.experimentRun.winnerId??mission.experimentRun.pendingEvidenceCandidateId??mission.validationRun.candidateId;
+    const searchChampionCandidate=mission.searchChampion?.candidate;
+    const candidate=mission.candidates.find((item)=>item.id===candidateId)??(searchChampionCandidate?.id===candidateId?searchChampionCandidate:undefined);
+    const evaluation=mission.validationRun.evaluation;
+    const pendingIds=evaluation?.unverifiedCriterionIds??[];
+    const pendingCriteria=pendingIds.flatMap((id)=>{
+      const criterion=mission.acceptanceRubric.find((item)=>item.id===id);
+      return criterion?[criterion]:[];
+    });
+    const deterministicOnly=Boolean(
+      candidate
+      && evaluation
+      && pendingCriteria.length
+      && pendingCriteria.length===pendingIds.length
+      && pendingCriteria.every((criterion)=>criterion.validationMethod==="format-roundtrip")
+      && mission.artifactAcceptance.status!=="unverified",
+    );
+    if(deterministicOnly&&candidate&&evaluation){
+      const pendingSet=new Set(pendingIds);
+      const testCases=mission.hiddenEvalSuite.filter((testCase)=>testCase.criterionIds.some((id)=>pendingSet.has(id)));
+      const seedRuns=testCases.map((testCase)=>({
+        testCaseId:testCase.id,
+        output:"SERVER SNAPSHOT EVIDENCE PENDING",
+        latencyMs:0,
+        cost:0,
+        trace:[],
+        verificationStatus:"unverified" as const,
+      }));
+      const deterministicRuns=normalizeLocallyVerifiableCandidateRuns(mission,candidate,testCases,seedRuns);
+      const settlement=applyDeterministicRoundtripEvidence({
+        criteria:mission.acceptanceRubric,
+        testCases,
+        runs:deterministicRuns,
+        evaluation,
+      });
+      const settled=new Set(settlement.settledCriterionIds);
+      if(pendingCriteria.every((criterion)=>settled.has(criterion.id))){
+        const runById=new Map(mission.validationRun.runs.map((run)=>[run.testCaseId,run]));
+        for(const run of deterministicRuns)runById.set(run.testCaseId,run);
+        const settledTitles=pendingCriteria.map((criterion)=>criterion.title);
+        const coverage=settlement.evaluation.verifiedRubricCoverage??0;
+        const rubricScore=settlement.evaluation.rubricScore;
+        const checks=mission.validationRun.checks
+          .filter((check)=>!settledTitles.some((title)=>check.label.includes(title)&&check.status==="warning"))
+          .map((check)=>check.label==="Project-specific Rubric"
+            ? {...check,status:coverage===100&&rubricScore!==undefined&&rubricScore>=85?"pass" as const:"warning" as const,detail:`Rubric ${rubricScore??"待评"} / 85；真实证据覆盖 ${coverage}%。`}
+            : check);
+        for(const criterion of pendingCriteria){
+          checks.push({
+            label:`Deterministic · ${criterion.title}`,
+            status:"pass" as const,
+            detail:`Criterion ${criterion.id} 已由 Durable Workflow 对当前 Candidate Snapshot 执行原格式 Roundtrip 并逐字验证。`,
+          });
+        }
+        const remaining=settlement.evaluation.unverifiedCriterionIds??[];
+        const summary=remaining.length
+          ? `Durable Workflow 已补齐 ${settlement.settledCriterionIds.length} 项确定性证据；仍有 ${remaining.length} 项需要其他验证能力。`
+          : "Durable Workflow 已补齐全部确定性 Roundtrip 证据；最终 Release Review 仍需独立评审能力，未自动放行。";
+        const updated={
+          ...mission,
+          validationRun:{
+            ...mission.validationRun,
+            evaluation:settlement.evaluation,
+            runs:[...runById.values()],
+            checks,
+            recommendation:"hold" as const,
+            summary,
+          },
+          campaign:{
+            ...mission.campaign,
+            status:"paused" as const,
+            stopReason:`[server-release-review-required] ${summary}`,
+          },
+          stage:"validation" as const,
+          updatedAt:now,
+        };
+        await runtime.missions.save(updated);
+        await runtime.jobs.put(controlJob(input,{
+          status:"waiting",
+          startedAt:input.requestedAt,
+          progress:{percent:70,detail:"确定性 Snapshot 复验已完成；等待独立 Release Review"},
+        }));
+        await runtime.events.append(createEvolutionEvent({
+          id:`evt-${input.controlJobId}-action-${iteration}-complete`,
+          missionId:input.missionId,jobId:input.controlJobId,checkpointId:plan.checkpoint.id,
+          type:"ActionCompleted",source:"vercel-workflow-control",
+          payload:{
+            action,
+            serverNative:true,
+            conditional:true,
+            evidenceMode:"deterministic-roundtrip",
+            settledCriterionIds:settlement.settledCriterionIds,
+            remainingCriterionIds:remaining,
+          },
+        }));
+        return {control:"stop",result:result(input,{
+          status:"waiting-action",iterations:iteration+1,nextAction:action,
+          checkpointId:plan.checkpoint.id,reason:summary,
+        })};
+      }
+    }
+  }
+
   if(action==="distill"&&serverAiConfigured()){
     const winnerId=mission.experimentRun.winnerId??mission.searchChampion?.candidate?.id;
     const winner=mission.candidates.find((candidate)=>candidate.id===winnerId)??mission.searchChampion?.candidate;
@@ -446,7 +551,7 @@ export async function executeServerControlStep(
     priority:60,
     checkpointId:plan.checkpoint.id,
     inputRef:action,
-    progress:{percent:0,detail:(["understand","compile-contract","build-eval","distill","next-queue"].includes(action)&&!serverAiConfigured())?"Server AI Step 已实现，等待服务器 AI 配置":"等待 P0-3B server step handler 接管"},
+    progress:{percent:0,detail:(["understand","compile-contract","build-eval","distill","next-queue"].includes(action)&&!serverAiConfigured())?"Server AI Step 已实现，等待服务器 AI 配置":action==="revalidate"?"确定性 Roundtrip 可由 Server 自动复验；当前 Mission 仍需要其他验证能力":"等待 P0-3B server step handler 接管"},
     createdAt:existing?.createdAt??now,
     updatedAt:now,
   }));
@@ -463,7 +568,7 @@ export async function executeServerControlStep(
   }));
   return {control:"stop",result:result(input,{
     status:"waiting-action",iterations:iteration+1,nextAction:action,
-    checkpointId:plan.checkpoint.id,reason:(["understand","compile-contract","build-eval","distill","next-queue"].includes(action)&&!serverAiConfigured())?"该动作的 Server Step 已完成，但服务器 AI 尚未配置。":"P0-3A durable control 已接管；该动作将在 P0-3B 迁入 server step。",
+    checkpointId:plan.checkpoint.id,reason:(["understand","compile-contract","build-eval","distill","next-queue"].includes(action)&&!serverAiConfigured())?"该动作的 Server Step 已完成，但服务器 AI 尚未配置。":action==="revalidate"?"Server 已支持确定性 Roundtrip 复验；该 Mission 的剩余证据仍需 AI / Runner / 视觉或人工能力。":"P0-3A durable control 已接管；该动作将在 P0-3B 迁入 server step。",
   })};
 }
 

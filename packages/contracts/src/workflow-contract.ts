@@ -48,6 +48,9 @@ export const EvolutionWorkflowCapabilitiesSchema=z.object({
   durable:z.boolean(),
   serverAi:z.boolean(),
   serverNativeActions:z.array(z.string()),
+  conditionalActions:z.array(z.string()).default([]),
+  blockedActions:z.array(z.object({action:z.string(),reason:z.string()})).default([]),
+  migrationPendingActions:z.array(z.string()).default([]),
   pendingActions:z.array(z.string()),
 });
 export type EvolutionWorkflowCapabilities=z.infer<typeof EvolutionWorkflowCapabilitiesSchema>;

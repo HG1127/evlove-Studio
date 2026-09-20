@@ -13,3 +13,4 @@ export * from "./artifact-output";
 export * from "./acceptance-rubric";
 export * from "./eval-suite-normalization";
 export * from "./release-target";
+export * from "./deterministic-criterion-evidence";

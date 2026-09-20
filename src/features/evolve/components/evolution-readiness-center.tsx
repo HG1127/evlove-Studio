@@ -190,7 +190,11 @@ export function EvolutionReadinessCenter() {
         capabilities,
         message: capabilities.fullAuto
           ? "Durable Workflow 已具备完整 AutoPilot 接管能力"
-          : `Workflow 已连接；仍待迁：${capabilities.pendingActions.join("、") || "无"}`,
+          : [
+              capabilities.migrationPendingActions.length ? `待迁：${capabilities.migrationPendingActions.join("、")}` : "",
+              capabilities.conditionalActions.length ? `条件执行：${capabilities.conditionalActions.join("、")}` : "",
+              capabilities.blockedActions.length ? `待配置：${capabilities.blockedActions.map((item)=>item.action).join("、")}` : "",
+            ].filter(Boolean).join("；") || "Workflow 已连接",
       });
     }).catch((error) => {
       if (active) setWorkflowCheck({ busy: false, message: error instanceof Error ? error.message : String(error) });
@@ -248,7 +252,11 @@ export function EvolutionReadinessCenter() {
       capabilities,
       message: capabilities.fullAuto
         ? "Durable Workflow 已具备完整 AutoPilot 接管能力"
-        : `Workflow 已连接；仍待迁：${capabilities.pendingActions.join("、") || "无"}`,
+        : [
+            capabilities.migrationPendingActions.length ? `待迁：${capabilities.migrationPendingActions.join("、")}` : "",
+            capabilities.conditionalActions.length ? `条件执行：${capabilities.conditionalActions.join("、")}` : "",
+            capabilities.blockedActions.length ? `待配置：${capabilities.blockedActions.map((item)=>item.action).join("、")}` : "",
+          ].filter(Boolean).join("；") || "Workflow 已连接",
     })).catch((error) => setWorkflowCheck({ busy: false, message: error instanceof Error ? error.message : String(error) }));
   };
 
@@ -453,11 +461,13 @@ export function EvolutionReadinessCenter() {
                 <Button size="sm" variant="secondary" onClick={refreshWorkflow} disabled={workflowCheck.busy}><RefreshCcw className={`size-3.5 ${workflowCheck.busy ? "animate-spin" : ""}`} />检测 Workflow</Button>
               </div>
             </div>
-            <div className="mt-3 grid grid-cols-2 gap-2 text-[10px] sm:grid-cols-4">
+            <div className="mt-3 grid grid-cols-2 gap-2 text-[10px] sm:grid-cols-3 xl:grid-cols-6">
               <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>durable</b><div className={workflowCheck.capabilities?.durable ? "text-emerald-600" : "text-slate-400"}>{workflowCheck.capabilities?.durable ? "READY" : "—"}</div></div>
               <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>server AI</b><div className={workflowCheck.capabilities?.serverAi ? "text-emerald-600" : "text-amber-600"}>{workflowCheck.capabilities?.serverAi ? "READY" : "NOT CONFIGURED"}</div></div>
               <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>server actions</b><div className="text-sky-600">{workflowCheck.capabilities?.serverNativeActions.length ?? 0}</div></div>
-              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>pending</b><div className={workflowCheck.capabilities?.pendingActions.length ? "text-amber-600" : "text-emerald-600"}>{workflowCheck.capabilities?.pendingActions.join(" / ") || "NONE"}</div></div>
+              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>conditional</b><div className={workflowCheck.capabilities?.conditionalActions.length ? "text-sky-600" : "text-slate-400"}>{workflowCheck.capabilities?.conditionalActions.join(" / ") || "NONE"}</div></div>
+              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>migration</b><div className={workflowCheck.capabilities?.migrationPendingActions.length ? "text-amber-600" : "text-emerald-600"}>{workflowCheck.capabilities?.migrationPendingActions.join(" / ") || "NONE"}</div></div>
+              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>blocked</b><div className={workflowCheck.capabilities?.blockedActions.length ? "text-amber-600" : "text-emerald-600"}>{workflowCheck.capabilities?.blockedActions.map((item)=>item.action).join(" / ") || "NONE"}</div></div>
             </div>
           </div>
           <div className="rounded-xl border bg-white p-3">

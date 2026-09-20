@@ -140,6 +140,22 @@ export function deriveAttentionRequest(project: EvolveProject): AttentionRequest
     });
   }
 
+  const serverReleaseReviewRequired = project.campaign.status === "paused"
+    && (project.campaign.stopReason ?? "").includes("[server-release-review-required]");
+  if (serverReleaseReviewRequired) {
+    return attention({
+      type: "capability",
+      title: "确定性证据已补齐，等待独立 Release Review",
+      reason: project.campaign.stopReason ?? "Durable Workflow 已补齐当前 Candidate 的确定性证据，但最终发布判断尚未完成。",
+      stage: "validation",
+      riskLevel: "medium",
+      blocking: true,
+      questions: [],
+      suggestedAction: "当前 Candidate 与已验证 Roundtrip 证据均已保留。补齐 Server AI / 最终评审能力后从断点继续，无需重新生成成果。",
+      criterionIds: [],
+    });
+  }
+
   const localReviewExhausted = project.campaign.status === "paused" && /本地评审自动重试已耗尽/.test(project.campaign.stopReason ?? "");
   // A persisted fuse from an older Judge contract must not survive a runtime contract upgrade.
   // Give the same Candidate one automatic settlement pass under the new rules, then stamp the new

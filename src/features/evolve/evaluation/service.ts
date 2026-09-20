@@ -3,6 +3,7 @@ import { EvaluateAiResultSchema } from "../ai/schemas";
 import { getAiProviderStatus, runEvolveAi, type AiAttemptNotice } from "../ai/service";
 import type { AcceptanceCriterion, CriterionScore, EvaluationResult, TargetRunResult, TestCase } from "../schemas";
 import { retrieveTextContext } from "../runtime/context-retrieval";
+import { hasDeterministicRoundtripProof } from "@evolution/core";
 
 export function citesHistoricalEvidence(text: string) {
   return /\b(?:diagnosis|sourceUnderstanding|designRationale|appliedPatches|searchAppliedPatches)\s*[.[]/i.test(text);
@@ -23,23 +24,10 @@ function rubricFromContext(context: Record<string, unknown>): AcceptanceCriterio
   return Array.isArray(project?.acceptanceRubric) ? project!.acceptanceRubric! : [];
 }
 
-function deterministicRoundtripProof(criterion: AcceptanceCriterion, testCases: TestCase[], runs: TargetRunResult[]) {
-  if (criterion.validationMethod !== "format-roundtrip") return false;
-  const mappedCases = testCases.filter((testCase) => testCase.criterionIds.includes(criterion.id)).map((testCase) => testCase.id);
-  if (!mappedCases.length) return false;
-  const runMap = new Map(runs.map((run) => [run.testCaseId, run]));
-  return mappedCases.every((id) => {
-    const run = runMap.get(id);
-    return run?.verificationStatus === "verified"
-      && (run.output?.includes("CANDIDATE TEXT FORMAT ROUNDTRIP VERIFIED")
-        || run.trace?.some((step) => step.stage === "format-roundtrip" && step.status === "pass"));
-  });
-}
-
 /** Deterministic criteria are settled by Runtime and must not consume or invalidate Judge output. */
 export function criteriaRequiringJudge(criteria: AcceptanceCriterion[], testCases: TestCase[], runs: TargetRunResult[]) {
   const mapped = new Set(testCases.flatMap((testCase) => testCase.criterionIds));
-  return criteria.filter((criterion) => mapped.has(criterion.id) && !deterministicRoundtripProof(criterion, testCases, runs));
+  return criteria.filter((criterion) => mapped.has(criterion.id) && !hasDeterministicRoundtripProof(criterion, testCases, runs));
 }
 
 export function deriveCriterionScores(
@@ -59,7 +47,7 @@ export function deriveCriterionScores(
     // actually encoded/decoded the current Candidate snapshot and compared it byte-for-byte/text-for-
     // text, settle the criterion here even when the judge omitted its criteria[] row. This prevents a
     // verified TXT/MD roundtrip from getting stuck forever as "待补评审".
-    const deterministicRoundtrip = deterministicRoundtripProof(criterion, testCases, runs);
+    const deterministicRoundtrip = hasDeterministicRoundtripProof(criterion, testCases, runs);
     if (deterministicRoundtrip) return {
       criterionId: criterion.id,
       score: 100,
