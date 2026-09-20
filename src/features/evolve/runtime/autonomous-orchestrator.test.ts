@@ -210,7 +210,7 @@ describe("autonomous orchestrator", () => {
     expect(request?.reason).toContain("experiment-build-pending");
   });
 
-  it("classifies the new Hidden Holdout migration boundary as capability", () => {
+  it("automatically retries the legacy Hidden Holdout migration boundary", () => {
     const p = project({
       campaign: {
         ...demoProject.campaign,
@@ -220,9 +220,37 @@ describe("autonomous orchestrator", () => {
       stage: "experiment",
       attentionRequests: [],
     });
+    expect(deriveAttentionRequest(p)).toBeUndefined();
+  });
+
+  it("classifies a real Hidden Holdout evidence gap as capability", () => {
+    const p = project({
+      campaign: {
+        ...demoProject.campaign,
+        status: "paused",
+        stopReason: "[server-campaign-holdout-evidence-pending] H-UX 需要真实浏览器证据",
+      },
+      stage: "validation",
+      attentionRequests: [],
+    });
     const request = deriveAttentionRequest(p);
     expect(request?.type).toBe("capability");
-    expect(request?.reason).toContain("holdout-pending");
+    expect(request?.reason).toContain("holdout-evidence-pending");
+  });
+
+  it("classifies Artifact Acceptance migration boundary as capability", () => {
+    const p = project({
+      campaign: {
+        ...demoProject.campaign,
+        status: "paused",
+        stopReason: "[server-campaign-artifact-acceptance-pending] Hidden Holdout 已完成；等待 Gate F",
+      },
+      stage: "validation",
+      attentionRequests: [],
+    });
+    const request = deriveAttentionRequest(p);
+    expect(request?.type).toBe("capability");
+    expect(request?.reason).toContain("artifact-acceptance-pending");
   });
 
   it("automatically retries the legacy server baseline migration pause under the new server baseline capability", () => {

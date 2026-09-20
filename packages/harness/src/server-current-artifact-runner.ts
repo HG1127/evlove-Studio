@@ -1,0 +1,134 @@
+import type {
+  EvaluateAiResult,
+  ExecuteArtifactBatchAiResult,
+  EvolveProject,
+  TargetRunResult,
+  TestCase,
+} from "@evolution/contracts";
+import { criteriaRequiringJudge, deriveCriterionScores, settleAiEvaluation } from "@evolution/core";
+import {
+  baselineLocalEvidence,
+  boundedBaselineArtifacts,
+  compactBaselineRunOutput,
+  semanticEvidenceStatus,
+  serverBaselineCurrentViewGap,
+  unavailableBaselineRun,
+} from "./server-baseline-evidence";
+
+export type ServerCurrentArtifactPorts = {
+  executeSemanticBatch(args: {
+    project: EvolveProject;
+    testCases: TestCase[];
+    artifactContext: Array<Record<string, unknown>>;
+  }): Promise<ExecuteArtifactBatchAiResult>;
+  executeExternalBatch?(args: {
+    project: EvolveProject;
+    testCases: TestCase[];
+  }): Promise<TargetRunResult[]>;
+  judge(payload: unknown): Promise<EvaluateAiResult>;
+};
+
+function average(values:number[]){
+  return values.length ? values.reduce((sum,value)=>sum+value,0)/values.length : 0;
+}
+
+function deterministicOnly(project:EvolveProject,testCases:TestCase[],runs:TargetRunResult[]){
+  const rubric=deriveCriterionScores(project.acceptanceRubric,testCases,[],runs);
+  const measured=runs.filter((run)=>!run.error);
+  return {
+    accuracy:0,evidence:0,riskCoverage:0,completeness:0,safety:"PASS" as const,
+    notes:["当前同卷 Baseline 仅获得确定性证据；未测量的通用质量维度保持 0，不代表产品失败。"],
+    failures:[],
+    criterionScores:rubric.criterionScores,
+    rubricScore:rubric.rubricScore,
+    verifiedRubricCoverage:rubric.verifiedRubricCoverage,
+    unverifiedCriterionIds:rubric.unverifiedCriterionIds,
+    caseScores:[],
+    averageCost:Number(average(measured.map((run)=>run.cost)).toFixed(4)),
+    averageLatencyMs:Math.round(average(measured.map((run)=>run.latencyMs))),
+  };
+}
+
+export async function executeServerCurrentArtifactSuite(
+  project:EvolveProject,
+  testCases:TestCase[],
+  ports:ServerCurrentArtifactPorts,
+){
+  const ordered=new Map<string,TargetRunResult>();
+  const semanticCases:TestCase[]=[];
+  const externalCases:TestCase[]=[];
+  for(const testCase of testCases){
+    const gap=serverBaselineCurrentViewGap(project,testCase);
+    if(gap){ordered.set(testCase.id,unavailableBaselineRun(testCase,gap));continue;}
+    const local=baselineLocalEvidence(project,testCase);
+    if(local){ordered.set(testCase.id,local);continue;}
+    if(testCase.executionMode==="external-runner"){externalCases.push(testCase);continue;}
+    if(testCase.executionMode==="artifact-runtime"){semanticCases.push(testCase);continue;}
+    ordered.set(testCase.id,unavailableBaselineRun(testCase,`Server 当前版本暂不支持 executionMode=${testCase.executionMode} 的真实执行。`));
+  }
+  if(externalCases.length){
+    if(!ports.executeExternalBatch){
+      for(const testCase of externalCases)ordered.set(testCase.id,unavailableBaselineRun(testCase,"Server External Runner / Sandbox 未连接。"));
+    }else{
+      try{
+        const results=await ports.executeExternalBatch({project,testCases:externalCases});
+        const byId=new Map(results.map((run)=>[run.testCaseId,run]));
+        for(const testCase of externalCases)ordered.set(testCase.id,byId.get(testCase.id)??unavailableBaselineRun(testCase,"Server External Runner 没有返回本题结果。"));
+      }catch(error){
+        const message=error instanceof Error?error.message:String(error);
+        for(const testCase of externalCases)ordered.set(testCase.id,unavailableBaselineRun(testCase,`Server External Runner 未完成：${message}`));
+      }
+    }
+  }
+  if(semanticCases.length){
+    const started=Date.now();
+    try{
+      const result=await ports.executeSemanticBatch({project,testCases:semanticCases,artifactContext:boundedBaselineArtifacts(project)});
+      const byId=new Map(result.results.map((item)=>[item.testCaseId,item]));
+      const latency=Math.max(1,Math.round((Date.now()-started)/Math.max(1,semanticCases.length)));
+      for(const testCase of semanticCases){
+        const item=byId.get(testCase.id);
+        ordered.set(testCase.id,item?{
+          testCaseId:testCase.id,output:item.output,latencyMs:latency,cost:0,
+          verificationStatus:semanticEvidenceStatus(item.output),
+          trace:[{id:`server-current-semantic-${testCase.id}`,stage:"AI 语义核查",summary:"Server AI 读取当前版本并定位同卷证据",status:"info",detail:"仅提供当前成果观察；独立 Judge 负责 Rubric 结算。"},...item.trace],
+        }:unavailableBaselineRun(testCase,"Server AI Batch 未返回本题结果。"));
+      }
+    }catch(error){
+      const message=error instanceof Error?error.message:String(error);
+      for(const testCase of semanticCases)ordered.set(testCase.id,unavailableBaselineRun(testCase,`Server AI Artifact Runtime 未完成：${message}`));
+    }
+  }
+  return testCases.map((testCase)=>ordered.get(testCase.id)??unavailableBaselineRun(testCase,"当前版本同卷执行未返回结果。"));
+}
+
+export async function judgeServerCurrentArtifactSuite(
+  project:EvolveProject,
+  testCases:TestCase[],
+  runs:TargetRunResult[],
+  ports:ServerCurrentArtifactPorts,
+){
+  const judgeCriteria=criteriaRequiringJudge(project.acceptanceRubric,testCases,runs);
+  const judgeIds=new Set(judgeCriteria.map((criterion)=>criterion.id));
+  const evaluableIds=new Set(runs.filter((run)=>run.verificationStatus==="verified"||run.verificationStatus==="partial").map((run)=>run.testCaseId));
+  const judgeCases=testCases.filter((testCase)=>evaluableIds.has(testCase.id)&&(testCase.criterionIds.length===0||testCase.criterionIds.some((id)=>judgeIds.has(id))));
+  const judgeCaseIds=new Set(judgeCases.map((testCase)=>testCase.id));
+  const effectiveCriteria=judgeCriteria.filter((criterion)=>judgeCases.some((testCase)=>testCase.criterionIds.includes(criterion.id)));
+  if(!judgeCases.length||!effectiveCriteria.length)return deterministicOnly(project,testCases,runs);
+  const ai=await ports.judge({
+    mode:"server-holdout-baseline",
+    project:{goal:project.goal,metrics:project.metrics,acceptanceRubric:effectiveCriteria},
+    acceptanceRubric:effectiveCriteria,
+    evaluatorInstruction:"Judge only supplied CURRENT VERSION evidence from the hidden same-paper baseline. UNVERIFIED tests are omitted and must not be invented as failures. Never cite diagnosis, plan or Candidate claims.",
+    testCases:judgeCases.map((testCase)=>({id:testCase.id,title:testCase.title,input:testCase.input.slice(0,1600),expected:testCase.expected,tags:testCase.tags,criterionIds:testCase.criterionIds,executionMode:testCase.executionMode,evidenceScope:testCase.evidenceScope})),
+    runs:runs.filter((run)=>judgeCaseIds.has(run.testCaseId)).map((run)=>{
+      const testCase=testCases.find((item)=>item.id===run.testCaseId);
+      const query=`${testCase?.title??""} ${testCase?.input??""} ${(testCase?.expected??[]).join(" ")}`;
+      return {testCaseId:run.testCaseId,verificationStatus:run.verificationStatus,outputChunks:[compactBaselineRunOutput(run.output,query)],trace:run.trace.slice(0,12).map((step)=>({stage:step.stage,status:step.status,summary:step.summary}))};
+    }),
+  });
+  return settleAiEvaluation({
+    criteria:project.acceptanceRubric,testCases,runs,ai,
+    notes:["Server Hidden Holdout：当前版本已在隐藏同卷执行并独立 Judge。",...(runs.some((run)=>run.verificationStatus==="unverified")?["部分隐藏题缺真实执行能力；对应 Criterion 保持 UNVERIFIED。"]:[])],
+  });
+}

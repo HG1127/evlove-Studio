@@ -21,3 +21,4 @@ export * from "./plan-grounding";
 export * from "./campaign-control";
 export * from "./evaluation-settlement";
 export * from "./experiment-winner";
+export * from "./validation-decision";

@@ -18,6 +18,7 @@ import { getServerProductionRuntime } from "../../apps/backend/src/services/prod
 import { runServerAi } from "../../apps/backend/src/services/ai-gateway";
 import { runServerMissionBaseline } from "../../apps/backend/src/services/server-baseline";
 import { runServerMissionExperiment } from "../../apps/backend/src/services/server-experiment";
+import { runServerMissionHoldout } from "../../apps/backend/src/services/server-holdout";
 import { serverAiConfigured } from "../../apps/backend/src/server-env";
 
 function controlJob(input:EvolutionWorkflowRunInput,args:{
@@ -400,7 +401,45 @@ export async function executeServerControlStep(
       && campaignMission.experimentRun.status==="completed"
       && (campaignMission.experimentRun.winnerId||campaignMission.experimentRun.pendingEvidenceCandidateId)){
       const candidateId=campaignMission.experimentRun.winnerId??campaignMission.experimentRun.pendingEvidenceCandidateId;
-      const reason=`[server-campaign-holdout-pending] Server Experiment 已完成并冻结 Candidate ${candidateId}；等待 Hidden Holdout / Artifact Acceptance Server Step。`;
+      const holdoutOutcome=await runServerMissionHoldout(campaignMission);
+      campaignMission=holdoutOutcome.project;
+      await runtime.missions.save(campaignMission);
+      await runtime.events.append(createEvolutionEvent({
+        id:`evt-${input.controlJobId}-campaign-holdout-${iteration}`,
+        missionId:input.missionId,jobId:input.controlJobId,checkpointId:plan.checkpoint.id,
+        type:holdoutOutcome.control==="continue"?"ActionCompleted":"JobProgress",source:"vercel-workflow-control",
+        payload:{
+          action,serverNative:true,conditional:true,phase:"holdout",candidateId,
+          readyForArtifactAcceptance:holdoutOutcome.readyForArtifactAcceptance,
+          evidenceIncomplete:holdoutOutcome.evidenceIncomplete,
+          recommendation:holdoutOutcome.validation.recommendation,
+          reason:holdoutOutcome.reason,
+        },
+      }));
+      if(holdoutOutcome.control==="stop"){
+        await runtime.jobs.put(controlJob(input,{
+          status:"waiting",
+          startedAt:input.requestedAt,
+          progress:{percent:70,detail:holdoutOutcome.reason.slice(0,240)},
+        }));
+        return {control:"stop",result:result(input,{
+          status:"waiting-action",iterations:iteration+1,nextAction:action,
+          checkpointId:plan.checkpoint.id,reason:holdoutOutcome.reason,
+        })};
+      }
+      await runtime.jobs.put(controlJob(input,{
+        status:"running",
+        startedAt:input.requestedAt,
+        progress:{percent:72,detail:holdoutOutcome.reason.slice(0,240)},
+      }));
+      return {control:"continue"};
+    }
+
+    if(campaignCheckpoint?.round===round
+      && campaignCheckpoint.completedPhase==="validation"
+      && campaignMission.validationRun.status==="completed"){
+      const candidateId=campaignMission.validationRun.candidateId??campaignMission.experimentRun.winnerId??campaignMission.experimentRun.pendingEvidenceCandidateId;
+      const reason=`[server-campaign-artifact-acceptance-pending] Server Hidden Holdout 已完成 Candidate ${candidateId??"unknown"}；等待 Artifact Acceptance / Repair Server Step。`;
       const paused={
         ...campaignMission,
         campaign:{
@@ -409,20 +448,20 @@ export async function executeServerControlStep(
           stopReason:reason,
           schedule:{...campaignMission.campaign.schedule,enabled:false,nextRunAt:undefined},
         },
-        stage:"experiment" as const,
+        stage:"validation" as const,
         updatedAt:now,
       };
       await runtime.missions.save(paused);
       await runtime.jobs.put(controlJob(input,{
         status:"waiting",
         startedAt:input.requestedAt,
-        progress:{percent:68,detail:reason},
+        progress:{percent:78,detail:reason},
       }));
       await runtime.events.append(createEvolutionEvent({
-        id:`evt-${input.controlJobId}-campaign-holdout-pending-${iteration}`,
+        id:`evt-${input.controlJobId}-campaign-artifact-acceptance-pending-${iteration}`,
         missionId:input.missionId,jobId:input.controlJobId,checkpointId:plan.checkpoint.id,
         type:"JobProgress",source:"vercel-workflow-control",
-        payload:{action,serverNative:true,conditional:true,phase:"holdout",candidateId,reason},
+        payload:{action,serverNative:true,conditional:true,phase:"artifact-acceptance",candidateId,reason},
       }));
       return {control:"stop",result:result(input,{
         status:"waiting-action",iterations:iteration+1,nextAction:action,

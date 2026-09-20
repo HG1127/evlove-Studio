@@ -8,3 +8,5 @@ export * from "./candidate-snapshot-evidence";
 export * from "./server-campaign-preparation";
 export * from "./server-baseline";
 export * from "./server-experiment";
+export * from "./server-current-artifact-runner";
+export * from "./server-holdout";

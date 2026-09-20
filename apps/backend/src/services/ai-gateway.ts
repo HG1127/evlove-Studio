@@ -10,6 +10,7 @@ import {
   NextQueueAiResultSchema,
   PlanAiResultSchema,
   ProblemAnalysisAiResultSchema,
+  ReleaseReviewAiResultSchema,
   RubricAiResultSchema,
   UnderstandAiResultSchema,
   jsonSchemas,
@@ -22,12 +23,13 @@ import {
   type NextQueueAiResult,
   type PlanAiResult,
   type ProblemAnalysisAiResult,
+  type ReleaseReviewAiResult,
   type RubricAiResult,
   type UnderstandAiResult,
 } from "@evolution/contracts";
 import { getServerAiConfig } from "../server-env";
 
-export type ServerAiOperation="understand"|"rubric"|"eval-suite"|"build-candidate"|"execute-artifact-batch"|"evaluate"|"problem-analysis"|"diagnose"|"plan"|"distill"|"next-queue";
+export type ServerAiOperation="understand"|"rubric"|"eval-suite"|"build-candidate"|"execute-artifact-batch"|"evaluate"|"problem-analysis"|"diagnose"|"plan"|"release-review"|"distill"|"next-queue";
 
 type StructuredSchema={name:string;schema:Record<string,unknown>};
 type Contract<T>={schema:StructuredSchema;parser:ZodType<T>;instruction:string};
@@ -48,9 +50,10 @@ function contract(operation:"evaluate"):Contract<EvaluateAiResult>;
 function contract(operation:"problem-analysis"):Contract<ProblemAnalysisAiResult>;
 function contract(operation:"diagnose"):Contract<DiagnosisAiResult>;
 function contract(operation:"plan"):Contract<PlanAiResult>;
+function contract(operation:"release-review"):Contract<ReleaseReviewAiResult>;
 function contract(operation:"distill"):Contract<DistillAiResult>;
 function contract(operation:"next-queue"):Contract<NextQueueAiResult>;
-function contract(operation:ServerAiOperation):Contract<UnderstandAiResult|RubricAiResult|EvalSuiteAiResult|BuildCandidateAiResult|ExecuteArtifactBatchAiResult|EvaluateAiResult|ProblemAnalysisAiResult|DiagnosisAiResult|PlanAiResult|DistillAiResult|NextQueueAiResult>{
+function contract(operation:ServerAiOperation):Contract<UnderstandAiResult|RubricAiResult|EvalSuiteAiResult|BuildCandidateAiResult|ExecuteArtifactBatchAiResult|EvaluateAiResult|ProblemAnalysisAiResult|DiagnosisAiResult|PlanAiResult|ReleaseReviewAiResult|DistillAiResult|NextQueueAiResult>{
   if(operation==="understand")return{
     schema:jsonSchemas.understand,
     parser:UnderstandAiResultSchema,
@@ -95,6 +98,11 @@ function contract(operation:ServerAiOperation):Contract<UnderstandAiResult|Rubri
     schema:jsonSchemas.plan,
     parser:PlanAiResultSchema,
     instruction:"Generate a small diverse Candidate population for the selected diagnosed problem. Each Candidate must include a concrete patch hypothesis and complete designRationale: exact supplied source evidence, command alignment, causal mechanism, covered acceptance criteria, protected-scope compliance and falsifier. Do not claim measured improvement before experiment.",
+  };
+  if(operation==="release-review")return{
+    schema:jsonSchemas.releaseReview,
+    parser:ReleaseReviewAiResultSchema,
+    instruction:"Perform the final release review from measured aggregate Baseline/Holdout evidence and deterministic checks only. Do not ask for hidden test contents and do not infer missing evidence. Return release only when all supplied hard gates and evidence requirements are satisfied; otherwise hold or reject with concrete reasons.",
   };
   if(operation==="distill")return{
     schema:jsonSchemas.distill,
@@ -229,6 +237,7 @@ export function runServerAi(operation:"evaluate",payload:unknown):Promise<Evalua
 export function runServerAi(operation:"problem-analysis",payload:unknown):Promise<ProblemAnalysisAiResult>;
 export function runServerAi(operation:"diagnose",payload:unknown):Promise<DiagnosisAiResult>;
 export function runServerAi(operation:"plan",payload:unknown):Promise<PlanAiResult>;
+export function runServerAi(operation:"release-review",payload:unknown):Promise<ReleaseReviewAiResult>;
 export function runServerAi(operation:"distill",payload:unknown):Promise<DistillAiResult>;
 export function runServerAi(operation:"next-queue",payload:unknown):Promise<NextQueueAiResult>;
 export function runServerAi(operation:ServerAiOperation,payload:unknown){
@@ -241,6 +250,7 @@ export function runServerAi(operation:ServerAiOperation,payload:unknown){
   if(operation==="problem-analysis")return structured(payload,contract("problem-analysis"));
   if(operation==="diagnose")return structured(payload,contract("diagnose"));
   if(operation==="plan")return structured(payload,contract("plan"));
+  if(operation==="release-review")return structured(payload,contract("release-review"));
   if(operation==="distill")return structured(payload,contract("distill"));
   return structured(payload,contract("next-queue"));
 }

@@ -19,6 +19,7 @@ import {
   serverExperimentSemanticStatus,
   unavailableExperimentRun,
 } from "./server-experiment-evidence";
+import { normalizeLocallyVerifiableCandidateRuns } from "./candidate-snapshot-evidence";
 
 export type ServerExperimentExecutionPorts = {
   executeSemanticBatch(args: {
@@ -69,11 +70,12 @@ export async function executeServerExperimentCandidate(
   project: EvolveProject,
   candidate: Candidate,
   ports: ServerExperimentExecutionPorts,
+  testCases: TestCase[] = project.evalSuite,
 ): Promise<TargetRunResult[]> {
   const ordered = new Map<string, TargetRunResult>();
   const semanticCases: TestCase[] = [];
   const externalCases: TestCase[] = [];
-  for (const testCase of project.evalSuite) {
+  for (const testCase of testCases) {
     const local = candidateLocalEvidence(project, candidate, testCase);
     if (local) {
       ordered.set(testCase.id, local);
@@ -140,7 +142,8 @@ export async function executeServerExperimentCandidate(
       for (const testCase of semanticCases) ordered.set(testCase.id, unavailableExperimentRun(testCase, `Server AI Artifact Runtime 未完成：${message}`));
     }
   }
-  return project.evalSuite.map((testCase) => ordered.get(testCase.id) ?? unavailableExperimentRun(testCase, "Experiment 执行未返回结果。"));
+  const runs = testCases.map((testCase) => ordered.get(testCase.id) ?? unavailableExperimentRun(testCase, "Candidate 执行未返回结果。"));
+  return normalizeLocallyVerifiableCandidateRuns(project, candidate, testCases, runs);
 }
 
 export async function judgeServerExperimentCandidate(
@@ -148,21 +151,23 @@ export async function judgeServerExperimentCandidate(
   candidate: Candidate,
   runs: TargetRunResult[],
   ports: ServerExperimentExecutionPorts,
+  testCases: TestCase[] = project.evalSuite,
+  mode = "server-candidate",
 ) {
-  const judgeCriteria = criteriaRequiringJudge(project.acceptanceRubric, project.evalSuite, runs);
+  const judgeCriteria = criteriaRequiringJudge(project.acceptanceRubric, testCases, runs);
   const judgeIds = new Set(judgeCriteria.map((criterion) => criterion.id));
   const evaluableRunIds = new Set(runs
     .filter((run) => run.verificationStatus === "verified" || run.verificationStatus === "partial")
     .map((run) => run.testCaseId));
-  const judgeCases = project.evalSuite.filter((testCase) =>
+  const judgeCases = testCases.filter((testCase) =>
     evaluableRunIds.has(testCase.id)
     && (testCase.criterionIds.length === 0 || testCase.criterionIds.some((id) => judgeIds.has(id))));
   const judgeCaseIds = new Set(judgeCases.map((testCase) => testCase.id));
   const effectiveCriteria = judgeCriteria.filter((criterion) =>
     judgeCases.some((testCase) => testCase.criterionIds.includes(criterion.id)));
-  if (!judgeCases.length || !effectiveCriteria.length) return deterministicOnlyEvaluation(project, project.evalSuite, runs);
+  if (!judgeCases.length || !effectiveCriteria.length) return deterministicOnlyEvaluation(project, testCases, runs);
   const payload = {
-    mode: "server-candidate",
+    mode,
     candidate: { id: candidate.id },
     project: {
       goal: project.goal,
@@ -182,7 +187,7 @@ export async function judgeServerExperimentCandidate(
       evidenceScope: testCase.evidenceScope,
     })),
     runs: runs.filter((run) => judgeCaseIds.has(run.testCaseId)).map((run) => {
-      const testCase = project.evalSuite.find((item) => item.id === run.testCaseId);
+      const testCase = testCases.find((item) => item.id === run.testCaseId);
       const query = `${testCase?.title ?? ""} ${testCase?.input ?? ""} ${(testCase?.expected ?? []).join(" ")}`;
       return {
         testCaseId: run.testCaseId,
@@ -195,7 +200,7 @@ export async function judgeServerExperimentCandidate(
   const ai = await ports.judge(payload);
   return settleAiEvaluation({
     criteria: project.acceptanceRubric,
-    testCases: project.evalSuite,
+    testCases,
     runs,
     ai,
     notes: [

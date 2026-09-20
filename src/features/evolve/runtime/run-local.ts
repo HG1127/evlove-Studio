@@ -16,7 +16,7 @@ import { buildCandidateArtifacts } from "./artifact-quality";
 import { mapTestsToRubric, normalizeAcceptanceRubric, rubricCoverage, rubricValidation } from "./acceptance-rubric";
 import { describeArtifact, resolveProjectArtifactStrategy } from "./artifact-strategy";
 import { buildArtifactGraph, compileSemanticEvolution } from "./semantic-evolution";
-import { candidateWinnerDecision, computeGapAnalysis, gapHeadline, REGRESSION_TOLERANCE } from "@evolution/core";
+import { candidateWinnerDecision, computeGapAnalysis, gapHeadline, REGRESSION_TOLERANCE, validationRegression as coreValidationRegression } from "@evolution/core";
 import { extractSource } from "../sources/source-loader";
 import { getArtifactBlob, putArtifactBlob } from "./artifact-blob-store";
 import { readFrozenArtifact } from "./frozen-artifact";
@@ -489,14 +489,7 @@ function score(project: EvolveProject, evaluation: EvaluationResult) {
 
 /** Regression requires a shared verified criterion, not two unrelated generic averages. */
 export function validationRegression(project: EvolveProject, candidate: EvaluationResult, baseline: EvaluationResult) {
-  if (!project.acceptanceRubric.length) return candidate.accuracy < baseline.accuracy - REGRESSION_TOLERANCE || candidate.completeness < baseline.completeness - REGRESSION_TOLERANCE;
-  return project.acceptanceRubric.some((criterion) => {
-    const current = candidate.criterionScores?.find((item) => item.criterionId === criterion.id);
-    const prior = baseline.criterionScores?.find((item) => item.criterionId === criterion.id);
-    return current?.verificationStatus === "verified" && prior?.verificationStatus === "verified"
-      && current.testCaseIds.some((id) => prior.testCaseIds.includes(id))
-      && current.score < prior.score - REGRESSION_TOLERANCE;
-  });
+  return coreValidationRegression(project, candidate, baseline);
 }
 
 /** Cheap first rung: rank hypotheses before paying to construct large artifacts. */

@@ -164,8 +164,12 @@ export function deriveAttentionRequest(project: EvolveProject): AttentionRequest
     && (project.campaign.stopReason ?? "").includes("[server-campaign-experiment-pending]");
   if (staleServerExperimentPause) return undefined;
 
+  const staleServerHoldoutPause = project.campaign.status === "paused"
+    && (project.campaign.stopReason ?? "").includes("[server-campaign-holdout-pending]");
+  if (staleServerHoldoutPause) return undefined;
+
   const serverCampaignCapabilityPending = project.campaign.status === "paused"
-    && /\[server-campaign-(?:ai-pending|baseline-evidence-pending|baseline-judge-pending|contract-pending|diagnosis-pending|plan-grounding-pending|experiment-build-pending|experiment-judge-pending|holdout-pending)\]/.test(project.campaign.stopReason ?? "");
+    && /\[server-campaign-(?:ai-pending|baseline-evidence-pending|baseline-judge-pending|contract-pending|diagnosis-pending|plan-grounding-pending|experiment-build-pending|experiment-judge-pending|holdout-contract-pending|holdout-artifact-pending|holdout-judge-pending|holdout-review-pending|holdout-evidence-pending|artifact-acceptance-pending)\]/.test(project.campaign.stopReason ?? "");
   if (serverCampaignCapabilityPending) {
     return attention({
       type: "capability",
@@ -175,7 +179,7 @@ export function deriveAttentionRequest(project: EvolveProject): AttentionRequest
       riskLevel: "medium",
       blocking: true,
       questions: [],
-      suggestedAction: "当前 Baseline / Problem / Diagnosis / Candidate 断点会保留；补齐对应 Server AI、Baseline 或 Experiment 能力后从断点继续，无需重新开始。",
+      suggestedAction: "当前 Baseline / Problem / Diagnosis / Candidate / Holdout 断点会保留；补齐对应执行、评审或 Artifact Acceptance 能力后从断点继续，无需重新开始。",
       criterionIds: [],
     });
   }
