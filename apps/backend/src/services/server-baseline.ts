@@ -1,0 +1,113 @@
+import type { EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
+import { runVercelSandboxCodebaseValidation } from "@evolution/adapters/sandbox";
+import { runServerBaseline, trustedServerBaselineChampion } from "@evolution/harness";
+import { runServerAi } from "./ai-gateway";
+import { getServerArtifactStore } from "./artifact-runtime";
+
+function codebaseTarget(project: EvolveProject) {
+  return project.sourceArtifacts.find((artifact) =>
+    artifact.role === "target"
+    && (
+      artifact.artifactKind === "codebase"
+      || artifact.extension.toLowerCase() === "zip"
+      || artifact.artifactDescriptor?.family === "codebase"
+      || artifact.artifactDescriptor?.family === "package"
+    ));
+}
+
+export function resolveServerBaselineCodebaseBinding(project: EvolveProject) {
+  const source = codebaseTarget(project);
+  if (!source) return { source: undefined, blobId: undefined, candidateId: undefined, reason: "当前 Mission 没有 codebase/package Target。" };
+  const champion = trustedServerBaselineChampion(project);
+  const snapshot = champion?.artifactSnapshots.find((item) => item.sourceArtifactId === source.id);
+  if (snapshot && !snapshot.frozenArtifact) {
+    return {
+      source,
+      blobId: undefined,
+      candidateId: champion?.id,
+      reason: `当前 Search Champion ${project.searchChampion?.versionLabel ?? champion?.id} 的代码成果尚未冻结为实际 ZIP，不能回退原 Source ZIP 代替执行。`,
+    };
+  }
+  return {
+    source,
+    blobId: snapshot?.frozenArtifact?.blobId ?? source.id,
+    candidateId: snapshot ? champion?.id : undefined,
+    sha256: snapshot?.frozenArtifact?.sha256,
+    reason: undefined,
+  };
+}
+
+function unavailableExternal(testCase: TestCase, detail: string): TargetRunResult {
+  return {
+    testCaseId: testCase.id,
+    output: `UNVERIFIED：${detail}`,
+    latencyMs: 0,
+    cost: 0,
+    verificationStatus: "unverified",
+    trace: [{
+      id: `server-external-unavailable-${testCase.id}`,
+      stage: "external-runner",
+      summary: "Server External Runner 未完成",
+      status: "warning",
+      detail,
+    }],
+  };
+}
+
+/** Composition root: wires Harness Baseline ports to production Server AI + Artifact Store + Vercel Sandbox. */
+export async function runServerMissionBaseline(project: EvolveProject) {
+  return runServerBaseline(project, {
+    executeSemanticBatch: async ({ project: current, testCases, artifactContext }) => runServerAi("execute-artifact-batch", {
+      project: {
+        name: current.name,
+        objectType: current.objectType,
+        goal: current.goal,
+        evolutionCommand: current.evolutionCommand,
+        protectedItems: current.protectedItems,
+        editableItems: current.editableItems,
+        sourceArtifacts: artifactContext,
+      },
+      testCases: testCases.map((testCase) => ({
+        id: testCase.id,
+        title: testCase.title,
+        input: testCase.input,
+        expected: testCase.expected,
+        criterionIds: testCase.criterionIds,
+        evidenceScope: testCase.evidenceScope,
+      })),
+      evidenceInstruction: "Inspect the current Baseline artifact only. Missing evidence must be reported as UNVERIFIED; never infer future Candidate behavior.",
+      variant: null,
+    }),
+    executeExternalBatch: async ({ project: current, testCases }) => {
+      const binding = resolveServerBaselineCodebaseBinding(current);
+      if (!binding.source || !binding.blobId) {
+        return testCases.map((testCase) => unavailableExternal(
+          testCase,
+          binding.reason ?? "当前 Server Baseline 的 Vercel Sandbox 路径仅支持冻结源码包/codebase；HTML/远端 Target Runner 尚未迁入 Server。",
+        ));
+      }
+      try {
+        const blob = await getServerArtifactStore().get(binding.blobId);
+        if (!blob) {
+          return testCases.map((testCase) => unavailableExternal(
+            testCase,
+            `找不到当前 Baseline Artifact Blob ${binding.blobId}，不能回退其他版本冒充真实代码执行。`,
+          ));
+        }
+        const response = await runVercelSandboxCodebaseValidation({
+          id: `${current.id}-baseline-${binding.candidateId ?? "source"}`,
+          archive: new Uint8Array(await blob.arrayBuffer()),
+          testCases,
+        });
+        return response.results;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return testCases.map((testCase) => unavailableExternal(
+          testCase,
+          `Vercel Sandbox 未完成：${message}`,
+        ));
+      }
+    },
+    judge: (payload) => runServerAi("evaluate", payload),
+  });
+}

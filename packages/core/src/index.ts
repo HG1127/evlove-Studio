@@ -19,3 +19,4 @@ export * from "./evidence-provenance";
 export * from "./campaign-problem";
 export * from "./plan-grounding";
 export * from "./campaign-control";
+export * from "./evaluation-settlement";

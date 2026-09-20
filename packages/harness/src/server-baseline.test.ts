@@ -1,0 +1,152 @@
+import { describe, expect, it } from "vitest";
+import type { EvaluateAiResult, EvolveProject, TargetRunResult } from "@evolution/contracts";
+import { runServerBaseline } from "./server-baseline";
+
+function fixture(): EvolveProject {
+  const now="2026-09-20T13:00:00.000Z";
+  return {
+    id:"baseline-mission",name:"Baseline",objectType:"document",department:"test",goal:"提升说明完整度",problemStatement:"",desiredOutcome:"",
+    evolutionCommand:"让说明更完整",protectedItems:["事实"],editableItems:["表达"],metrics:[],
+    sourceArtifacts:[{id:"source",name:"source.md",role:"target",artifactKind:"document",mimeType:"text/markdown",size:40,extension:"md",inputMode:"paste",parseStatus:"ready",textContent:"当前说明包含安装步骤，但缺少验证与回滚说明。",textExcerpt:"当前说明包含安装步骤",structure:[],warnings:[],createdAt:now}],
+    inputClarifications:[],commandHistory:[],supplementalValidationEvidence:[],adviceLedger:[],
+    acceptanceRubric:[
+      {id:"CONTENT",title:"操作闭环",requirement:"说明包含安装、验证和回滚",source:"user-command",weight:60,hardGate:true,judgeType:"llm",validationMethod:"semantic-judge",minScore:85,evidenceExpected:["验证","回滚"],protectedConstraint:false,artifactIds:["source"],category:"outcome"},
+      {id:"FORMAT",title:"格式保持",requirement:"Markdown 可往返",source:"system-integrity",weight:30,hardGate:true,judgeType:"integrity",validationMethod:"format-roundtrip",minScore:90,evidenceExpected:["roundtrip"],protectedConstraint:true,artifactIds:["source"],category:"integrity"},
+      {id:"STRUCTURE",title:"结构可读",requirement:"当前文档存在可检查正文",source:"system-integrity",weight:10,hardGate:false,judgeType:"structural",validationMethod:"static-structure",minScore:70,evidenceExpected:["正文"],protectedConstraint:false,artifactIds:["source"],category:"integrity"},
+    ],
+    acceptanceRubricState:{status:"ready",summary:"ready",version:1,weightTotal:100,uncoveredCriterionIds:[],warnings:[],confirmedAt:now},
+    evalSuite:[
+      {id:"V1",title:"操作闭环",input:"检查安装、验证和回滚",expected:["安装","验证","回滚"],tags:[],hidden:false,criterionIds:["CONTENT"],executionMode:"artifact-runtime",evidenceScope:"product-behavior"},
+      {id:"V2",title:"格式往返",input:"检查 Markdown 原格式",expected:["逐字往返"],tags:[],hidden:false,criterionIds:["FORMAT"],executionMode:"roundtrip",evidenceScope:"format"},
+      {id:"V3",title:"正文结构",input:"检查当前正文",expected:["存在正文"],tags:[],hidden:false,criterionIds:["STRUCTURE"],executionMode:"static-evidence",evidenceScope:"implementation"},
+    ],
+    hiddenEvalSuite:[
+      {id:"H1",title:"隐藏闭环",input:"检查闭环",expected:["验证","回滚"],tags:[],hidden:true,criterionIds:["CONTENT"],executionMode:"artifact-runtime",evidenceScope:"product-behavior"},
+      {id:"H2",title:"隐藏格式",input:"检查格式",expected:["roundtrip"],tags:[],hidden:true,criterionIds:["FORMAT"],executionMode:"roundtrip",evidenceScope:"format"},
+    ],
+    baselineRun:{id:"baseline",status:"idle",suiteName:"Core",totalCases:2,runs:[]},
+    problems:[],candidates:[],selectedCandidateIds:[],lessons:[],nextQueue:[],versions:[],outputArtifacts:[],appliedPatches:[],searchAppliedPatches:[],evolutionArchive:[],roundHistory:[],
+    experimentRun:{id:"experiment",status:"idle",candidateResults:[]},validationRun:{id:"validation",status:"idle",checks:[],runs:[],baselineRuns:[]},
+    artifactAcceptance:{id:"acceptance",status:"idle",overallScore:0,coverageScore:0,integrityScore:0,pairwiseScore:0,hardGatePass:false,results:[],attempts:0,maxRepairAttempts:3,summary:""},
+    release:{status:"idle",trafficPercent:0,healthy:true,kpis:[],history:[],evidenceMode:"simulation"},
+    targetConnection:{adapter:"artifact",connectionId:"artifact",status:"connected",label:"Artifact"},
+    experimentPolicy:{batchArtifactRuntime:true,batchSize:4},
+    aiProfile:{},
+    gates:[
+      {id:"target-ready",label:"Target Ready",status:"approved",approvedAt:now},
+      {id:"experiment-ready",label:"Experiment Ready",status:"pending"},
+      {id:"artifact-ready",label:"Artifact Ready",status:"pending"},
+      {id:"release-ready",label:"Release Ready",status:"pending"},
+    ],
+    stage:"target",version:"V1",currentVersionId:"V1",updatedAt:now,
+    campaign:{status:"idle",executionMode:"auto-rounds",currentRound:0,noImprovementRounds:0,candidateCount:2,searchMode:"focused",parentStrategy:"champion-only",eliteCount:2,exploreRatio:0.3,estimatedCost:0,autoApproveOfflineExperiment:true,stopCriteria:{maxRounds:3,patienceRounds:2,minImprovement:1,stopWhenAcceptanceMet:true,stopOnSafetyFailure:true,stopWhenMetricTargetsMet:false},schedule:{enabled:false,mode:"manual",intervalMinutes:60,hour:8,minute:0,daysOfWeek:[]}},
+  } as unknown as EvolveProject;
+}
+
+function judge(): EvaluateAiResult {
+  return {
+    accuracy:72,evidence:78,riskCoverage:70,completeness:68,safety:"PASS",
+    notes:["当前说明尚缺回滚细节"],failures:["操作闭环不足"],
+    cases:[{testCaseId:"V1",accuracy:72,evidence:78,completeness:68,reason:"有安装步骤，但验证/回滚不足"}],
+    criteria:[{criterionId:"CONTENT",score:72,pass:false,evidence:["V1: 有安装步骤"],gaps:["缺验证/回滚"],testCaseIds:["V1"]}],
+  };
+}
+
+describe("server baseline",()=>{
+  it("executes semantic + deterministic evidence and produces a ready BaselineRun",async()=>{
+    const outcome=await runServerBaseline(fixture(),{
+      executeSemanticBatch:async({testCases})=>({results:testCases.map((testCase)=>({testCaseId:testCase.id,output:"当前说明包含安装步骤，但验证与回滚说明不足。",trace:[]}))}),
+      judge:async()=>judge(),
+    },{now:()=> "2026-09-20T13:05:00.000Z"});
+    expect(outcome.ready).toBe(true);
+    expect(outcome.baseline.status).toBe("completed");
+    expect(outcome.baseline.runs.find((run)=>run.testCaseId==="V1")?.verificationStatus).toBe("verified");
+    expect(outcome.baseline.runs.find((run)=>run.testCaseId==="V2")?.verificationStatus).toBe("verified");
+    expect(outcome.baseline.result?.demoJudged).not.toBe(true);
+    expect(outcome.baseline.result?.criterionScores?.find((item)=>item.criterionId==="CONTENT")).toMatchObject({verificationStatus:"verified",pass:false});
+    expect(outcome.project.stage).toBe("problem");
+    expect(outcome.project.campaign.rootBaseline).toBeTruthy();
+    expect(outcome.project.campaign.checkpoint).toMatchObject({round:1,completedPhase:"baseline"});
+  });
+
+  it("fails closed when the server judge cannot complete",async()=>{
+    const outcome=await runServerBaseline(fixture(),{
+      executeSemanticBatch:async({testCases})=>({results:testCases.map((testCase)=>({testCaseId:testCase.id,output:"当前说明包含安装步骤。",trace:[]}))}),
+      judge:async()=>{throw new Error("judge unavailable");},
+    });
+    expect(outcome.ready).toBe(false);
+    expect(outcome.baseline.status).toBe("failed");
+    expect(outcome.reason).toContain("baseline-judge-pending");
+    expect(outcome.project.campaign.status).toBe("paused");
+  });
+
+  it("does not turn missing external execution into a product failure",async()=>{
+    const project=fixture();
+    project.evalSuite=[
+      {id:"V1",title:"真实运行",input:"运行 E2E",expected:["通过"],tags:[],hidden:false,criterionIds:["CONTENT"],executionMode:"external-runner",evidenceScope:"product-behavior"},
+      project.evalSuite[1]!,
+      project.evalSuite[2]!,
+    ];
+    const outcome=await runServerBaseline(project,{
+      executeSemanticBatch:async()=>({results:[]}),
+      executeExternalBatch:async({testCases})=>testCases.map((testCase):TargetRunResult=>({
+        testCaseId:testCase.id,output:"UNVERIFIED：Sandbox OIDC unavailable",latencyMs:0,cost:0,verificationStatus:"unverified",trace:[],
+      })),
+      judge:async()=>judge(),
+    });
+    expect(outcome.ready).toBe(false);
+    expect(outcome.reason).toContain("baseline-evidence-pending");
+    const run=outcome.baseline.runs.find((item)=>item.testCaseId==="V1");
+    expect(run?.verificationStatus).toBe("unverified");
+    expect(run?.error).toBeUndefined();
+    expect(outcome.baseline.result?.failures).not.toContain("Sandbox OIDC unavailable");
+  });
+
+  it("measures the accepted Search Champion snapshot instead of falling back to the original text",async()=>{
+    const project=fixture();
+    const candidate={
+      id:"champion-candidate",
+      name:"S1",
+      change:"补齐验证与回滚",
+      status:"winner" as const,
+      artifactBuildStatus:"ready" as const,
+      artifactSnapshots:[{
+        id:"champion-snapshot",
+        sourceArtifactId:"source",
+        name:"source.md",
+        mimeType:"text/markdown",
+        content:"S1 CURRENT CHAMPION：安装、验证、回滚均已完整。",
+        contentHash:"hash-s1",
+        buildMode:"ai-full" as const,
+        notes:[],
+        createdAt:"2026-09-20T13:10:00.000Z",
+      }],
+      patches:[],
+      addressesAdvice:[],
+      riskLevel:"low" as const,
+      risks:[],
+      accuracy:90,evidence:90,riskCoverage:90,costDelta:0,speedDelta:0,safety:"PASS" as const,recommended:true,notes:[],
+    };
+    const acceptedEvaluation={accuracy:92,evidence:92,riskCoverage:90,completeness:94,safety:"PASS" as const,averageCost:0.01,averageLatencyMs:10,notes:[],failures:[],rubricScore:92,verifiedRubricCoverage:100,unverifiedCriterionIds:[]};
+    const validation={...project.validationRun,status:"completed" as const,candidateId:candidate.id,recommendation:"release" as const,evaluation:acceptedEvaluation};
+    const acceptance={...project.artifactAcceptance,status:"passed" as const,candidateId:candidate.id,hardGatePass:true,overallScore:92,coverageScore:92,integrityScore:92,pairwiseScore:92};
+    project.searchChampion={
+      id:"champion-s1",versionLabel:"S1",round:1,score:92,candidate,
+      evaluation:acceptedEvaluation,validation,artifactAcceptance:acceptance,patches:[],
+      parentVersionId:"V1",reason:"accepted",selectedAt:"2026-09-20T13:10:00.000Z",
+    };
+    project.campaign.currentRound=1;
+    let observed="";
+    const outcome=await runServerBaseline(project,{
+      executeSemanticBatch:async({testCases,artifactContext})=>{
+        observed=String(artifactContext.find((item)=>item.id==="source")?.content??"");
+        return {results:testCases.map((testCase)=>({testCaseId:testCase.id,output:"S1 CURRENT CHAMPION 已包含安装、验证、回滚。",trace:[]}))};
+      },
+      judge:async()=>judge(),
+    });
+    expect(observed).toContain("S1 CURRENT CHAMPION");
+    expect(observed).not.toContain("缺少验证与回滚说明");
+    expect(outcome.baseline.runs.find((run)=>run.testCaseId==="V2")?.output).toContain("S1");
+    expect(outcome.project.campaign.checkpoint).toMatchObject({round:2,completedPhase:"baseline"});
+  });
+});

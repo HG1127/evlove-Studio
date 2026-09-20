@@ -156,8 +156,12 @@ export function deriveAttentionRequest(project: EvolveProject): AttentionRequest
     });
   }
 
+  const staleServerBaselinePause = project.campaign.status === "paused"
+    && (project.campaign.stopReason ?? "").includes("[server-campaign-baseline-pending]");
+  if (staleServerBaselinePause) return undefined;
+
   const serverCampaignCapabilityPending = project.campaign.status === "paused"
-    && /\[server-campaign-(?:ai-pending|baseline-pending|contract-pending|diagnosis-pending|plan-grounding-pending|experiment-pending)\]/.test(project.campaign.stopReason ?? "");
+    && /\[server-campaign-(?:ai-pending|baseline-evidence-pending|baseline-judge-pending|contract-pending|diagnosis-pending|plan-grounding-pending|experiment-pending)\]/.test(project.campaign.stopReason ?? "");
   if (serverCampaignCapabilityPending) {
     return attention({
       type: "capability",

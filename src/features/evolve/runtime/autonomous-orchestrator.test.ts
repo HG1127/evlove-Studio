@@ -198,6 +198,64 @@ describe("autonomous orchestrator", () => {
     expect(request?.suggestedAction).toContain("断点");
   });
 
+  it("automatically retries the legacy server baseline migration pause under the new server baseline capability", () => {
+    const criteria: EvolveProject["acceptanceRubric"] = [
+      { id:"GOAL", title:"核心目标", requirement:"落实既有进化目标", source:"user-command", weight:60, hardGate:true, judgeType:"llm", validationMethod:"semantic-judge", minScore:85, evidenceExpected:["当前成果"], protectedConstraint:false, artifactIds:[], category:"outcome" },
+      { id:"FORMAT", title:"格式保持", requirement:"保持目标成果可交付格式", source:"system-integrity", weight:25, hardGate:true, judgeType:"integrity", validationMethod:"format-roundtrip", minScore:90, evidenceExpected:["roundtrip"], protectedConstraint:true, artifactIds:[demoProject.sourceArtifacts[0]!.id], category:"artifact-specific" },
+      { id:"STRUCT", title:"结构完整", requirement:"成果结构完整可读", source:"system-integrity", weight:15, hardGate:false, judgeType:"structural", validationMethod:"static-structure", minScore:80, evidenceExpected:["结构"], protectedConstraint:false, artifactIds:[], category:"integrity" },
+    ];
+    const visible = [
+      { ...demoProject.evalSuite[0]!, id:"V-GOAL", criterionIds:["GOAL"], hidden:false, executionMode:"artifact-runtime" as const, evidenceScope:"product-behavior" as const },
+      { ...demoProject.evalSuite[0]!, id:"V-FORMAT", criterionIds:["FORMAT"], hidden:false, executionMode:"roundtrip" as const, evidenceScope:"format" as const },
+      { ...demoProject.evalSuite[0]!, id:"V-STRUCT", criterionIds:["STRUCT"], hidden:false, executionMode:"static-evidence" as const, evidenceScope:"implementation" as const },
+    ];
+    const hidden = [
+      { ...visible[0]!, id:"H-GOAL", hidden:true },
+      { ...visible[1]!, id:"H-FORMAT", hidden:true },
+    ];
+    const p = project({
+      inputUnderstanding: {
+        status: "ready",
+        intentRestatement: "继续既有进化目标",
+        implicitRequirements: [],
+        assumptions: [],
+        acceptanceFocus: [],
+        confidence: 0.9,
+        clarifications: [],
+      },
+      acceptanceRubric: criteria,
+      acceptanceRubricState: { status:"ready", summary:"ready", version:1, weightTotal:100, uncoveredCriterionIds:[], warnings:[] },
+      evalSuite: visible,
+      hiddenEvalSuite: hidden,
+      gates: demoProject.gates.map((gate) => gate.id === "target-ready"
+        ? { ...gate, status: "approved" as const }
+        : gate),
+      campaign: {
+        ...demoProject.campaign,
+        status: "paused",
+        stopReason: "[server-campaign-baseline-pending] Campaign Planning 已迁到 Server，但 Baseline 执行仍需先完成",
+      },
+      attentionRequests: [],
+    });
+    expect(deriveAttentionRequest(p)).toBeUndefined();
+    expect(deriveAutonomousDecision(p).action).toBe("run-campaign");
+  });
+
+  it("keeps a new server baseline evidence gap classified as capability", () => {
+    const p = project({
+      campaign: {
+        ...demoProject.campaign,
+        status: "paused",
+        stopReason: "[server-campaign-baseline-evidence-pending] V1 尚未获得真实 Runner 证据",
+      },
+      stage: "baseline",
+      attentionRequests: [],
+    });
+    const request = deriveAttentionRequest(p);
+    expect(request?.type).toBe("capability");
+    expect(request?.reason).toContain("baseline-evidence-pending");
+  });
+
   it("continues old offline completed artifacts through Lesson and Next Queue before declaring complete", () => {
     const candidate = CandidateSchema.parse({
       id:"offline-complete",name:"离线成果",change:"完成",status:"passed",artifactBuildStatus:"ready",

@@ -1,13 +1,16 @@
 import { serverEnv } from "../runtime/env";
 import { EvaluateAiResultSchema } from "../ai/schemas";
 import { getAiProviderStatus, runEvolveAi, type AiAttemptNotice } from "../ai/service";
-import type { AcceptanceCriterion, CriterionScore, EvaluationResult, TargetRunResult, TestCase } from "../schemas";
+import type { AcceptanceCriterion, EvaluationResult, TargetRunResult, TestCase } from "../schemas";
 import { retrieveTextContext } from "../runtime/context-retrieval";
-import { hasDeterministicRoundtripProof } from "@evolution/core";
+import {
+  citesHistoricalEvidence,
+  criteriaRequiringJudge,
+  deriveCriterionScores,
+  normalizeEvaluationScore,
+} from "@evolution/core";
 
-export function citesHistoricalEvidence(text: string) {
-  return /\b(?:diagnosis|sourceUnderstanding|designRationale|appliedPatches|searchAppliedPatches)\s*[.[]/i.test(text);
-}
+export { citesHistoricalEvidence, criteriaRequiringJudge, deriveCriterionScores } from "@evolution/core";
 
 function average(values: number[]) {
   return values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
@@ -22,101 +25,6 @@ function reviewOutput(text: string, query: string, maxChars = 6500) {
 function rubricFromContext(context: Record<string, unknown>): AcceptanceCriterion[] {
   const project = context.project as { acceptanceRubric?: AcceptanceCriterion[] } | undefined;
   return Array.isArray(project?.acceptanceRubric) ? project!.acceptanceRubric! : [];
-}
-
-/** Deterministic criteria are settled by Runtime and must not consume or invalidate Judge output. */
-export function criteriaRequiringJudge(criteria: AcceptanceCriterion[], testCases: TestCase[], runs: TargetRunResult[]) {
-  const mapped = new Set(testCases.flatMap((testCase) => testCase.criterionIds));
-  return criteria.filter((criterion) => mapped.has(criterion.id) && !hasDeterministicRoundtripProof(criterion, testCases, runs));
-}
-
-export function deriveCriterionScores(
-  criteria: AcceptanceCriterion[],
-  testCases: TestCase[],
-  caseScores: NonNullable<EvaluationResult["caseScores"]>,
-  runs: TargetRunResult[],
-  aiCriteria?: Array<{ criterionId: string; score: number; pass: boolean; evidence: string[]; gaps: string[]; testCaseIds: string[] }>,
-) {
-  const aiMap = new Map((aiCriteria ?? []).map((item) => [item.criterionId, item]));
-  const caseMap = new Map(caseScores.map((item) => [item.testCaseId, item]));
-  const runMap = new Map(runs.map((item) => [item.testCaseId, item]));
-  const criterionScores: CriterionScore[] = criteria.map((criterion) => {
-    const mappedCases = testCases.filter((testCase) => testCase.criterionIds.includes(criterion.id)).map((testCase) => testCase.id);
-    const mappedStatuses = mappedCases.map((id) => runMap.get(id)?.verificationStatus ?? "unverified");
-    // Deterministic format evidence does not need an LLM to repeat the same verdict. If the runtime
-    // actually encoded/decoded the current Candidate snapshot and compared it byte-for-byte/text-for-
-    // text, settle the criterion here even when the judge omitted its criteria[] row. This prevents a
-    // verified TXT/MD roundtrip from getting stuck forever as "待补评审".
-    const deterministicRoundtrip = hasDeterministicRoundtripProof(criterion, testCases, runs);
-    if (deterministicRoundtrip) return {
-      criterionId: criterion.id,
-      score: 100,
-      pass: true,
-      verificationStatus: "verified" as const,
-      evidence: mappedCases.map((id) => `${id}: 当前 Candidate 已完成原格式 Roundtrip 并逐字一致`),
-      gaps: [],
-      testCaseIds: mappedCases,
-    };
-    const ai = aiMap.get(criterion.id);
-    const historicalCitation = [...(ai?.evidence ?? []), ...(ai?.gaps ?? []), ...mappedCases.flatMap((id) => caseMap.get(id)?.reason ?? [])].some(citesHistoricalEvidence);
-    if (historicalCitation) return {
-      criterionId: criterion.id, score: 0, pass: false, verificationStatus: "unverified" as const,
-      evidence: [], gaps: ["评审引用了历史诊断/方案说明，不能证明当前成果状态；需针对当前快照重新核查"], testCaseIds: mappedCases,
-    };
-    const related = mappedCases.flatMap((id) => { const item = caseMap.get(id); return item ? [item] : []; });
-    // A successful artifact run proves that output was produced. It does not prove that an
-    // acceptance criterion passed. A judge that omits both criterion and case scores formerly
-    // turned this state into a verified 0/FALSE, producing the misleading 0% shown in the UI.
-    const hasJudgement = Boolean(ai) || related.length > 0;
-    const fullyVerified = hasJudgement && mappedCases.length > 0 && mappedStatuses.every((status) => status === "verified");
-    const hasPartialEvidence = hasJudgement && mappedStatuses.some((status) => status === "verified" || status === "partial");
-    const verificationStatus: CriterionScore["verificationStatus"] = fullyVerified ? "verified" : hasPartialEvidence ? "partial" : "unverified";
-    if (ai && verificationStatus !== "unverified") {
-      const score = normalizeScore(ai.score);
-      const scorePass = ai.pass && score >= criterion.minScore;
-      const pass = criterion.hardGate ? verificationStatus === "verified" && scorePass : scorePass;
-      const verificationGap = verificationStatus === "partial" ? ["当前只有部分/静态证据，尚不足以证明该项已在真实运行环境完全通过"] : [];
-      return {
-        criterionId: criterion.id, score, pass, verificationStatus,
-        evidence: ai.evidence.slice(0, 6), gaps: [...verificationGap, ...ai.gaps.slice(0, 6)],
-        testCaseIds: ai.testCaseIds.filter((id) => mappedCases.includes(id)).length ? ai.testCaseIds.filter((id) => mappedCases.includes(id)) : mappedCases,
-      };
-    }
-    const score = related.length ? Math.round(related.reduce((sum, item) => sum + (item.accuracy + item.evidence + item.completeness) / 3, 0) / related.length) : 0;
-    const scorePass = score >= criterion.minScore;
-    const pass = verificationStatus === "unverified" ? false : criterion.hardGate ? verificationStatus === "verified" && scorePass : scorePass;
-    const mappedRunsCompleted = mappedCases.length > 0 && mappedStatuses.some((status) => status === "verified" || status === "partial");
-    const gaps = verificationStatus === "unverified"
-      ? [mappedRunsCompleted && !hasJudgement ? "测试已执行，但评审模型未返回逐题或逐标准判定；该项标记为待补评审，不能按 0 分判定产品失败" : mappedCases.length ? "当前运行时没有该验收项所需的真实证据能力；该项标记为未验证，不把解析器/Runner能力缺失误判为产品失败" : "该 criterion 没有映射到任何测试题"]
-      : verificationStatus === "partial"
-        ? ["只有部分/静态证据，需要真实 Runner / 视觉审查 / 人工验收才能完全确认", ...(scorePass ? [] : ["现有证据得分未达到最低分"]) ]
-        : scorePass ? [] : ["映射测试未达到 criterion 最低分"];
-    return { criterionId: criterion.id, score, pass, verificationStatus, evidence: related.map((item) => `${item.testCaseId}: ${item.reason}`).slice(0, 4), gaps, testCaseIds: mappedCases };
-  });
-  const totalWeight = criteria.reduce((sum, item) => sum + item.weight, 0) || 1;
-  const effectiveWeight = (criterion: AcceptanceCriterion) => {
-    const status = criterionScores.find((item) => item.criterionId === criterion.id)?.verificationStatus;
-    return status === "verified" ? criterion.weight : status === "partial" ? criterion.weight * 0.5 : 0;
-  };
-  const scoredWeight = criteria.reduce((sum, criterion) => sum + effectiveWeight(criterion), 0);
-  const rubricScore = criteria.length && scoredWeight > 0
-    ? Math.round(criteria.reduce((sum, criterion) => sum + (criterionScores.find((item) => item.criterionId === criterion.id)?.score ?? 0) * effectiveWeight(criterion), 0) / scoredWeight)
-    : undefined;
-  const verifiedWeight = criteria.reduce((sum, criterion) => sum + (criterionScores.find((item) => item.criterionId === criterion.id)?.verificationStatus === "verified" ? criterion.weight : 0), 0);
-  const verifiedRubricCoverage = criteria.length ? Math.round(verifiedWeight / totalWeight * 100) : 100;
-  const unverifiedCriterionIds = criterionScores.filter((item) => item.verificationStatus !== "verified").map((item) => item.criterionId);
-  return { criterionScores, rubricScore, verifiedRubricCoverage, unverifiedCriterionIds };
-}
-
-
-/**
- * 归一化 AI 评分：部分模型会把 0-100 百分制答成 0-1 比例（0.92），
- * 直接渲染会出现「准确率 1%」这种假数据；(0,1] 一律按比例放大，其余 clamp 到 0-100。
- * 真打出 1 分的场景几乎不存在，1.0 反而更常是「满分比例」，所以按比例处理。
- */
-function normalizeScore(value: number): number {
-  const percent = value > 0 && value <= 1 ? value * 100 : value;
-  return Math.round(Math.min(100, Math.max(0, percent)));
 }
 
 function demoScore(runs: TargetRunResult[]): Omit<EvaluationResult, "averageCost" | "averageLatencyMs"> {
@@ -247,9 +155,9 @@ export async function evaluateRuns(args: {
     const preliminaryKnownIds = new Set(evaluationPayload.testCases.map((testCase) => testCase.id));
     const preliminaryCaseScores = (ai.cases ?? []).filter((item) => preliminaryKnownIds.has(item.testCaseId)).map((item) => ({
       testCaseId: item.testCaseId,
-      accuracy: normalizeScore(item.accuracy),
-      evidence: normalizeScore(item.evidence),
-      completeness: normalizeScore(item.completeness),
+      accuracy: normalizeEvaluationScore(item.accuracy),
+      evidence: normalizeEvaluationScore(item.evidence),
+      completeness: normalizeEvaluationScore(item.completeness),
       reason: item.reason.slice(0, 200),
     }));
     const preliminaryRubric = deriveCriterionScores(rubric, args.testCases, preliminaryCaseScores, args.runs, ai.criteria);
@@ -306,16 +214,16 @@ export async function evaluateRuns(args: {
       .filter((item) => knownIds.has(item.testCaseId))
       .map((item) => ({
         testCaseId: item.testCaseId,
-        accuracy: normalizeScore(item.accuracy),
-        evidence: normalizeScore(item.evidence),
-        completeness: normalizeScore(item.completeness),
+        accuracy: normalizeEvaluationScore(item.accuracy),
+        evidence: normalizeEvaluationScore(item.evidence),
+        completeness: normalizeEvaluationScore(item.completeness),
         reason: item.reason.slice(0, 200),
       }));
     if (!caseScores.length) warnings.push(`评审留痕：评阅模型未返回逐题分数，本轮差距归因只能定位到执行失败题`);
     const rubricResult = deriveCriterionScores(rubric, args.testCases, caseScores, args.runs, ai.criteria);
     if (rubric.length && rubricResult.criterionScores.some((item) => item.testCaseIds.length === 0)) warnings.push(`评审留痕：部分 Acceptance Criterion 没有对应测试题，Rubric Coverage 不完整`);
     core = {
-      accuracy: normalizeScore(ai.accuracy), evidence: normalizeScore(ai.evidence), riskCoverage: normalizeScore(ai.riskCoverage), completeness: normalizeScore(ai.completeness), safety: ai.safety, notes: ai.notes, failures: ai.failures, caseScores,
+      accuracy: normalizeEvaluationScore(ai.accuracy), evidence: normalizeEvaluationScore(ai.evidence), riskCoverage: normalizeEvaluationScore(ai.riskCoverage), completeness: normalizeEvaluationScore(ai.completeness), safety: ai.safety, notes: ai.notes, failures: ai.failures, caseScores,
       rubricScore: rubricResult.rubricScore, verifiedRubricCoverage: rubricResult.verifiedRubricCoverage, unverifiedCriterionIds: rubricResult.unverifiedCriterionIds, criterionScores: rubricResult.criterionScores,
     };
   } else {

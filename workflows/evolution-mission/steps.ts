@@ -6,7 +6,7 @@ import {
   type EvolutionWorkflowResult,
   type EvolutionWorkflowRunInput,
 } from "@evolution/contracts";
-import { applyDeterministicRoundtripEvidence, mapTestsToRubric, materializeAcceptedChampionPackage, normalizeAcceptanceRubric, normalizeEvalSuiteForProject, resetDownstream, rubricSuiteCoverage, rubricValidation } from "@evolution/core";
+import { applyDeterministicRoundtripEvidence, baselineReadiness, mapTestsToRubric, materializeAcceptedChampionPackage, normalizeAcceptanceRubric, normalizeEvalSuiteForProject, resetDownstream, rubricSuiteCoverage, rubricValidation } from "@evolution/core";
 import {
   advanceServerCampaignPreparation,
   buildServerHarnessPlan,
@@ -16,6 +16,7 @@ import {
 } from "@evolution/harness";
 import { getServerProductionRuntime } from "../../apps/backend/src/services/production-runtime";
 import { runServerAi } from "../../apps/backend/src/services/ai-gateway";
+import { runServerMissionBaseline } from "../../apps/backend/src/services/server-baseline";
 import { serverAiConfigured } from "../../apps/backend/src/server-env";
 
 function controlJob(input:EvolutionWorkflowRunInput,args:{
@@ -350,7 +351,48 @@ export async function executeServerControlStep(
       })};
     }
 
-    const outcome=await advanceServerCampaignPreparation(mission,{
+    let campaignMission=mission;
+    if(!baselineReadiness(campaignMission).ready){
+      const baselineOutcome=await runServerMissionBaseline(campaignMission);
+      campaignMission=baselineOutcome.project;
+      await runtime.missions.save(campaignMission);
+      await runtime.events.append(createEvolutionEvent({
+        id:`evt-${input.controlJobId}-campaign-baseline-${iteration}`,
+        missionId:input.missionId,jobId:input.controlJobId,checkpointId:plan.checkpoint.id,
+        type:baselineOutcome.ready?"ActionCompleted":"JobProgress",
+        source:"vercel-workflow-control",
+        payload:{
+          action,
+          phase:"baseline",
+          serverNative:true,
+          ready:baselineOutcome.ready,
+          reason:baselineOutcome.reason,
+          capabilityGaps:baselineOutcome.capabilityGaps,
+          verified:baselineOutcome.baseline.runs.filter((run)=>run.verificationStatus==="verified").length,
+          partial:baselineOutcome.baseline.runs.filter((run)=>run.verificationStatus==="partial").length,
+          unverified:baselineOutcome.baseline.runs.filter((run)=>run.verificationStatus==="unverified").length,
+          failed:baselineOutcome.baseline.runs.filter((run)=>run.verificationStatus==="failed").length,
+        },
+      }));
+      if(!baselineOutcome.ready){
+        await runtime.jobs.put(controlJob(input,{
+          status:"waiting",
+          startedAt:input.requestedAt,
+          progress:{percent:28,detail:baselineOutcome.reason.slice(0,240)},
+        }));
+        return {control:"stop",result:result(input,{
+          status:"waiting-action",iterations:iteration+1,nextAction:action,
+          checkpointId:plan.checkpoint.id,reason:baselineOutcome.reason,
+        })};
+      }
+      await runtime.jobs.put(controlJob(input,{
+        status:"running",
+        startedAt:input.requestedAt,
+        progress:{percent:30,detail:"Server Baseline 已完成并达到诊断证据门槛"},
+      }));
+    }
+
+    const outcome=await advanceServerCampaignPreparation(campaignMission,{
       problemAnalysis:(payload)=>runServerAi("problem-analysis",payload),
       diagnose:(payload)=>runServerAi("diagnose",payload),
       plan:(payload)=>runServerAi("plan",payload),
