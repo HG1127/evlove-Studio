@@ -1,4 +1,4 @@
-import { beginReleaseCycle, experimentNeedsEvidenceRepair, buildExperimentGapAdvicePayload, buildGapAdvicePayload, fallbackExperimentAdvice, projectHasOnlineReleaseTarget } from "@evolution/core";
+import { beginReleaseCycle, completeAutonomousMission, experimentNeedsEvidenceRepair, buildExperimentGapAdvicePayload, buildGapAdvicePayload, fallbackExperimentAdvice, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget } from "@evolution/core";
 import { deliveryReadiness } from "./delivery-readiness";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -1999,49 +1999,30 @@ export function useProjectRuntime(initialProject: EvolveProject) {
   }, [commit, materializeOutputs, projectId, runCampaignRound]);
 
   const finishAutonomousSuccess = useCallback(async () => {
-    await materializeOutputs();
-    let current = projectRef.current;
-    const offlineDelivery = !projectHasOnlineReleaseTarget(current);
-    if (offlineDelivery && current.lessons.length === 0) {
-      pushActivity("离线成果已冻结 · 自动提炼本轮 Lesson", undefined, projectId);
-      await distill();
-      current = projectRef.current;
-    }
-    if (offlineDelivery && current.lessons.length > 0 && current.nextQueue.length === 0) {
-      pushActivity("Lesson 已形成 · 自动生成 Next Evolve Queue", undefined, projectId);
-      await generateNextQueue();
-    }
+    const current = projectRef.current;
+    const online = projectHasOnlineReleaseTarget(current);
+    if (online && !projectHasLiveReleaseDecision(current)) throw new Error("线上 Target 尚无真实 Promote / Rollback 决策，不能标记自主闭环完成");
+    if (!current.outputArtifacts.some((artifact) => artifact.accepted && artifact.kind === "primary")) throw new Error("最终成果尚未完成 Gate F 打包");
+    if (!current.lessons.length || !current.nextQueue.length) throw new Error("Lesson / Next Queue 尚未完成，不能结束自主闭环");
     const finishedAt = now();
-    commit((state) => ({
-      ...state,
-      stage: offlineDelivery ? "learning" : "release",
-      campaign: {
-        ...state.campaign,
-        status: "completed",
-        completedAt: finishedAt,
-        stopReason: offlineDelivery
-          ? "当前进化要求已全部通过：成果冻结、离线经验沉淀与下一轮建议已完成"
-          : "当前进化要求已全部通过：独立验证与成果完整性验收完成；线上发布按需执行",
-        schedule: { ...state.campaign.schedule, enabled: false, nextRunAt: undefined },
-      },
-      gates: state.gates.map((gate) => gate.id === "release-ready" && offlineDelivery
-        ? { ...gate, status: "approved", approvedAt: finishedAt, note: "离线成果已通过完整验收并自动打包；生产发布路径不适用" }
-        : gate),
-    }));
-    setStage(offlineDelivery ? "learning" : "release");
-    setStatus({ busy: false, message: offlineDelivery
-      ? "进化完成：成果、Lesson 与下一轮建议已准备好，等待你验收"
-      : "进化完成：最终成果已通过完整验收并打包；线上发布可按需继续" });
-    pushActivity(offlineDelivery
-      ? "自主进化完成 · 离线闭环（成果 + Lesson + Next Queue）已完成"
-      : "自主进化完成 · 最终成果已打包，线上发布按需执行", undefined, projectId);
-  }, [commit, distill, generateNextQueue, materializeOutputs, projectId, setStatus]);
+    const reason=online
+      ? "当前进化要求已全部通过：成果冻结、真实线上 Release 决策、经验沉淀与下一轮建议已完成"
+      : "当前进化要求已全部通过：成果冻结、离线经验沉淀与下一轮建议已完成";
+    commit((state) => completeAutonomousMission(state,{at:finishedAt,reason}));
+    setStage("learning");
+    setStatus({ busy: false, message: online
+      ? "进化完成：真实上线决策、成果、Lesson 与下一轮建议均已闭环"
+      : "进化完成：成果、Lesson 与下一轮建议已准备好，等待你验收" });
+    pushActivity(online
+      ? "自主进化完成 · 线上闭环（Release + Outcome + Lesson + Next Queue）已完成"
+      : "自主进化完成 · 离线闭环（成果 + Lesson + Next Queue）已完成", undefined, projectId);
+  }, [commit, projectId, setStatus]);
 
   // 自主编排器：React 只负责执行纯状态机给出的动作，不再自己决定流程分支。
   // 每一步结束后重新读取最新 Project，再决定继续、修复、补证、打包或请求人工。
   const runAutoPilot = useCallback(async () => {
     const cur = () => projectRef.current;
-    if (productionRuntimeMode() !== "local" && await shouldUseServerAutoPilot()) {
+    if (productionRuntimeMode() !== "local" && await shouldUseServerAutoPilot(cur())) {
       try {
         const started = await startServerEvolutionWorkflow(projectId);
         setStatus({ busy: false, message: "Durable Workflow 已接管自主进化，关闭浏览器后仍会继续执行" });
@@ -2054,13 +2035,12 @@ export function useProjectRuntime(initialProject: EvolveProject) {
     pushActivity("自主进化开始 · Orchestrator 接管后续理解、进化、验证与收敛", undefined, projectId);
     const executor = createHarnessActionExecutor<HarnessPlan>(projectId, {
       complete: async () => {
-        setStatus({ busy: false, message: "进化完成：最终成果已准备好，等待你验收" });
-        pushActivity("自主进化已完成 · 等待用户验收成果", undefined, projectId);
+        await finishAutonomousSuccess();
         return { control: "stop" };
       },
       package: async () => {
-        await finishAutonomousSuccess();
-        return { control: "stop" };
+        await materializeOutputs();
+        return { control: "continue" };
       },
       distill: async () => { await distill(); },
       "next-queue": async () => { await generateNextQueue(); },
@@ -2180,7 +2160,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
       setStatus({ busy: false, error: message });
       pushActivity(`Harness Failure Router · ${failure.action} · ${failure.disposition.reason}：${message}`, undefined, projectId);
     }
-  }, [commit, compileAcceptanceRubric, deepenUnderstanding, distill, executeValidation, finishAutonomousSuccess, generateEvalSuite, generateNextQueue, projectId, runCampaign, setStatus]);
+  }, [commit, compileAcceptanceRubric, deepenUnderstanding, distill, executeValidation, finishAutonomousSuccess, generateEvalSuite, generateNextQueue, materializeOutputs, projectId, runCampaign, setStatus]);
 
 
   /**

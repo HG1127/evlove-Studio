@@ -5,9 +5,11 @@ import {
   SandboxHealthSchema,
   type EvolutionWorkflowCapabilities,
   type EvolutionWorkflowStartResponse,
+  type EvolveProject,
   type SandboxBrowserHealth,
   type SandboxHealth,
 } from "@evolution/contracts";
+import { projectHasOnlineReleaseTarget } from "@evolution/core";
 
 async function apiJson(url:string,init?:RequestInit){
   const response=await fetch(url,init);
@@ -54,10 +56,13 @@ export async function checkServerBrowserHealth():Promise<SandboxBrowserHealth>{
   return SandboxBrowserHealthSchema.parse(await apiJson("/api/evolution/browser-health"));
 }
 
-export async function shouldUseServerAutoPilot(){
+export async function shouldUseServerAutoPilot(project:EvolveProject){
   try{
     const capability=await getServerWorkflowCapabilities();
-    return capability.available&&capability.fullAuto;
+    if(!capability.available||!capability.durable)return false;
+    return projectHasOnlineReleaseTarget(project)
+      ? capability.closure.onlineFullAuto
+      : capability.closure.offlineFullAuto;
   }catch{
     return false;
   }

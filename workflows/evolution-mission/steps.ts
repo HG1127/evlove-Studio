@@ -6,7 +6,7 @@ import {
   type EvolutionWorkflowResult,
   type EvolutionWorkflowRunInput,
 } from "@evolution/contracts";
-import { applyDeterministicRoundtripEvidence, baselineReadiness, mapTestsToRubric, materializeAcceptedChampionPackage, normalizeAcceptanceRubric, normalizeEvalSuiteForProject, resetDownstream, rubricSuiteCoverage, rubricValidation } from "@evolution/core";
+import { applyDeterministicRoundtripEvidence, baselineReadiness, completeAutonomousMission, mapTestsToRubric, materializeAcceptedChampionPackage, normalizeAcceptanceRubric, normalizeEvalSuiteForProject, resetDownstream, rubricSuiteCoverage, rubricValidation } from "@evolution/core";
 import {
   advanceServerCampaignPreparation,
   buildServerHarnessPlan,
@@ -774,6 +774,8 @@ export async function executeServerControlStep(
   }
 
   if(action==="complete"){
+    const completed=completeAutonomousMission(reconcileAttentionRequest(mission),{at:now,reason:plan.decision.reason});
+    await runtime.missions.save(completed);
     await runtime.jobs.put(controlJob(input,{
       status:"completed",startedAt:input.requestedAt,finishedAt:now,
       progress:{percent:100,detail:"Mission durable control loop 已完成"},

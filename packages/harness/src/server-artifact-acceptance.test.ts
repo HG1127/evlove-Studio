@@ -1,7 +1,8 @@
 import {describe,expect,it,vi} from "vitest";
 import type {Candidate,EvolveProject} from "@evolution/contracts";
-import {campaignGoalSatisfied,campaignStopReason,evidenceFingerprint} from "@evolution/core";
+import {campaignGoalSatisfied,campaignStopReason,completeAutonomousMission,evidenceFingerprint,materializeAcceptedChampionPackage} from "@evolution/core";
 import {runServerArtifactAcceptance} from "./server-artifact-acceptance";
+import {buildServerHarnessPlan} from "./server-plan";
 
 function fixture(pass=true){
   const now="2026-09-20T14:00:00.000Z";
@@ -43,6 +44,18 @@ describe("server artifact acceptance",()=>{
     expect(outcome.project.gates.find((gate)=>gate.id==="artifact-ready")?.status).toBe("approved");
     expect(campaignGoalSatisfied(outcome.project)).toBe(true);
     expect(campaignStopReason(outcome.project)).toContain("全部通过");
+
+    expect(buildServerHarnessPlan(outcome.project).decision.action).toBe("package");
+    const packaged={...outcome.project,outputArtifacts:materializeAcceptedChampionPackage(outcome.project,"2026-09-20T14:31:00.000Z")};
+    expect(buildServerHarnessPlan(packaged).decision.action).toBe("distill");
+    const learned={...packaged,lessons:[{id:"lesson",title:"经验",summary:"有效",reusable:true,effect:"改善",limit:"离线",trigger:[],method:[],validatedOn:["offline"],status:"lesson" as const}]};
+    expect(buildServerHarnessPlan(learned).decision.action).toBe("next-queue");
+    const queued={...learned,nextQueue:[{id:"next",title:"下一轮",reason:"继续",priority:"P1" as const,source:"lesson",suggestedMetrics:[]}]};
+    const completePlan=buildServerHarnessPlan(queued);
+    expect(completePlan.decision.action).toBe("complete");
+    const completed=completeAutonomousMission(queued,{at:"2026-09-20T14:32:00.000Z",reason:completePlan.decision.reason});
+    expect(completed.campaign.status).toBe("completed");
+    expect(completed.campaign.checkpoint).toBeUndefined();
   });
 
   it("pauses without repair when frozen evidence is unavailable",async()=>{

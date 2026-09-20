@@ -349,6 +349,39 @@ describe("autonomous orchestrator", () => {
     expect(deriveAutonomousDecision(base).action).toBe("complete");
   });
 
+  it("blocks online completion until a real live Release decision exists, then closes learning", () => {
+    const candidate = CandidateSchema.parse({
+      id:"online-complete",name:"线上成果",change:"完成",status:"passed",artifactBuildStatus:"ready",
+      artifactSnapshots:[CandidateArtifactSnapshotSchema.parse({id:"snap-online-complete",sourceArtifactId:demoProject.sourceArtifacts[0]!.id,name:"result.txt",mimeType:"text/plain",content:"final",contentHash:"hash-online-complete",createdAt:"now"})],
+    });
+    const base = project({
+      targetConnection:{adapter:"http",connectionId:"production",status:"connected",label:"Production HTTP"},
+      candidates:[candidate],
+      experimentRun:{...demoProject.experimentRun,status:"completed",winnerId:candidate.id},
+      validationRun:{...demoProject.validationRun,status:"completed",candidateId:candidate.id,recommendation:"release",evaluation:{...demoProject.baselineRun.result!,demoJudged:false},checks:[],runs:[],baselineRuns:[]},
+      artifactAcceptance:{...demoProject.artifactAcceptance,status:"passed",candidateId:candidate.id,hardGatePass:true,overallScore:96,coverageScore:96,integrityScore:96,pairwiseScore:96},
+      outputArtifacts:[{id:"out-online-complete",projectId:demoProject.id,round:1,versionLabel:"S1",candidateId:candidate.id,name:"result.txt",mimeType:"text/plain",kind:"primary",content:"final",description:"accepted",sourceArtifactIds:[demoProject.sourceArtifacts[0]!.id],isChampion:true,accepted:true,createdAt:"now"} as EvolveProject["outputArtifacts"][number]],
+      release:{...demoProject.release,status:"idle",evidenceMode:"none"},
+      lessons:[],nextQueue:[],
+      attentionRequests:[],
+    });
+    const binding=evidenceFingerprint(base,candidate);
+    base.validationRun.evidenceFingerprint=binding;
+    base.artifactAcceptance.evidenceFingerprint=binding;
+
+    const blocked=deriveAutonomousDecision(base);
+    expect(blocked.action).toBe("wait-human");
+    expect(blocked.stage).toBe("release");
+    expect(blocked.attention?.type).toBe("capability");
+
+    base.release={...base.release,status:"promoted",evidenceMode:"live",healthy:true,observationStatus:"healthy"};
+    expect(deriveAutonomousDecision(base).action).toBe("distill");
+    base.lessons=[{id:"lesson-live",title:"线上经验",summary:"有效",reusable:true,effect:"改善",limit:"线上",trigger:[],method:[],validatedOn:["production"],status:"verified-skill"}];
+    expect(deriveAutonomousDecision(base).action).toBe("next-queue");
+    base.nextQueue=[{id:"next-live",title:"下一轮",reason:"继续",priority:"P1",source:"lesson",suggestedMetrics:[]}];
+    expect(deriveAutonomousDecision(base).action).toBe("complete");
+  });
+
   it("resolves a stale attention request automatically after the blocker disappears", () => {
     const base = project({ attentionRequests: [] });
     const blocked = reconcileAttentionRequest(base, {

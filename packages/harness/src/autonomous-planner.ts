@@ -5,6 +5,8 @@ import {
   deliveryReadiness,
   experimentNeedsEvidenceRepair,
   goalReadiness,
+  projectHasLiveReleaseDecision,
+  projectHasOnlineReleaseTarget,
   rubricSuiteCoverage,
   rubricValidation,
 } from "@evolution/core";
@@ -257,11 +259,25 @@ export function deriveAutonomousDecision(project: EvolveProject): AutonomousDeci
   }
 
   const acceptedOutput = project.outputArtifacts.some((artifact) => artifact.accepted && artifact.kind === "primary");
-  const offlineDelivery = project.targetConnection.adapter !== "http";
   if (deliveryReadiness(project).ready && acceptedOutput) {
-    if (offlineDelivery && project.lessons.length === 0) return { action: "distill", reason: "离线成果已通过完整验收，自动沉淀本轮 Lesson", stage: "learning" };
-    if (offlineDelivery && project.nextQueue.length === 0) return { action: "next-queue", reason: "Lesson 已形成，自动生成下一轮 Evolve Queue", stage: "learning" };
-    return { action: "complete", reason: offlineDelivery ? "离线成果、经验与下一轮建议均已准备完成" : "最终成果已通过验收并准备完成", stage: offlineDelivery ? "learning" : "release" };
+    const onlineRelease = projectHasOnlineReleaseTarget(project);
+    if (onlineRelease && !projectHasLiveReleaseDecision(project)) {
+      const request = attention({
+        type: "capability",
+        title: "线上成果已验收，等待真实 Release 决策",
+        reason: "当前 Candidate 已通过 Gate F 并完成打包，但线上 Target 尚无 live Promote / Rollback 证据；不能把“已打包”冒充“已上线闭环”。",
+        stage: "release",
+        riskLevel: "high",
+        blocking: true,
+        questions: [],
+        suggestedAction: "先在最终验收明确授权 Release Ready，再使用 Release 治理入口执行 Preview/Health/Promote，或在异常时 Rollback；产生真实 live 决策后系统会继续沉淀经验与 Next Queue。",
+        criterionIds: [],
+      });
+      return { action: "wait-human", reason: request.reason, stage: request.stage, attention: request };
+    }
+    if (project.lessons.length === 0) return { action: "distill", reason: onlineRelease ? "真实 Release 决策已完成，自动沉淀本轮 Lesson" : "离线成果已通过完整验收，自动沉淀本轮 Lesson", stage: "learning" };
+    if (project.nextQueue.length === 0) return { action: "next-queue", reason: "Lesson 已形成，自动生成下一轮 Evolve Queue", stage: "learning" };
+    return { action: "complete", reason: onlineRelease ? "线上 Release 决策、经验与下一轮建议均已完成" : "离线成果、经验与下一轮建议均已准备完成", stage: "learning" };
   }
   if (campaignGoalSatisfied(project)) return { action: "package", reason: "完整验收已通过，冻结并打包最终成果", stage: "release" };
   if (project.inputUnderstanding?.status !== "ready") return { action: "understand", reason: "先完整理解输入与隐含约束", stage: "target" };

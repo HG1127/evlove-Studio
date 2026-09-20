@@ -47,6 +47,13 @@ export const EvolutionWorkflowCapabilitiesSchema=z.object({
   fullAuto:z.boolean(),
   durable:z.boolean(),
   serverAi:z.boolean(),
+  closure:z.object({
+    codeReady:z.boolean().default(false),
+    offlineFullAuto:z.boolean().default(false),
+    onlineFullAuto:z.boolean().default(false),
+    configBlocked:z.array(z.object({capability:z.string(),reason:z.string()})).default([]),
+    externalCapabilityBlocked:z.array(z.object({capability:z.string(),reason:z.string()})).default([]),
+  }).prefault({}),
   serverNativeActions:z.array(z.string()),
   conditionalActions:z.array(z.string()).default([]),
   blockedActions:z.array(z.object({action:z.string(),reason:z.string()})).default([]),

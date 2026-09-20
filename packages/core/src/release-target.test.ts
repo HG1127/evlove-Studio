@@ -1,6 +1,6 @@
 import { describe,expect,it } from "vitest";
 import type { EvolveProject, ReleaseState } from "@evolution/contracts";
-import { beginReleaseCycle, projectHasOnlineReleaseTarget, projectReleaseMode } from "./release-target";
+import { beginReleaseCycle, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, projectReleaseMode } from "./release-target";
 
 const baseRelease:ReleaseState={
   status:"idle",
@@ -46,5 +46,17 @@ describe("release target domain",()=>{
     expect(next.deploymentId).toBeUndefined();
     expect(next.trafficPercent).toBe(0);
     expect(next.evidenceMode).toBe("none");
+  });
+
+  it("requires a real live terminal release decision for online closure",()=>{
+    const project={
+      targetConnection:{adapter:"http"},
+      release:{...baseRelease,status:"promoted",evidenceMode:"live",healthy:true,observationStatus:"healthy"},
+    } as unknown as EvolveProject;
+    expect(projectHasLiveReleaseDecision(project)).toBe(true);
+    project.release={...project.release,observationStatus:"observing"};
+    expect(projectHasLiveReleaseDecision(project)).toBe(false);
+    project.release={...project.release,status:"rolled-back",observationStatus:"healthy"};
+    expect(projectHasLiveReleaseDecision(project)).toBe(true);
   });
 });

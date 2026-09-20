@@ -54,6 +54,22 @@ function readRunnerCapabilities(): RunnerCapabilitySnapshot | undefined {
   }
 }
 
+function workflowCapabilityMessage(capabilities: EvolutionWorkflowCapabilities) {
+  if (capabilities.fullAuto) return "Durable Workflow 已具备离线 + 线上完整 AutoPilot 接管能力";
+  return [
+    capabilities.closure.offlineFullAuto
+      ? "离线闭环：FULL AUTO"
+      : capabilities.closure.codeReady
+        ? "离线闭环代码已就绪，但仍有配置阻塞"
+        : "离线闭环代码尚未就绪",
+    capabilities.closure.onlineFullAuto
+      ? "线上闭环：FULL AUTO"
+      : `线上闭环：${capabilities.closure.externalCapabilityBlocked.map((item) => item.capability).join("、") || "待能力接入"}`,
+    capabilities.migrationPendingActions.length ? `待迁：${capabilities.migrationPendingActions.join("、")}` : "",
+    capabilities.closure.configBlocked.length ? `待配置：${capabilities.closure.configBlocked.map((item) => item.capability).join("、")}` : "",
+  ].filter(Boolean).join("；");
+}
+
 const stateStyles: Record<ReadinessState, string> = {
   ready: "border-emerald-200 bg-emerald-50 text-emerald-800",
   local: "border-sky-200 bg-sky-50 text-sky-800",
@@ -114,6 +130,7 @@ export function EvolutionReadinessCenter() {
   const p02Ready = Boolean(supabaseReady && realtimeCheck.health?.ready);
   const p03Connected = Boolean(workflowCheck.capabilities?.available && workflowCheck.capabilities?.durable);
   const p03FullAuto = Boolean(workflowCheck.capabilities?.fullAuto);
+  const p03OfflineAuto = Boolean(workflowCheck.capabilities?.closure.offlineFullAuto);
   const p04Ready = Boolean(sandboxCheck.health?.ready);
   const p04BrowserReady = Boolean(browserCheck.health?.ready);
   const releaseReadReady = Boolean(releaseCheck.capabilities?.readEnabled && releaseCheck.health?.ready);
@@ -188,13 +205,7 @@ export function EvolutionReadinessCenter() {
       setWorkflowCheck({
         busy: false,
         capabilities,
-        message: capabilities.fullAuto
-          ? "Durable Workflow 已具备完整 AutoPilot 接管能力"
-          : [
-              capabilities.migrationPendingActions.length ? `待迁：${capabilities.migrationPendingActions.join("、")}` : "",
-              capabilities.conditionalActions.length ? `条件执行：${capabilities.conditionalActions.join("、")}` : "",
-              capabilities.blockedActions.length ? `待配置：${capabilities.blockedActions.map((item)=>item.action).join("、")}` : "",
-            ].filter(Boolean).join("；") || "Workflow 已连接",
+        message: workflowCapabilityMessage(capabilities),
       });
     }).catch((error) => {
       if (active) setWorkflowCheck({ busy: false, message: error instanceof Error ? error.message : String(error) });
@@ -250,13 +261,7 @@ export function EvolutionReadinessCenter() {
     void getServerWorkflowCapabilities(true).then((capabilities) => setWorkflowCheck({
       busy: false,
       capabilities,
-      message: capabilities.fullAuto
-        ? "Durable Workflow 已具备完整 AutoPilot 接管能力"
-        : [
-            capabilities.migrationPendingActions.length ? `待迁：${capabilities.migrationPendingActions.join("、")}` : "",
-            capabilities.conditionalActions.length ? `条件执行：${capabilities.conditionalActions.join("、")}` : "",
-            capabilities.blockedActions.length ? `待配置：${capabilities.blockedActions.map((item)=>item.action).join("、")}` : "",
-          ].filter(Boolean).join("；") || "Workflow 已连接",
+      message: workflowCapabilityMessage(capabilities),
     })).catch((error) => setWorkflowCheck({ busy: false, message: error instanceof Error ? error.message : String(error) }));
   };
 
@@ -457,17 +462,19 @@ export function EvolutionReadinessCenter() {
                 <div className="mt-1 text-[11px] text-slate-500">{workflowCheck.message || "等待 Workflow capability 检测"}</div>
               </div>
               <div className="flex items-center gap-2">
-                <Badge className={p03FullAuto ? "border-emerald-200 bg-emerald-50 text-emerald-700" : p03Connected ? "border-amber-200 bg-amber-50 text-amber-700" : "border-slate-200 bg-slate-50 text-slate-600"}>{p03FullAuto ? "FULL AUTO" : p03Connected ? "PARTIAL" : "CHECK"}</Badge>
+                <Badge className={p03FullAuto || p03OfflineAuto ? "border-emerald-200 bg-emerald-50 text-emerald-700" : p03Connected ? "border-amber-200 bg-amber-50 text-amber-700" : "border-slate-200 bg-slate-50 text-slate-600"}>{p03FullAuto ? "FULL AUTO" : p03OfflineAuto ? "OFFLINE AUTO" : p03Connected ? "PARTIAL" : "CHECK"}</Badge>
                 <Button size="sm" variant="secondary" onClick={refreshWorkflow} disabled={workflowCheck.busy}><RefreshCcw className={`size-3.5 ${workflowCheck.busy ? "animate-spin" : ""}`} />检测 Workflow</Button>
               </div>
             </div>
-            <div className="mt-3 grid grid-cols-2 gap-2 text-[10px] sm:grid-cols-3 xl:grid-cols-6">
+            <div className="mt-3 grid grid-cols-2 gap-2 text-[10px] sm:grid-cols-4 xl:grid-cols-8">
               <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>durable</b><div className={workflowCheck.capabilities?.durable ? "text-emerald-600" : "text-slate-400"}>{workflowCheck.capabilities?.durable ? "READY" : "—"}</div></div>
               <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>server AI</b><div className={workflowCheck.capabilities?.serverAi ? "text-emerald-600" : "text-amber-600"}>{workflowCheck.capabilities?.serverAi ? "READY" : "NOT CONFIGURED"}</div></div>
               <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>server actions</b><div className="text-sky-600">{workflowCheck.capabilities?.serverNativeActions.length ?? 0}</div></div>
               <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>conditional</b><div className={workflowCheck.capabilities?.conditionalActions.length ? "text-sky-600" : "text-slate-400"}>{workflowCheck.capabilities?.conditionalActions.join(" / ") || "NONE"}</div></div>
               <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>migration</b><div className={workflowCheck.capabilities?.migrationPendingActions.length ? "text-amber-600" : "text-emerald-600"}>{workflowCheck.capabilities?.migrationPendingActions.join(" / ") || "NONE"}</div></div>
               <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>blocked</b><div className={workflowCheck.capabilities?.blockedActions.length ? "text-amber-600" : "text-emerald-600"}>{workflowCheck.capabilities?.blockedActions.map((item)=>item.action).join(" / ") || "NONE"}</div></div>
+              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>offline closure</b><div className={workflowCheck.capabilities?.closure.offlineFullAuto ? "text-emerald-600" : "text-amber-600"}>{workflowCheck.capabilities?.closure.offlineFullAuto ? "FULL AUTO" : workflowCheck.capabilities?.closure.codeReady ? "CODE READY" : "BLOCKED"}</div></div>
+              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>online closure</b><div className={workflowCheck.capabilities?.closure.onlineFullAuto ? "text-emerald-600" : "text-amber-600"}>{workflowCheck.capabilities?.closure.onlineFullAuto ? "FULL AUTO" : workflowCheck.capabilities?.closure.externalCapabilityBlocked.map((item)=>item.capability).join(" / ") || "BLOCKED"}</div></div>
             </div>
           </div>
           <div className="rounded-xl border bg-white p-3">

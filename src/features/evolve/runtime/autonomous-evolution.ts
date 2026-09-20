@@ -1,6 +1,6 @@
 import type { AttentionRequest, EvolveProject } from "../schemas";
 import { deliveryReadiness } from "./delivery-readiness";
-import { projectHasOnlineReleaseTarget } from "@evolution/core";
+import { projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget } from "@evolution/core";
 import { deriveAttentionRequest } from "./autonomous-orchestrator";
 
 export { autonomousClarificationPlan, clarificationNeedsHuman } from "./autonomy-policy";
@@ -40,8 +40,10 @@ export function autonomousEvolutionState(project: EvolveProject, busy = false): 
   const targets = project.sourceArtifacts.filter((artifact) => artifact.role === "target");
   if (!targets.length) return "waiting-input";
   const hasAcceptedOutput = project.outputArtifacts.some((artifact) => artifact.accepted && artifact.kind === "primary");
-  const offlineClosureReady = projectHasOnlineReleaseTarget(project) || (project.lessons.length > 0 && project.nextQueue.length > 0);
-  if (deliveryReadiness(project).ready && hasAcceptedOutput && offlineClosureReady) return "completed";
+  const online = projectHasOnlineReleaseTarget(project);
+  const releaseClosureReady = !online || projectHasLiveReleaseDecision(project);
+  const learningClosureReady = project.lessons.length > 0 && project.nextQueue.length > 0;
+  if (deliveryReadiness(project).ready && hasAcceptedOutput && releaseClosureReady && learningClosureReady) return "completed";
   if (busy || project.campaign.status === "running" || project.campaign.status === "scheduled") return "running";
   if (project.inputUnderstanding?.status === "running") return "preparing";
   if (autonomousAttention(project)) return "attention";
@@ -52,11 +54,15 @@ export function autonomousProgress(project: EvolveProject) {
   const targetReady = project.gates.find((gate) => gate.id === "target-ready")?.status === "approved";
   const evolved = Boolean(project.searchChampion?.candidate && project.searchChampion.validation?.recommendation === "release" && project.searchChampion.artifactAcceptance?.status === "passed");
   const packaged = project.outputArtifacts.some((artifact) => artifact.accepted && artifact.kind === "primary");
-  const closureReady = projectHasOnlineReleaseTarget(project) ? packaged : packaged && project.lessons.length > 0 && project.nextQueue.length > 0;
+  const online = projectHasOnlineReleaseTarget(project);
+  const closureReady = packaged
+    && (!online || projectHasLiveReleaseDecision(project))
+    && project.lessons.length > 0
+    && project.nextQueue.length > 0;
   return [
     { id: "input", label: "任务已输入", done: project.sourceArtifacts.some((artifact) => artifact.role === "target") },
     { id: "contract", label: "目标与验收已建立", done: Boolean(targetReady && project.evalSuite.length && project.hiddenEvalSuite.length) },
     { id: "evolve", label: "自动进化已达标", done: evolved },
-    { id: "output", label: projectHasOnlineReleaseTarget(project) ? "成果已准备" : "成果与经验已准备", done: closureReady },
+    { id: "output", label: online ? "上线决策、成果与经验已准备" : "成果与经验已准备", done: closureReady },
   ];
 }

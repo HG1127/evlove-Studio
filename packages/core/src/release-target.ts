@@ -5,6 +5,15 @@ export function projectHasOnlineReleaseTarget(project:EvolveProject){
   return (!project.releaseTarget||project.releaseTarget.provider==="none")&&project.targetConnection.adapter==="http";
 }
 
+export function projectHasLiveReleaseDecision(project:EvolveProject){
+  if(!projectHasOnlineReleaseTarget(project))return false;
+  if(project.release.evidenceMode!=="live")return false;
+  if(project.release.status==="rolled-back")return true;
+  return project.release.status==="promoted"
+    && project.release.healthy!==false
+    && project.release.observationStatus!=="observing";
+}
+
 export function projectReleaseMode(project:EvolveProject){
   return project.releaseTarget?.mode??"progressive";
 }

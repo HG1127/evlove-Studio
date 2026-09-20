@@ -24,3 +24,4 @@ export * from "./experiment-winner";
 export * from "./validation-decision";
 export * from "./artifact-acceptance-settlement";
 export * from "./search-champion-settlement";
+export * from "./autonomous-completion";
