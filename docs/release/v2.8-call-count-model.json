@@ -1,0 +1,66 @@
+{
+  "kind": "modeled-call-count-not-wall-clock-benchmark",
+  "assumptions": {
+    "candidates": 6,
+    "cases": 8,
+    "finalists": 3,
+    "screeningCases": 3,
+    "batchSize": 4
+  },
+  "candidateExperiment": {
+    "v27HeavyPath": {
+      "candidateBuildCalls": 6,
+      "executeCalls": 48,
+      "judgeCalls": 6,
+      "populationJudgeCalls": 0,
+      "total": 60
+    },
+    "v28CodeZipOverlayFastPath": {
+      "candidateBuildCalls": 0,
+      "screeningExecuteBatchCalls": 6,
+      "populationJudgeCalls": 1,
+      "fullExecuteBatchCalls": 6,
+      "judgeCalls": 3,
+      "total": 16
+    },
+    "v28WhenFinalistsStillNeedAiBuild": {
+      "candidateBuildCalls": 3,
+      "screeningExecuteBatchCalls": 6,
+      "populationJudgeCalls": 1,
+      "fullExecuteBatchCalls": 6,
+      "judgeCalls": 3,
+      "total": 19
+    },
+    "callReductionFastPathPercent": 73.3,
+    "callReductionAiBuildPercent": 68.3
+  },
+  "baseline8Cases": {
+    "v27": {
+      "executeCalls": 8,
+      "judgeCalls": 1,
+      "total": 9
+    },
+    "v28": {
+      "executeBatchCalls": 2,
+      "judgeCalls": 1,
+      "total": 3
+    },
+    "reductionPercent": 66.7
+  },
+  "hiddenValidation8Cases": {
+    "v27": {
+      "executeCalls": 16,
+      "judgeCalls": 2,
+      "releaseJudgeCalls": 1,
+      "total": 19
+    },
+    "v28": {
+      "executeBatchCalls": 4,
+      "judgeCalls": 2,
+      "releaseJudgeCalls": 1,
+      "total": 7
+    },
+    "reductionPercent": 63.2
+  },
+  "note": "This models logical AI/Target call counts from the V2.7 vs V2.8 orchestration shape. Actual wall-clock depends on provider latency, rate limits, local/static evidence cases, cache hits and external runners."
+}

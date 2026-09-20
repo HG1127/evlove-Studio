@@ -1,0 +1,78 @@
+{
+  "zip": "/mnt/data/EvolveStudio_V2.5_AIStudio_Compatible(1).zip",
+  "entries": 165,
+  "usefulEntries": 160,
+  "textEntries": 151,
+  "softwareStructureSignals": {
+    "package_json": true,
+    "src_tree": true,
+    "tests": true
+  },
+  "semanticObject": "software-system",
+  "selectedTop20": [
+    "src/components/ui/input.tsx",
+    "src/features/evolve/ai/demo-provider.ts",
+    "src/features/evolve/ai/json-schemas.ts",
+    "src/features/evolve/ai/openai-provider.ts",
+    "src/features/evolve/ai/providers/byok.ts",
+    "src/features/evolve/ai/providers/registry.ts",
+    "src/features/evolve/ai/schemas.ts",
+    "src/features/evolve/components/adaptive-stage-guide.tsx",
+    "src/features/evolve/components/eval-suite-editor.tsx",
+    "src/features/evolve/components/evolution-composer.tsx",
+    "src/features/evolve/components/project-source-input.tsx",
+    "src/features/evolve/components/stage-panels.tsx",
+    "src/features/evolve/components/stage-progress.tsx",
+    "src/features/evolve/data/demo-eval-suite.ts",
+    "src/features/evolve/evaluation/gap.ts",
+    "src/features/evolve/evaluation/service.ts",
+    "src/features/evolve/runtime/acceptance-rubric.ts",
+    "src/features/evolve/runtime/api.ts",
+    "src/features/evolve/runtime/artifact-blob-store.ts",
+    "src/features/evolve/runtime/artifact-compatibility.ts"
+  ],
+  "selectedTop20TestFiles": 0,
+  "requiredCoreFilesPresent": {
+    "src/features/evolve/runtime/semantic-evolution.ts": true,
+    "src/features/evolve/runtime/workflow-engine.ts": true,
+    "src/features/evolve/runtime/artifact-compatibility.ts": true,
+    "src/features/evolve/components/evolution-composer.tsx": true,
+    "src/features/evolve/components/stage-panels.tsx": true,
+    "src/features/evolve/runtime/run-local.ts": true,
+    "src/features/evolve/evaluation/service.ts": true
+  },
+  "userGoalAnchors": [
+    {
+      "id": "USER-INPUT-COMPAT",
+      "mode": "external-runner",
+      "goal": "成果物输入兼容"
+    },
+    {
+      "id": "USER-WORKFLOW-CLOSURE",
+      "mode": "external-runner",
+      "goal": "流程完整闭环"
+    },
+    {
+      "id": "USER-UIUX",
+      "mode": "visual-review",
+      "goal": "UI/UX 与操作习惯"
+    }
+  ],
+  "internalCouplingSanitization": {
+    "input": "semantic-evolution.ts 新增融资资料/战略包等业务对象分类； workflow-engine.ts 六步状态机无断点； Tailwind token 未完整验证。",
+    "output": "",
+    "removedInternalCoupling": true
+  },
+  "assertions": {
+    "recognizes_real_codebase": true,
+    "indexes_core_evolve_files": true,
+    "tests_do_not_dominate_semantic_context": true,
+    "anchors_3_user_goals": true,
+    "input_compat_requires_real_runner": true,
+    "workflow_requires_real_runner": true,
+    "uiux_requires_visual_review": true,
+    "strips_internal_objectives": true,
+    "generic_components_folder_is_not_codebase": true
+  },
+  "passed": true
+}

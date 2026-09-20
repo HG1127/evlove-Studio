@@ -1,0 +1,520 @@
+import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+import {
+  Activity,
+  ArrowRight,
+  Boxes,
+  BrainCircuit,
+  CircleAlert,
+  CloudCog,
+  Database,
+  GitBranch,
+  LockKeyhole,
+  Network,
+  RefreshCcw,
+  Rocket,
+  ServerCog,
+  ShieldCheck,
+  Sparkles,
+  Workflow,
+} from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs } from "@/components/ui/tabs";
+import { getAiProviderStatus } from "../ai/service";
+import { useLocalProjects } from "../runtime/use-local-projects";
+import {
+  BACKEND_REQUIREMENTS,
+  EVOLUTION_PHASES,
+  backendRequirementState,
+  deriveEngineReadiness,
+  projectLoopSummary,
+  type ReadinessState,
+  type RunnerCapabilitySnapshot,
+} from "../runtime/system-readiness";
+import { deriveWorkflowSteps } from "../runtime/workflow-engine";
+import { getRunnerGatewayConfig, testRunnerGateway } from "../runtime/target-runner-config";
+import { PRODUCTION_BOUNDARIES, PRODUCTION_SCHEMA_VERSIONS, PRODUCTION_PORTS, type EvolutionWorkflowCapabilities, type SandboxBrowserHealth, type SandboxHealth } from "@evolution/contracts";
+import { checkSupabaseBackendHealth, checkSupabaseRealtimeHealth, type SupabaseBackendHealth, type SupabaseRealtimeHealth } from "@evolution/adapters";
+import { getSupabaseRuntimeConfig, productionRuntimeMode } from "../runtime/production-runtime";
+import { productionSyncStatus } from "../runtime/production-sync";
+import { checkServerBrowserHealth, checkServerSandboxHealth, getServerWorkflowCapabilities } from "../runtime/server-workflow-client";
+import { HarnessInspector } from "./harness-inspector";
+
+function readRunnerCapabilities(): RunnerCapabilitySnapshot | undefined {
+  try {
+    const raw = window.localStorage.getItem("evolve-runner-capabilities");
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as { capabilities?: RunnerCapabilitySnapshot };
+    return parsed.capabilities;
+  } catch {
+    return undefined;
+  }
+}
+
+const stateStyles: Record<ReadinessState, string> = {
+  ready: "border-emerald-200 bg-emerald-50 text-emerald-800",
+  local: "border-sky-200 bg-sky-50 text-sky-800",
+  partial: "border-amber-200 bg-amber-50 text-amber-800",
+  backend: "border-violet-200 bg-violet-50 text-violet-800",
+  blocked: "border-rose-200 bg-rose-50 text-rose-800",
+};
+
+const stateLabel: Record<ReadinessState, string> = {
+  ready: "真实可用",
+  local: "本地闭环",
+  partial: "部分闭环",
+  backend: "待后端",
+  blocked: "阻塞",
+};
+
+const backendIcons = {
+  "control-plane": ServerCog,
+  "git-target": GitBranch,
+  sandbox: Boxes,
+  release: Rocket,
+  "capability-service": Sparkles,
+  "vault-rbac": LockKeyhole,
+  "evidence-ledger": Database,
+  "outcome-science": Activity,
+  connectors: Network,
+} as const;
+
+export function EvolutionReadinessCenter() {
+  const projects = useLocalProjects({ includeDemo: false });
+  const [activeTab, setActiveTab] = useState("overview");
+  const [engineFilter, setEngineFilter] = useState<"all" | "gaps">("all");
+  const [backendPriority, setBackendPriority] = useState<"all" | "P0" | "P1" | "P2">("P0");
+  const [runner, setRunner] = useState<RunnerCapabilitySnapshot | undefined>(() => readRunnerCapabilities());
+  const [runnerCheck, setRunnerCheck] = useState<{ busy: boolean; message: string }>({ busy: false, message: "" });
+  const [supabaseCheck, setSupabaseCheck] = useState<{ busy: boolean; message: string; health?: SupabaseBackendHealth }>({ busy: false, message: "" });
+  const [realtimeCheck, setRealtimeCheck] = useState<{ busy: boolean; message: string; health?: SupabaseRealtimeHealth; liveStatus: string }>(() => ({ busy: false, message: "", liveStatus: productionSyncStatus().realtimeStatus }));
+  const [workflowCheck, setWorkflowCheck] = useState<{ busy: boolean; message: string; capabilities?: EvolutionWorkflowCapabilities }>({ busy: false, message: "" });
+  const [sandboxCheck, setSandboxCheck] = useState<{ busy: boolean; message: string; health?: SandboxHealth }>({ busy: false, message: "" });
+  const [browserCheck, setBrowserCheck] = useState<{ busy: boolean; message: string; health?: SandboxBrowserHealth }>({ busy: false, message: "" });
+  const visualJudgeLive = getAiProviderStatus("visual-judge").live;
+  const signals = useMemo(() => ({ runner, visualJudgeLive }), [runner, visualJudgeLive]);
+  const engines = useMemo(() => deriveEngineReadiness(signals), [signals]);
+  const summaries = useMemo(() => projects.map((project) => ({ project, loop: projectLoopSummary(project) })), [projects]);
+  const latestProject = useMemo(() => projects.slice().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0], [projects]);
+  const closed = summaries.filter((item) => item.loop.complete).length;
+  const blocked = summaries.filter((item) => item.loop.blocked > 0).length;
+  const average = summaries.length ? Math.round(summaries.reduce((sum, item) => sum + item.loop.percent, 0) / summaries.length) : 0;
+  const backendReady = BACKEND_REQUIREMENTS.filter((item) => backendRequirementState(item, signals) === "ready").length;
+  const p0 = BACKEND_REQUIREMENTS.filter((item) => item.priority === "P0");
+  const p0Ready = p0.filter((item) => backendRequirementState(item, signals) === "ready").length;
+  const productionMode = productionRuntimeMode();
+  const productionContractsReady = PRODUCTION_BOUNDARIES.filter((item) => item.ready).length;
+  const productionModeLabel = productionMode === "http" ? "REMOTE API" : productionMode === "supabase" ? "SUPABASE" : "LOCAL ADAPTER";
+  const supabaseConfig = getSupabaseRuntimeConfig();
+  const supabaseReady = Boolean(supabaseCheck.health?.database && supabaseCheck.health?.storage);
+  const p02Ready = Boolean(supabaseReady && realtimeCheck.health?.ready);
+  const p03Connected = Boolean(workflowCheck.capabilities?.available && workflowCheck.capabilities?.durable);
+  const p03FullAuto = Boolean(workflowCheck.capabilities?.fullAuto);
+  const p04Ready = Boolean(sandboxCheck.health?.ready);
+  const p04BrowserReady = Boolean(browserCheck.health?.ready);
+  const hybridFunctionalReady = Boolean(p02Ready && p04Ready);
+  const hybridInteractionReady = Boolean(hybridFunctionalReady && p04BrowserReady);
+  const visibleEngines = engineFilter === "gaps"
+    ? engines.filter((engine) => engine.state !== "ready" && engine.state !== "local")
+    : engines;
+  const visibleBackendRequirements = backendPriority === "all"
+    ? BACKEND_REQUIREMENTS
+    : BACKEND_REQUIREMENTS.filter((item) => item.priority === backendPriority);
+  const targetCoverage = [
+    { target: "文件 / Office / HTML Artifact", state: "ready", read: "✓", snapshot: "✓", mutate: "✓", validate: "✓", deploy: "交付", observe: "离线", rollback: "✓", gap: "复杂 Renderer 仍需补齐" },
+    { target: "HTML / Web 页面", state: p04BrowserReady || (runner?.htmlBrowser && runner?.e2e) ? "ready" : "partial", read: "✓", snapshot: "✓", mutate: "✓", validate: p04BrowserReady ? "Chromium Steps" : runner?.e2e ? "✓" : "部分", deploy: p04BrowserReady ? "Sandbox Preview" : "Preview", observe: p04BrowserReady ? "真实交互" : runner?.screenshots ? "✓" : "部分", rollback: "✓", gap: p04BrowserReady ? "Route Matrix / 视觉审查继续扩展" : "工程级 Preview / Browser Runtime" },
+    { target: "ZIP / Codebase", state: p04BrowserReady ? "partial" : p04Ready ? "partial" : runner?.build ? "partial" : "backend", read: "✓", snapshot: "✓", mutate: "✓", validate: p04BrowserReady ? "Build/Test + Browser" : p04Ready ? "Sandbox Build/Test" : runner?.build ? "Build" : "静态", deploy: p04BrowserReady ? "Sandbox Preview" : "待 Preview", observe: p04BrowserReady ? "Browser Steps / E2E" : p04Ready ? "执行证据" : "待后端", rollback: "ZIP", gap: p04BrowserReady ? "Git Target / Production Deploy 后续补齐" : p04Ready ? "Browser Runtime / Preview" : "Git + Sandbox + Preview Runtime" },
+    { target: "Production HTTP Target", state: runner?.release ? "ready" : "backend", read: "连接", snapshot: "Hash", mutate: "Deploy", validate: "Canary", deploy: runner?.release ? "✓" : "待后端", observe: runner?.release ? "Telemetry" : "待后端", rollback: runner?.release ? "✓" : "待后端", gap: "Deploy / Traffic / Telemetry" },
+    { target: "Git Repository", state: "backend", read: "待后端", snapshot: "Commit SHA", mutate: "Branch/PR", validate: "CI", deploy: "Merge", observe: "Webhook", rollback: "Revert", gap: "Git-native Target Adapter" },
+    { target: "Agent / Workflow / Memory / API / DB", state: "backend", read: "待后端", snapshot: "待后端", mutate: "待后端", validate: "待后端", deploy: "待后端", observe: "待后端", rollback: "待后端", gap: "External Connector SDK" },
+  ] as const;
+  const readinessTabs = [
+    { value: "overview", label: "闭环总览", icon: <Workflow className="size-3.5" />, badge: <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px]">{EVOLUTION_PHASES.length}</span> },
+    { value: "engines", label: "核心 Engine", icon: <Activity className="size-3.5" />, badge: <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px]">{engines.length}</span> },
+    { value: "harness", label: "Harness / Runtime", icon: <BrainCircuit className="size-3.5" /> },
+    { value: "backend", label: "后端缺口", icon: <CloudCog className="size-3.5" />, badge: <span className="rounded-md bg-violet-100 px-1.5 py-0.5 text-[10px] text-violet-700">{BACKEND_REQUIREMENTS.length - backendReady}</span> },
+    { value: "targets", label: "Target Adapter", icon: <Network className="size-3.5" />, badge: <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px]">{targetCoverage.length}</span> },
+  ];
+
+  useEffect(() => {
+    const config = getRunnerGatewayConfig();
+    if (!config.enabled || !config.runUrl.trim()) return;
+    let active = true;
+    queueMicrotask(() => { if (active) setRunnerCheck({ busy: true, message: "正在自动检测后台 Runner 能力…" }); });
+    void testRunnerGateway(config).then((result) => {
+      if (!active) return;
+      setRunner(readRunnerCapabilities());
+      setRunnerCheck({ busy: false, message: result.message });
+    }).catch((error) => {
+      if (!active) return;
+      setRunnerCheck({ busy: false, message: error instanceof Error ? error.message : String(error) });
+    });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    const config = getSupabaseRuntimeConfig();
+    if (!config) return;
+    let active = true;
+    queueMicrotask(() => { if (active) setSupabaseCheck({ busy: true, message: "正在检测 Supabase 数据底座…" }); });
+    void checkSupabaseBackendHealth(config).then((health) => {
+      if (active) setSupabaseCheck({ busy: false, message: health.message, health });
+    }).catch((error) => {
+      if (active) setSupabaseCheck({ busy: false, message: error instanceof Error ? error.message : String(error) });
+    });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    const onRealtimeStatus = (event: Event) => {
+      const status = (event as CustomEvent<{ status?: string }>).detail?.status;
+      if (status) setRealtimeCheck((current) => ({ ...current, liveStatus: status }));
+    };
+    window.addEventListener("evolve-production-realtime-status", onRealtimeStatus);
+    return () => window.removeEventListener("evolve-production-realtime-status", onRealtimeStatus);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    queueMicrotask(() => { if (active) setWorkflowCheck({ busy: true, message: "正在检测 Durable Workflow…" }); });
+    void getServerWorkflowCapabilities(true).then((capabilities) => {
+      if (!active) return;
+      setWorkflowCheck({
+        busy: false,
+        capabilities,
+        message: capabilities.fullAuto
+          ? "Durable Workflow 已具备完整 AutoPilot 接管能力"
+          : `Workflow 已连接；仍待迁：${capabilities.pendingActions.join("、") || "无"}`,
+      });
+    }).catch((error) => {
+      if (active) setWorkflowCheck({ busy: false, message: error instanceof Error ? error.message : String(error) });
+    });
+    return () => { active = false; };
+  }, []);
+
+  const refreshSupabase = () => {
+    const config = getSupabaseRuntimeConfig();
+    if (!config) {
+      setSupabaseCheck({ busy: false, message: "未配置 VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY" });
+      return;
+    }
+    setSupabaseCheck((current) => ({ ...current, busy: true, message: "正在重新检测 Supabase…" }));
+    void checkSupabaseBackendHealth(config).then((health) => setSupabaseCheck({ busy: false, message: health.message, health }))
+      .catch((error) => setSupabaseCheck({ busy: false, message: error instanceof Error ? error.message : String(error) }));
+  };
+
+  const refreshRealtime = () => {
+    const config = getSupabaseRuntimeConfig();
+    if (!config) {
+      setRealtimeCheck((current) => ({ ...current, busy: false, message: "未配置 Supabase" }));
+      return;
+    }
+    setRealtimeCheck((current) => ({ ...current, busy: true, message: "正在做真实 Realtime 自检…" }));
+    void checkSupabaseRealtimeHealth(config).then((health) => setRealtimeCheck((current) => ({ ...current, busy: false, message: health.message, health })))
+      .catch((error) => setRealtimeCheck((current) => ({ ...current, busy: false, message: error instanceof Error ? error.message : String(error) })));
+  };
+
+  const refreshWorkflow = () => {
+    setWorkflowCheck((current) => ({ ...current, busy: true, message: "正在重新检测 Workflow…" }));
+    void getServerWorkflowCapabilities(true).then((capabilities) => setWorkflowCheck({
+      busy: false,
+      capabilities,
+      message: capabilities.fullAuto
+        ? "Durable Workflow 已具备完整 AutoPilot 接管能力"
+        : `Workflow 已连接；仍待迁：${capabilities.pendingActions.join("、") || "无"}`,
+    })).catch((error) => setWorkflowCheck({ busy: false, message: error instanceof Error ? error.message : String(error) }));
+  };
+
+  const refreshSandbox = () => {
+    setSandboxCheck((current) => ({ ...current, busy: true, message: "正在创建临时 Vercel Sandbox 做真实健康检查…" }));
+    void checkServerSandboxHealth().then((health) => setSandboxCheck({ busy: false, health, message: health.message }))
+      .catch((error) => setSandboxCheck({ busy: false, message: error instanceof Error ? error.message : String(error) }));
+  };
+
+  const refreshBrowser = () => {
+    setBrowserCheck((current) => ({ ...current, busy: true, message: "正在准备 Browser Runtime Snapshot 并启动 Chromium…" }));
+    void checkServerBrowserHealth().then((health) => setBrowserCheck({ busy: false, health, message: health.message }))
+      .catch((error) => setBrowserCheck({ busy: false, message: error instanceof Error ? error.message : String(error) }));
+  };
+
+  const refreshRunner = () => {
+    const config = getRunnerGatewayConfig();
+    setRunnerCheck({ busy: true, message: "正在重新检测…" });
+    void testRunnerGateway(config).then((result) => {
+      setRunner(readRunnerCapabilities());
+      setRunnerCheck({ busy: false, message: result.message });
+    }).catch((error) => setRunnerCheck({ busy: false, message: error instanceof Error ? error.message : String(error) }));
+  };
+
+  return <div className="space-y-5">
+    <section className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+      <div>
+        <div className="text-xs font-semibold text-indigo-600">Evolution Readiness</div>
+        <h1 className="mt-1 text-3xl font-bold tracking-tight">进化闭环完整性中心</h1>
+        <p className="mt-2 max-w-4xl text-sm leading-6 text-slate-500">
+          这里不是功能清单，而是系统级验收表：从目标、实验、证据、成果到生产 Outcome 和学习，逐层判断是否形成真实闭环，并把必须依赖后端的能力集中列出。
+        </p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Badge className="border-indigo-200 bg-indigo-50 text-indigo-700">23 个流程节点</Badge>
+        <Badge className="border-sky-200 bg-sky-50 text-sky-700">8 个闭环阶段</Badge>
+        <Badge className="border-emerald-200 bg-emerald-50 text-emerald-700">9 个 Engine</Badge>
+      </div>
+    </section>
+
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <Stat label="项目平均闭环" value={projects.length ? `${average}%` : "—"} sub={projects.length ? `${closed}/${projects.length} 个项目完整闭环` : "创建项目后自动计算"} icon={<Workflow className="size-4" />} />
+      <Stat label="阻塞项目" value={String(blocked)} sub="存在 blocked workflow node" icon={<CircleAlert className="size-4" />} tone={blocked ? "amber" : "emerald"} />
+      <Stat label="P0 后端能力" value={`${p0Ready}/${p0.length}`} sub="Build / Release 可自动探测" icon={<CloudCog className="size-4" />} tone={p0Ready === p0.length ? "emerald" : "violet"} />
+      <Stat label="全部后端能力" value={`${backendReady}/${BACKEND_REQUIREMENTS.length}`} sub="未就绪能力不会伪装成已完成" icon={<ShieldCheck className="size-4" />} tone="slate" />
+    </div>
+
+    <div className="sticky top-[3.75rem] z-20 rounded-2xl border bg-white/90 p-2 shadow-sm backdrop-blur-xl">
+      <Tabs items={readinessTabs} value={activeTab} onValueChange={setActiveTab} className="bg-transparent" />
+    </div>
+
+    {activeTab === "overview" && <Card>
+      <CardHeader className="pb-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div><CardTitle className="text-base">完整进化闭环 · 23 节点 / 8 阶段</CardTitle><p className="mt-1 text-xs leading-5 text-slate-500">离线成果可以在第 6 阶段闭环；需要生产验证的任务继续进入第 7 阶段，最终都必须经过学习和 Next Queue 才算完整结束。</p></div>
+          <Badge className="border-emerald-200 bg-emerald-50 text-emerald-700">流程定义 23/23 覆盖</Badge>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          {EVOLUTION_PHASES.map((phase, index) => <div key={phase.id} className="rounded-2xl border bg-slate-50/60 p-4">
+            <div className="flex items-center justify-between gap-2"><span className="text-xs font-bold text-indigo-600">阶段 {index + 1}</span><Badge>{phase.range[0]}–{phase.range[1]}</Badge></div>
+            <div className="mt-2 font-semibold text-slate-900">{phase.title}</div>
+            <div className="mt-2 text-xs leading-5 text-slate-500">输入：{phase.input}<br />产出：{phase.output}</div>
+            <div className="mt-3 border-t pt-2 text-[11px] leading-5 text-slate-600">{phase.closedLoopRole}</div>
+          </div>)}
+        </div>
+      </CardContent>
+    </Card>}
+
+    {activeTab === "engines" && <section>
+      <div className="mb-3 flex flex-wrap items-end justify-between gap-3"><div><h2 className="font-semibold">9 个核心 Engine</h2><p className="mt-1 text-xs text-slate-500">区分“本地已闭环”“真实运行可用”“部分闭环”和“必须等后端”。</p></div><div className="flex flex-wrap gap-2"><div className="flex rounded-xl bg-slate-200/60 p-1"><Button size="sm" variant={engineFilter === "all" ? "default" : "ghost"} onClick={() => setEngineFilter("all")}>全部</Button><Button size="sm" variant={engineFilter === "gaps" ? "default" : "ghost"} onClick={() => setEngineFilter("gaps")}>只看缺口</Button></div><Button size="sm" variant="secondary" onClick={refreshRunner} disabled={runnerCheck.busy}><RefreshCcw className={`size-3.5 ${runnerCheck.busy ? "animate-spin" : ""}`} />刷新 Runner</Button></div></div>
+      {runnerCheck.message && <div className="mb-3 rounded-xl border bg-white px-3 py-2 text-xs text-slate-500">{runnerCheck.message}</div>}
+      <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-3">
+        {visibleEngines.map((engine) => <Card key={engine.id} className={stateStyles[engine.state]}>
+          <CardContent className="pt-5">
+            <div className="flex items-start justify-between gap-3"><div><div className="text-[10px] font-bold uppercase tracking-[.12em] opacity-70">{engine.purpose}</div><div className="mt-1 font-semibold">{engine.title}</div></div><Badge className="bg-white/70">{stateLabel[engine.state]}</Badge></div>
+            <p className="mt-3 text-xs leading-5 opacity-90">{engine.current}</p>
+            <div className="mt-3 rounded-xl border border-current/10 bg-white/50 p-2.5 text-[11px] leading-5"><b>还缺：</b>{engine.gap}</div>
+          </CardContent>
+        </Card>)}
+      </div>
+      {visibleEngines.length === 0 && <Card><CardContent className="py-10 text-center text-sm text-emerald-700">当前没有需要补齐的 Engine 缺口。</CardContent></Card>}
+    </section>}
+
+    {activeTab === "harness" && <HarnessInspector project={latestProject} />}
+
+    {activeTab === "targets" && <section>
+      <div className="mb-3"><h2 className="font-semibold">Target Adapter Coverage</h2><p className="mt-1 text-xs text-slate-500">“支持一个对象”必须看完整生命周期，而不是只看能不能读。最终目标统一覆盖 Read → Snapshot → Mutate → Validate → Deploy → Observe → Rollback。</p></div>
+      <Card className="overflow-hidden">
+        <CardContent className="p-0">
+          <div className="overflow-x-auto">
+            <div className="min-w-[980px]">
+              <div className="grid grid-cols-[220px_90px_repeat(7,minmax(84px,1fr))_220px] border-b bg-slate-50 px-4 py-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                <span>Target</span><span>状态</span><span>Read</span><span>Snapshot</span><span>Mutate</span><span>Validate</span><span>Deploy</span><span>Observe</span><span>Rollback</span><span>主要缺口</span>
+              </div>
+              {targetCoverage.map((row) => <div key={row.target} className="grid grid-cols-[220px_90px_repeat(7,minmax(84px,1fr))_220px] items-center border-b px-4 py-3 text-xs last:border-b-0">
+                <span className="font-semibold text-slate-800">{row.target}</span>
+                <Badge className={row.state === "ready" ? "w-fit border-emerald-200 bg-emerald-50 text-emerald-700" : row.state === "partial" ? "w-fit border-amber-200 bg-amber-50 text-amber-700" : "w-fit border-violet-200 bg-violet-50 text-violet-700"}>{row.state === "ready" ? "可用" : row.state === "partial" ? "部分" : "待后端"}</Badge>
+                {[row.read,row.snapshot,row.mutate,row.validate,row.deploy,row.observe,row.rollback].map((value,index)=><span key={index} className={value === "✓" || value.includes("Build") || value === "Telemetry" || value === "Canary" || value === "执行证据" ? "font-semibold text-emerald-700" : value.includes("待") ? "text-violet-600" : "text-slate-500"}>{value}</span>)}
+                <span className="text-[11px] leading-5 text-slate-500">{row.gap}</span>
+              </div>)}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </section>}
+
+    {activeTab === "overview" && <section>
+      <div className="mb-3"><h2 className="font-semibold">现有 Mission 的闭环状态</h2><p className="mt-1 text-xs text-slate-500">直接按 23 个 Workflow Node 计算，不用页面所在阶段猜完成度。</p></div>
+      {summaries.length ? <div className="grid gap-3 lg:grid-cols-2">
+        {summaries.slice().sort((a, b) => b.project.updatedAt.localeCompare(a.project.updatedAt)).slice(0, 6).map(({ project, loop }) => {
+          const steps = deriveWorkflowSteps(project);
+          const phaseStates = EVOLUTION_PHASES.map((phase) => {
+            const items = steps.filter((step) => Number(step.id) >= phase.range[0] && Number(step.id) <= phase.range[1]);
+            const done = items.filter((step) => step.state === "completed" || step.state === "skipped").length;
+            return { phase, done, total: items.length };
+          });
+          return <Card key={project.id}><CardContent className="pt-5">
+            <div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="truncate font-semibold">{project.name}</div><div className="mt-1 text-xs text-slate-400">{loop.online ? "需要 Production Outcome" : "离线 Artifact 闭环"} · {loop.closed}/{loop.total} 节点</div></div><Badge className={loop.complete ? "border-emerald-200 bg-emerald-50 text-emerald-700" : loop.blocked ? "border-amber-200 bg-amber-50 text-amber-700" : ""}>{loop.complete ? "闭环完成" : `${loop.percent}%`}</Badge></div>
+            <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-indigo-500" style={{ width: `${loop.percent}%` }} /></div>
+            <div className="mt-3 grid grid-cols-4 gap-1">{phaseStates.map(({ phase, done, total }) => <div key={phase.id} title={phase.title} className={`h-2 rounded-full ${done === total ? "bg-emerald-400" : done ? "bg-indigo-300" : "bg-slate-200"}`} />)}</div>
+            <div className="mt-3 flex items-center justify-between gap-3 text-xs"><span className="min-w-0 truncate text-slate-500">下一缺口：{loop.firstOpen?.title ?? "无"}</span><Link to={`/projects/${project.id}`} className="shrink-0 font-semibold text-indigo-600">进入 Mission <ArrowRight className="ml-1 inline size-3" /></Link></div>
+          </CardContent></Card>;
+        })}
+      </div> : <Card><CardContent className="py-12 text-center text-sm text-slate-400">还没有真实 Mission。创建第一个任务后，这里会自动计算 23 节点闭环覆盖率。</CardContent></Card>}
+      {summaries.length > 6 && <div className="mt-3 text-right"><Link to="/projects" className="text-xs font-semibold text-indigo-600">查看全部 {summaries.length} 个 Mission <ArrowRight className="ml-1 inline size-3" /></Link></div>}
+    </section>}
+
+    {activeTab === "backend" && <section>
+      <Card className="mb-4 border-emerald-100 bg-emerald-50/40">
+        <CardHeader className="pb-2">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <CardTitle className="text-sm">Backend-ready Contract</CardTitle>
+              <p className="mt-1 text-xs leading-5 text-slate-500">这表示核心业务已与浏览器实现解耦，可以开始替换为 Postgres / Queue / Worker / Object Storage；不代表这些基础设施已经部署。</p>
+            </div>
+            <div className="flex gap-2">
+              <Badge className="border-emerald-200 bg-white text-emerald-700">{productionContractsReady}/{PRODUCTION_BOUNDARIES.length} Contract</Badge>
+              <Badge className={productionMode === "local" ? "border-slate-200 bg-white text-slate-600" : "border-indigo-200 bg-indigo-50 text-indigo-700"}>{productionModeLabel}</Badge>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="rounded-xl border bg-white p-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="text-xs font-semibold text-slate-800">P0-1 · Supabase Data Foundation</div>
+                <div className="mt-1 text-[11px] text-slate-500">{supabaseConfig ? (supabaseCheck.message || "已配置，等待健康检查") : "未配置 Supabase；当前继续使用 Local Adapter"}</div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge className={supabaseReady ? "border-emerald-200 bg-emerald-50 text-emerald-700" : supabaseConfig ? "border-amber-200 bg-amber-50 text-amber-700" : "border-slate-200 bg-slate-50 text-slate-600"}>{supabaseReady ? "READY" : supabaseConfig ? "CHECK" : "NOT CONFIGURED"}</Badge>
+                <Button size="sm" variant="secondary" onClick={refreshSupabase} disabled={supabaseCheck.busy}><RefreshCcw className={`size-3.5 ${supabaseCheck.busy ? "animate-spin" : ""}`} />检测</Button>
+              </div>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2 text-[10px] sm:grid-cols-5">
+              {(["missions","jobs","events","artifacts"] as const).map((name) => <div key={name} className="rounded-lg bg-slate-50 px-2 py-1.5"><b>{name}</b><div className={supabaseCheck.health?.tables[name] ? "text-emerald-600" : "text-slate-400"}>{supabaseCheck.health?.tables[name] ? "READY" : "—"}</div></div>)}
+              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>storage</b><div className={supabaseCheck.health?.storage ? "text-emerald-600" : "text-slate-400"}>{supabaseCheck.health?.storage ? "READY" : "—"}</div></div>
+            </div>
+          </div>
+          <div className="rounded-xl border bg-white p-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="text-xs font-semibold text-slate-800">P0-2 · Realtime + Artifact Remote</div>
+                <div className="mt-1 text-[11px] text-slate-500">{realtimeCheck.message || `Channel: ${realtimeCheck.liveStatus} · Artifact: ${supabaseCheck.health?.storage ? "REMOTE READY" : "WAITING"}`}</div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge className={p02Ready ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}>{p02Ready ? "READY" : "PENDING"}</Badge>
+                <Button size="sm" variant="secondary" onClick={refreshRealtime} disabled={realtimeCheck.busy || !supabaseConfig}><RefreshCcw className={`size-3.5 ${realtimeCheck.busy ? "animate-spin" : ""}`} />检测 Realtime</Button>
+              </div>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2 text-[10px] sm:grid-cols-3">
+              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>realtime</b><div className={realtimeCheck.health?.ready ? "text-emerald-600" : "text-slate-400"}>{realtimeCheck.health?.ready ? `READY ${realtimeCheck.health.latencyMs ?? ""}ms` : realtimeCheck.liveStatus}</div></div>
+              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>artifact remote</b><div className={supabaseCheck.health?.storage ? "text-emerald-600" : "text-slate-400"}>{supabaseCheck.health?.storage ? "READY" : "—"}</div></div>
+              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>local cache</b><div className="text-sky-600">IndexedDB CACHE</div></div>
+            </div>
+          </div>
+          <div className="rounded-xl border bg-white p-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="text-xs font-semibold text-slate-800">P0-3 · Durable Evolution Workflow</div>
+                <div className="mt-1 text-[11px] text-slate-500">{workflowCheck.message || "等待 Workflow capability 检测"}</div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge className={p03FullAuto ? "border-emerald-200 bg-emerald-50 text-emerald-700" : p03Connected ? "border-amber-200 bg-amber-50 text-amber-700" : "border-slate-200 bg-slate-50 text-slate-600"}>{p03FullAuto ? "FULL AUTO" : p03Connected ? "PARTIAL" : "CHECK"}</Badge>
+                <Button size="sm" variant="secondary" onClick={refreshWorkflow} disabled={workflowCheck.busy}><RefreshCcw className={`size-3.5 ${workflowCheck.busy ? "animate-spin" : ""}`} />检测 Workflow</Button>
+              </div>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2 text-[10px] sm:grid-cols-4">
+              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>durable</b><div className={workflowCheck.capabilities?.durable ? "text-emerald-600" : "text-slate-400"}>{workflowCheck.capabilities?.durable ? "READY" : "—"}</div></div>
+              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>server AI</b><div className={workflowCheck.capabilities?.serverAi ? "text-emerald-600" : "text-amber-600"}>{workflowCheck.capabilities?.serverAi ? "READY" : "NOT CONFIGURED"}</div></div>
+              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>server actions</b><div className="text-sky-600">{workflowCheck.capabilities?.serverNativeActions.length ?? 0}</div></div>
+              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>pending</b><div className={workflowCheck.capabilities?.pendingActions.length ? "text-amber-600" : "text-emerald-600"}>{workflowCheck.capabilities?.pendingActions.join(" / ") || "NONE"}</div></div>
+            </div>
+          </div>
+          <div className="rounded-xl border bg-white p-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="text-xs font-semibold text-slate-800">P0-4 · Vercel Sandbox Runtime</div>
+                <div className="mt-1 text-[11px] text-slate-500">{sandboxCheck.message || "尚未执行 Sandbox 健康检查；点击后会创建一个 30 秒临时 Sandbox。"}</div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge className={p04Ready ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-slate-50 text-slate-600"}>{p04Ready ? "READY" : sandboxCheck.health ? "UNAVAILABLE" : "NOT CHECKED"}</Badge>
+                <Button size="sm" variant="secondary" onClick={refreshSandbox} disabled={sandboxCheck.busy}><RefreshCcw className={`size-3.5 ${sandboxCheck.busy ? "animate-spin" : ""}`} />检测 Sandbox</Button>
+              </div>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2 text-[10px] sm:grid-cols-4">
+              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>runtime</b><div className={p04Ready ? "text-emerald-600" : "text-slate-400"}>{sandboxCheck.health?.nodeVersion || "—"}</div></div>
+              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>npm</b><div className={p04Ready ? "text-emerald-600" : "text-slate-400"}>{sandboxCheck.health?.npmVersion || "—"}</div></div>
+              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>region</b><div className="text-slate-500">{sandboxCheck.health?.region || "—"}</div></div>
+              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>latency</b><div className="text-slate-500">{sandboxCheck.health?.latencyMs !== undefined ? `${sandboxCheck.health.latencyMs}ms` : "—"}</div></div>
+            </div>
+            <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50/70 p-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="text-[10px] font-semibold text-slate-700">Browser Runtime · Chromium + Playwright</div>
+                  <div className="mt-0.5 text-[10px] text-slate-400">{browserCheck.message || "未检测；首次检测会初始化可复用 Browser Snapshot。"}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge className={p04BrowserReady ? "border-emerald-200 bg-white text-emerald-700" : "border-slate-200 bg-white text-slate-500"}>{p04BrowserReady ? "READY" : browserCheck.health ? "UNAVAILABLE" : "NOT CHECKED"}</Badge>
+                  <Button size="sm" variant="secondary" onClick={refreshBrowser} disabled={browserCheck.busy || !p04Ready}><RefreshCcw className={`size-3.5 ${browserCheck.busy ? "animate-spin" : ""}`} />检测 Browser</Button>
+                </div>
+              </div>
+              <div className="mt-2 grid grid-cols-2 gap-2 text-[10px] sm:grid-cols-5">
+                <div><b>browser</b><div className={p04BrowserReady ? "text-emerald-600" : "text-slate-400"}>{browserCheck.health?.browser || "—"}</div></div>
+                <div><b>playwright</b><div className={p04BrowserReady ? "text-emerald-600" : "text-slate-400"}>{browserCheck.health?.playwrightVersion || "—"}</div></div>
+                <div><b>snapshot</b><div className={browserCheck.health?.snapshotCached ? "text-emerald-600" : "text-slate-400"}>{browserCheck.health?.snapshotCached ? "CACHED" : "—"}</div></div>
+                <div><b>preview</b><div className={browserCheck.health?.previewHealthy ? "text-emerald-600" : "text-slate-400"}>{browserCheck.health?.previewHealthy ? "READY" : "—"}</div></div>
+                <div><b>browser steps</b><div className={browserCheck.health?.browserStepsVerified ? "text-emerald-600" : "text-slate-400"}>{browserCheck.health?.browserStepsVerified ? `VERIFIED ${browserCheck.health.browserStepsExecuted}` : "—"}</div></div>
+              </div>
+            </div>
+          </div>
+          <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+            {PRODUCTION_BOUNDARIES.map((item) => <div key={item.id} className="rounded-xl border bg-white p-3">
+              <div className="flex items-center justify-between gap-2"><span className="text-xs font-semibold text-slate-800">{item.title}</span><Badge className="border-emerald-200 bg-emerald-50 text-emerald-700">READY</Badge></div>
+              <div className="mt-1 text-[10px] leading-4 text-slate-400">{item.contract}</div>
+            </div>)}
+          </div>
+          <div className="grid gap-3 lg:grid-cols-2">
+            <div className="rounded-xl border bg-white p-3">
+              <div className="text-xs font-semibold text-slate-700">Production Ports</div>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">{PRODUCTION_PORTS.map((port) => <div key={port.id} className="rounded-lg bg-slate-50 px-3 py-2 text-[11px]"><b className="text-slate-700">{port.label}</b><div className="mt-0.5 text-slate-400">→ {port.backend}</div></div>)}</div>
+            </div>
+            <div className="rounded-xl border bg-white p-3">
+              <div className="text-xs font-semibold text-slate-700">Schema Versions</div>
+              <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-slate-500">
+                {Object.entries(PRODUCTION_SCHEMA_VERSIONS).map(([key,value]) => <div key={key} className="flex justify-between gap-2"><span>{key}</span><b className="font-mono text-slate-700">{value}</b></div>)}
+              </div>
+            </div>
+          </div>
+          <div className="rounded-xl border border-violet-100 bg-violet-50/60 px-3 py-2.5 text-[11px] leading-5 text-violet-800"><b>当前优先级：</b>{!supabaseReady ? "先完成 P0-1 Supabase Data Foundation。" : !p02Ready ? "先完成 P0-2 Realtime 验收。" : !hybridFunctionalReady ? "先完成 P0-4 Vercel Sandbox 真实执行接入。" : !hybridInteractionReady ? "Sandbox Build/Test 已 READY；当前继续完成 Browser Runtime Snapshot、真实 Preview 与 Browser Steps/E2E。" : !p03FullAuto ? "Hybrid 功能模式 READY：浏览器 AI/BYOK + Supabase + Realtime + Sandbox Build/Test + Preview + Browser Steps/E2E 已可支撑核心功能闭环；Server AI、支付与 FULL AUTO 后置。" : "P0-3/P0-4 已完整闭环，可进入 Git Target / Production Release。"}</div>
+        </CardContent>
+      </Card>
+      <div className="mb-3 flex flex-wrap items-end justify-between gap-3"><div><h2 className="font-semibold">Backend Readiness Backlog</h2><p className="mt-1 text-xs text-slate-500">默认只看 P0。这里列的是必须配置真实后端/基础设施才能升级证据等级的能力。</p></div><div className="flex flex-wrap gap-2"><div className="flex rounded-xl bg-slate-200/60 p-1">{(["P0","P1","P2","all"] as const).map((priority)=><Button key={priority} size="sm" variant={backendPriority===priority?"default":"ghost"} onClick={()=>setBackendPriority(priority)}>{priority==="all"?"全部":priority}</Button>)}</div><Link to="/settings"><Button variant="secondary" size="sm">AI 模型与连接 <ArrowRight className="size-3.5" /></Button></Link></div></div>
+      <div className="space-y-3">
+        {(["P0", "P1", "P2"] as const).map((priority) => {
+          const items = visibleBackendRequirements.filter((item) => item.priority === priority);
+          if (!items.length) return null;
+          return <Card key={priority}><CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm"><Badge className={priority === "P0" ? "border-rose-200 bg-rose-50 text-rose-700" : priority === "P1" ? "border-amber-200 bg-amber-50 text-amber-700" : ""}>{priority}</Badge>{priority === "P0" ? "闭环关键基础设施" : priority === "P1" ? "生产化与规模化" : "扩展生态"}</CardTitle></CardHeader><CardContent className="grid gap-3 xl:grid-cols-2">
+            {items.map((item) => {
+              const Icon = backendIcons[item.id as keyof typeof backendIcons] ?? ServerCog;
+              const status = backendRequirementState(item, signals);
+              return <div key={item.id} className="rounded-2xl border bg-slate-50/60 p-4">
+                <div className="flex items-start justify-between gap-3"><div className="flex min-w-0 gap-3"><div className="grid size-9 shrink-0 place-items-center rounded-xl bg-white text-indigo-600"><Icon className="size-4" /></div><div><div className="font-semibold">{item.title}</div><div className="mt-0.5 text-[10px] text-slate-400">{item.category}</div></div></div><Badge className={status === "ready" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-violet-200 bg-violet-50 text-violet-700"}>{status === "ready" ? "已连接" : "待后端"}</Badge></div>
+                <p className="mt-3 text-xs leading-5 text-slate-600">{item.why}</p>
+                <div className="mt-3 space-y-2 text-[11px] leading-5">
+                  <div><b className="text-slate-700">当前：</b><span className="text-slate-500">{item.current}</span></div>
+                  <div><b className="text-slate-700">前端已补齐：</b><span className="text-slate-500">{item.frontend}</span></div>
+                  <div><b className="text-slate-700">后端要做：</b><span className="text-slate-500">{item.backend.join(" · ")}</span></div>
+                  {item.config?.length ? <div className="rounded-xl bg-white p-2.5"><b className="text-slate-700">后续配置：</b><span className="text-slate-500">{item.config.join(" · ")}</span></div> : null}
+                </div>
+              </div>;
+            })}
+          </CardContent></Card>;
+        })}
+      </div>
+    </section>}
+
+    {activeTab === "overview" && <div className="rounded-2xl border border-indigo-100 bg-indigo-50/60 p-4 text-xs leading-6 text-indigo-900">
+      <b>完整性的判定标准：</b>一个能力只有在“真实输入 → 实际 Mutation → 真实执行/证据 → Gate 决策 → 同一 Artifact 交付/发布 → Outcome → Learning → Next Queue”全部可追踪时才算闭环。缺少后端时，系统必须明确显示“本地闭环 / 部分闭环 / 待后端”，不能用 Demo 或模拟结果冒充真实能力。
+    </div>}
+  </div>;
+}
+
+function Stat({ label, value, sub, icon, tone = "indigo" }: { label: string; value: string; sub: string; icon: React.ReactNode; tone?: "indigo" | "amber" | "emerald" | "violet" | "slate" }) {
+  const styles = {
+    indigo: "bg-indigo-50 text-indigo-700",
+    amber: "bg-amber-50 text-amber-700",
+    emerald: "bg-emerald-50 text-emerald-700",
+    violet: "bg-violet-50 text-violet-700",
+    slate: "bg-slate-50 text-slate-700",
+  };
+  return <Card><CardContent className="flex items-center gap-3 pt-5"><div className={`grid size-10 shrink-0 place-items-center rounded-xl ${styles[tone]}`}>{icon}</div><div><div className="text-2xl font-bold">{value}</div><div className="text-xs font-semibold text-slate-600">{label}</div><div className="mt-0.5 text-[10px] text-slate-400">{sub}</div></div></CardContent></Card>;
+}

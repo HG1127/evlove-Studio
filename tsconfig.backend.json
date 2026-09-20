@@ -1,0 +1,34 @@
+{
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.backend.tsbuildinfo",
+    "target": "es2023",
+    "lib": ["ES2023", "DOM"],
+    "module": "esnext",
+    "types": ["node"],
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": false,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "paths": {
+      "@evolution/contracts": ["./packages/contracts/src/index.ts"],
+      "@evolution/core": ["./packages/core/src/index.ts"],
+      "@evolution/harness": ["./packages/harness/src/index.ts"],
+      "@evolution/adapters/sandbox": ["./packages/adapters/src/vercel-sandbox-adapter.ts"],
+      "@evolution/adapters": ["./packages/adapters/src/index.ts"]
+    }
+  },
+  "include": [
+    "workflows/**/*.ts",
+    "apps/backend/**/*.ts",
+    "packages/contracts/src/**/*.ts",
+    "packages/core/src/**/*.ts",
+    "packages/harness/src/**/*.ts",
+    "packages/adapters/src/**/*.ts"
+  ]
+}

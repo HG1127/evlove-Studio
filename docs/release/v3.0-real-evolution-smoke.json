@@ -1,0 +1,43 @@
+{
+  "version": "3.0.0",
+  "checks": [
+    {
+      "name": "5 user steps",
+      "pass": true
+    },
+    {
+      "name": "5-step progress uses compiler",
+      "pass": true
+    },
+    {
+      "name": "stage guide shows actual read evidence",
+      "pass": true
+    },
+    {
+      "name": "runtime uses stage-specific retrieval",
+      "pass": true
+    },
+    {
+      "name": "problem node uses focused evidence",
+      "pass": true
+    },
+    {
+      "name": "diagnosis uses focused evidence",
+      "pass": true
+    },
+    {
+      "name": "candidate node uses focused evidence",
+      "pass": true
+    },
+    {
+      "name": "user-facing Chinese stage titles",
+      "pass": true
+    },
+    {
+      "name": "AI engine requires real artifact evidence",
+      "pass": true
+    }
+  ],
+  "passed": 9,
+  "total": 9
+}

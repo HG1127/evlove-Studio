@@ -1,0 +1,71 @@
+{
+  "version": "2.5.0",
+  "executed": true,
+  "method": "TypeScript transpileModule + Node runtime execution",
+  "passed": 10,
+  "total": 10,
+  "results": [
+    {
+      "name": "融资ZIP识别为融资资料体系",
+      "pass": true,
+      "actual": "fundraising-data-room"
+    },
+    {
+      "name": "融资流程使用业务节点",
+      "pass": true,
+      "actual": "融资目标>资料关系>说服力诊断>分成果进化>联合验收>资料包交付"
+    },
+    {
+      "name": "融资包存在跨成果联合验收",
+      "pass": true,
+      "actual": [
+        "财务数字在 PPT、Excel、公司介绍之间一致",
+        "核心叙事、市场规模、融资用途与财务预测相互支持"
+      ]
+    },
+    {
+      "name": "Semantic Rubric权重精确100",
+      "pass": true,
+      "actual": 100
+    },
+    {
+      "name": "真实工程ZIP识别软件系统",
+      "pass": true,
+      "actual": "software-system"
+    },
+    {
+      "name": "普通ZIP含API字样不误判软件",
+      "pass": true,
+      "actual": "generic-multi-artifact-package"
+    },
+    {
+      "name": "战略包识别企业战略经营体系",
+      "pass": true,
+      "actual": "strategy-operating-system"
+    },
+    {
+      "name": "战略流程动态变化",
+      "pass": true,
+      "actual": [
+        "战略目标",
+        "战略关系",
+        "断点诊断",
+        "体系进化",
+        "闭环验收",
+        "体系交付"
+      ]
+    },
+    {
+      "name": "培训包识别教学体系",
+      "pass": true,
+      "actual": "training-course-package"
+    },
+    {
+      "name": "多Target建立must-match关系",
+      "pass": true,
+      "actual": [
+        "must-match"
+      ]
+    }
+  ]
+}

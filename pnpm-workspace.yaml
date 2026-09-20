@@ -1,0 +1,13 @@
+packages:
+  - 'packages/*'
+  - 'apps/*'
+  - 'tools/*'
+
+allowBuilds:
+  '@parcel/watcher': false
+  '@swc/core': false
+  cbor-extract: true
+  core-js: false
+  esbuild: true
+  less: false
+  protobufjs: false

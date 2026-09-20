@@ -1,0 +1,65 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 以下主题层由导入项目 (Evolve Studio) 的 globals.css 翻译而来:
+   原文件用 Tailwind v4 的 @theme 直接映射色板; 在 v3 下改为 CSS 变量 +
+   tailwind.config.js 里同名的颜色映射, 视觉一致。 */
+
+:root {
+  --background: #eef1f6;
+  --foreground: #172033;
+  --card: #ffffff;
+  --card-foreground: #172033;
+  --muted: #f4f5f9;
+  --muted-foreground: #6b778c;
+  --border: #edf0f5;
+  --primary: #4f46e5;
+  --primary-foreground: #ffffff;
+  --accent: #eef2ff;
+  --accent-foreground: #3730a3;
+  --success: #16875c;
+  --radius: 0.875rem;
+}
+
+* { border-color: var(--border); }
+html,
+body,
+#root { min-height: 100%; }
+html { background: var(--background); }
+body { margin: 0; background: var(--background); color: var(--foreground); font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; }
+button, input, textarea, select { font: inherit; }
+::selection { background: #c7d2fe; color: #1e1b4b; }
+
+.studio-grid { background: var(--muted); }
+.soft-shadow { box-shadow: 0 2px 8px rgba(23,32,51,.025), 0 12px 28px rgba(23,32,51,.035); }
+.focus-ring:focus-visible { outline: 3px solid rgba(79,70,229,.18); outline-offset: 2px; }
+
+/* 中英混排对齐:一行里英文(尤其 ds 的 display/像素字体如 Press Start 2P)和中文(系统黑体)
+   混在一起时,英文会偏小、偏上,跟中文对不齐。把纯英文/数字那一截用 <span className="cjk-latin">
+   包起来即可统一对齐:font-size-adjust 拉平字号,vertical-align 把英文下移到与中文同基线。
+   --cjk-latin-shift 由 design_picker 按 ds 烧进 :root(默认 -0.15em);极个别字体偏差大改这一个值。 */
+.cjk-latin {
+  font-size-adjust: 0.56;
+  vertical-align: var(--cjk-latin-shift, -0.15em);
+}
+
+/* 全站内容用填充面与间距分组；保留风险颜色、表格行线和键盘焦点。 */
+.studio-card { border: 0; }
+.studio-main :where(div, section, article, details)[class~="border"][class*="rounded"]:not([class*="border-rose"]):not([class*="border-red"]):not([class*="border-amber"]):not([class*="border-emerald"]):not([class*="border-indigo"]):not([class*="border-sky"]):not(:focus-within) {
+  border-color: transparent;
+}
+.studio-main .studio-card :where(div, section, article, details)[class~="border"][class~="bg-white"][class*="rounded"]:not(.composer-input):not([class*="border-rose"]):not([class*="border-amber"]):not([class*="border-emerald"]):not([class*="border-indigo"]):not([class*="border-sky"]) {
+  background-color: #f5f6fa;
+}
+.studio-main :where(div, section, details)[class*="border-indigo"],
+.studio-main :where(div, section, details)[class*="border-sky"] { border-color: rgba(99,102,241,.1); }
+.studio-main :where(input, textarea, select):not([type="checkbox"]):not([type="radio"]):not([type="file"]) { border-color: transparent; }
+.studio-main :where(input, textarea, select):focus-visible { border-color: #a5b4fc; }
+.studio-main .space-y-6 > :not([hidden]) ~ :not([hidden]) { margin-top: 1rem; }
+.studio-main .space-y-8 > :not([hidden]) ~ :not([hidden]) { margin-top: 1.25rem; }
+.studio-main .gap-6 { gap: 1rem; }
+.studio-main .gap-8 { gap: 1.25rem; }
+@media (prefers-reduced-motion: reduce) {
+  .studio-shell *, .studio-shell *::before, .studio-shell *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
+}

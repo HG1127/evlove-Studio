@@ -1,0 +1,16 @@
+{
+  "kind": "runtime-smoke",
+  "candidateOverlay": {
+    "pass": true,
+    "buildMode": "deterministic",
+    "path": "src/runtime.ts",
+    "summary": "Deterministic/Overlay Artifact Builder 已生成 1 个 Candidate Snapshot；AI full rewrite 未调用。 system.zip: 本地构建 1 个文件级 overlay，跳过 AI 全工程重写。"
+  },
+  "assertions": {
+    "deterministicBuild": true,
+    "zipOverlay": true,
+    "exactPath": true,
+    "fullReplacementContent": true
+  },
+  "pass": true
+}

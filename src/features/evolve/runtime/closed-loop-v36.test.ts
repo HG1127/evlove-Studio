@@ -1,0 +1,144 @@
+import { evidenceFingerprint } from "./evidence-binding";
+import { describe, expect, it } from "vitest";
+import { demoProject } from "../data/mock-project";
+import { CandidateArtifactSnapshotSchema, CandidateSchema, EvolveProjectSchema, OutputArtifactSchema, type SourceArtifact } from "../schemas";
+import { deliveryReadiness } from "./delivery-readiness";
+import { stepCompleted, stepUnlocked } from "./real-evolution-workflow";
+import { buildCandidateDeterministically, normalizeCandidateArtifactOutputs, repairHtmlEnvelope } from "./candidate-builder";
+import { resetDownstream } from "./downstream";
+import { acceptanceArtifacts } from "./artifact-quality";
+
+function ready() {
+  const project = EvolveProjectSchema.parse({ ...demoProject,
+    experimentRun: { ...demoProject.experimentRun, winnerId: "C" },
+    validationRun: { ...demoProject.validationRun, status: "completed", candidateId: "C", recommendation: "release" },
+    artifactAcceptance: { ...demoProject.artifactAcceptance, candidateId: "C", status: "passed", hardGatePass: true },
+  });
+  project.candidates = [CandidateSchema.parse({ id: "C", name: "candidate", change: "edit", artifactSnapshots: [CandidateArtifactSnapshotSchema.parse({ id: "s", sourceArtifactId: "source", name: "page.html", mimeType: "text/html", content: "tested content", contentHash: "caller-hash", buildMode: "deterministic", createdAt: "now" })] })];
+  const binding = evidenceFingerprint(project, project.candidates[0]);
+  project.validationRun.evidenceFingerprint = binding;
+  project.artifactAcceptance.evidenceFingerprint = binding;
+  return project;
+}
+function source(extension: string, textContent: string) {
+  return { id: "s", name: `sample.${extension}`, extension, mimeType: extension === "html" ? "text/html" : "text/markdown", textContent } as SourceArtifact;
+}
+function candidate(operation: "add" | "update", target: string, content: string) {
+  return CandidateSchema.parse({ id: "C", name: "test", change: "edit", patches: [{ id: "p", component: "code", operation, target, content, rationale: "test" }] });
+}
+
+describe("真实交付闭环", () => {
+  it("同一候选通过两类验收后才解锁交付", () => {
+    expect(deliveryReadiness(ready()).ready).toBe(true);
+    expect(stepUnlocked(ready(), "deliver")).toBe(true);
+  });
+  it.each(["hold", "reject"] as const)("验证完成但结论为 %s 不可交付", recommendation => {
+    const project = ready(); project.validationRun.recommendation = recommendation;
+    expect(stepUnlocked(project, "deliver")).toBe(false);
+    expect(stepCompleted(project, "verify")).toBe(false);
+  });
+  it("候选不一致或必要门槛失败均阻断", () => {
+    const project = ready(); project.validationRun.candidateId = "older";
+    expect(deliveryReadiness(project).ready).toBe(false);
+    project.validationRun.candidateId = "C"; project.artifactAcceptance.hardGatePass = false;
+    expect(deliveryReadiness(project).ready).toBe(false);
+  });
+  it("演示评测不能解锁真实交付", () => {
+    const project = ready(); project.validationRun.evaluation = { ...demoProject.baselineRun.result!, demoJudged: true };
+    expect(deliveryReadiness(project).ready).toBe(false);
+    const outputs = acceptanceArtifacts(project, candidate("update", "old text", "new text"), project.artifactAcceptance);
+    expect(outputs.every(output => !output.accepted)).toBe(true);
+  });
+  it("HTML 新增基于原文件合并为完整文档", () => {
+    const result = buildCandidateDeterministically(candidate("add", "说明", "<section>new body</section>"), [source("html", "<!doctype html><html><head><style>.old{color:red}</style></head><body><main>old</main></body></html>")]);
+    expect(result?.snapshots[0]?.content).toContain("<main>old</main>");
+    expect(result?.snapshots[0]?.content).toContain("<section>new body</section>");
+    expect(result?.snapshots[0]?.content).toContain("<style>.old{color:red}</style>");
+    expect(result?.snapshots[0]?.content).toMatch(/<\/body>\s*<\/html>/);
+  });
+  it("HTML 纯文本新增会编码为可运行内容，不注入脚本标签", () => {
+    const result = buildCandidateDeterministically(candidate("add", "说明", "配置 <script>alert(1)</script>"), [source("html", "<html><body>old</body></html>")]);
+    expect(result?.snapshots[0]?.content).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+  });
+  it("AI 遗漏 HTML 包装时保留原 head，并把局部片段安全合并回完整文档", () => {
+    const original = "<!doctype html><html lang=zh><head><style>.old{color:red}</style></head><body>old</body></html>";
+    const repaired = repairHtmlEnvelope(original, "```html\n<body><main>new</main>\n```");
+    expect(repaired).toContain("<html lang=zh>");
+    expect(repaired).toContain("<style>.old{color:red}</style>");
+    expect(repaired).toContain("<body><main>new</main></body></html>");
+    const fragment = repairHtmlEnvelope(original, "<section>fragment</section>");
+    expect(fragment).toContain("<body>old\n<section>fragment</section>\n</body></html>");
+  });
+  it("AI 返回 main 片段时替换原 main，不重复页面其他结构", () => {
+    const original = "<!doctype html><html><head><title>保留</title></head><body><header>导航</header><main>旧内容</main><footer>页脚</footer></body></html>";
+    const repaired = repairHtmlEnvelope(original, "<style>main{line-height:1.6}</style><main><section>新内容</section></main>");
+    expect(repaired).toContain("<title>保留</title>");
+    expect(repaired).toContain("<header>导航</header>");
+    expect(repaired).toContain("<main><section>新内容</section></main>");
+    expect(repaired.match(/<main\b/g)).toHaveLength(1);
+    expect(repaired).toContain("main{line-height:1.6}");
+  });
+  it("AI 自动修复仅返回 CSS 时合并回原 HTML 并保持文件可运行", () => {
+    const original = "<!doctype html><html><head><style>body { color: #222; }</style></head><body><main>原内容</main></body></html>";
+    const repaired = repairHtmlEnvelope(original, "```css\nbody{line-height:1.6;color:#111}\n```");
+    expect(repaired).toContain("<main>原内容</main>");
+    expect(repaired).toContain("body{line-height:1.6;color:#111}");
+    expect(repaired).toMatch(/<html[\s\S]*<body[\s\S]*<\/body>\s*<\/html>/i);
+  });
+  it("同一目标的多段 AI 输出归并为一份完整可运行成果", () => {
+    const original = source("html", "<!doctype html><html><head><title>保留</title></head><body><main>旧内容</main></body></html>");
+    const outputs = normalizeCandidateArtifactOutputs([original], [
+      { sourceArtifactId: "wrong-id-1", name: "fragment.html", mimeType: "text/html", content: "<main>新内容</main>", buildMode: "ai-full", notes: ["正文"] },
+      { sourceArtifactId: "wrong-id-2", name: "styles.css", mimeType: "text/css", content: "body{line-height:1.6}", buildMode: "ai-full", notes: ["样式"] },
+    ]);
+    expect(outputs).toHaveLength(1);
+    expect(outputs[0]?.sourceArtifactId).toBe(original.id);
+    expect(outputs[0]?.content).toContain("<title>保留</title>");
+    expect(outputs[0]?.content).toContain("<main>新内容</main>");
+    expect(outputs[0]?.content).toContain("body{line-height:1.6}");
+    expect(outputs[0]?.notes.at(-1)).toContain("2 段局部修改");
+  });
+  it("重复原文不能只修改第一个匹配", () => {
+    expect(buildCandidateDeterministically(candidate("update", "same text", "new text"), [source("html", "same text + same text")])).toBeUndefined();
+  });
+  it("完全无变化的候选不能报告构造成功", () => {
+    expect(buildCandidateDeterministically(candidate("update", "old text", "old text"), [source("md", "old text")])).toBeUndefined();
+  });
+  it("精确修改与 Markdown 新增仍可使用", () => {
+    expect(buildCandidateDeterministically(candidate("update", "old text", "new text"), [source("html", "<html><body>old text</body></html>")])?.snapshots[0]?.content).toContain("new text");
+    expect(buildCandidateDeterministically(candidate("add", "说明", "new body"), [source("md", "# 原文\nold text")])?.snapshots[0]?.content).toContain("new body");
+  });
+  it("输入变化使结论失效，但保留历史成果且不重复归档", () => {
+    const project = ready();
+    project.outputArtifacts = [OutputArtifactSchema.parse({ id: "o", projectId: project.id, round: 1, versionLabel: "S1", name: "old.md", mimeType: "text/markdown", kind: "primary", content: "old", description: "已验证", accepted: true, isChampion: true, createdAt: "2026-09-11" })];
+    const reset = resetDownstream(project);
+    expect(deliveryReadiness(reset).ready).toBe(false);
+    expect(reset.outputArtifacts).toHaveLength(0);
+    expect(reset.archivedOutputs?.[0]).toMatchObject({ accepted: true, isChampion: false, content: "old" });
+    expect(EvolveProjectSchema.parse(resetDownstream(reset)).archivedOutputs).toHaveLength(1);
+  });
+});
+
+it("rejects same-ID changed contents even when the supplied contentHash is unchanged", () => {
+  const project = ready();
+  project.candidates[0].artifactSnapshots[0].content = "untested content";
+  expect(deliveryReadiness(project).ready).toBe(false);
+});
+it("requires revalidation after the acceptance contract changes but not score display updates", () => {
+  const project = ready();
+  if (project.metrics.length) project.metrics[0].value += 1;
+  expect(deliveryReadiness(project).ready).toBe(true);
+  project.protectedItems.push("new protection requirement");
+  expect(deliveryReadiness(project).ready).toBe(false);
+});
+it("legacy unbound proof cannot authorize final delivery", () => {
+  const project = ready();
+  project.validationRun.evidenceFingerprint = undefined;
+  expect(deliveryReadiness(project).ready).toBe(false);
+});
+
+it("旧验收不能给改写后的同 ID 文件标记已接受", () => {
+  const project = ready();
+  project.candidates[0].artifactSnapshots[0].content = "changed after acceptance";
+  expect(acceptanceArtifacts(project, project.candidates[0], project.artifactAcceptance).every(item => !item.accepted)).toBe(true);
+});

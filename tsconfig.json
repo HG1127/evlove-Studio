@@ -1,0 +1,20 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./tsconfig.app.json" },
+    { "path": "./tsconfig.node.json" },
+    { "path": "./tsconfig.backend.json" }
+  ],
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["./src/*"],
+      "@evolution/contracts": ["./packages/contracts/src/index.ts"],
+      "@evolution/core": ["./packages/core/src/index.ts"],
+      "@evolution/harness": ["./packages/harness/src/index.ts"],
+      "@evolution/adapters/sandbox": ["./packages/adapters/src/vercel-sandbox-adapter.ts"],
+      "@evolution/adapters": ["./packages/adapters/src/index.ts"],
+      "@evolution/ui": ["./packages/ui/src/index.ts"],
+      "@evolution/testkit": ["./packages/testkit/src/index.ts"]
+    }
+  }
+}

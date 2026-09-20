@@ -1,0 +1,45 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+/.swc
+
+.vercel
+.env*
+
+# Build / runtime outputs
+.output
+.workflow-data
+coverage
+playwright-report
+test-results
+artifacts
+
+# Local validation logs
+/*-build*.txt
+/*-tests*.txt
+/workflow-*.txt
+/document-evidence-*.txt
+/retry-*.txt
+/recovery-*.txt
+/local-edits-*.txt
