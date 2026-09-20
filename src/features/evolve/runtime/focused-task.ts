@@ -1,4 +1,5 @@
-import type { EvolveProject, Problem } from "../schemas";
+import type { EvolveProject } from "../schemas";
+import { prioritizeProblems } from "@evolution/core";
 import { retrieveTextContext, sourceRelevance } from "./context-retrieval";
 import { planGroundingContext } from "./plan-grounding";
 import type { PlanAiResult } from "../ai/schemas";
@@ -18,46 +19,7 @@ export function limitPlanToTask(project: EvolveProject, result: PlanAiResult): P
  * discovery question. Promote that evidence directly into the round target and save one broad
  * problem-analysis model call. Diagnosis still runs independently to find the implementation cause.
  */
-export function baselineRubricProblem(project: EvolveProject): Problem | undefined {
-  const scores = new Map((project.baselineRun.result?.criterionScores ?? []).map((item) => [item.criterionId, item]));
-  const ranked = project.acceptanceRubric.flatMap((criterion) => {
-    const score = scores.get(criterion.id);
-    if (!score || score.verificationStatus !== "verified" || score.pass) return [];
-    const deficit = Math.max(0, criterion.minScore - score.score);
-    return [{ criterion, score, priority: (criterion.hardGate ? 1000 : 0) + deficit * 5 + criterion.weight }];
-  }).sort((a, b) => b.priority - a.priority);
-  const picked = ranked[0];
-  if (!picked) return undefined;
-  const evidence = [...new Set([
-    ...picked.score.evidence,
-    ...picked.score.gaps,
-    ...picked.score.testCaseIds.map((id) => `已验证测试 ${id}`),
-  ].filter(Boolean))].slice(0, 8);
-  const deficit = Math.max(0, picked.criterion.minScore - picked.score.score);
-  return {
-    id: `rubric-problem-${picked.criterion.id}`,
-    title: `${picked.criterion.title} 未达到验收标准`,
-    impact: Math.min(100, Math.max(1, Math.round(picked.criterion.weight + deficit))),
-    severity: picked.criterion.hardGate || deficit >= 15 ? "high" : deficit >= 6 ? "medium" : "low",
-    status: "recommended",
-    summary: `Baseline 已有真实证据：${picked.criterion.title} ${picked.score.score}/${picked.criterion.minScore}，本轮优先修复这一明确差距。`,
-    evidence: evidence.length ? evidence : [`Criterion ${picked.criterion.id} 已验证但未达最低分`],
-    evidenceRefs: [],
-    confidence: 0.98,
-    affectedComponent: picked.criterion.artifactIds?.length ? picked.criterion.artifactIds.join("、") : `Acceptance · ${picked.criterion.category}`,
-  };
-}
-
-/** Ranking is advisory; explicit user selection always wins. Unsupported claims require investigation. */
-export function prioritizeProblems(problems: Problem[]) {
-  return problems.filter(p => p.status !== "resolved").map(problem => ({
-    problem,
-    needsEvidence: !problem.evidence.length || (problem.confidence ?? 0.5) < 0.55
-      || (problem.evidenceRefs.length > 0 && !problem.evidenceRefs.some(ref => ref.verified)),
-    score: Math.min(100, Math.max(0, problem.impact)) * (problem.confidence ?? 0.5)
-      + ({ high: 30, medium: 15, low: 0 }[problem.severity]),
-  })).sort((a, b) => Number(a.needsEvidence) - Number(b.needsEvidence) || b.score - a.score);
-}
+export { baselineRubricProblem, prioritizeProblems } from "@evolution/core";
 
 export function focusedTask(project: EvolveProject) {
   const queue = prioritizeProblems(project.problems);

@@ -156,6 +156,22 @@ export function deriveAttentionRequest(project: EvolveProject): AttentionRequest
     });
   }
 
+  const serverCampaignCapabilityPending = project.campaign.status === "paused"
+    && /\[server-campaign-(?:ai-pending|baseline-pending|contract-pending|diagnosis-pending|plan-grounding-pending|experiment-pending)\]/.test(project.campaign.stopReason ?? "");
+  if (serverCampaignCapabilityPending) {
+    return attention({
+      type: "capability",
+      title: "Server Campaign 已保存断点，等待后续执行能力",
+      reason: project.campaign.stopReason ?? "Durable Workflow 已保存 Campaign 断点，但下一执行面尚未就绪。",
+      stage: project.stage,
+      riskLevel: "medium",
+      blocking: true,
+      questions: [],
+      suggestedAction: "当前 Baseline / Problem / Diagnosis / Candidate 断点会保留；补齐对应 Server AI、Baseline 或 Experiment 能力后从断点继续，无需重新开始。",
+      criterionIds: [],
+    });
+  }
+
   const localReviewExhausted = project.campaign.status === "paused" && /本地评审自动重试已耗尽/.test(project.campaign.stopReason ?? "");
   // A persisted fuse from an older Judge contract must not survive a runtime contract upgrade.
   // Give the same Candidate one automatic settlement pass under the new rules, then stamp the new

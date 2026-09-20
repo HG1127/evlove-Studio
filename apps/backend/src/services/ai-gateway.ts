@@ -2,20 +2,26 @@ import { Output, generateText, gateway } from "ai";
 import type { ZodType } from "zod";
 import {
   DistillAiResultSchema,
+  DiagnosisAiResultSchema,
   EvalSuiteAiResultSchema,
   NextQueueAiResultSchema,
+  PlanAiResultSchema,
+  ProblemAnalysisAiResultSchema,
   RubricAiResultSchema,
   UnderstandAiResultSchema,
   jsonSchemas,
   type DistillAiResult,
+  type DiagnosisAiResult,
   type EvalSuiteAiResult,
   type NextQueueAiResult,
+  type PlanAiResult,
+  type ProblemAnalysisAiResult,
   type RubricAiResult,
   type UnderstandAiResult,
 } from "@evolution/contracts";
 import { getServerAiConfig } from "../server-env";
 
-export type ServerAiOperation="understand"|"rubric"|"eval-suite"|"distill"|"next-queue";
+export type ServerAiOperation="understand"|"rubric"|"eval-suite"|"problem-analysis"|"diagnose"|"plan"|"distill"|"next-queue";
 
 type StructuredSchema={name:string;schema:Record<string,unknown>};
 type Contract<T>={schema:StructuredSchema;parser:ZodType<T>;instruction:string};
@@ -30,9 +36,12 @@ const SYSTEM=[
 function contract(operation:"understand"):Contract<UnderstandAiResult>;
 function contract(operation:"rubric"):Contract<RubricAiResult>;
 function contract(operation:"eval-suite"):Contract<EvalSuiteAiResult>;
+function contract(operation:"problem-analysis"):Contract<ProblemAnalysisAiResult>;
+function contract(operation:"diagnose"):Contract<DiagnosisAiResult>;
+function contract(operation:"plan"):Contract<PlanAiResult>;
 function contract(operation:"distill"):Contract<DistillAiResult>;
 function contract(operation:"next-queue"):Contract<NextQueueAiResult>;
-function contract(operation:ServerAiOperation):Contract<UnderstandAiResult|RubricAiResult|EvalSuiteAiResult|DistillAiResult|NextQueueAiResult>{
+function contract(operation:ServerAiOperation):Contract<UnderstandAiResult|RubricAiResult|EvalSuiteAiResult|ProblemAnalysisAiResult|DiagnosisAiResult|PlanAiResult|DistillAiResult|NextQueueAiResult>{
   if(operation==="understand")return{
     schema:jsonSchemas.understand,
     parser:UnderstandAiResultSchema,
@@ -47,6 +56,21 @@ function contract(operation:ServerAiOperation):Contract<UnderstandAiResult|Rubri
     schema:jsonSchemas.evalSuite,
     parser:EvalSuiteAiResultSchema,
     instruction:"Create a compact discriminative Eval Suite mapped to the supplied Acceptance Rubric. Every test must include criterionIds, executionMode and evidenceScope. Cover every criterion and every hard gate in hidden holdout. Do not invent selectors or runtime capabilities.",
+  };
+  if(operation==="problem-analysis")return{
+    schema:jsonSchemas.problemAnalysis,
+    parser:ProblemAnalysisAiResultSchema,
+    instruction:"Analyze the supplied measured Baseline and current artifact evidence. Return only concrete user/business problems supported by the supplied source, test or trace evidence. Do not treat missing runtime capability as a product defect. Prefer the smallest high-impact problem that can be falsified.",
+  };
+  if(operation==="diagnose")return{
+    schema:jsonSchemas.diagnosis,
+    parser:DiagnosisAiResultSchema,
+    instruction:"Diagnose the selected problem from the supplied Baseline, source excerpts and traces. Every evidence item must quote or closely identify supplied evidence so the server can resolve it to a source/test/trace. Give counter-evidence and a falsifier. Do not invent implementation facts.",
+  };
+  if(operation==="plan")return{
+    schema:jsonSchemas.plan,
+    parser:PlanAiResultSchema,
+    instruction:"Generate a small diverse Candidate population for the selected diagnosed problem. Each Candidate must include a concrete patch hypothesis and complete designRationale: exact supplied source evidence, command alignment, causal mechanism, covered acceptance criteria, protected-scope compliance and falsifier. Do not claim measured improvement before experiment.",
   };
   if(operation==="distill")return{
     schema:jsonSchemas.distill,
@@ -175,12 +199,18 @@ async function structured<T>(payload:unknown,schema:Contract<T>):Promise<T>{
 export function runServerAi(operation:"understand",payload:unknown):Promise<UnderstandAiResult>;
 export function runServerAi(operation:"rubric",payload:unknown):Promise<RubricAiResult>;
 export function runServerAi(operation:"eval-suite",payload:unknown):Promise<EvalSuiteAiResult>;
+export function runServerAi(operation:"problem-analysis",payload:unknown):Promise<ProblemAnalysisAiResult>;
+export function runServerAi(operation:"diagnose",payload:unknown):Promise<DiagnosisAiResult>;
+export function runServerAi(operation:"plan",payload:unknown):Promise<PlanAiResult>;
 export function runServerAi(operation:"distill",payload:unknown):Promise<DistillAiResult>;
 export function runServerAi(operation:"next-queue",payload:unknown):Promise<NextQueueAiResult>;
 export function runServerAi(operation:ServerAiOperation,payload:unknown){
   if(operation==="understand")return structured(payload,contract("understand"));
   if(operation==="rubric")return structured(payload,contract("rubric"));
   if(operation==="eval-suite")return structured(payload,contract("eval-suite"));
+  if(operation==="problem-analysis")return structured(payload,contract("problem-analysis"));
+  if(operation==="diagnose")return structured(payload,contract("diagnose"));
+  if(operation==="plan")return structured(payload,contract("plan"));
   if(operation==="distill")return structured(payload,contract("distill"));
   return structured(payload,contract("next-queue"));
 }

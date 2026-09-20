@@ -182,6 +182,22 @@ describe("autonomous orchestrator", () => {
     expect(request?.suggestedAction).toContain("无需重新生成成果");
   });
 
+  it("classifies a persisted Server Campaign migration boundary as capability instead of a generic limit", () => {
+    const p = project({
+      campaign: {
+        ...demoProject.campaign,
+        status: "paused",
+        stopReason: "[server-campaign-experiment-pending] Problem → Diagnosis → Plan 已完成；等待 Experiment Server Step。",
+      },
+      stage: "plan",
+      attentionRequests: [],
+    });
+    const request = deriveAttentionRequest(p);
+    expect(request?.type).toBe("capability");
+    expect(request?.title).toContain("Server Campaign");
+    expect(request?.suggestedAction).toContain("断点");
+  });
+
   it("continues old offline completed artifacts through Lesson and Next Queue before declaring complete", () => {
     const candidate = CandidateSchema.parse({
       id:"offline-complete",name:"离线成果",change:"完成",status:"passed",artifactBuildStatus:"ready",

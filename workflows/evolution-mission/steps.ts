@@ -8,6 +8,7 @@ import {
 } from "@evolution/contracts";
 import { applyDeterministicRoundtripEvidence, mapTestsToRubric, materializeAcceptedChampionPackage, normalizeAcceptanceRubric, normalizeEvalSuiteForProject, resetDownstream, rubricSuiteCoverage, rubricValidation } from "@evolution/core";
 import {
+  advanceServerCampaignPreparation,
   buildServerHarnessPlan,
   normalizeLocallyVerifiableCandidateRuns,
   reconcileAttentionRequest,
@@ -317,6 +318,89 @@ export async function executeServerControlStep(
     return {control:"continue"};
   }
 
+  if(action==="run-campaign"){
+    if(!serverAiConfigured()){
+      const reason="[server-campaign-ai-pending] Campaign Planning Server Step 已实现，但服务器 AI 尚未配置。";
+      const updated={
+        ...mission,
+        campaign:{
+          ...mission.campaign,
+          status:"paused" as const,
+          stopReason:reason,
+          schedule:{...mission.campaign.schedule,enabled:false,nextRunAt:undefined},
+        },
+        stage:mission.stage,
+        updatedAt:now,
+      };
+      await runtime.missions.save(updated);
+      await runtime.jobs.put(controlJob(input,{
+        status:"waiting",
+        startedAt:input.requestedAt,
+        progress:{percent:20,detail:"Campaign Planning 已迁到 Server，等待 Server AI 配置"},
+      }));
+      await runtime.events.append(createEvolutionEvent({
+        id:`evt-${input.controlJobId}-campaign-ai-pending-${iteration}`,
+        missionId:input.missionId,jobId:input.controlJobId,checkpointId:plan.checkpoint.id,
+        type:"JobProgress",source:"vercel-workflow-control",
+        payload:{action,serverNative:true,conditional:true,phase:"ai-config",reason},
+      }));
+      return {control:"stop",result:result(input,{
+        status:"waiting-action",iterations:iteration+1,nextAction:action,
+        checkpointId:plan.checkpoint.id,reason,
+      })};
+    }
+
+    const outcome=await advanceServerCampaignPreparation(mission,{
+      problemAnalysis:(payload)=>runServerAi("problem-analysis",payload),
+      diagnose:(payload)=>runServerAi("diagnose",payload),
+      plan:(payload)=>runServerAi("plan",payload),
+    });
+    await runtime.missions.save(outcome.project);
+    const phasePercent=outcome.phase==="problem"?32:outcome.phase==="diagnose"?42:outcome.phase==="plan"?52:outcome.phase==="experiment"?60:outcome.phase==="settled"?80:24;
+    await runtime.events.append(createEvolutionEvent({
+      id:`evt-${input.controlJobId}-campaign-${iteration}-${outcome.phase}`,
+      missionId:input.missionId,jobId:input.controlJobId,checkpointId:plan.checkpoint.id,
+      type:outcome.control==="continue"?"ActionCompleted":"JobProgress",
+      source:outcome.phase==="problem"||outcome.phase==="diagnose"||outcome.phase==="plan"?"vercel-workflow-ai":"vercel-workflow-control",
+      payload:{
+        action,
+        serverNative:true,
+        conditional:true,
+        phase:outcome.phase,
+        reason:outcome.reason,
+        candidateCount:outcome.candidateCount,
+        ungroundedCount:outcome.ungroundedCount,
+        completed:outcome.completed,
+      },
+    }));
+
+    if(outcome.completed){
+      await runtime.jobs.put(controlJob(input,{
+        status:"running",
+        startedAt:input.requestedAt,
+        progress:{percent:phasePercent,detail:"Campaign 已满足停止条件；继续进入成果打包/学习闭环"},
+      }));
+      return {control:"continue"};
+    }
+    if(outcome.control==="continue"){
+      await runtime.jobs.put(controlJob(input,{
+        status:"running",
+        startedAt:input.requestedAt,
+        progress:{percent:phasePercent,detail:`Server Campaign · ${outcome.phase} 已完成，继续下一阶段`},
+      }));
+      return {control:"continue"};
+    }
+    await runtime.jobs.put(controlJob(input,{
+      status:"waiting",
+      startedAt:input.requestedAt,
+      progress:{percent:phasePercent,detail:outcome.reason.slice(0,240)},
+    }));
+    return {control:"stop",result:result(input,{
+      status:"waiting-action",iterations:iteration+1,nextAction:action,
+      checkpointId:plan.checkpoint.id,reason:outcome.reason,
+    })};
+  }
+
   if(action==="revalidate"){
     const candidateId=mission.experimentRun.winnerId??mission.experimentRun.pendingEvidenceCandidateId??mission.validationRun.candidateId;
     const searchChampionCandidate=mission.searchChampion?.candidate;
@@ -542,7 +626,7 @@ export async function executeServerControlStep(
     schemaVersion:PRODUCTION_SCHEMA_VERSIONS.job,
     id:actionJobId,
     missionId:input.missionId,
-    type:action==="run-campaign"?"campaign":"mission-action",
+    type:"mission-action",
     status:"waiting",
     label:`Harness · ${action}`,
     idempotencyKey:`${input.missionId}:${plan.checkpoint.id}:${action}`,
@@ -551,7 +635,7 @@ export async function executeServerControlStep(
     priority:60,
     checkpointId:plan.checkpoint.id,
     inputRef:action,
-    progress:{percent:0,detail:(["understand","compile-contract","build-eval","distill","next-queue"].includes(action)&&!serverAiConfigured())?"Server AI Step 已实现，等待服务器 AI 配置":action==="revalidate"?"确定性 Roundtrip 可由 Server 自动复验；当前 Mission 仍需要其他验证能力":"等待 P0-3B server step handler 接管"},
+    progress:{percent:0,detail:(["understand","compile-contract","build-eval","distill","next-queue"].includes(action)&&!serverAiConfigured())?"Server AI Step 已实现，等待服务器 AI 配置":action==="revalidate"?"确定性 Roundtrip 可由 Server 自动复验；当前 Mission 仍需要其他验证能力":"等待后续 server step handler 接管"},
     createdAt:existing?.createdAt??now,
     updatedAt:now,
   }));
@@ -568,7 +652,7 @@ export async function executeServerControlStep(
   }));
   return {control:"stop",result:result(input,{
     status:"waiting-action",iterations:iteration+1,nextAction:action,
-    checkpointId:plan.checkpoint.id,reason:(["understand","compile-contract","build-eval","distill","next-queue"].includes(action)&&!serverAiConfigured())?"该动作的 Server Step 已完成，但服务器 AI 尚未配置。":action==="revalidate"?"Server 已支持确定性 Roundtrip 复验；该 Mission 的剩余证据仍需 AI / Runner / 视觉或人工能力。":"P0-3A durable control 已接管；该动作将在 P0-3B 迁入 server step。",
+    checkpointId:plan.checkpoint.id,reason:(["understand","compile-contract","build-eval","distill","next-queue"].includes(action)&&!serverAiConfigured())?"该动作的 Server Step 已完成，但服务器 AI 尚未配置。":action==="revalidate"?"Server 已支持确定性 Roundtrip 复验；该 Mission 的剩余证据仍需 AI / Runner / 视觉或人工能力。":"Durable control 已接管；该动作仍待迁入 server step。",
   })};
 }
 

@@ -3,7 +3,7 @@ import { resolveProjectOperationConnections } from "../ai/providers/registry";
 import type { EvolveProject } from "../schemas";
 import { getTargetAdapter } from "../target/registry";
 import { deriveAutonomousDecision, type AutonomousAction, type AutonomousDecision } from "./autonomous-orchestrator";
-import { campaignPreflightStopReason } from "./evolution-search";
+import { campaignPreflightStopReason } from "@evolution/core";
 import { classifyRuntimeFailure, type FailureDisposition } from "@evolution/harness";
 import { focusedSourceContext } from "./focused-task";
 import { getRunTask, shouldResumeTask } from "./run-manager";
