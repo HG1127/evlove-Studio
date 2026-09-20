@@ -1,4 +1,5 @@
 import type { Candidate, EvolveProject, ReleaseAdapterResult } from "@evolution/contracts";
+import { appendReleaseObservation } from "./release-outcome";
 import { projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, projectReleaseMode } from "./release-target";
 
 export type DurableReleaseAction = "shadow" | "promote" | "rollback";
@@ -70,6 +71,26 @@ export function applyReleaseResultToProject(args:{
   if(effective==="promote"&&args.result.deploymentId!==args.project.release.deploymentId){
     throw new Error("Promote receipt deploymentId 与 Preview 绑定不一致");
   }
+  const durableAction=effective as DurableReleaseAction;
+  const observation= {
+    source:"release-action" as const,
+    action:durableAction,
+    at:args.result.observedAt,
+    candidateId:args.candidate.id,
+    deploymentId:args.result.deploymentId,
+    stableDeploymentId:args.result.stableDeploymentId??args.project.release.stableDeploymentId,
+    artifactHashes:args.result.artifactHashes,
+    evidenceMode:"live" as const,
+    environment:args.result.environment,
+    healthy:args.result.ok&&args.result.healthy===true,
+    observationStatus:args.result.ok
+      ?args.result.observationStatus
+      :args.result.observationStatus==="observing"?"observing" as const:"unhealthy" as const,
+    latencyMs:args.result.latencyMs,
+    sampleSize:args.result.sampleSize,
+    windowMinutes:args.result.windowMinutes,
+    reason:args.result.note,
+  };
   const status=effective==="shadow"?"shadow":effective==="promote"?"promoted":"rolled-back";
   if(args.project.release.status===status
     &&args.project.release.candidateId===args.candidate.id
@@ -81,7 +102,11 @@ export function applyReleaseResultToProject(args:{
     if(!recovering)return args.project;
     return {
       ...args.project,
-      release:{...args.project.release,recovery:undefined},
+      release:{
+        ...args.project.release,
+        recovery:undefined,
+        observations:appendReleaseObservation(args.project.release.observations,observation),
+      },
       campaign:(args.project.campaign.stopReason??"").startsWith("[server-release-")
         ?{...args.project.campaign,status:"running",stopReason:undefined}
         :args.project.campaign,
@@ -126,6 +151,7 @@ export function applyReleaseResultToProject(args:{
       sampleSize:args.result.sampleSize,
       windowMinutes:args.result.windowMinutes,
       recovery:undefined,
+      observations:appendReleaseObservation(args.project.release.observations,observation),
       history:[...args.project.release.history,{
         at,
         action:effective,

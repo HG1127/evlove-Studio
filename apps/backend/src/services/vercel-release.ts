@@ -259,7 +259,7 @@ export async function executeVercelReleaseAction(args:{
       observationStatus:health.ready?"healthy":"unhealthy",
       stableDeploymentId:productionBefore?.id,deploymentId:candidate.id,
       artifactHashes:args.artifactHashes,environment:"preview",observedAt:observedAt(),
-      sampleSize:health.checks.length,windowMinutes:Math.max(0.01,health.latencyMs/60000),
+      latencyMs:health.latencyMs,sampleSize:health.checks.length,windowMinutes:Math.max(0.01,health.latencyMs/60000),
       provider:"vercel",releaseMode:"preview-promote",deploymentUrl:candidate.url,productionUrl:config.productionUrl,
     });
   }
@@ -280,7 +280,7 @@ export async function executeVercelReleaseAction(args:{
       observationStatus:health.ready?"healthy":"unhealthy",
       stableDeploymentId:args.stableDeploymentId??(productionBefore?.id===candidate.id?undefined:productionBefore?.id),deploymentId:candidate.id,
       artifactHashes:args.artifactHashes,environment:"production",observedAt:observedAt(),
-      sampleSize:points,windowMinutes:Math.max(0.01,health.latencyMs/60000),
+      latencyMs:health.latencyMs,sampleSize:points,windowMinutes:Math.max(0.01,health.latencyMs/60000),
       provider:"vercel",releaseMode:"preview-promote",deploymentUrl:candidate.url,productionUrl:config.productionUrl,
     });
   }
@@ -299,7 +299,7 @@ export async function executeVercelReleaseAction(args:{
       observationStatus:health.ready?"healthy":"unhealthy",
       stableDeploymentId:target.id,deploymentId:target.id,
       environment:"production",observedAt:observedAt(),
-      sampleSize:health.checks.length,windowMinutes:Math.max(0.01,health.latencyMs/60000),
+      latencyMs:health.latencyMs,sampleSize:health.checks.length,windowMinutes:Math.max(0.01,health.latencyMs/60000),
       provider:"vercel",releaseMode:"preview-promote",deploymentUrl:target.url,productionUrl:config.productionUrl,
     });
   }

@@ -33,6 +33,7 @@ function receipt(action:"shadow"|"promote"|"rollback",healthy=true):ReleaseAdapt
     artifactHashes:action==="rollback"?undefined:[{sourceArtifactId:"source",contentHash:"hash-c1"}],
     environment:action==="shadow"?"preview":"production",
     observedAt:"2026-09-20T15:00:00Z",
+    latencyMs:12,
     sampleSize:1,
     windowMinutes:0.1,
   };
@@ -48,6 +49,8 @@ describe("durable release orchestration",()=>{
     const promoted=applyReleaseResultToProject({project:preview,candidate,requestedAction:"promote",result:receipt("promote")});
     expect(projectHasLiveReleaseDecision(promoted)).toBe(true);
     expect(promoted.stage).toBe("learning");
+    expect(promoted.release.observations).toHaveLength(2);
+    expect(promoted.release.observations?.at(-1)).toMatchObject({source:"release-action",action:"promote",latencyMs:12,environment:"production"});
   });
 
   it("routes an unhealthy promoted deployment to rollback instead of learning",()=>{
@@ -90,5 +93,6 @@ describe("durable release orchestration",()=>{
     const twice=applyReleaseResultToProject({project:once,candidate,requestedAction:"shadow",result:previewReceipt});
     expect(twice).toBe(once);
     expect(twice.release.history).toHaveLength(1);
+    expect(twice.release.observations).toHaveLength(1);
   });
 });

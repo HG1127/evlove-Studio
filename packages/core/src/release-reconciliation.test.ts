@@ -40,6 +40,7 @@ describe("release reconciliation",()=>{
     expect(result.project.release.observedAt).toBe("2026-09-20T15:05:00Z");
     expect(result.project.campaign.status).toBe("running");
     expect(result.project.version).toBe("V13");
+    expect(result.project.release.observations?.at(-1)).toMatchObject({source:"reconcile",action:"reconcile",deploymentId:"dpl_candidate",environment:"production",latencyMs:20});
   });
 
   it("turns a recovered unhealthy Production into a safe rollback continuation",()=>{
@@ -66,6 +67,8 @@ describe("release reconciliation",()=>{
     expect(result.disposition).toBe("terminal-live-decision");
     expect(result.project.release.status).toBe("rolled-back");
     expect(result.project.release.deploymentId).toBe("dpl_stable");
+    expect(result.project.release.observations?.at(-1)).toMatchObject({deploymentId:"dpl_stable",environment:"production"});
+    expect(result.project.release.observations?.at(-1)?.artifactHashes).toBeUndefined();
   });
 
   it("refreshes a rolled-back terminal outcome without misclassifying stable as the Candidate",()=>{

@@ -713,10 +713,31 @@ export const ReleaseAdapterResultSchema = z.object({
   artifactHashes: z.array(z.object({ sourceArtifactId: z.string(), contentHash: z.string() })).optional(),
   environment: z.string().optional(),
   observedAt: z.string().optional(),
+  latencyMs: z.number().nonnegative().optional(),
   sampleSize: z.number().int().min(0).optional(),
   windowMinutes: z.number().min(0).optional(),
 });
 export type ReleaseAdapterResult = z.infer<typeof ReleaseAdapterResultSchema>;
+
+export const ReleaseObservationSchema = z.object({
+  id:z.string(),
+  at:z.string(),
+  source:z.enum(["release-action","reconcile"]),
+  action:z.enum(["shadow","promote","rollback","reconcile"]),
+  candidateId:z.string().optional(),
+  deploymentId:z.string().optional(),
+  stableDeploymentId:z.string().optional(),
+  artifactHashes:z.array(z.object({sourceArtifactId:z.string(),contentHash:z.string()})).optional(),
+  evidenceMode:z.enum(["none","live","simulation"]).default("none"),
+  environment:z.string().optional(),
+  healthy:z.boolean().optional(),
+  observationStatus:z.enum(["observing","healthy","unhealthy"]).optional(),
+  latencyMs:z.number().nonnegative().optional(),
+  sampleSize:z.number().int().min(0).optional(),
+  windowMinutes:z.number().min(0).optional(),
+  reason:z.string(),
+});
+export type ReleaseObservation = z.infer<typeof ReleaseObservationSchema>;
 
 export const ReleaseStateSchema = z.object({
   status: z.enum(["idle", "shadow", "canary-5", "canary-20", "canary-50", "promoted", "rolled-back"]),
@@ -741,6 +762,7 @@ export const ReleaseStateSchema = z.object({
     at: z.string(),
     lastObservedAt: z.string().optional(),
   }).optional(),
+  observations:z.array(ReleaseObservationSchema).optional(),
   history: z.array(z.object({
     at: z.string(),
     action: z.string(),

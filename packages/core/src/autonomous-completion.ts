@@ -1,12 +1,12 @@
 import type {EvolveProject} from "@evolution/contracts";
 import {projectHasOnlineReleaseTarget} from "./release-target";
-import {projectHasFreshHealthyProductionOutcome} from "./release-outcome";
+import {projectHasStableHealthyProductionOutcome} from "./release-outcome";
 
 /** Final state transition after package + learning/queue (and live release decision when applicable). */
 export function completeAutonomousMission(project:EvolveProject,args:{at:string;reason:string}):EvolveProject{
   const online=projectHasOnlineReleaseTarget(project);
-  if(online&&!projectHasFreshHealthyProductionOutcome(project,{now:Date.parse(args.at)})){
-    throw new Error("Production Outcome 已过期或未确认，不能完成线上自主闭环");
+  if(online&&!projectHasStableHealthyProductionOutcome(project,{now:Date.parse(args.at)})){
+    throw new Error("Production Outcome 尚未形成新鲜且稳定的连续健康证据，不能完成线上自主闭环");
   }
   return {
     ...project,

@@ -115,7 +115,7 @@ function contract(operation:ServerAiOperation):Contract<UnderstandAiResult|Rubri
   if(operation==="distill")return{
     schema:jsonSchemas.distill,
     parser:DistillAiResultSchema,
-    instruction:"Distill the causal lesson from source, baseline, accepted winner, validation and release evidence. Treat releaseFreshness as authoritative: only call it verified-skill when the Production Outcome is fresh, healthy, live and supports reuse; stale/unknown production evidence must not justify verified-skill. Otherwise return lesson or anti-pattern. State effect, limit, triggers, method and validation surfaces.",
+    instruction:"Distill the causal lesson from source, baseline, accepted winner, validation and release evidence. Treat releaseFreshness and releaseTrend as authoritative: only call it verified-skill when Production Outcome is fresh, live, healthy and has a stable-healthy trend with the required consecutive observations. A single healthy point, stale/unknown evidence, degrading health or flapping must not justify verified-skill. Otherwise return lesson or anti-pattern. State effect, limit, triggers, method and validation surfaces.",
   };
   return{
     schema:jsonSchemas.nextQueue,

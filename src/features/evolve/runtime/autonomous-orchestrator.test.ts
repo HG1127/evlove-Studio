@@ -396,8 +396,28 @@ describe("autonomous orchestrator", () => {
     expect(promotePlan.decision.action).toBe("run-release");
     expect(promotePlan.checkpoint.id).not.toBe(previewPlan.checkpoint.id);
     expect(promotePlan.sourceRevision).not.toBe(previewPlan.sourceRevision);
-    base.release={...base.release,status:"promoted",evidenceMode:"live",healthy:true,observationStatus:"healthy",environment:"production",observedAt:new Date().toISOString()};
+    const firstHealthyAt=new Date().toISOString();
+    base.release={...base.release,status:"promoted",evidenceMode:"live",healthy:true,observationStatus:"healthy",environment:"production",observedAt:firstHealthyAt,observations:[{
+      id:"prod-h1",at:firstHealthyAt,source:"release-action",action:"promote",candidateId:candidate.id,deploymentId:"dpl-preview",
+      evidenceMode:"live",environment:"production",healthy:true,observationStatus:"healthy",reason:"promote health",
+    }]};
+    expect(deriveAutonomousDecision(base).action).toBe("reconcile-release");
+    const secondHealthyAt=new Date(Date.now()+1000).toISOString();
+    base.release={...base.release,observedAt:secondHealthyAt,observations:[...(base.release.observations??[]),{
+      id:"prod-h2",at:secondHealthyAt,source:"reconcile",action:"reconcile",candidateId:candidate.id,deploymentId:"dpl-preview",
+      evidenceMode:"live",environment:"production",healthy:true,observationStatus:"healthy",reason:"refresh health",
+    }]};
     expect(deriveAutonomousDecision(base).action).toBe("distill");
+    const stablePlan=buildServerHarnessPlan(base);
+    const sameObservedAt=base.release.observedAt;
+    base.release={...base.release,observedAt:sameObservedAt,observations:[...(base.release.observations??[]),{
+      id:"prod-h3",at:secondHealthyAt,source:"reconcile",action:"reconcile",candidateId:candidate.id,deploymentId:"dpl-preview",
+      evidenceMode:"live",environment:"production",healthy:true,observationStatus:"healthy",reason:"same-time extra observation",
+    }]};
+    const observationChangedPlan=buildServerHarnessPlan(base);
+    expect(observationChangedPlan.decision.action).toBe("distill");
+    expect(observationChangedPlan.sourceRevision).not.toBe(stablePlan.sourceRevision);
+    expect(observationChangedPlan.checkpoint.id).not.toBe(stablePlan.checkpoint.id);
     base.release={...base.release,observedAt:new Date(Date.now()-31*60*1000).toISOString()};
     expect(deriveAutonomousDecision(base).action).toBe("reconcile-release");
     base.release={...base.release,observedAt:new Date().toISOString()};

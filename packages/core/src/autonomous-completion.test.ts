@@ -26,6 +26,26 @@ describe("autonomous mission completion",()=>{
       campaign:{status:"running",schedule:{enabled:false}},
       gates:[],
     } as unknown as EvolveProject;
-    expect(()=>completeAutonomousMission(project,{at,reason:"closure complete"})).toThrow(/Outcome.*过期|刷新/);
+    expect(()=>completeAutonomousMission(project,{at,reason:"closure complete"})).toThrow(/Outcome.*稳定|连续健康|线上自主闭环/);
+  });
+
+  it("completes an online mission only after two fresh healthy production observations",()=>{
+    const at="2026-09-20T15:00:00Z";
+    const project={
+      releaseTarget:{provider:"vercel",mode:"preview-promote",status:"connected",label:"Vercel"},
+      targetConnection:{adapter:"artifact"},
+      release:{
+        status:"promoted",candidateId:"C1",deploymentId:"dpl",trafficPercent:100,healthy:true,kpis:[],evidenceMode:"live",
+        observationStatus:"healthy",environment:"production",observedAt:"2026-09-20T14:59:00Z",history:[],
+        observations:[
+          {id:"h1",at:"2026-09-20T14:58:00Z",source:"release-action",action:"promote",candidateId:"C1",deploymentId:"dpl",evidenceMode:"live",environment:"production",healthy:true,observationStatus:"healthy",reason:"promote"},
+          {id:"h2",at:"2026-09-20T14:59:00Z",source:"reconcile",action:"reconcile",candidateId:"C1",deploymentId:"dpl",evidenceMode:"live",environment:"production",healthy:true,observationStatus:"healthy",reason:"refresh"},
+        ],
+      },
+      campaign:{status:"running",schedule:{enabled:false}},
+      gates:[],
+    } as unknown as EvolveProject;
+    const done=completeAutonomousMission(project,{at,reason:"closure complete"});
+    expect(done.campaign.status).toBe("completed");
   });
 });

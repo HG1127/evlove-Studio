@@ -1,6 +1,46 @@
-import type {EvolveProject} from "@evolution/contracts";
+import type {EvolveProject,ReleaseObservation} from "@evolution/contracts";
 
 export const PRODUCTION_OUTCOME_FRESHNESS_MS=30*60*1000;
+export const RELEASE_OBSERVATION_RETENTION_MS=7*24*60*60*1000;
+export const RELEASE_OBSERVATION_MAX_ENTRIES=120;
+export const PRODUCTION_OUTCOME_MIN_HEALTHY_STREAK=2;
+export const PRODUCTION_OUTCOME_TREND_WINDOW=6;
+export const PRODUCTION_OUTCOME_FLAP_TRANSITIONS=2;
+export const PRODUCTION_OUTCOME_UNHEALTHY_STREAK=2;
+
+function observationId(input:Omit<ReleaseObservation,"id">){
+  return [
+    input.source,
+    input.action,
+    input.candidateId??"-",
+    input.deploymentId??"-",
+    input.environment??"-",
+    input.at,
+    input.observationStatus??"-",
+    String(input.healthy??""),
+  ].join("|");
+}
+
+export function appendReleaseObservation(
+  current:ReleaseObservation[]|undefined,
+  input:Omit<ReleaseObservation,"id"> & {id?:string},
+  options?:{maxEntries?:number;retentionMs?:number},
+){
+  const maxEntries=options?.maxEntries??RELEASE_OBSERVATION_MAX_ENTRIES;
+  const retentionMs=options?.retentionMs??RELEASE_OBSERVATION_RETENTION_MS;
+  const observation:ReleaseObservation={...input,id:input.id??observationId(input)};
+  const anchor=Date.parse(observation.at);
+  const lowerBound=Number.isFinite(anchor)?anchor-retentionMs:undefined;
+  const merged=[
+    ...(current??[]).filter((item)=>item.id!==observation.id),
+    observation,
+  ].filter((item)=>{
+    if(lowerBound===undefined)return true;
+    const at=Date.parse(item.at);
+    return !Number.isFinite(at)||at>=lowerBound;
+  }).sort((a,b)=>Date.parse(a.at)-Date.parse(b.at));
+  return merged.slice(-maxEntries);
+}
 
 export type ProductionOutcomeFreshnessStatus="fresh"|"stale"|"unknown";
 
@@ -59,6 +99,122 @@ export function projectHasFreshHealthyProductionOutcome(
   return freshness.status==="fresh"
     &&project.release.healthy===true
     &&project.release.observationStatus==="healthy";
+}
+
+export type ProductionOutcomeTrendStatus=
+  |"stable-healthy"
+  |"healthy-insufficient"
+  |"degrading"
+  |"flapping"
+  |"stale"
+  |"unknown";
+
+export type ProductionOutcomeTrend={
+  status:ProductionOutcomeTrendStatus;
+  reason:string;
+  healthyStreak:number;
+  unhealthyStreak:number;
+  transitions:number;
+  observations:number;
+};
+
+function currentProductionObservations(project:EvolveProject,now:number,maxAgeMs:number){
+  const deploymentId=project.release.deploymentId;
+  return (project.release.observations??[])
+    .filter((item)=>item.evidenceMode==="live"
+      &&item.environment==="production"
+      &&Boolean(deploymentId)
+      &&item.deploymentId===deploymentId)
+    .filter((item)=>{
+      const at=Date.parse(item.at);
+      return Number.isFinite(at)&&Math.max(0,now-at)<=maxAgeMs;
+    })
+    .sort((a,b)=>Date.parse(b.at)-Date.parse(a.at));
+}
+
+export function productionOutcomeTrend(
+  project:EvolveProject,
+  options?:{now?:number;maxAgeMs?:number;minHealthyStreak?:number},
+):ProductionOutcomeTrend{
+  const now=options?.now??Date.now();
+  const maxAgeMs=options?.maxAgeMs??PRODUCTION_OUTCOME_FRESHNESS_MS;
+  const minHealthyStreak=options?.minHealthyStreak??PRODUCTION_OUTCOME_MIN_HEALTHY_STREAK;
+  const freshness=productionOutcomeFreshness(project,{now,maxAgeMs});
+  if(freshness.status==="stale"){
+    return {status:"stale",reason:freshness.reason,healthyStreak:0,unhealthyStreak:0,transitions:0,observations:0};
+  }
+  if(freshness.status==="unknown"){
+    return {status:"unknown",reason:freshness.reason,healthyStreak:0,unhealthyStreak:0,transitions:0,observations:0};
+  }
+  const observations=currentProductionObservations(project,now,maxAgeMs).slice(0,PRODUCTION_OUTCOME_TREND_WINDOW);
+  if(!observations.length){
+    return {
+      status:project.release.healthy===true?"healthy-insufficient":"unknown",
+      reason:project.release.healthy===true
+        ?`Production 当前 healthy，但 Observation Ledger 尚无足够连续证据；至少需要 ${minHealthyStreak} 次 healthy 观测。`
+        :"Observation Ledger 尚无当前 Production Deployment 的 live 观测。",
+      healthyStreak:project.release.healthy===true?1:0,
+      unhealthyStreak:project.release.healthy===false?1:0,
+      transitions:0,
+      observations:0,
+    };
+  }
+  const states=observations
+    .filter((item)=>item.observationStatus==="healthy"||item.observationStatus==="unhealthy")
+    .map((item)=>item.observationStatus as "healthy"|"unhealthy");
+  let healthyStreak=0;
+  for(const state of states){
+    if(state!=="healthy")break;
+    healthyStreak+=1;
+  }
+  let unhealthyStreak=0;
+  for(const state of states){
+    if(state!=="unhealthy")break;
+    unhealthyStreak+=1;
+  }
+  let transitions=0;
+  for(let i=1;i<states.length;i++)if(states[i]!==states[i-1])transitions+=1;
+  if(unhealthyStreak>=PRODUCTION_OUTCOME_UNHEALTHY_STREAK){
+    return {
+      status:"degrading",
+      reason:`Production 最近连续 ${unhealthyStreak} 次 unhealthy，需要人工核对或恢复。`,
+      healthyStreak,unhealthyStreak,transitions,observations:observations.length,
+    };
+  }
+  if(transitions>=PRODUCTION_OUTCOME_FLAP_TRANSITIONS){
+    return {
+      status:"flapping",
+      reason:`最近 ${states.length} 次 Production 观测发生 ${transitions} 次健康状态切换，存在 flapping。`,
+      healthyStreak,unhealthyStreak,transitions,observations:observations.length,
+    };
+  }
+  if(healthyStreak>=minHealthyStreak){
+    return {
+      status:"stable-healthy",
+      reason:`Production 已连续 ${healthyStreak} 次 healthy，满足稳定证据门槛。`,
+      healthyStreak,unhealthyStreak,transitions,observations:observations.length,
+    };
+  }
+  if(states[0]==="unhealthy"){
+    return {
+      status:"degrading",
+      reason:"Production 最新观测为 unhealthy，尚未形成连续异常但不能视为稳定健康。",
+      healthyStreak,unhealthyStreak,transitions,observations:observations.length,
+    };
+  }
+  return {
+    status:"healthy-insufficient",
+    reason:`Production 当前 healthy，但只有 ${healthyStreak} 次连续 healthy；至少需要 ${minHealthyStreak} 次。`,
+    healthyStreak,unhealthyStreak,transitions,observations:observations.length,
+  };
+}
+
+export function projectHasStableHealthyProductionOutcome(
+  project:EvolveProject,
+  options?:{now?:number;maxAgeMs?:number;minHealthyStreak?:number},
+){
+  return projectHasFreshHealthyProductionOutcome(project,options)
+    &&productionOutcomeTrend(project,options).status==="stable-healthy";
 }
 
 export type ReleaseAuditItem={

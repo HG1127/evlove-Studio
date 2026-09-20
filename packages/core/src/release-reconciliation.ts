@@ -3,6 +3,7 @@ import type {
   EvolveProject,
   VercelReleaseObservation,
 } from "@evolution/contracts";
+import { appendReleaseObservation } from "./release-outcome";
 import { expectedReleaseArtifactHashes } from "./release-orchestration";
 
 export type ReleaseReconcileDisposition="safe-to-resume"|"terminal-live-decision"|"manual-check";
@@ -177,11 +178,52 @@ export function reconcileReleaseObservation(args:{
   candidate:Candidate;
   observation:VercelReleaseObservation;
 }):ReleaseReconcileResult{
-  const {project,candidate,observation}=args;
-  const boundId=project.release.deploymentId;
-  const stableId=project.release.stableDeploymentId;
+  const {candidate,observation}=args;
+  const sourceProject=args.project;
+  const boundId=sourceProject.release.deploymentId;
+  const stableId=sourceProject.release.stableDeploymentId;
+  const candidateDeploymentId=sourceProject.release.status==="rolled-back"
+    ?[...sourceProject.release.history].reverse().find((entry)=>entry.candidateId===candidate.id&&entry.action==="promote")?.deploymentId
+    :boundId;
   const productionId=observation.productionDeployment?.id;
   const checkedAt=observation.checkedAt;
+  const recoveryAction=sourceProject.release.recovery?.action;
+  const previewObservation=(recoveryAction==="shadow"
+      ||(!recoveryAction&&(sourceProject.release.status==="idle"||sourceProject.release.status==="shadow")))
+    &&Boolean(observation.boundDeployment);
+  const observedHealth=previewObservation
+    ?observation.boundHealth
+    :observation.productionHealth;
+  const observedDeploymentId=previewObservation
+    ?observation.boundDeployment?.id
+    :productionId??sourceProject.release.deploymentId;
+  const observedEnvironment=previewObservation?"preview":"production";
+  const observedCandidateArtifact=Boolean(candidateDeploymentId)&&observedDeploymentId===candidateDeploymentId;
+  const project:EvolveProject={
+    ...sourceProject,
+    release:{
+      ...sourceProject.release,
+      observations:appendReleaseObservation(sourceProject.release.observations,{
+        source:"reconcile",
+        action:"reconcile",
+        at:checkedAt,
+        candidateId:candidate.id,
+        deploymentId:observedDeploymentId,
+        stableDeploymentId:stableId,
+        artifactHashes:observedCandidateArtifact?expectedReleaseArtifactHashes(candidate):undefined,
+        evidenceMode:"live",
+        environment:observedEnvironment,
+        healthy:observedHealth?.ready,
+        observationStatus:observedHealth?observedHealth.ready?"healthy":"unhealthy":undefined,
+        latencyMs:observedHealth?.latencyMs,
+        sampleSize:observedHealth?.checks.length,
+        windowMinutes:observedHealth?Math.max(0.01,observedHealth.latencyMs/60000):undefined,
+        reason:observation.errors.length
+          ?`Reconcile observation incomplete: ${observation.errors.join("；")}`
+          :`Reconcile observed ${observedEnvironment} deployment ${observedDeploymentId??"unknown"}.`,
+      }),
+    },
+  };
   if(project.release.candidateId!==candidate.id){
     const reason="Mission Release Candidate 与当前 exact Candidate 不一致；禁止自动恢复。";
     return {project:withRecovery(project,{status:"manual-check",reason,observedAt:checkedAt}),disposition:"manual-check",reason};

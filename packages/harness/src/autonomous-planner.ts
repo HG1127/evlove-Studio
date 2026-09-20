@@ -8,6 +8,7 @@ import {
   currentReleaseCandidate,
   nextDurableReleaseAction,
   productionOutcomeFreshness,
+  productionOutcomeTrend,
   projectHasLiveReleaseDecision,
   projectHasOnlineReleaseTarget,
   projectReleaseMode,
@@ -283,6 +284,26 @@ export function deriveAutonomousDecision(project: EvolveProject): AutonomousDeci
           reason:freshness.reason,
           stage:"release",riskLevel:"high",blocking:true,questions:[],criterionIds:[],
           suggestedAction:"刷新真实 Production Health / Outcome 后再继续经验提炼；旧 healthy 结果不会被当作当前线上证据。",
+        });
+        return {action:"wait-human",reason:request.reason,stage:request.stage,attention:request};
+      }
+      const trend=productionOutcomeTrend(project);
+      if(trend.status==="healthy-insufficient"||trend.status==="unknown"){
+        if(project.releaseTarget?.provider==="vercel"&&projectReleaseMode(project)==="preview-promote"){
+          return {
+            action:"reconcile-release",
+            reason:`${trend.reason} 先补充只读 Production Observation，再判断是否足以进入 Learning。`,
+            stage:"release",
+          };
+        }
+      }
+      if(trend.status==="degrading"||trend.status==="flapping"){
+        const request=attention({
+          type:"capability",
+          title:trend.status==="flapping"?"Production Outcome 出现波动":"Production Outcome 正在恶化",
+          reason:trend.reason,
+          stage:"release",riskLevel:"high",blocking:true,questions:[],criterionIds:[],
+          suggestedAction:"先核对最新 Production Outcome 与最近 Observation Timeline；连续异常或健康/异常反复不会被当作稳定线上证据。",
         });
         return {action:"wait-human",reason:request.reason,stage:request.stage,attention:request};
       }

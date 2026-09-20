@@ -32,6 +32,7 @@ export function buildServerHarnessPlan(project:EvolveProject):ServerHarnessPlan 
     project.release.recovery?.status,
     project.release.recovery?.action,
     project.release.recovery?.lastObservedAt,
+    ...(project.release.observations??[]).slice(-6).map((item)=>item.id),
     decision.action,
   ]);
   const checkpointId=`server-checkpoint-${fastHash([
@@ -42,6 +43,7 @@ export function buildServerHarnessPlan(project:EvolveProject):ServerHarnessPlan 
     project.release.status,
     project.release.deploymentId,
     project.release.recovery?.status,
+    project.release.observations?.at(-1)?.id,
     decision.action,
   ])}`;
   return {
