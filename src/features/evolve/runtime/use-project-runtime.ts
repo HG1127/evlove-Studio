@@ -1,4 +1,4 @@
-import { experimentNeedsEvidenceRepair, buildExperimentGapAdvicePayload, buildGapAdvicePayload, fallbackExperimentAdvice } from "@evolution/core";
+import { beginReleaseCycle, experimentNeedsEvidenceRepair, buildExperimentGapAdvicePayload, buildGapAdvicePayload, fallbackExperimentAdvice, projectHasOnlineReleaseTarget } from "@evolution/core";
 import { deliveryReadiness } from "./delivery-readiness";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -1283,6 +1283,25 @@ export function useProjectRuntime(initialProject: EvolveProject) {
     commit((current) => ({ ...current, targetConnection: nextConnection }));
   }, [commit]);
 
+  const setReleaseTarget = useCallback((releaseTarget: NonNullable<EvolveProject["releaseTarget"]>) => {
+    commit((current) => ({ ...current, releaseTarget }));
+  }, [commit]);
+
+  const bindReleaseDeployment = useCallback((deploymentId: string) => {
+    const current = projectRef.current;
+    const currentWinnerId = current.experimentRun.winnerId ?? current.searchChampion?.candidate?.id;
+    if (!currentWinnerId) throw new Error("没有可绑定 Preview Deployment 的 Release Candidate");
+    if (current.release.status !== "idle") throw new Error("Release 已经开始，不能中途更换 Candidate Deployment");
+    commit((state) => ({
+      ...state,
+      release: {
+        ...state.release,
+        candidateId: currentWinnerId,
+        deploymentId,
+      },
+    }));
+  }, [commit]);
+
   const materializeOutputs = useCallback(async () => {
     const current = projectRef.current;
     const champion = current.searchChampion;
@@ -1982,7 +2001,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
   const finishAutonomousSuccess = useCallback(async () => {
     await materializeOutputs();
     let current = projectRef.current;
-    const offlineDelivery = current.targetConnection.adapter !== "http";
+    const offlineDelivery = !projectHasOnlineReleaseTarget(current);
     if (offlineDelivery && current.lessons.length === 0) {
       pushActivity("离线成果已冻结 · 自动提炼本轮 Lesson", undefined, projectId);
       await distill();
@@ -2210,7 +2229,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
   const prepareChampionRelease = useCallback(() => {
     const current = projectRef.current;
     const champion = current.searchChampion;
-    if (current.targetConnection.adapter !== "http") throw new Error("当前 Mission 是离线成果类型，不需要生产发布；请在成果中心完成用户验收。只有 HTTP / Production Target 才能进入发布流程。");
+    if (!projectHasOnlineReleaseTarget(current)) throw new Error("当前 Mission 没有连接生产发布平台；请在发布控制中先连接独立 Release Target。");
     if (!champion?.candidate || !champion.validation) throw new Error("Search Champion 尚未完成 Hidden Validation");
     if (champion.validation.status !== "completed" || champion.validation.recommendation !== "release") throw new Error("Search Champion 尚未获得 Release 推荐，禁止准备生产发布");
     if (champion.artifactAcceptance?.status !== "passed") throw new Error("Search Champion 尚未通过 Gate F · Artifact Ready");
@@ -2223,6 +2242,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
       experimentRun: { ...state.experimentRun, status: "completed", winnerId: championCandidate.id },
       validationRun: championValidation,
       artifactAcceptance: champion.artifactAcceptance!,
+      release: beginReleaseCycle(state.release, championCandidate.id),
       outputArtifacts: [...acceptanceArtifacts(state, championCandidate, champion.artifactAcceptance!), ...materializeChampionOutputs(state).filter((artifact) => artifact.kind !== "primary").map((artifact) => ({ ...artifact, accepted: true }))],
       gates: state.gates.map((gate) => gate.id === "artifact-ready"
         ? { ...gate, status: "approved", approvedAt: champion.artifactAcceptance?.acceptedAt ?? now(), note: `最终 Search Champion ${champion.versionLabel} 已通过 Artifact Acceptance ${champion.artifactAcceptance?.overallScore ?? 0}/100` }
@@ -2403,6 +2423,8 @@ export function useProjectRuntime(initialProject: EvolveProject) {
     updateCampaign,
     updateAiProfile,
     setTargetConnection,
+    setReleaseTarget,
+    bindReleaseDeployment,
     runCampaignRound,
     runCampaign,
     runAutoPilot,

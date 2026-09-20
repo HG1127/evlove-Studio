@@ -17,6 +17,7 @@ import { deriveNextWorkflowAction } from "../runtime/workflow-engine";
 import { AutonomousEvolutionPanel } from "./autonomous-evolution-panel";
 import { autonomousAttention, autonomousEvolutionState } from "../runtime/autonomous-evolution";
 import { deriveAutonomousDecision, LOCAL_REVIEW_CONTRACT_VERSION } from "../runtime/autonomous-orchestrator";
+import { projectHasOnlineReleaseTarget } from "@evolution/core";
 
 // 项目页有多个独立工作区。延后加载未打开的区域，避免材料解析、成果打包和实验控制台
 // 影响用户打开项目并确认当前进化步骤的速度。
@@ -139,7 +140,7 @@ export function ProjectStudio({ project: initialProject }: { project: EvolveProj
   // Projects created before the offline-closure split may already have an accepted artifact but no
   // Lesson / Next Queue. Resume those machine-owned tail steps once on page load; no user click needed.
   const tailDecision = deriveAutonomousDecision(project);
-  const offlineClosurePending = project.targetConnection.adapter !== "http" && (tailDecision.action === "distill" || tailDecision.action === "next-queue");
+  const offlineClosurePending = !projectHasOnlineReleaseTarget(project) && (tailDecision.action === "distill" || tailDecision.action === "next-queue");
   useEffect(() => {
     if (!offlineClosurePending || runtime.status.busy || autonomyAttention || offlineClosureRecoveryTriggeredRef.current) return;
     offlineClosureRecoveryTriggeredRef.current = true;
@@ -162,8 +163,11 @@ export function ProjectStudio({ project: initialProject }: { project: EvolveProj
     const alreadyStarted = current.campaign.status !== "idle" || current.campaign.currentRound > 0 || current.outputArtifacts.some((artifact) => artifact.accepted);
     if (alreadyStarted || runtime.status.busy) return;
     autostartTriggeredRef.current = true;
-    setView("flow");
-    void runtime.runAutoPilot();
+    const timer = window.setTimeout(() => {
+      setView("flow");
+      void runtime.runAutoPilot();
+    }, 0);
+    return () => window.clearTimeout(timer);
     // autostart is a one-shot handoff from project creation; later resume is governed by Campaign state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autostart, runtime.project.id, runtime.status.busy]);
@@ -172,7 +176,10 @@ export function ProjectStudio({ project: initialProject }: { project: EvolveProj
     if (view !== "source") return;
     const label = `${runtime.status.label ?? ""} ${runtime.status.phase ?? ""}`;
     const autonomousAction = runtime.status.busy && /(深度理解输入|Acceptance Rubric|Eval Suite|Evolution Search|Candidate|Hidden Validation|Artifact Acceptance)/i.test(label);
-    if (autonomousAction || project.campaign.status === "running") setView("flow");
+    if (autonomousAction || project.campaign.status === "running") {
+      const timer = window.setTimeout(() => setView("flow"), 0);
+      return () => window.clearTimeout(timer);
+    }
   }, [project.campaign.status, runtime.status.busy, runtime.status.label, runtime.status.phase, view]);
   const generator = resolveProjectOperationConnections("plan", project.aiProfile)[0];
   const evaluator = resolveProjectOperationConnections("evaluate", project.aiProfile)[0];

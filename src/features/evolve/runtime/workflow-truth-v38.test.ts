@@ -4,6 +4,8 @@ import { EvolveProjectSchema } from "../schemas";
 import { baselineReadiness, reusableBaselineRuns } from "./baseline-readiness";
 import { resolveEvidenceRefs } from "./evidence-provenance";
 import { candidateImprovesBaseline, hypothesisGroundingScore, validationRegression } from "./run-local";
+import { deriveWorkflowSteps, workflowRequiresOnlineRelease } from "./workflow-engine";
+import { beginReleaseCycle } from "@evolution/core";
 
 const project = () => EvolveProjectSchema.parse(structuredClone(demoProject));
 
@@ -82,6 +84,59 @@ describe("workflow truth gates", () => {
     };
     expect(hypothesisGroundingScore(grounded)).toBeGreaterThan(hypothesisGroundingScore(pCandidate("weak")));
   });
+});
+
+
+it("skips fake canary stages for a Vercel preview-promote release target", () => {
+  const p = project();
+  p.releaseTarget = {
+    provider: "vercel",
+    mode: "preview-promote",
+    status: "connected",
+    label: "Vercel · test",
+    projectId: "prj_test",
+    productionUrl: "https://example.vercel.app",
+    healthPath: "/",
+  };
+  p.release = { ...p.release, status: "shadow", trafficPercent: 0, healthy: true, observationStatus: "healthy" };
+  const steps = deriveWorkflowSteps(p);
+  expect(workflowRequiresOnlineRelease(p)).toBe(true);
+  expect(steps.find((step) => step.id === "19")?.state).toBe("completed");
+  expect(steps.find((step) => step.id === "20")?.state).toBe("skipped");
+  expect(steps.find((step) => step.id === "21")?.state).toBe("ready");
+
+  const progressive = project();
+  progressive.releaseTarget = undefined;
+  progressive.targetConnection = { ...progressive.targetConnection, adapter: "http" };
+  progressive.release = { ...progressive.release, status: "shadow", trafficPercent: 0, healthy: true, observationStatus: "healthy" };
+  expect(deriveWorkflowSteps(progressive).find((step) => step.id === "20")?.state).toBe("ready");
+});
+
+
+it("starts every new release candidate from an unbound idle cycle while preserving the current production as stable", () => {
+  const p = project();
+  p.release = {
+    ...p.release,
+    status: "promoted",
+    candidateId: "old-candidate",
+    deploymentId: "dpl_current_prod",
+    stableDeploymentId: "dpl_previous_prod",
+    trafficPercent: 100,
+    healthy: true,
+    evidenceMode: "live",
+    observationStatus: "healthy",
+    environment: "production",
+    artifactHashes: [{ sourceArtifactId: "source-old", contentHash: "a".repeat(64) }],
+    history: [{ at: "2026-09-20T00:00:00.000Z", action: "promote", note: "old production" }],
+  };
+  const next = beginReleaseCycle(p.release, "new-candidate");
+  expect(next.status).toBe("idle");
+  expect(next.candidateId).toBe("new-candidate");
+  expect(next.deploymentId).toBeUndefined();
+  expect(next.stableDeploymentId).toBe("dpl_current_prod");
+  expect(next.trafficPercent).toBe(0);
+  expect(next.evidenceMode).toBe("none");
+  expect(next.history).toHaveLength(1);
 });
 
 function pCandidate(id: string) {

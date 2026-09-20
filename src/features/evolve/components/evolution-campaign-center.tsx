@@ -7,6 +7,7 @@ import { CHECKPOINT_PHASE_LABELS, getRunActivity, type ProjectRuntime } from "..
 import { buildSearchMemory } from "../runtime/search-memory";
 import { autonomousAttention } from "../runtime/autonomous-evolution";
 import { campaignMetricTargetStatus, campaignScheduleIssue, estimateNextRoundCost } from "../runtime/evolution-search";
+import { projectHasOnlineReleaseTarget } from "@evolution/core";
 
 const selectClass = "h-9 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none transition focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100";
 const inputClass = selectClass;
@@ -64,7 +65,8 @@ export function EvolutionCampaignCenter({ runtime, onOpenAttention }: { runtime:
   const metricTargetStatus = campaignMetricTargetStatus(project);
   const scheduleIssue = campaign.schedule.enabled ? undefined : campaignScheduleIssue({ ...campaign.schedule, enabled: true });
   const championDeliverableReady = Boolean(champion?.candidate?.artifactSnapshots.length && champion.validation?.status === "completed" && champion.validation.recommendation === "release" && champion.artifactAcceptance?.status === "passed" && champion.artifactAcceptance.hardGatePass);
-  const productionReleaseReady = project.targetConnection.adapter === "http" && championDeliverableReady;
+  const onlineReleaseTarget = projectHasOnlineReleaseTarget(project);
+  const productionReleaseReady = onlineReleaseTarget && championDeliverableReady;
   const archiveCounts = useMemo(() => ({
     champion: project.evolutionArchive.filter((item) => item.kind === "champion").length,
     elite: project.evolutionArchive.filter((item) => item.kind === "elite").length,
@@ -72,7 +74,7 @@ export function EvolutionCampaignCenter({ runtime, onOpenAttention }: { runtime:
     failure: project.evolutionArchive.filter((item) => item.kind === "failure").length,
   }), [project.evolutionArchive]);
   // 搜索记忆：把 Archive 压缩成「反复无效 / 真实有效 / 反复出现的差距」画像，下一轮生成候选时会注入。
-  const searchMemory = useMemo(() => buildSearchMemory(project), [project.evolutionArchive, project.campaign.noImprovementRounds, project.searchChampion?.score]);
+  const searchMemory = useMemo(() => buildSearchMemory(project), [project]);
 
   // 定时倒计时 / 当前动作已耗时都要每秒走表；既无定时也不在运行时不挂 interval。
   const ticking = Boolean(campaign.schedule.enabled && campaign.schedule.nextRunAt) || campaign.status === "running" || runtime.status.busy;
@@ -222,7 +224,7 @@ export function EvolutionCampaignCenter({ runtime, onOpenAttention }: { runtime:
         <Button disabled={campaign.status !== "running" && campaign.status !== "scheduled"} variant="secondary" onClick={runtime.pauseCampaign}><CirclePause className="size-4" />暂停</Button>
         <Button variant="secondary" disabled={!campaign.schedule.enabled && (settingsLocked || campaign.status === "paused" || campaign.status === "completed" || campaign.status === "stopped" || Boolean(scheduleIssue))} title={!campaign.schedule.enabled && scheduleIssue ? scheduleIssue : undefined} onClick={() => runtime.scheduleCampaign(!campaign.schedule.enabled)}><AlarmClock className="size-4" />{campaign.schedule.enabled ? "取消定时" : "启用定时"}</Button>
         <Button variant="secondary" disabled={!championDeliverableReady} title={!championDeliverableReady ? "只有通过 Hidden Validation + Gate F 且存在已测试成果快照的 Search Champion 才能生成正式成果包" : undefined} onClick={() => runtime.materializeOutputs()}><Download className="size-4" />生成最佳版本成果包</Button>
-        {project.targetConnection.adapter === "http" ? <Button variant="secondary" disabled={!productionReleaseReady} title={!productionReleaseReady ? "需要 Search Champion 完整通过离线验收后才能进入生产发布" : undefined} onClick={runtime.prepareChampionRelease}><Award className="size-4" />准备发布最佳版本</Button> : <Badge className="border-slate-200 bg-slate-50 text-slate-500">离线成果无需生产发布</Badge>}
+        {onlineReleaseTarget ? <Button variant="secondary" disabled={!productionReleaseReady} title={!productionReleaseReady ? "需要 Search Champion 完整通过离线验收后才能进入生产发布" : undefined} onClick={runtime.prepareChampionRelease}><Award className="size-4" />准备发布最佳版本</Button> : <Badge className="border-slate-200 bg-slate-50 text-slate-500">离线成果无需生产发布</Badge>}
         <Button variant="ghost" disabled={runtime.status.busy || (campaign.currentRound === 0 && !champion)} onClick={() => { if (window.confirm("确认重置 Campaign 搜索历史？生产已发布版本不会被回滚，但 Search Champion / Archive / Round History 会清空。")) runtime.resetCampaign(); }}><RotateCcw className="size-4" />重置搜索</Button>
       </div>
       </div></details>

@@ -769,6 +769,18 @@ export const TargetConnectionSchema = z.object({
   label: z.string().default("Demo Target Adapter"),
 });
 
+export const ReleaseTargetSchema = z.object({
+  provider: z.enum(["none", "http", "vercel"]).default("none"),
+  mode: z.enum(["progressive", "preview-promote"]).default("progressive"),
+  status: z.enum(["connected", "not-configured", "error"]).default("not-configured"),
+  label: z.string().default("未连接发布平台"),
+  projectId: z.string().optional(),
+  projectName: z.string().optional(),
+  productionUrl: z.string().url().optional(),
+  healthPath: z.string().startsWith("/").default("/"),
+}).prefault({});
+export type ReleaseTarget = z.infer<typeof ReleaseTargetSchema>;
+
 
 
 export const CampaignScheduleSchema = z.object({
@@ -1021,6 +1033,7 @@ export const EvolveProjectSchema = z.object({
   outputArtifacts: z.array(OutputArtifactSchema).default([]),
   archivedOutputs: z.array(OutputArtifactSchema).optional(),
   targetConnection: TargetConnectionSchema,
+  releaseTarget: ReleaseTargetSchema.optional(),
   updatedAt: z.string(),
 });
 export type EvolveProject = z.infer<typeof EvolveProjectSchema>;

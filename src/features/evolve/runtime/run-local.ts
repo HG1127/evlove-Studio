@@ -26,6 +26,8 @@ import {retrieveTextContext} from "./context-retrieval";
 import { searchBaseCandidate } from "./search-base";
 import { applySupplementalEvidenceToEvaluation } from "./supplemental-validation-evidence";
 import { getTargetAdapter, getTargetStatus } from "../target/registry";
+import { getProductionRuntime, productionRuntimeMode } from "./production-runtime";
+import { runServerVercelReleaseAction } from "./server-release-client";
 import {
   ArtifactRoleSchema,
   CandidateSchema,
@@ -1600,6 +1602,10 @@ export async function runRelease(project: EvolveProject, inputCandidate: Candida
   const parsed = EvolveProjectSchema.parse(project);
   const candidate = CandidateSchema.parse(inputCandidate);
   if (!actions.includes(action)) throw new Error("Unsupported release action");
+  const releaseMode = parsed.releaseTarget?.mode ?? "progressive";
+  if (releaseMode === "preview-promote" && ["canary-5", "canary-20", "canary-50"].includes(action)) {
+    throw new Error("当前发布平台使用 Preview → Promote，不支持 5% / 20% / 50% Canary。");
+  }
   const requestedStatus = action === "promote" ? "promoted" : action === "rollback" ? "rolled-back" : action;
   const refreshingCurrentStage = parsed.release.status === requestedStatus;
 
@@ -1616,7 +1622,9 @@ export async function runRelease(project: EvolveProject, inputCandidate: Candida
   if (action !== "rollback" && !refreshingCurrentStage && parsed.release.healthy === false) throw new Error("Current release KPI is unhealthy. Rollback or investigate before advancing traffic.");
 
   if (action !== "rollback") {
-    const expected = requiredPrevious[action];
+    const expected = releaseMode === "preview-promote"
+      ? (action === "shadow" ? ["idle", "promoted", "rolled-back"] : action === "promote" ? "shadow" : undefined)
+      : requiredPrevious[action];
     const expectedList = expected === undefined ? [] : Array.isArray(expected) ? expected : [expected];
     if (!refreshingCurrentStage && expectedList.length && !expectedList.includes(parsed.release.status)) {
       throw new Error(`Invalid release transition: ${parsed.release.status} → ${action}; expected previous state ${expectedList.join(" / ")}`);
@@ -1635,10 +1643,23 @@ export async function runRelease(project: EvolveProject, inputCandidate: Candida
     }
   }
 
-  const adapter = getTargetAdapter(parsed);
-  if (!adapter.live) throw new Error("当前项目使用离线 Artifact/Mock Runner，不能执行真实 Shadow、Canary 或 Promote。请在“材料与目标”连接 HTTP Target Runner；文件类成果可直接在“成果与版本”领取已验收快照。");
-  if (!adapter.release) throw new Error("Target adapter does not implement release()");
-  const result = await adapter.release({ project: parsed, candidate, action });
+  let result: ReleaseAdapterResult;
+  if (parsed.releaseTarget?.provider === "vercel") {
+    // Release API re-reads the Mission from Supabase before touching production.
+    // Force the latest browser projection to the backend first so Winner/Gate/Artifact Hash cannot be stale.
+    if (productionRuntimeMode() !== "local") await getProductionRuntime().missions.save(parsed);
+    result = await runServerVercelReleaseAction({
+      missionId: parsed.id,
+      candidateId: candidate.id,
+      action,
+      deploymentId: action === "rollback" ? parsed.release.stableDeploymentId : parsed.release.deploymentId,
+    });
+  } else {
+    const adapter = getTargetAdapter(parsed);
+    if (!adapter.live) throw new Error("当前项目使用离线 Artifact/Mock Runner，不能执行真实 Shadow、Canary 或 Promote。请连接独立 Release Target 或真实 HTTP Target Runner。");
+    if (!adapter.release) throw new Error("Target adapter does not implement release()");
+    result = await adapter.release({ project: parsed, candidate, action });
+  }
   if (result.evidenceMode !== "live") throw new Error("发布接口只返回了模拟结果，未声明 evidenceMode=live；本次不会写入 Shadow / Canary / Promote 状态。请让真实 Target Runner 返回生产证据类型后重试。");
   if (!result.ok) throw new Error(`真实发布平台拒绝了 ${action}：${result.note}`);
   const effectiveAction = result.effectiveAction ?? action;
@@ -1651,7 +1672,11 @@ export async function runRelease(project: EvolveProject, inputCandidate: Candida
       throw new Error("线上发布回执的 Artifact Hash 与已验收快照不一致或不完整；禁止推进流量。");
     }
   }
-  if (["canary-5", "canary-20", "canary-50", "promote"].includes(effectiveAction) && result.observationStatus !== "observing" && (!result.sampleSize || !result.windowMinutes)) {
+  if (releaseMode === "preview-promote" && effectiveAction === "promote") {
+    if (result.observationStatus !== "healthy" || result.healthy !== true) {
+      throw new Error("Production Promote 后 Health Gate 尚未确认健康；不会把本次发布结算为成功。");
+    }
+  } else if (["canary-5", "canary-20", "canary-50", "promote"].includes(effectiveAction) && result.observationStatus !== "observing" && (!result.sampleSize || !result.windowMinutes)) {
     throw new Error("Canary/Promote 回执缺少有效 sampleSize 或 windowMinutes；样本和观察窗口不足时不能推进流量。");
   }
   return { ...result, action: effectiveAction };

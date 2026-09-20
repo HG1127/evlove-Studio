@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ProductionRuntimePorts } from "@evolution/contracts";
 import type { SourceArtifact } from "../schemas";
 import {
   beginParseJob,
@@ -10,9 +11,22 @@ import {
   getParseJob,
   listParseJobs,
 } from "./parse-job-store";
+import { configureProductionRuntime, resetProductionRuntime } from "./production-runtime";
+
+const testRuntime:ProductionRuntimePorts={
+  missions:{initialize:async()=>{},list:async()=>[],get:async()=>undefined,save:async()=>{},delete:async()=>{},flush:async()=>{}},
+  jobs:{list:async()=>[],get:async()=>undefined,put:async()=>{},cancel:async()=>{}},
+  events:{append:async()=>{},list:async()=>[]},
+  artifacts:{put:async()=>{},get:async()=>undefined,delete:async()=>{}},
+};
+
+beforeEach(()=>{
+  configureProductionRuntime(testRuntime,"local");
+});
 
 afterEach(async () => {
   await clearParseJobs();
+  resetProductionRuntime();
   vi.unstubAllGlobals();
 });
 

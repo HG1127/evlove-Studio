@@ -35,11 +35,12 @@ import {
 } from "../runtime/system-readiness";
 import { deriveWorkflowSteps } from "../runtime/workflow-engine";
 import { getRunnerGatewayConfig, testRunnerGateway } from "../runtime/target-runner-config";
-import { PRODUCTION_BOUNDARIES, PRODUCTION_SCHEMA_VERSIONS, PRODUCTION_PORTS, type EvolutionWorkflowCapabilities, type SandboxBrowserHealth, type SandboxHealth } from "@evolution/contracts";
+import { PRODUCTION_BOUNDARIES, PRODUCTION_SCHEMA_VERSIONS, PRODUCTION_PORTS, type EvolutionWorkflowCapabilities, type SandboxBrowserHealth, type SandboxHealth, type VercelReleaseCapabilities, type VercelReleaseHealth } from "@evolution/contracts";
 import { checkSupabaseBackendHealth, checkSupabaseRealtimeHealth, type SupabaseBackendHealth, type SupabaseRealtimeHealth } from "@evolution/adapters";
 import { getSupabaseRuntimeConfig, productionRuntimeMode } from "../runtime/production-runtime";
 import { productionSyncStatus } from "../runtime/production-sync";
 import { checkServerBrowserHealth, checkServerSandboxHealth, getServerWorkflowCapabilities } from "../runtime/server-workflow-client";
+import { checkServerVercelReleaseHealth, getServerVercelReleaseCapabilities } from "../runtime/server-release-client";
 import { HarnessInspector } from "./harness-inspector";
 
 function readRunnerCapabilities(): RunnerCapabilitySnapshot | undefined {
@@ -93,6 +94,7 @@ export function EvolutionReadinessCenter() {
   const [workflowCheck, setWorkflowCheck] = useState<{ busy: boolean; message: string; capabilities?: EvolutionWorkflowCapabilities }>({ busy: false, message: "" });
   const [sandboxCheck, setSandboxCheck] = useState<{ busy: boolean; message: string; health?: SandboxHealth }>({ busy: false, message: "" });
   const [browserCheck, setBrowserCheck] = useState<{ busy: boolean; message: string; health?: SandboxBrowserHealth }>({ busy: false, message: "" });
+  const [releaseCheck, setReleaseCheck] = useState<{ busy: boolean; message: string; capabilities?: VercelReleaseCapabilities; health?: VercelReleaseHealth }>({ busy: false, message: "" });
   const visualJudgeLive = getAiProviderStatus("visual-judge").live;
   const signals = useMemo(() => ({ runner, visualJudgeLive }), [runner, visualJudgeLive]);
   const engines = useMemo(() => deriveEngineReadiness(signals), [signals]);
@@ -114,6 +116,8 @@ export function EvolutionReadinessCenter() {
   const p03FullAuto = Boolean(workflowCheck.capabilities?.fullAuto);
   const p04Ready = Boolean(sandboxCheck.health?.ready);
   const p04BrowserReady = Boolean(browserCheck.health?.ready);
+  const releaseReadReady = Boolean(releaseCheck.capabilities?.readEnabled && releaseCheck.health?.ready);
+  const releaseWriteReady = Boolean(releaseCheck.capabilities?.writeEnabled);
   const hybridFunctionalReady = Boolean(p02Ready && p04Ready);
   const hybridInteractionReady = Boolean(hybridFunctionalReady && p04BrowserReady);
   const visibleEngines = engineFilter === "gaps"
@@ -126,7 +130,7 @@ export function EvolutionReadinessCenter() {
     { target: "文件 / Office / HTML Artifact", state: "ready", read: "✓", snapshot: "✓", mutate: "✓", validate: "✓", deploy: "交付", observe: "离线", rollback: "✓", gap: "复杂 Renderer 仍需补齐" },
     { target: "HTML / Web 页面", state: p04BrowserReady || (runner?.htmlBrowser && runner?.e2e) ? "ready" : "partial", read: "✓", snapshot: "✓", mutate: "✓", validate: p04BrowserReady ? "Chromium Steps" : runner?.e2e ? "✓" : "部分", deploy: p04BrowserReady ? "Sandbox Preview" : "Preview", observe: p04BrowserReady ? "真实交互" : runner?.screenshots ? "✓" : "部分", rollback: "✓", gap: p04BrowserReady ? "Route Matrix / 视觉审查继续扩展" : "工程级 Preview / Browser Runtime" },
     { target: "ZIP / Codebase", state: p04BrowserReady ? "partial" : p04Ready ? "partial" : runner?.build ? "partial" : "backend", read: "✓", snapshot: "✓", mutate: "✓", validate: p04BrowserReady ? "Build/Test + Browser" : p04Ready ? "Sandbox Build/Test" : runner?.build ? "Build" : "静态", deploy: p04BrowserReady ? "Sandbox Preview" : "待 Preview", observe: p04BrowserReady ? "Browser Steps / E2E" : p04Ready ? "执行证据" : "待后端", rollback: "ZIP", gap: p04BrowserReady ? "Git Target / Production Deploy 后续补齐" : p04Ready ? "Browser Runtime / Preview" : "Git + Sandbox + Preview Runtime" },
-    { target: "Production HTTP Target", state: runner?.release ? "ready" : "backend", read: "连接", snapshot: "Hash", mutate: "Deploy", validate: "Canary", deploy: runner?.release ? "✓" : "待后端", observe: runner?.release ? "Telemetry" : "待后端", rollback: runner?.release ? "✓" : "待后端", gap: "Deploy / Traffic / Telemetry" },
+    { target: "Production HTTP Target", state: releaseWriteReady || runner?.release ? "ready" : releaseReadReady ? "partial" : "backend", read: "连接", snapshot: "Hash", mutate: "Deploy", validate: releaseCheck.capabilities?.mode==="preview-promote" ? "Preview Gate" : "Canary", deploy: releaseWriteReady || runner?.release ? "✓" : "只读", observe: releaseReadReady || runner?.release ? "Health" : "待后端", rollback: releaseWriteReady || runner?.release ? "✓" : "待凭据", gap: releaseWriteReady || runner?.release ? "Production Release 已接通" : releaseReadReady ? "生产健康观测已接通；Promote/Rollback 仍需 VERCEL_RELEASE_TOKEN" : "Deploy / Traffic / Telemetry" },
     { target: "Git Repository", state: "backend", read: "待后端", snapshot: "Commit SHA", mutate: "Branch/PR", validate: "CI", deploy: "Merge", observe: "Webhook", rollback: "Revert", gap: "Git-native Target Adapter" },
     { target: "Agent / Workflow / Memory / API / DB", state: "backend", read: "待后端", snapshot: "待后端", mutate: "待后端", validate: "待后端", deploy: "待后端", observe: "待后端", rollback: "待后端", gap: "External Connector SDK" },
   ] as const;
@@ -194,6 +198,27 @@ export function EvolutionReadinessCenter() {
     return () => { active = false; };
   }, []);
 
+  useEffect(() => {
+    let active = true;
+    queueMicrotask(() => { if (active) setReleaseCheck({ busy: true, message: "正在检测 Production Release Provider…" }); });
+    void Promise.all([getServerVercelReleaseCapabilities(), checkServerVercelReleaseHealth()]).then(([capabilities, health]) => {
+      if (!active) return;
+      setReleaseCheck({
+        busy: false,
+        capabilities,
+        health,
+        message: capabilities.writeEnabled
+          ? "Vercel Release Read / Write 已就绪"
+          : health.ready
+            ? "Production Health 可观测；Promote / Rollback 仍需专用 Release Token"
+            : health.message,
+      });
+    }).catch((error) => {
+      if (active) setReleaseCheck({ busy: false, message: error instanceof Error ? error.message : String(error) });
+    });
+    return () => { active = false; };
+  }, []);
+
   const refreshSupabase = () => {
     const config = getSupabaseRuntimeConfig();
     if (!config) {
@@ -237,6 +262,22 @@ export function EvolutionReadinessCenter() {
     setBrowserCheck((current) => ({ ...current, busy: true, message: "正在准备 Browser Runtime Snapshot 并启动 Chromium…" }));
     void checkServerBrowserHealth().then((health) => setBrowserCheck({ busy: false, health, message: health.message }))
       .catch((error) => setBrowserCheck({ busy: false, message: error instanceof Error ? error.message : String(error) }));
+  };
+
+  const refreshRelease = () => {
+    setReleaseCheck((current) => ({ ...current, busy: true, message: "正在重新检测 Production Release…" }));
+    void Promise.all([getServerVercelReleaseCapabilities(), checkServerVercelReleaseHealth()]).then(([capabilities, health]) => {
+      setReleaseCheck({
+        busy: false,
+        capabilities,
+        health,
+        message: capabilities.writeEnabled
+          ? "Vercel Release Read / Write 已就绪"
+          : health.ready
+            ? "Production Health 可观测；Promote / Rollback 仍需专用 Release Token"
+            : health.message,
+      });
+    }).catch((error) => setReleaseCheck({ busy: false, message: error instanceof Error ? error.message : String(error) }));
   };
 
   const refreshRunner = () => {
@@ -323,7 +364,7 @@ export function EvolutionReadinessCenter() {
               {targetCoverage.map((row) => <div key={row.target} className="grid grid-cols-[220px_90px_repeat(7,minmax(84px,1fr))_220px] items-center border-b px-4 py-3 text-xs last:border-b-0">
                 <span className="font-semibold text-slate-800">{row.target}</span>
                 <Badge className={row.state === "ready" ? "w-fit border-emerald-200 bg-emerald-50 text-emerald-700" : row.state === "partial" ? "w-fit border-amber-200 bg-amber-50 text-amber-700" : "w-fit border-violet-200 bg-violet-50 text-violet-700"}>{row.state === "ready" ? "可用" : row.state === "partial" ? "部分" : "待后端"}</Badge>
-                {[row.read,row.snapshot,row.mutate,row.validate,row.deploy,row.observe,row.rollback].map((value,index)=><span key={index} className={value === "✓" || value.includes("Build") || value === "Telemetry" || value === "Canary" || value === "执行证据" ? "font-semibold text-emerald-700" : value.includes("待") ? "text-violet-600" : "text-slate-500"}>{value}</span>)}
+                {[row.read,row.snapshot,row.mutate,row.validate,row.deploy,row.observe,row.rollback].map((value,index)=><span key={index} className={value === "✓" || value.includes("Build") || value === "Health" || value === "Canary" || value === "执行证据" ? "font-semibold text-emerald-700" : value.includes("待") ? "text-violet-600" : "text-slate-500"}>{value}</span>)}
                 <span className="text-[11px] leading-5 text-slate-500">{row.gap}</span>
               </div>)}
             </div>
@@ -456,6 +497,25 @@ export function EvolutionReadinessCenter() {
               </div>
             </div>
           </div>
+          <div className="rounded-xl border bg-white p-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="text-xs font-semibold text-slate-800">P0 · Production Release Provider</div>
+                <div className="mt-1 text-[11px] text-slate-500">{releaseCheck.message || "等待 Release Provider 检测"}</div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge className={releaseWriteReady ? "border-emerald-200 bg-emerald-50 text-emerald-700" : releaseReadReady ? "border-amber-200 bg-amber-50 text-amber-700" : "border-slate-200 bg-slate-50 text-slate-600"}>{releaseWriteReady ? "READ / WRITE READY" : releaseReadReady ? "READ-ONLY READY" : "CHECK"}</Badge>
+                <Button size="sm" variant="secondary" onClick={refreshRelease} disabled={releaseCheck.busy}><RefreshCcw className={`size-3.5 ${releaseCheck.busy ? "animate-spin" : ""}`} />检测 Release</Button>
+              </div>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2 text-[10px] sm:grid-cols-5">
+              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>provider</b><div className={releaseCheck.capabilities?.available ? "text-emerald-600" : "text-slate-400"}>{releaseCheck.capabilities?.available ? "VERCEL" : "—"}</div></div>
+              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>health</b><div className={releaseCheck.health?.ready ? "text-emerald-600" : "text-slate-400"}>{releaseCheck.health?.ready ? "READY" : "—"}</div></div>
+              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>write</b><div className={releaseCheck.capabilities?.writeEnabled ? "text-emerald-600" : "text-amber-600"}>{releaseCheck.capabilities?.writeEnabled ? "READY" : "TOKEN REQUIRED"}</div></div>
+              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>mode</b><div className="text-sky-600">{releaseCheck.capabilities?.mode === "preview-promote" ? "PREVIEW → PROMOTE" : releaseCheck.capabilities?.mode ?? "—"}</div></div>
+              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>rolling release</b><div className={releaseCheck.capabilities?.rollingReleaseSupported ? "text-emerald-600" : "text-slate-500"}>{releaseCheck.capabilities?.rollingReleaseSupported ? "SUPPORTED" : releaseCheck.capabilities?.rollingReleaseReason || "NO"}</div></div>
+            </div>
+          </div>
           <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
             {PRODUCTION_BOUNDARIES.map((item) => <div key={item.id} className="rounded-xl border bg-white p-3">
               <div className="flex items-center justify-between gap-2"><span className="text-xs font-semibold text-slate-800">{item.title}</span><Badge className="border-emerald-200 bg-emerald-50 text-emerald-700">READY</Badge></div>
@@ -474,7 +534,7 @@ export function EvolutionReadinessCenter() {
               </div>
             </div>
           </div>
-          <div className="rounded-xl border border-violet-100 bg-violet-50/60 px-3 py-2.5 text-[11px] leading-5 text-violet-800"><b>当前优先级：</b>{!supabaseReady ? "先完成 P0-1 Supabase Data Foundation。" : !p02Ready ? "先完成 P0-2 Realtime 验收。" : !hybridFunctionalReady ? "先完成 P0-4 Vercel Sandbox 真实执行接入。" : !hybridInteractionReady ? "Sandbox Build/Test 已 READY；当前继续完成 Browser Runtime Snapshot、真实 Preview 与 Browser Steps/E2E。" : !p03FullAuto ? "Hybrid 功能模式 READY：浏览器 AI/BYOK + Supabase + Realtime + Sandbox Build/Test + Preview + Browser Steps/E2E 已可支撑核心功能闭环；Server AI、支付与 FULL AUTO 后置。" : "P0-3/P0-4 已完整闭环，可进入 Git Target / Production Release。"}</div>
+          <div className="rounded-xl border border-violet-100 bg-violet-50/60 px-3 py-2.5 text-[11px] leading-5 text-violet-800"><b>当前优先级：</b>{!supabaseReady ? "先完成 P0-1 Supabase Data Foundation。" : !p02Ready ? "先完成 P0-2 Realtime 验收。" : !hybridFunctionalReady ? "先完成 P0-4 Vercel Sandbox 真实执行接入。" : !hybridInteractionReady ? "Sandbox Build/Test 已 READY；当前继续完成 Browser Runtime Snapshot、真实 Preview 与 Browser Steps/E2E。" : !releaseReadReady ? "Hybrid 功能闭环已 READY；当前补 Production Release Health 观测。" : !releaseWriteReady ? "Hybrid + Production Health 已 READY；Promote / Rollback 代码已 fail-closed，待后续配置 VERCEL_RELEASE_TOKEN 时再开放写操作。" : !p03FullAuto ? "Hybrid + Production Release Read/Write 已 READY；Server AI / FULL AUTO 仍按既定计划后置。" : "P0-3/P0-4/Production Release 已完整闭环。"}</div>
         </CardContent>
       </Card>
       <div className="mb-3 flex flex-wrap items-end justify-between gap-3"><div><h2 className="font-semibold">Backend Readiness Backlog</h2><p className="mt-1 text-xs text-slate-500">默认只看 P0。这里列的是必须配置真实后端/基础设施才能升级证据等级的能力。</p></div><div className="flex flex-wrap gap-2"><div className="flex rounded-xl bg-slate-200/60 p-1">{(["P0","P1","P2","all"] as const).map((priority)=><Button key={priority} size="sm" variant={backendPriority===priority?"default":"ghost"} onClick={()=>setBackendPriority(priority)}>{priority==="all"?"全部":priority}</Button>)}</div><Link to="/settings"><Button variant="secondary" size="sm">AI 模型与连接 <ArrowRight className="size-3.5" /></Button></Link></div></div>

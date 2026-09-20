@@ -1,5 +1,5 @@
 import { BaselineRetryAction } from "./baseline-retry-action";
-import { experimentNeedsEvidenceRepair, computeGapAnalysis, buildGapAdvicePayload, type GapAnalysis } from "@evolution/core";
+import { experimentNeedsEvidenceRepair, computeGapAnalysis, buildGapAdvicePayload, projectHasOnlineReleaseTarget, type GapAnalysis } from "@evolution/core";
 import { compileUserEvolutionSteps, preferredInternalStage, stepForStage, workflowStepState } from "../runtime/real-evolution-workflow";
 
 import {
@@ -61,6 +61,8 @@ import { addVisualEvidence, getVisualEvidence } from "../runtime/visual-evidence
 import { connectedTargetConnection, getRunnerGatewayConfig, testRunnerGateway } from "../runtime/target-runner-config";
 import { latestSupplementalEvidenceForCriterion } from "../runtime/supplemental-validation-evidence";
 import { criterionCanUseLocalSnapshotEvidence } from "../runtime/eval-suite-normalization";
+import { checkServerVercelReleaseHealth, getServerVercelReleaseCapabilities, listServerVercelDeployments } from "../runtime/server-release-client";
+import type { VercelDeploymentSummary, VercelReleaseCapabilities, VercelReleaseHealth } from "@evolution/contracts";
 
 // 交付物预览与下载会带入格式化、压缩等依赖，只在到达交付阶段后再加载。
 const ProjectOutputsPanel = lazy(() => import("./project-outputs-panel").then((module) => ({ default: module.ProjectOutputsPanel })));
@@ -812,7 +814,7 @@ export function PendingEvidencePanel({ runtime, criteria }: { runtime: ProjectRu
 function ValidationPanel({ runtime }: { runtime: ProjectRuntime }) {
   const p=runtime.project;
   const autonomousMode=p.campaign.executionMode==="auto-rounds";
-  const liveRelease=p.targetConnection.adapter==="http";
+  const liveRelease=projectHasOnlineReleaseTarget(p);
   const v=p.validationRun;
   const acceptance=p.artifactAcceptance;
   const artifactApproved=runtime.gate("artifact-ready")?.status==="approved";
@@ -877,7 +879,7 @@ function ValidationPanel({ runtime }: { runtime: ProjectRuntime }) {
 
     {behaviorPassed&&<Card className={cn("border-2",artifactPassed?"border-emerald-200":"border-amber-200")}><CardContent className="pt-5"><div className="flex flex-wrap items-center gap-2"><div className="font-semibold text-slate-900">成果完整性</div><Badge className={artifactPassed?"border-emerald-200 bg-emerald-50 text-emerald-700":acceptance?.status==="failed"?"border-rose-200 bg-rose-50 text-rose-700":"border-amber-200 bg-amber-50 text-amber-700"}>{artifactPassed?"通过":acceptance?.status==="failed"?"需要修复":"检查中"}</Badge></div><p className="mt-2 text-sm leading-6 text-slate-500">{artifactPassed?"格式、结构、用户要求和必须保留的内容都已通过检查。":acceptance?.summary??"正在检查最终成果是否完整。"}</p>{acceptance?.status==="failed"&&<div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">有 {failedCriteria.length} 项未通过，系统只会修复失败项。</div>}{autonomousMode?<div className="mt-4 rounded-xl border border-emerald-100 bg-emerald-50/60 p-3 text-xs leading-5 text-emerald-800">自动模式下无需人工确认 Gate。通过后系统会冻结刚刚验收过的同一成果快照并继续打包。</div>:<div className="mt-4"><GateCard title="确认成果完整" approved={artifactApproved} disabled={!artifactPassed} onApprove={()=>runtime.approveGate("artifact-ready","最终成果通过项目专属 Acceptance Rubric 与结构完整性检查")}>{artifactPassed?"确认后冻结这份刚刚验收通过的版本。":"检查通过后才能确认。"}</GateCard></div>}</CardContent></Card>}
 
-    <Card><CardContent className="pt-5"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><div className="font-semibold text-slate-900">成果交付</div><p className="mt-1 text-sm leading-6 text-slate-500">实际效果和成果完整性通过后，离线成果会自动冻结和打包；只有真实生产上线继续保留人工授权。</p></div>{releaseApproved?null:autonomousMode&&!liveRelease?<Badge className="border-indigo-200 bg-indigo-50 text-indigo-700">系统自动完成</Badge>:<Button disabled={!canRelease} onClick={()=>runtime.approveGate("release-ready","Hidden Behavior + 成果物完整性 全部通过")}>{liveRelease?"授权进入上线流程":"确认可以交付"}</Button>}</div>{releaseApproved&&artifactApproved&&liveRelease&&<div className="mt-4 flex justify-end"><Button onClick={()=>runtime.releaseAction("shadow")} disabled={runtime.status.busy}><Eye className="size-4"/>开始后台观察</Button></div>}{releaseApproved&&artifactApproved&&!liveRelease&&<div className="mt-4 rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm leading-6 text-sky-900">验收完成，可以到“成果与版本”领取文件。当前没有连接线上发布平台，因此不会显示虚假的上线结果。</div>}</CardContent></Card>
+    <Card><CardContent className="pt-5"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><div className="font-semibold text-slate-900">成果交付</div><p className="mt-1 text-sm leading-6 text-slate-500">实际效果和成果完整性通过后，离线成果会自动冻结和打包；只有真实生产上线继续保留人工授权。</p></div>{releaseApproved?null:autonomousMode&&!liveRelease?<Badge className="border-indigo-200 bg-indigo-50 text-indigo-700">系统自动完成</Badge>:<Button disabled={!canRelease} onClick={()=>runtime.approveGate("release-ready","Hidden Behavior + 成果物完整性 全部通过")}>{liveRelease?"授权进入上线流程":"确认可以交付"}</Button>}</div>{releaseApproved&&artifactApproved&&liveRelease&&<div className="mt-4 flex justify-end"><Button onClick={()=>runtime.setStage("release")} disabled={runtime.status.busy}><Eye className="size-4"/>进入发布控制</Button></div>}{releaseApproved&&artifactApproved&&!liveRelease&&<div className="mt-4 rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm leading-6 text-sky-900">验收完成，可以到“成果与版本”领取文件。当前没有连接线上发布平台，因此不会显示虚假的上线结果。</div>}</CardContent></Card>
 
     {v.status==="failed"&&<div className="rounded-2xl border border-rose-200 bg-rose-50 p-5"><div className="flex items-center gap-2 text-sm font-bold text-rose-800"><CircleAlert className="size-4"/>验证执行失败</div><p className="mt-2 break-words text-xs leading-5 text-rose-700">{v.error??"未知错误"}</p><div className="mt-3"><Button size="sm" onClick={()=>void runtime.executeValidation()} disabled={runtime.status.busy}>重试验证</Button></div></div>}
     {v.status!=="completed"&&v.status!=="failed"&&<div className="rounded-2xl border border-dashed p-9 text-center"><ShieldCheck className="mx-auto size-8 text-slate-300"/><div className="mt-3 text-sm font-semibold text-slate-700">最终验收还没开始</div><p className="mt-1 text-sm text-slate-500">点击“开始验收”，系统会先做关键检查；如果已经发现明确问题，就不会浪费时间继续跑后面的检查。</p></div>}
@@ -904,8 +906,14 @@ const TRAFFIC_BY_ACTION: Record<string, string> = {
 
 function ReleasePanel({ runtime }: { runtime: ProjectRuntime }) {
   const p = runtime.project;
-  const liveRelease = p.targetConnection.adapter === "http";
-  const steps: { action: "shadow" | "canary-5" | "canary-20" | "canary-50" | "promote"; label: string; traffic: string }[] = [
+  const vercelRelease = p.releaseTarget?.provider === "vercel";
+  const genericHttpRelease = p.releaseTarget?.provider === "http" || ((!p.releaseTarget || p.releaseTarget.provider === "none") && p.targetConnection.adapter === "http");
+  const liveRelease = vercelRelease || genericHttpRelease;
+  const previewPromote = vercelRelease && p.releaseTarget?.mode === "preview-promote";
+  const steps: { action: "shadow" | "canary-5" | "canary-20" | "canary-50" | "promote"; label: string; traffic: string }[] = previewPromote ? [
+    { action: "shadow", label: "Preview Gate", traffic: "0% Production 流量" },
+    { action: "promote", label: "Production", traffic: "100% Production 流量" },
+  ] : [
     { action: "shadow", label: "后台观察", traffic: "不影响真实用户" },
     { action: "canary-5", label: "小流量试运行", traffic: "5% 用户" },
     { action: "canary-20", label: "扩大试运行", traffic: "20% 用户" },
@@ -920,7 +928,9 @@ function ReleasePanel({ runtime }: { runtime: ProjectRuntime }) {
   const currentVersion = p.versions.find((version) => version.id === p.currentVersionId) ?? p.versions[p.versions.length - 1];
   const lastRollbackAt = p.release.history.slice().reverse().find((entry) => entry.action === "rollback")?.at;
   const releasedLive = Boolean(releasedVersion && (!lastRollbackAt || (releasedVersion?.releasedAt ?? "") > lastRollbackAt));
-  const challengeStage: Record<string, string> = { shadow: "后台观察", "canary-5": "小流量试运行", "canary-20": "扩大试运行", "canary-50": "半量运行" };
+  const challengeStage: Record<string, string> = previewPromote
+    ? { shadow: "Preview Gate" }
+    : { shadow: "后台观察", "canary-5": "小流量试运行", "canary-20": "扩大试运行", "canary-50": "半量运行" };
   const challenging = challengeStage[p.release.status];
   // 发布轮次：每次从 Shadow 重新起手算新一轮发布周期，给历史条目打徽标，多轮记录不再混作一锅。
   const historyWithRound = p.release.history.map((entry, idx) => ({
@@ -929,14 +939,72 @@ function ReleasePanel({ runtime }: { runtime: ProjectRuntime }) {
   }));
   // 在产栏回滚快捷入口：新候选验证出问题时一步回到旧版，二次确认防误触。
   const [rollbackArm, setRollbackArm] = useState(false);
+  const [releaseCaps, setReleaseCaps] = useState<VercelReleaseCapabilities>();
+  const [releaseHealth, setReleaseHealth] = useState<VercelReleaseHealth>();
+  const [releaseDeployments, setReleaseDeployments] = useState<VercelDeploymentSummary[]>([]);
+  const [releaseProviderBusy, setReleaseProviderBusy] = useState(false);
+  const [releaseProviderError, setReleaseProviderError] = useState("");
+  useEffect(() => {
+    if (!vercelRelease) return;
+    let active = true;
+    void Promise.all([getServerVercelReleaseCapabilities(), checkServerVercelReleaseHealth()])
+      .then(([caps, health]) => {
+        if (!active) return;
+        setReleaseCaps(caps);
+        setReleaseHealth(health);
+        if (caps.writeEnabled) {
+          void listServerVercelDeployments().then((result) => {
+            if (active && result.available) setReleaseDeployments(result.deployments);
+          }).catch(() => undefined);
+        }
+      })
+      .catch((error) => {
+        if (active) setReleaseProviderError(error instanceof Error ? error.message : String(error));
+      });
+    return () => { active = false; };
+  }, [vercelRelease]);
+  const connectVercelRelease = async () => {
+    setReleaseProviderBusy(true);
+    setReleaseProviderError("");
+    try {
+      const [caps, health] = await Promise.all([getServerVercelReleaseCapabilities(), checkServerVercelReleaseHealth()]);
+      if (!caps.available || !caps.projectId) throw new Error("当前部署没有可识别的 Vercel Project");
+      runtime.setReleaseTarget({
+        provider: "vercel",
+        mode: caps.mode,
+        status: "connected",
+        label: `Vercel · ${caps.projectName ?? caps.projectId}`,
+        projectId: caps.projectId,
+        projectName: caps.projectName,
+        productionUrl: caps.productionUrl,
+        healthPath: "/",
+      });
+      setReleaseCaps(caps);
+      setReleaseHealth(health);
+      if (caps.writeEnabled) {
+        const deployments = await listServerVercelDeployments();
+        if (deployments.available) setReleaseDeployments(deployments.deployments);
+      }
+    } catch (error) {
+      setReleaseProviderError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setReleaseProviderBusy(false);
+    }
+  };
+  const releaseWriteReady = !vercelRelease || Boolean(releaseCaps?.writeEnabled);
+  const readyPreviewDeployments = releaseDeployments.filter((deployment) => deployment.state === "READY" && deployment.target !== "production");
+  const releaseDeploymentBound = !previewPromote
+    || p.release.status !== "idle"
+    || Boolean(p.release.deploymentId && p.release.candidateId === runtime.winner?.id);
   const armRollback = () => {
     setRollbackArm(true);
     window.setTimeout(() => setRollbackArm((current) => (current ? false : current)), 4000);
   };
-  const canRollback = p.release.status !== "idle" && p.release.status !== "rolled-back";
+  const canRollback = releaseWriteReady && p.release.status !== "idle" && p.release.status !== "rolled-back";
   return <div className="space-y-4">
     <SectionTitle eyebrow="第 5 步 · 安全交付" title="需要上线时，逐步放量" desc="文件成果可以直接领取；只有需要在线运行的成果，才需要从后台观察开始逐步放量，并随时保留回滚能力。" />
-    {!liveRelease&&<div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm leading-6 text-sky-900"><b>当前不需要线上发布。</b> 已验收文件可以直接领取。以后接入真实线上服务后，系统才会启用逐步放量和回滚。</div>}
+    {!liveRelease&&<div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm leading-6 text-sky-900"><b>当前没有连接独立发布平台。</b> 已验收文件仍可直接领取；如果这个项目需要部署到当前 Vercel Project，可以单独连接 Release Target，不会改变现有验证 Target。<div className="mt-3"><Button size="sm" variant="secondary" disabled={releaseProviderBusy} onClick={()=>void connectVercelRelease()}><PlugZap className="size-3.5"/>{releaseProviderBusy?"正在检测…":"连接当前 Vercel Release"}</Button></div>{releaseProviderError&&<div className="mt-2 text-xs text-rose-700">{releaseProviderError}</div>}</div>}
+    {vercelRelease&&<div className="rounded-2xl border border-indigo-200 bg-indigo-50/60 p-4 text-sm leading-6 text-indigo-900"><div className="flex flex-wrap items-center gap-2"><b>{p.releaseTarget?.label}</b><Badge className={releaseHealth?.ready?"border-emerald-200 bg-emerald-50 text-emerald-700":"border-amber-200 bg-amber-50 text-amber-700"}>{releaseHealth?.ready?"Production Health READY":"Health 未确认"}</Badge><Badge className={releaseWriteReady?"border-emerald-200 bg-emerald-50 text-emerald-700":"border-amber-200 bg-amber-50 text-amber-700"}>{releaseWriteReady?"Release Write READY":"Read-only"}</Badge></div><p className="mt-2 text-xs text-indigo-700">{previewPromote?"当前 Vercel 方案使用 Preview → Production Promote；不会伪造 5% / 20% / 50% 流量。":"当前发布平台使用渐进式发布。"}{!releaseWriteReady?" Promote / Rollback 需要单独配置 VERCEL_RELEASE_TOKEN；当前仍可做真实 Production 健康观测。":""}</p>{releaseWriteReady&&previewPromote&&p.release.status==="idle"&&<div className="mt-3 rounded-xl border border-indigo-200 bg-white/80 p-3"><div className="text-xs font-semibold">绑定当前 Winner 的 Preview Deployment</div><select className="mt-2 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs" value={p.release.deploymentId??""} onChange={(event)=>{try{if(event.target.value)runtime.bindReleaseDeployment(event.target.value);setReleaseProviderError("");}catch(error){setReleaseProviderError(error instanceof Error?error.message:String(error));}}}><option value="">请选择 READY Preview</option>{readyPreviewDeployments.map((deployment)=><option key={deployment.id} value={deployment.id}>{deployment.id} · {new URL(deployment.url).hostname}</option>)}</select><p className="mt-2 text-[11px] text-indigo-600">{p.release.deploymentId&&p.release.candidateId===runtime.winner?.id?"已绑定当前 Release Candidate；Preview Gate 只会验证这个 Deployment。":readyPreviewDeployments.length?"请选择与当前 Candidate 对应的 Preview，系统不会自动猜。":"当前没有 READY Preview Deployment。"}</p></div>}</div>}
     {(releasedVersion || challenging) && <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50/60 px-4 py-3 text-xs text-emerald-900">
       <Rocket className="size-4 shrink-0 text-emerald-600" />
       {p.release.status === "promoted" && releasedVersion && <><span className="font-bold">在产 {releasedVersion.label} · {releasedVersion.candidateTitle ?? "历史候选"}</span><span className="text-emerald-700">发布于 {new Date(releasedVersion.releasedAt!).toLocaleString("zh-CN")}</span><span className="ml-auto text-emerald-700">当前在产</span></>}
@@ -946,9 +1014,9 @@ function ReleasePanel({ runtime }: { runtime: ProjectRuntime }) {
         ? <Button size="sm" className="border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100" onClick={() => { setRollbackArm(false); void runtime.releaseAction("rollback"); }}>确认{p.release.status === "promoted" ? "回滚该版本" : "回滚新候选"}？</Button>
         : <Button size="sm" variant="ghost" onClick={armRollback}><RefreshCcw className="size-3.5" />{p.release.status === "promoted" ? "回滚该版本" : "回滚新候选"}</Button>)}
     </div>}
-    {liveRelease&&<div className="grid gap-2 md:grid-cols-5">{steps.map((step, i) => { const done = index >= i; const active = index === i; return <div key={step.action} className={cn("rounded-2xl border p-4", done ? "border-emerald-200 bg-emerald-50" : "bg-slate-50", active && "ring-2 ring-indigo-100")}><div className="text-xs font-semibold">{step.label}</div><div className="mt-2 text-[11px] text-slate-400">{step.traffic}</div><div className="mt-3 text-xs font-semibold">{done ? "已到达" : "等待"}</div></div>; })}</div>}
+    {liveRelease&&<div className={cn("grid gap-2",previewPromote?"md:grid-cols-2":"md:grid-cols-5")}>{steps.map((step, i) => { const done = index >= i; const active = index === i; return <div key={step.action} className={cn("rounded-2xl border p-4", done ? "border-emerald-200 bg-emerald-50" : "bg-slate-50", active && "ring-2 ring-indigo-100")}><div className="text-xs font-semibold">{step.label}</div><div className="mt-2 text-[11px] text-slate-400">{step.traffic}</div><div className="mt-3 text-xs font-semibold">{done ? "已到达" : "等待"}</div></div>; })}</div>}
     {liveRelease&&p.release.evidenceMode==="live"&&<TechnicalDetails label="技术人员查看：线上指标、部署信息与观察窗口" meta={p.release.observationStatus==="observing"?"正在观察":p.release.healthy===false?"异常":"正常"}><div><div className="mb-2 text-xs font-semibold text-slate-500">{p.release.environment||"production"}{p.release.deploymentId?` · deployment ${p.release.deploymentId}`:""}{p.release.observedAt?` · ${new Date(p.release.observedAt).toLocaleString("zh-CN")}`:""}{p.release.sampleSize!==undefined?` · sample ${p.release.sampleSize}`:""}{p.release.windowMinutes!==undefined?` / ${p.release.windowMinutes}min`:""}</div>{p.release.kpis.length>0?<div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{p.release.kpis.map((metric) => <ScoreCard key={metric.key} label={metric.label} value={metric.value} unit={metric.unit} />)}</div>:<div className="rounded-xl border border-dashed p-4 text-xs text-slate-400">正在等待生产指标样本。</div>}</div></TechnicalDetails>}
-    {liveRelease&&<Card><CardContent className="pt-5"><div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between"><div><div className="text-sm font-semibold">当前：{index>=0?steps[index]?.label:"等待开始"}</div><div className="mt-1 text-xs text-slate-500">新版本当前承接 {p.release.trafficPercent}% 流量</div></div><div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={() => runtime.releaseAction("rollback")} disabled={p.release.status === "idle" || p.release.status === "rolled-back" || runtime.status.busy}><RefreshCcw className="size-4" />回滚到上一版</Button>{p.release.observationStatus==="observing"&&["shadow","canary-5","canary-20","canary-50"].includes(p.release.status)&&<Button variant="secondary" onClick={()=>runtime.releaseAction(p.release.status as "shadow"|"canary-5"|"canary-20"|"canary-50")} disabled={runtime.status.busy}><RefreshCcw className="size-4"/>刷新观察结果</Button>}{p.release.status !== "promoted" && p.release.status !== "rolled-back" && <Button onClick={() => runtime.releaseAction(next.action)} disabled={runtime.status.busy || p.release.healthy === false || p.release.observationStatus === "observing"}><Rocket className="size-4" />{index < 0 ? "开始后台观察" : `继续到${next.label}`}</Button>}</div></div>{historyWithRound.length > 0 && <details className="mt-4 border-t pt-3"><summary className="cursor-pointer text-xs font-semibold text-slate-500">技术人员查看：发布历史</summary><div className="mt-3 space-y-2">{historyWithRound.slice().reverse().map((h, i) => <div key={`${h.at}-${i}`} className="flex gap-3 text-xs"><span className="w-32 shrink-0 text-slate-400">{new Date(h.at).toLocaleString()}</span><Badge>Round {h.cycle}</Badge><span className="font-semibold">{h.action}</span><span className="text-indigo-600">{h.action === "rollback" ? "回旧版" : TRAFFIC_BY_ACTION[h.action] ?? "—"}</span><span className="text-slate-500">{h.note}</span></div>)}</div></details>}</CardContent></Card>}
+    {liveRelease&&<Card><CardContent className="pt-5"><div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between"><div><div className="text-sm font-semibold">当前：{index>=0?steps[index]?.label:"等待开始"}</div><div className="mt-1 text-xs text-slate-500">{previewPromote?p.release.status==="shadow"?"Preview 已通过，Production 尚未切换":p.release.status==="promoted"?"Production 已接管真实流量":"Production 仍由稳定版本承接":`新版本当前承接 ${p.release.trafficPercent}% 流量`}</div></div><div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={() => runtime.releaseAction("rollback")} disabled={!releaseWriteReady || p.release.status === "idle" || p.release.status === "rolled-back" || runtime.status.busy}><RefreshCcw className="size-4" />回滚到上一版</Button>{!previewPromote&&p.release.observationStatus==="observing"&&["shadow","canary-5","canary-20","canary-50"].includes(p.release.status)&&<Button variant="secondary" onClick={()=>runtime.releaseAction(p.release.status as "shadow"|"canary-5"|"canary-20"|"canary-50")} disabled={runtime.status.busy}><RefreshCcw className="size-4"/>刷新观察结果</Button>}{p.release.status !== "promoted" && p.release.status !== "rolled-back" && <Button onClick={() => runtime.releaseAction(next.action)} disabled={!releaseWriteReady || !releaseDeploymentBound || runtime.status.busy || p.release.healthy === false || p.release.observationStatus === "observing"}><Rocket className="size-4" />{index < 0 ? previewPromote?"执行 Preview Gate":"开始后台观察" : `继续到${next.label}`}</Button>}</div></div>{historyWithRound.length > 0 && <details className="mt-4 border-t pt-3"><summary className="cursor-pointer text-xs font-semibold text-slate-500">技术人员查看：发布历史</summary><div className="mt-3 space-y-2">{historyWithRound.slice().reverse().map((h, i) => <div key={`${h.at}-${i}`} className="flex gap-3 text-xs"><span className="w-32 shrink-0 text-slate-400">{new Date(h.at).toLocaleString()}</span><Badge>Round {h.cycle}</Badge><span className="font-semibold">{h.action}</span><span className="text-indigo-600">{h.action === "rollback" ? "回旧版" : previewPromote&&h.action==="shadow"?"Preview":TRAFFIC_BY_ACTION[h.action] ?? "—"}</span><span className="text-slate-500">{h.note}</span></div>)}</div></details>}</CardContent></Card>}
     {p.release.healthy === false && p.release.observationStatus !== "observing" && <div className="rounded-2xl border border-rose-200 bg-rose-50/60 p-4 text-xs leading-5 text-rose-900/80">
       <b className="text-sm">线上表现出现异常，系统已经停止继续放量</b>
       <ul className="mt-2 space-y-1">

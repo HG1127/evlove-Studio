@@ -4,11 +4,12 @@ import { SupabaseBackendConfigSchema, type ProductionRuntimePorts, type Supabase
 import { localProductionPorts } from "./local-production-adapters";
 
 let configured:ProductionRuntimePorts|undefined;
+let configuredMode:ProductionRuntimeMode|undefined;
 
 export type ProductionRuntimeMode = "local" | "supabase" | "http";
 
-export function configureProductionRuntime(ports:ProductionRuntimePorts){configured=ports;}
-export function resetProductionRuntime(){configured=undefined;}
+export function configureProductionRuntime(ports:ProductionRuntimePorts,mode:ProductionRuntimeMode="local"){configured=ports;configuredMode=mode;}
+export function resetProductionRuntime(){configured=undefined;configuredMode=undefined;}
 
 export function getSupabaseRuntimeConfig():SupabaseBackendConfig|undefined{
   const parsed=SupabaseBackendConfigSchema.safeParse({
@@ -20,6 +21,8 @@ export function getSupabaseRuntimeConfig():SupabaseBackendConfig|undefined{
 }
 
 export function productionRuntimeMode():ProductionRuntimeMode{
+  if(configured)return configuredMode??"local";
+  if(import.meta.env.MODE==="test")return "local";
   if(serverEnv.EVOLUTION_API_URL?.trim())return "http";
   if(getSupabaseRuntimeConfig())return "supabase";
   return "local";
@@ -27,8 +30,8 @@ export function productionRuntimeMode():ProductionRuntimeMode{
 
 export function getProductionRuntime():ProductionRuntimePorts{
   if(configured)return configured;
-  const api=serverEnv.EVOLUTION_API_URL?.trim();
-  if(api)return createHttpProductionPorts(api);
-  const supabase=getSupabaseRuntimeConfig();
-  return supabase?createSupabaseProductionPorts(supabase):localProductionPorts;
+  const mode=productionRuntimeMode();
+  if(mode==="local")return localProductionPorts;
+  if(mode==="http")return createHttpProductionPorts(serverEnv.EVOLUTION_API_URL!.trim());
+  return createSupabaseProductionPorts(getSupabaseRuntimeConfig()!);
 }

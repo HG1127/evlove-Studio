@@ -1,4 +1,6 @@
 import { SupabaseBackendConfigSchema, type SupabaseBackendConfig } from "@evolution/contracts";
+import fs from "node:fs";
+import path from "node:path";
 
 function value(...items:Array<string|undefined>) {
   return items.map((item)=>item?.trim()).find(Boolean);
@@ -57,6 +59,50 @@ export function getServerAiConfig():ServerAiConfig|undefined{
   const rawBase=value(process.env.EVOLUTION_AI_BASE_URL,process.env.OPENAI_BASE_URL)??"https://api.openai.com/v1";
   const baseUrl=rawBase.replace(/\/+$/,"").replace(/\/(?:responses|chat\/completions)$/i,"");
   return {mode:"openai-compatible",apiKey,model,baseUrl,timeoutMs};
+}
+
+export type ServerVercelReleaseConfig={
+  token?:string;
+  projectId?:string;
+  projectName?:string;
+  productionUrl?:string;
+  teamId?:string;
+};
+
+function localVercelLink(){
+  if(process.env.VERCEL)return {};
+  try{
+    const file=path.join(process.cwd(),".vercel","project.json");
+    const parsed=JSON.parse(fs.readFileSync(file,"utf8")) as {projectId?:string;orgId?:string;projectName?:string};
+    return parsed;
+  }catch{return {};}
+}
+
+function absoluteHttps(value: string|undefined){
+  const trimmed=value?.trim();
+  if(!trimmed)return undefined;
+  return /^https?:\/\//i.test(trimmed)?trimmed:"https://"+trimmed;
+}
+
+export function getServerVercelReleaseConfig():ServerVercelReleaseConfig{
+  const linked=localVercelLink();
+  const projectName=value(process.env.EVOLUTION_VERCEL_PROJECT_NAME,process.env.VERCEL_PROJECT_NAME,linked.projectName);
+  return {
+    token:value(process.env.VERCEL_RELEASE_TOKEN,process.env.EVOLUTION_VERCEL_RELEASE_TOKEN),
+    projectId:value(process.env.EVOLUTION_VERCEL_PROJECT_ID,process.env.VERCEL_PROJECT_ID,linked.projectId),
+    projectName,
+    productionUrl:absoluteHttps(value(
+      process.env.EVOLUTION_VERCEL_PRODUCTION_URL,
+      process.env.VERCEL_PROJECT_PRODUCTION_URL,
+      projectName?projectName+".vercel.app":undefined,
+    )),
+    teamId:value(process.env.EVOLUTION_VERCEL_TEAM_ID,process.env.VERCEL_TEAM_ID,linked.orgId),
+  };
+}
+
+export function vercelReleaseWriteConfigured(){
+  const config=getServerVercelReleaseConfig();
+  return Boolean(config.token&&config.projectId);
 }
 
 export function serverAiConfigured(){return Boolean(getServerAiConfig());}

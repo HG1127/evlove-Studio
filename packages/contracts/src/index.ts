@@ -9,3 +9,4 @@ export * from "./workflow-contract";
 export * from "./ai-schemas";
 export * from "./ai-json-schemas";
 export * from "./sandbox-contract";
+export * from "./release-contract";

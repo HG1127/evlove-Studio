@@ -1,5 +1,6 @@
 import type { AiOperation } from "../ai/schemas";
 import type { EvolveProject } from "../schemas";
+import { projectHasOnlineReleaseTarget, projectReleaseMode } from "@evolution/core";
 
 export type WorkflowStepState = "completed" | "skipped" | "running" | "ready" | "blocked" | "pending";
 export type WorkflowStep = { id: string; phase: number; title: string; state: WorkflowStepState; detail: string };
@@ -27,7 +28,7 @@ export function recommendedProblem(project: EvolveProject) { return [...project.
 function atOrAfterRelease(project: EvolveProject, statuses: string[]) { return statuses.includes(project.release.status); }
 /** Production traffic is an optional branch. File/artifact projects close offline after Gate F. */
 export function workflowRequiresOnlineRelease(project: EvolveProject) {
-  return project.targetConnection.adapter === "http";
+  return projectHasOnlineReleaseTarget(project);
 }
 
 export function deriveWorkflowSteps(project: EvolveProject): WorkflowStep[] {
@@ -45,6 +46,7 @@ export function deriveWorkflowSteps(project: EvolveProject): WorkflowStep[] {
   const artifactPassed = behaviorPassed && project.artifactAcceptance.candidateId === project.experimentRun.winnerId && project.artifactAcceptance.status === "passed";
   const outputsReady = project.outputArtifacts.some((artifact) => artifact.kind === "primary" && artifact.accepted && artifact.frozenArtifact);
   const onlineRelease = workflowRequiresOnlineRelease(project);
+  const previewPromote = projectReleaseMode(project) === "preview-promote";
   const shadowDone = atOrAfterRelease(project, ["shadow", "canary-5", "canary-20", "canary-50", "promoted"]);
   const canaryDone = atOrAfterRelease(project, ["canary-5", "canary-20", "canary-50", "promoted"]);
   const finalRelease = project.release.status === "promoted" || project.release.status === "rolled-back";
@@ -70,9 +72,9 @@ export function deriveWorkflowSteps(project: EvolveProject): WorkflowStep[] {
     step("16",6,"验收实际成果",artifactPassed?"completed":behaviorPassed?project.artifactAcceptance.status==="repairing"?"running":"ready":"blocked",artifactPassed?`Acceptance ${project.artifactAcceptance.overallScore}/100`:`Coverage / Integrity / Pairwise / Hard Gate`),
     step("17",6,"定向修复未通过项",artifactPassed?"completed":project.artifactAcceptance.attempts>0?"running":behaviorPassed?"ready":"pending",artifactPassed?`${project.artifactAcceptance.attempts} 次 Repair 后通过`:`最多 ${project.artifactAcceptance.maxRepairAttempts} 次，修复后重跑 Holdout`),
     step("18",6,"冻结并交付已验收文件",outputsReady?"completed":artifactPassed?"ready":"blocked",outputsReady?"交付物 = 被测试并验收过的同一 Snapshot":"禁止重新生成另一份未测试成果"),
-    step("19",7,"Shadow",!onlineRelease?"skipped":shadowDone?"completed":outputsReady&&artifactPassed&&gateApproved(project,"release-ready")?"ready":"blocked",!onlineRelease?"离线成果任务：无需生产流量，按需发布时再启用":shadowDone?"真实流量旁路完成":"需已冻结成果 + Release Ready"),
-    step("20",7,"Canary 5→20→50",!onlineRelease?"skipped":canaryDone?"completed":shadowDone?"ready":"pending",!onlineRelease?"离线成果任务：不适用 Canary":`当前真实流量 ${project.release.trafficPercent}%`),
-    step("21",7,"Promote / Rollback",!onlineRelease?"skipped":finalRelease?"completed":canaryDone?"ready":"pending",!onlineRelease?"离线成果任务：不产生 Production Champion":finalRelease?project.release.status:"线上 KPI 决定 Production Champion"),
+    step("19",7,previewPromote?"Preview Gate":"Shadow",!onlineRelease?"skipped":shadowDone?"completed":outputsReady&&artifactPassed&&gateApproved(project,"release-ready")?"ready":"blocked",!onlineRelease?"离线成果任务：无需生产流量，按需发布时再启用":shadowDone?(previewPromote?"Preview Deployment 已通过 Health Gate":"真实流量旁路完成"):"需已冻结成果 + Release Ready"),
+    step("20",7,"Canary 5→20→50",!onlineRelease||previewPromote?"skipped":canaryDone?"completed":shadowDone?"ready":"pending",!onlineRelease?"离线成果任务：不适用 Canary":previewPromote?"当前 Release Provider 使用 Preview → Promote；Canary 明确跳过":`当前真实流量 ${project.release.trafficPercent}%`),
+    step("21",7,"Promote / Rollback",!onlineRelease?"skipped":finalRelease?"completed":previewPromote?shadowDone?"ready":"pending":canaryDone?"ready":"pending",!onlineRelease?"离线成果任务：不产生 Production Champion":finalRelease?project.release.status:previewPromote?"Preview Gate 通过后才允许 Promote；Production Health 决定最终状态":"线上 KPI 决定 Production Champion"),
     step("22",8,"Lesson / Skill / Anti-pattern",learned?"completed":outputsReady&&artifactPassed&&(!onlineRelease||finalRelease)?"ready":"blocked",learned?`${project.lessons.length} 条经验资产`:onlineRelease?"结合离线验收与线上决策提炼":"基于离线验收、修复轨迹与最终成果自动提炼"),
     step("23",8,"Next Evolve Queue",queued?"completed":learned?"ready":"blocked",queued?`${project.nextQueue.length} 个下一轮问题`:"Remaining Failure + Repair Trace + New Scenario"),
   ];
@@ -87,6 +89,7 @@ export function deriveWorkflowGates(project: EvolveProject): WorkflowGate[] {
   const acceptance = currentValidation && project.artifactAcceptance.candidateId === project.experimentRun.winnerId ? project.artifactAcceptance : { ...project.artifactAcceptance, status: "idle" as const };
   const finalRelease = project.release.status === "promoted" || project.release.status === "rolled-back";
   const onlineRelease = workflowRequiresOnlineRelease(project);
+  const previewPromote = projectReleaseMode(project) === "preview-promote";
   const outputsReady = project.outputArtifacts.some((artifact) => artifact.kind === "primary" && artifact.accepted && artifact.frozenArtifact);
   const artifactReady = acceptance.status === "passed" && outputsReady;
   const verified = project.lessons.find((item) => item.status === "verified-skill" || item.status === "anti-pattern");
@@ -97,7 +100,7 @@ export function deriveWorkflowGates(project: EvolveProject): WorkflowGate[] {
     { id:"A",title:"Problem Worthy",question:"这个问题值得开启一轮 Evolve 吗？",state:problem?"passed":project.problems.length?"ready":"pending",evidence:problem?`${problem.title} · impact ${problem.impact}% · severity ${problem.severity}`:"等待 Failure Map" },
     { id:"B",title:"Root Cause Ready",question:"根因证据足够可信么？",state:diagnosis?(diagnosis.confidence>=0.65&&diagnosis.evidence.length?"passed":"blocked"):problem?"ready":"pending",evidence:diagnosis?`${Math.round(diagnosis.confidence*100)}% confidence · ${diagnosis.evidence.length} evidence · falsifier: ${diagnosis.falsifier}`:"等待 Trace Diff" },
     { id:"C",title:"Offline Winner",question:"完整 Candidate Artifact 在 Holdout 中真的胜出么？",state:validation.status==="completed"?(validation.recommendation==="release"?"passed":"failed"):hasWinner?"ready":"pending",evidence:validation.status==="completed"?`${validation.recommendation??"hold"} · ${validation.checks.filter((item)=>item.status==="pass").length}/${validation.checks.length} checks`:"等待 Candidate Artifact / Hidden Validation" },
-    { id:"D",title:"Online Stable",question:"真实线上流量稳定么？",state:!onlineRelease?"skipped":project.release.status==="promoted"?"passed":project.release.status==="rolled-back"?"failed":project.release.status!=="idle"?(project.release.healthy===false?"blocked":"ready"):"pending",evidence:!onlineRelease?"离线成果模式：Online Gate 不适用；未伪造线上稳定结论":project.release.status==="idle"?"等待 Shadow / Canary":`${project.release.status} · ${project.release.trafficPercent}% traffic` },
+    { id:"D",title:"Online Stable",question:"真实线上流量稳定么？",state:!onlineRelease?"skipped":project.release.status==="promoted"?"passed":project.release.status==="rolled-back"?"failed":project.release.status!=="idle"?(project.release.healthy===false?"blocked":"ready"):"pending",evidence:!onlineRelease?"离线成果模式：Online Gate 不适用；未伪造线上稳定结论":previewPromote?(project.release.status==="idle"?"等待 Preview Gate":project.release.status==="shadow"?"Preview Gate 已通过，尚未 Promote":project.release.status):project.release.status==="idle"?"等待 Shadow / Canary":`${project.release.status} · ${project.release.trafficPercent}% traffic` },
     { id:"E",title:"Experience Ready",question:"经验值得固化复用么？",state:onlineRelease?(verified?"passed":finalRelease?"ready":"pending"):(learned?"passed":artifactReady?"ready":"pending"),evidence:onlineRelease?(verified?`${verified.status} · ${verified.title}`:"线上决策完成后 Distill"):(learned?`${project.lessons[0]?.status ?? "lesson"} · ${project.lessons[0]?.title ?? "离线经验"}`:artifactReady?"离线 Artifact 已验收，可提炼 Lesson":"等待 Gate F 与成果冻结") }, 
     { id:"F",title:"Artifact Ready",question:"最终交付 Artifact 本身完整满足最初进化目标吗？",state:acceptance.status==="passed"?"passed":acceptance.status==="failed"?"failed":acceptance.status==="repairing"?"ready":validation.recommendation==="release"?"ready":"pending",evidence:acceptance.status==="idle"?"等待 Requirement Coverage / Integrity / Pairwise Judge":`${acceptance.overallScore}/100 · coverage ${acceptance.coverageScore} · integrity ${acceptance.integrityScore} · hardGate ${acceptance.hardGatePass?"PASS":"FAIL"}` },
   ];
@@ -105,6 +108,7 @@ export function deriveWorkflowGates(project: EvolveProject): WorkflowGate[] {
 
 export function deriveNextWorkflowAction(project: EvolveProject): WorkflowNextAction {
   const onlineRelease = workflowRequiresOnlineRelease(project);
+  const previewPromote = projectReleaseMode(project) === "preview-promote";
   const outputsReady = project.outputArtifacts.some((artifact) => artifact.kind === "primary" && artifact.accepted && artifact.frozenArtifact);
   if (project.acceptanceRubricState.status!=="ready"||project.acceptanceRubric.length<3) return { id:"rubric",label:"AI 编译 Project-specific Acceptance Rubric",description:"先把用户原始进化要求编译成 requirement / weight / hardGate / minScore / evidenceExpected / protectedConstraint；这是 Target Ready 的必经契约。",operation:"rubric",kind:"machine" };
   if (!gateApproved(project,"target-ready")) return { id:"gate-target",label:"确认 Target Ready + Acceptance Contract",description:"用户确认 Goal、Protected / Editable Scope 与 Project-specific Rubric 后才冻结目标函数。",kind:"human-gate",gateId:"target-ready" };
@@ -126,9 +130,9 @@ export function deriveNextWorkflowAction(project: EvolveProject): WorkflowNextAc
     if (project.nextQueue.length===0) return { id:"next-queue",label:"生成 Next Evolve Queue",description:"根据剩余差距、Repair Trace 与已沉淀 Lesson 生成下一轮建议。",operation:"next-queue",kind:"machine" };
     return { id:"complete",label:"离线进化闭环完成",description:"Accepted Deliverable / Offline Evidence / Lesson / Next Queue 已形成；线上发布按需启用。",kind:"completed" };
   }
-  if (!gateApproved(project,"release-ready")) return { id:"gate-release",label:"确认并进入线上验证",description:"成果已冻结并通过 Gate F。确认后才允许进入真实 Shadow / Canary；如未配置生产发布能力，请先在设置中连接 Release Runner。",kind:"human-gate",gateId:"release-ready" };
-  if (project.release.status==="idle") return { id:"shadow",label:"启动 Shadow",description:"被验收过的同一 Artifact 进入真实分布旁路。",kind:"release",releaseAction:"shadow" };
-  if (project.release.status==="shadow") return { id:"canary-5",label:"推进 Canary 5%",description:"小流量真实用户验证。",kind:"release",releaseAction:"canary-5" };
+  if (!gateApproved(project,"release-ready")) return { id:"gate-release",label:"确认并进入线上验证",description:previewPromote?"成果已冻结并通过 Gate F。确认后才允许对真实 Preview Deployment 做 Health Gate，再由人工决定是否 Promote。":"成果已冻结并通过 Gate F。确认后才允许进入真实 Shadow / Canary；如未配置生产发布能力，请先在设置中连接 Release Runner。",kind:"human-gate",gateId:"release-ready" };
+  if (project.release.status==="idle") return { id:"shadow",label:previewPromote?"执行 Preview Gate":"启动 Shadow",description:previewPromote?"验证 READY Preview Deployment 与 Production 隔离，Health Gate 通过前不切换真实流量。":"被验收过的同一 Artifact 进入真实分布旁路。",kind:"release",releaseAction:"shadow" };
+  if (project.release.status==="shadow") return previewPromote ? { id:"promote",label:"Promote 为 Production",description:"Preview Gate 已通过；切换 Production 后立即重新执行 Health Gate。",kind:"release",releaseAction:"promote" } : { id:"canary-5",label:"推进 Canary 5%",description:"小流量真实用户验证。",kind:"release",releaseAction:"canary-5" };
   if (project.release.status==="canary-5") return { id:"canary-20",label:"推进 Canary 20%",description:"扩大真实样本。",kind:"release",releaseAction:"canary-20" };
   if (project.release.status==="canary-20") return { id:"canary-50",label:"推进 Canary 50%",description:"验证稳定性、成本与依赖。",kind:"release",releaseAction:"canary-50" };
   if (project.release.status==="canary-50") return project.release.healthy===false?{ id:"rollback",label:"线上异常：Rollback",description:"关键 KPI 回归，恢复上一 Production Champion。",kind:"release",releaseAction:"rollback" }:{ id:"promote",label:"Promote 为 Production Champion",description:"50% Canary 稳定后正式升级。",kind:"release",releaseAction:"promote" };
