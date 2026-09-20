@@ -6,7 +6,7 @@ import {
   type EvolutionWorkflowResult,
   type EvolutionWorkflowRunInput,
 } from "@evolution/contracts";
-import { applyDeterministicRoundtripEvidence, baselineReadiness, completeAutonomousMission, mapTestsToRubric, materializeAcceptedChampionPackage, normalizeAcceptanceRubric, normalizeEvalSuiteForProject, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, resetDownstream, rubricSuiteCoverage, rubricValidation } from "@evolution/core";
+import { applyDeterministicRoundtripEvidence, baselineReadiness, completeAutonomousMission, mapTestsToRubric, materializeAcceptedChampionPackage, normalizeAcceptanceRubric, normalizeEvalSuiteForProject, productionOutcomeFreshness, projectHasFreshHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, resetDownstream, rubricSuiteCoverage, rubricValidation } from "@evolution/core";
 import {
   advanceServerCampaignPreparation,
   buildServerHarnessPlan,
@@ -681,6 +681,8 @@ export async function executeServerControlStep(
     const winner=mission.candidates.find((candidate)=>candidate.id===winnerId)??mission.searchChampion?.candidate;
     if(!winner)throw new FatalError("没有已验证 Winner，无法提炼经验");
     const hasLiveDecision=projectHasLiveReleaseDecision(mission);
+    const releaseFreshness=productionOutcomeFreshness(mission);
+    const hasFreshLiveOutcome=hasLiveDecision&&projectHasFreshHealthyProductionOutcome(mission);
     const hasOfflineAcceptance=!projectHasOnlineReleaseTarget(mission)
       &&mission.artifactAcceptance.status==="passed"
       &&mission.artifactAcceptance.candidateId===winner.id;
@@ -691,9 +693,12 @@ export async function executeServerControlStep(
       winner,
       validation:mission.validationRun,
       release:mission.release,
+      releaseFreshness,
     });
-    const lesson=!hasLiveDecision&&parsed.status==="verified-skill"
-      ? {...parsed,status:"lesson" as const,validatedOn:[...parsed.validatedOn,"离线成果验收（尚无线上生产证据）"]}
+    const lesson=!hasFreshLiveOutcome&&parsed.status==="verified-skill"
+      ? {...parsed,status:"lesson" as const,validatedOn:[...parsed.validatedOn,hasLiveDecision
+        ?`Production Outcome 未达到 freshness 门槛：${releaseFreshness.reason}`
+        :"离线成果验收（尚无线上生产证据）"]}
       : parsed;
     const record={id:`lesson-${plan.checkpoint.id}`,...lesson};
     await runtime.missions.save({...mission,lessons:[record,...mission.lessons.filter((item)=>item.id!==record.id)],stage:"learning",updatedAt:now});

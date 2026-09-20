@@ -396,8 +396,11 @@ describe("autonomous orchestrator", () => {
     expect(promotePlan.decision.action).toBe("run-release");
     expect(promotePlan.checkpoint.id).not.toBe(previewPlan.checkpoint.id);
     expect(promotePlan.sourceRevision).not.toBe(previewPlan.sourceRevision);
-    base.release={...base.release,status:"promoted",evidenceMode:"live",healthy:true,observationStatus:"healthy"};
+    base.release={...base.release,status:"promoted",evidenceMode:"live",healthy:true,observationStatus:"healthy",environment:"production",observedAt:new Date().toISOString()};
     expect(deriveAutonomousDecision(base).action).toBe("distill");
+    base.release={...base.release,observedAt:new Date(Date.now()-31*60*1000).toISOString()};
+    expect(deriveAutonomousDecision(base).action).toBe("reconcile-release");
+    base.release={...base.release,observedAt:new Date().toISOString()};
     base.lessons=[{id:"lesson-live",title:"线上经验",summary:"有效",reusable:true,effect:"改善",limit:"线上",trigger:[],method:[],validatedOn:["production"],status:"verified-skill"}];
     expect(deriveAutonomousDecision(base).action).toBe("next-queue");
     base.nextQueue=[{id:"next-live",title:"下一轮",reason:"继续",priority:"P1",source:"lesson",suggestedMetrics:[]}];

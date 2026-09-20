@@ -27,6 +27,8 @@ export function buildServerHarnessPlan(project:EvolveProject):ServerHarnessPlan 
     project.release.stableDeploymentId,
     project.release.evidenceMode,
     project.release.healthy,
+    project.release.observedAt,
+    project.release.observationStatus,
     project.release.recovery?.status,
     project.release.recovery?.action,
     project.release.recovery?.lastObservedAt,

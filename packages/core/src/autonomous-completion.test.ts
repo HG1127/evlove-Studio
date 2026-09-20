@@ -16,4 +16,16 @@ describe("autonomous mission completion",()=>{
     expect(done.campaign.completedAt).toBe("2026-09-20T15:00:00Z");
     expect(done.gates[0]?.status).toBe("approved");
   });
+
+  it("refuses to complete an online mission with stale production outcome evidence",()=>{
+    const at="2026-09-20T15:00:00Z";
+    const project={
+      releaseTarget:{provider:"vercel",mode:"preview-promote",status:"connected",label:"Vercel"},
+      targetConnection:{adapter:"artifact"},
+      release:{status:"promoted",candidateId:"C1",deploymentId:"dpl",trafficPercent:100,healthy:true,kpis:[],evidenceMode:"live",observationStatus:"healthy",environment:"production",observedAt:"2026-09-20T14:00:00Z",history:[]},
+      campaign:{status:"running",schedule:{enabled:false}},
+      gates:[],
+    } as unknown as EvolveProject;
+    expect(()=>completeAutonomousMission(project,{at,reason:"closure complete"})).toThrow(/Outcome.*过期|刷新/);
+  });
 });

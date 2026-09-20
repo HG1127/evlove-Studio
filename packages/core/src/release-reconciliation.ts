@@ -37,8 +37,34 @@ function withRecovery(
   } satisfies EvolveProject;
 }
 
-function releaseHistory(project:EvolveProject,at:string,note:string){
-  return [...project.release.history,{at,action:"reconcile",note}];
+function releaseHistory(
+  project:EvolveProject,
+  at:string,
+  note:string,
+  overrides?:{
+    candidateId?:string;
+    deploymentId?:string;
+    artifactHashes?:Array<{sourceArtifactId:string;contentHash:string}>;
+    healthy?:boolean;
+    observationStatus?:"observing"|"healthy"|"unhealthy";
+    environment?:string;
+  },
+){
+  return [...project.release.history,{
+    at,
+    action:"reconcile",
+    note,
+    candidateId:overrides?.candidateId??project.release.candidateId,
+    deploymentId:overrides?.deploymentId??project.release.deploymentId,
+    stableDeploymentId:project.release.stableDeploymentId,
+    artifactHashes:overrides?.artifactHashes??project.release.artifactHashes,
+    evidenceMode:"live" as const,
+    environment:overrides?.environment??project.release.environment,
+    observedAt:at,
+    healthy:overrides?.healthy??project.release.healthy,
+    observationStatus:overrides?.observationStatus??project.release.observationStatus,
+    reason:note,
+  }];
 }
 
 function settlePromoted(
@@ -75,7 +101,7 @@ function settlePromoted(
       sampleSize:health.checks.length,
       windowMinutes:Math.max(0.01,health.latencyMs/60000),
       recovery:{status:"reconciled",action:project.release.recovery?.action,reason:healthy?"Production 已确认指向 exact Candidate Deployment，且 Health 通过。":"Production 已确认指向 exact Candidate Deployment，但 Health 未通过。",at:project.release.recovery?.at??at,lastObservedAt:at},
-      history:releaseHistory(project,at,healthy?"Reconcile：Production 已确认 exact Candidate Deployment，Health 通过。":"Reconcile：Production 指向 exact Candidate Deployment，但 Health 未通过。"),
+      history:releaseHistory(project,at,healthy?"Reconcile：Production 已确认 exact Candidate Deployment，Health 通过。":"Reconcile：Production 指向 exact Candidate Deployment，但 Health 未通过。",{candidateId:candidate.id,deploymentId:project.release.deploymentId,artifactHashes:expectedReleaseArtifactHashes(candidate),healthy,observationStatus:healthy?"healthy":"unhealthy",environment:"production"}),
     },
     stage:healthy?"learning":"release",
     campaign:{...project.campaign,status:"running",stopReason:undefined},
@@ -106,7 +132,7 @@ function settleRolledBack(
       sampleSize:health.checks.length,
       windowMinutes:Math.max(0.01,health.latencyMs/60000),
       recovery:{status:"reconciled",action:project.release.recovery?.action,reason:healthy?"Production 已确认回到 stable Deployment，Health 通过。":"Production 已确认回到 stable Deployment，但 Health 未通过。",at:project.release.recovery?.at??at,lastObservedAt:at},
-      history:releaseHistory(project,at,healthy?"Reconcile：Production 已确认 stable Deployment，Health 通过。":"Reconcile：Production 已回到 stable Deployment，但 Health 未通过。"),
+      history:releaseHistory(project,at,healthy?"Reconcile：Production 已确认 stable Deployment，Health 通过。":"Reconcile：Production 已回到 stable Deployment，但 Health 未通过。",{deploymentId:stableId,healthy,observationStatus:healthy?"healthy":"unhealthy",environment:"production"}),
     },
     stage:healthy?"learning":"release",
     campaign:{...project.campaign,status:"running",stopReason:undefined},
@@ -138,7 +164,7 @@ function settleShadow(
       sampleSize:health?.checks.length??0,
       windowMinutes:Math.max(0.01,(health?.latencyMs??0)/60000),
       recovery:{status:"reconciled",action:project.release.recovery?.action,reason:healthy?"绑定 Preview 已重新观测且 Health 通过。":"绑定 Preview 已重新观测但 Health 未通过。",at:project.release.recovery?.at??at,lastObservedAt:at},
-      history:releaseHistory(project,at,healthy?"Reconcile：绑定 Preview Health 通过。":"Reconcile：绑定 Preview Health 未通过。"),
+      history:releaseHistory(project,at,healthy?"Reconcile：绑定 Preview Health 通过。":"Reconcile：绑定 Preview Health 未通过。",{candidateId:candidate.id,deploymentId:project.release.deploymentId,artifactHashes:expectedReleaseArtifactHashes(candidate),healthy,observationStatus:healthy?"healthy":"unhealthy",environment:"preview"}),
     },
     stage:"release",
     campaign:{...project.campaign,status:healthy?"running":"paused",stopReason:healthy?undefined:"[server-release-preview-unhealthy] Reconcile 后 Preview Health 仍未通过。"},
@@ -173,6 +199,17 @@ export function reconcileReleaseObservation(args:{
     return {project:withRecovery(project,{status:"manual-check",reason,observedAt:checkedAt}),disposition:"manual-check",reason};
   }
 
+  if(project.release.status==="rolled-back"&&stableId&&productionId===stableId){
+    const updated=settleRolledBack(project,observation);
+    return {
+      project:updated,
+      disposition:updated.release.healthy?"terminal-live-decision":"manual-check",
+      reason:updated.release.healthy
+        ?"Reconcile 已刷新 rolled-back Production Outcome，stable Deployment 与 Health 均已确认。"
+        :"Rollback 终态仍指向 stable Deployment，但最新 Production Health 未通过。",
+    };
+  }
+
   if(productionId===boundId){
     if(project.release.recovery?.action==="shadow"){
       const reason="Preview/Shadow 本身不会切换 Production，但当前 Production 已指向绑定 Candidate；需要人工核对外部发布动作。";
@@ -200,7 +237,7 @@ export function reconcileReleaseObservation(args:{
             at:project.release.recovery.at,
             lastObservedAt:checkedAt,
           },
-          history:releaseHistory(project,checkedAt,"Reconcile：Rollback 请求后 Production 仍在 Candidate；继续 stable rollback。"),
+          history:releaseHistory(project,checkedAt,"Reconcile：Rollback 请求后 Production 仍在 Candidate；继续 stable rollback。",{deploymentId:boundId,healthy:health.ready,observationStatus:health.ready?"healthy":"unhealthy",environment:"production"}),
         },
         campaign:{...project.campaign,status:"running",stopReason:undefined},
         updatedAt:checkedAt,

@@ -741,7 +741,21 @@ export const ReleaseStateSchema = z.object({
     at: z.string(),
     lastObservedAt: z.string().optional(),
   }).optional(),
-  history: z.array(z.object({ at: z.string(), action: z.string(), note: z.string() })).default([]),
+  history: z.array(z.object({
+    at: z.string(),
+    action: z.string(),
+    note: z.string(),
+    candidateId:z.string().optional(),
+    deploymentId:z.string().optional(),
+    stableDeploymentId:z.string().optional(),
+    artifactHashes:z.array(z.object({sourceArtifactId:z.string(),contentHash:z.string()})).optional(),
+    evidenceMode:z.enum(["none","live","simulation"]).optional(),
+    environment:z.string().optional(),
+    observedAt:z.string().optional(),
+    healthy:z.boolean().optional(),
+    observationStatus:z.enum(["observing","healthy","unhealthy"]).optional(),
+    reason:z.string().optional(),
+  })).default([]),
 });
 export type ReleaseState = z.infer<typeof ReleaseStateSchema>;
 

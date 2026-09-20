@@ -1,4 +1,4 @@
-import { applyReleaseResultToProject, beginReleaseCycle, completeAutonomousMission, experimentNeedsEvidenceRepair, buildExperimentGapAdvicePayload, buildGapAdvicePayload, fallbackExperimentAdvice, nextDurableReleaseAction, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget } from "@evolution/core";
+import { applyReleaseResultToProject, beginReleaseCycle, completeAutonomousMission, experimentNeedsEvidenceRepair, buildExperimentGapAdvicePayload, buildGapAdvicePayload, fallbackExperimentAdvice, nextDurableReleaseAction, productionOutcomeFreshness, projectHasFreshHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget } from "@evolution/core";
 import { deliveryReadiness } from "./delivery-readiness";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -1161,6 +1161,8 @@ export function useProjectRuntime(initialProject: EvolveProject) {
     const currentWinner = current.candidates.find((candidate) => candidate.id === winnerId) ?? current.searchChampion?.candidate;
     if (!currentWinner) throw new Error("没有已验证 Winner");
     const hasLiveDecision = projectHasLiveReleaseDecision(current);
+    const releaseFreshness = productionOutcomeFreshness(current);
+    const hasFreshLiveOutcome = hasLiveDecision && projectHasFreshHealthyProductionOutcome(current);
     const hasOfflineAcceptance = !projectHasOnlineReleaseTarget(current)
       && current.artifactAcceptance.status === "passed"
       && current.artifactAcceptance.candidateId === currentWinner.id;
@@ -1172,12 +1174,15 @@ export function useProjectRuntime(initialProject: EvolveProject) {
         winner: currentWinner,
         validation: current.validationRun,
         release: current.release,
+        releaseFreshness,
       }, (notice) => reportProgress(`模型切换：${notice.model} · ${notice.message.slice(0, 100)}`, 0, 1, "经验提炼", "distill", notice));
       reportProgress("本轮经验已提炼", 1, 1, "经验提炼", "distill");
       return output;
     }));
-    const result = !hasLiveDecision && parsed.status === "verified-skill"
-      ? { ...parsed, status: "lesson" as const, validatedOn: [...parsed.validatedOn, "离线成果验收（尚无线上生产证据）"] }
+    const result = !hasFreshLiveOutcome && parsed.status === "verified-skill"
+      ? { ...parsed, status: "lesson" as const, validatedOn: [...parsed.validatedOn, hasLiveDecision
+        ? `Production Outcome 未达到 freshness 门槛：${releaseFreshness.reason}`
+        : "离线成果验收（尚无线上生产证据）"] }
       : parsed;
     const lesson = { id: `lesson-${Date.now()}`, ...result };
     commit((state) => ({ ...state, lessons: [lesson, ...state.lessons], stage: "learning" }));
@@ -2037,6 +2042,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
     const current = projectRef.current;
     const online = projectHasOnlineReleaseTarget(current);
     if (online && !projectHasLiveReleaseDecision(current)) throw new Error("线上 Target 尚无真实 Promote / Rollback 决策，不能标记自主闭环完成");
+    if (online && !projectHasFreshHealthyProductionOutcome(current)) throw new Error(`Production Outcome 需要刷新：${productionOutcomeFreshness(current).reason}`);
     if (!current.outputArtifacts.some((artifact) => artifact.accepted && artifact.kind === "primary")) throw new Error("最终成果尚未完成 Gate F 打包");
     if (!current.lessons.length || !current.nextQueue.length) throw new Error("Lesson / Next Queue 尚未完成，不能结束自主闭环");
     const finishedAt = now();

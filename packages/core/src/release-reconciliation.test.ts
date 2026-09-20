@@ -68,6 +68,17 @@ describe("release reconciliation",()=>{
     expect(result.project.release.deploymentId).toBe("dpl_stable");
   });
 
+  it("refreshes a rolled-back terminal outcome without misclassifying stable as the Candidate",()=>{
+    const x=fixture();
+    x.project.release={...x.project.release,status:"rolled-back",deploymentId:"dpl_stable",healthy:true,evidenceMode:"live",observationStatus:"healthy",environment:"production",observedAt:"2026-09-20T14:00:00Z",recovery:undefined};
+    const observed=observation("dpl_stable");
+    observed.boundDeployment={id:"dpl_stable",url:"https://prod.vercel.app",state:"READY",target:"production"};
+    const result=reconcileReleaseObservation({project:x.project,candidate:x.candidate,observation:observed});
+    expect(result.disposition).toBe("terminal-live-decision");
+    expect(result.project.release.status).toBe("rolled-back");
+    expect(result.project.release.observedAt).toBe("2026-09-20T15:05:00Z");
+  });
+
   it("continues the requested Rollback when Production still points at the Candidate",()=>{
     const x=fixture();
     x.project.release={...x.project.release,status:"promoted",recovery:{status:"pending",action:"rollback",reason:"timeout",at:"2026-09-20T15:00:00Z"}};

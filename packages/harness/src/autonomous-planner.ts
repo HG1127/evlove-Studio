@@ -7,6 +7,7 @@ import {
   goalReadiness,
   currentReleaseCandidate,
   nextDurableReleaseAction,
+  productionOutcomeFreshness,
   projectHasLiveReleaseDecision,
   projectHasOnlineReleaseTarget,
   projectReleaseMode,
@@ -266,7 +267,27 @@ export function deriveAutonomousDecision(project: EvolveProject): AutonomousDeci
   const acceptedOutput = project.outputArtifacts.some((artifact) => artifact.accepted && artifact.kind === "primary");
   if (deliveryReadiness(project).ready && acceptedOutput) {
     const onlineRelease = projectHasOnlineReleaseTarget(project);
-    if (onlineRelease && !projectHasLiveReleaseDecision(project)) {
+    const liveReleaseDecision=projectHasLiveReleaseDecision(project);
+    if(onlineRelease&&liveReleaseDecision){
+      const freshness=productionOutcomeFreshness(project);
+      if(freshness.status!=="fresh"){
+        if(project.releaseTarget?.provider==="vercel"&&projectReleaseMode(project)==="preview-promote"){
+          return {
+            action:"reconcile-release",
+            reason:`${freshness.reason} 先只读刷新 Production Outcome，再继续 Learning / Complete。`,
+            stage:"release",
+          };
+        }
+        const request=attention({
+          type:"capability",title:"Production Outcome 已过期，需要重新观测",
+          reason:freshness.reason,
+          stage:"release",riskLevel:"high",blocking:true,questions:[],criterionIds:[],
+          suggestedAction:"刷新真实 Production Health / Outcome 后再继续经验提炼；旧 healthy 结果不会被当作当前线上证据。",
+        });
+        return {action:"wait-human",reason:request.reason,stage:request.stage,attention:request};
+      }
+    }
+    if (onlineRelease && !liveReleaseDecision) {
       if(project.release.recovery?.status==="pending"
         &&project.releaseTarget?.provider==="vercel"
         &&projectReleaseMode(project)==="preview-promote"){

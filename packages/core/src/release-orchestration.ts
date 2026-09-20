@@ -126,7 +126,21 @@ export function applyReleaseResultToProject(args:{
       sampleSize:args.result.sampleSize,
       windowMinutes:args.result.windowMinutes,
       recovery:undefined,
-      history:[...args.project.release.history,{at,action:effective,note:args.requestedAction===effective?args.result.note:`${args.requestedAction} → ${effective}：${args.result.note}`}],
+      history:[...args.project.release.history,{
+        at,
+        action:effective,
+        note:args.requestedAction===effective?args.result.note:`${args.requestedAction} → ${effective}：${args.result.note}`,
+        candidateId:args.candidate.id,
+        deploymentId:args.result.deploymentId,
+        stableDeploymentId:args.result.stableDeploymentId??args.project.release.stableDeploymentId,
+        artifactHashes:args.result.artifactHashes,
+        evidenceMode:"live",
+        environment:args.result.environment,
+        observedAt:args.result.observedAt,
+        healthy:settledHealthy,
+        observationStatus:settledObservation,
+        reason:args.result.note,
+      }],
     },
     campaign:(args.project.campaign.stopReason??"").startsWith("[server-release-")
       ?{...args.project.campaign,status:"running",stopReason:undefined}

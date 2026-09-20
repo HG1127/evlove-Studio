@@ -27,3 +27,4 @@ export * from "./search-champion-settlement";
 export * from "./autonomous-completion";
 export * from "./release-orchestration";
 export * from "./release-reconciliation";
+export * from "./release-outcome";
