@@ -11,11 +11,16 @@ const capabilities={
     codeReady:true,
     offlineFullAuto:true,
     onlineFullAuto:false,
+    releaseOrchestrationReady:true,
+    onlinePostApprovalAuto:true,
     configBlocked:[],
-    externalCapabilityBlocked:[{capability:"online-release-orchestration",reason:"autonomous-live-release-not-integrated"}],
+    externalCapabilityBlocked:[
+      {capability:"online-release-authorization",reason:"human-release-ready-approval-required"},
+      {capability:"preview-deployment-binding",reason:"explicit-preview-deployment-binding-required"},
+    ],
   },
-  serverNativeActions:["run-campaign","campaign-artifact-acceptance","package","distill","next-queue"],
-  conditionalActions:["run-campaign","revalidate"],
+  serverNativeActions:["run-campaign","campaign-artifact-acceptance","run-release","package","distill","next-queue"],
+  conditionalActions:["run-campaign","revalidate","run-release"],
   blockedActions:[],
   migrationPendingActions:[],
   pendingActions:["run-campaign","revalidate"],
@@ -32,11 +37,18 @@ describe("server workflow routing",()=>{
     expect(await shouldUseServerAutoPilot(offline)).toBe(true);
   });
 
-  it("keeps online missions out of Durable AutoPilot until autonomous Release is integrated",async()=>{
+  it("keeps online missions out until Release Ready is approved, then enables post-approval Durable AutoPilot",async()=>{
     vi.resetModules();
     vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(capabilities),{status:200,headers:{"Content-Type":"application/json"}})));
     const {shouldUseServerAutoPilot}=await import("./server-workflow-client");
-    const online={...demoProject,targetConnection:{adapter:"http",connectionId:"production",status:"connected",label:"Production"}} as EvolveProject;
+    const online={
+      ...demoProject,
+      targetConnection:{adapter:"artifact",connectionId:"artifact",status:"connected",label:"Artifact"},
+      releaseTarget:{provider:"vercel",mode:"preview-promote",status:"connected",label:"Vercel",healthPath:"/"},
+      gates:demoProject.gates.map((gate)=>gate.id==="release-ready"?{...gate,status:"ready" as const}:gate),
+    } as EvolveProject;
     expect(await shouldUseServerAutoPilot(online)).toBe(false);
+    online.gates=online.gates.map((gate)=>gate.id==="release-ready"?{...gate,status:"approved" as const}:gate);
+    expect(await shouldUseServerAutoPilot(online)).toBe(true);
   });
 });

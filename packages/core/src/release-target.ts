@@ -7,11 +7,11 @@ export function projectHasOnlineReleaseTarget(project:EvolveProject){
 
 export function projectHasLiveReleaseDecision(project:EvolveProject){
   if(!projectHasOnlineReleaseTarget(project))return false;
+  const currentCandidateId=project.experimentRun.winnerId??project.searchChampion?.candidate?.id;
+  if(!currentCandidateId||project.release.candidateId!==currentCandidateId)return false;
   if(project.release.evidenceMode!=="live")return false;
-  if(project.release.status==="rolled-back")return true;
-  return project.release.status==="promoted"
-    && project.release.healthy!==false
-    && project.release.observationStatus!=="observing";
+  if(!["promoted","rolled-back"].includes(project.release.status))return false;
+  return project.release.healthy===true&&project.release.observationStatus==="healthy";
 }
 
 export function projectReleaseMode(project:EvolveProject){

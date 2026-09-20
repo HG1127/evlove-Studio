@@ -5,8 +5,11 @@ import {
   deliveryReadiness,
   experimentNeedsEvidenceRepair,
   goalReadiness,
+  currentReleaseCandidate,
+  nextDurableReleaseAction,
   projectHasLiveReleaseDecision,
   projectHasOnlineReleaseTarget,
+  projectReleaseMode,
   rubricSuiteCoverage,
   rubricValidation,
 } from "@evolution/core";
@@ -21,6 +24,7 @@ export type AutonomousAction =
   | "revalidate"
   | "run-campaign"
   | "package"
+  | "run-release"
   | "distill"
   | "next-queue"
   | "complete"
@@ -262,6 +266,50 @@ export function deriveAutonomousDecision(project: EvolveProject): AutonomousDeci
   if (deliveryReadiness(project).ready && acceptedOutput) {
     const onlineRelease = projectHasOnlineReleaseTarget(project);
     if (onlineRelease && !projectHasLiveReleaseDecision(project)) {
+      const uncertainReleasePause=project.campaign.status==="paused"
+        &&/\[server-release-(?:provider-pending|receipt-invalid|rollback-unhealthy|rollback-unavailable|preview-unhealthy)\]/.test(project.campaign.stopReason??"");
+      if(uncertainReleasePause){
+        const request=attention({
+          type:"capability",title:"线上 Release 需要人工核对后再继续",
+          reason:project.campaign.stopReason??"线上 Release 结果存在不确定性，已停止自动推进。",
+          stage:"release",riskLevel:"high",blocking:true,questions:[],criterionIds:[],
+          suggestedAction:"先核对 Vercel Production / Preview 实际状态；确认后可在发布控制中手动执行对应动作，成功回执会解除该暂停，再继续 Durable Workflow。",
+        });
+        return {action:"wait-human",reason:request.reason,stage:request.stage,attention:request};
+      }
+      const releaseGate=project.gates.find((gate)=>gate.id==="release-ready");
+      if(releaseGate?.status!=="approved"){
+        const request = attention({
+          type:"capability",
+          title:"需要授权 Release Ready",
+          reason:"线上 Target 已完成 Gate F 与打包，但生产发布必须先由用户明确授权 Release Ready。",
+          stage:"release",riskLevel:"high",blocking:true,questions:[],criterionIds:[],
+          suggestedAction:"在最终验收确认“授权进入上线流程”。授权仅允许进入 Preview/Health/Promote 治理，不会绕过 Health Gate 或回滚保护。",
+        });
+        return {action:"wait-human",reason:request.reason,stage:request.stage,attention:request};
+      }
+      if(project.releaseTarget?.provider!=="vercel"||projectReleaseMode(project)!=="preview-promote"){
+        const request=attention({
+          type:"capability",title:"当前线上 Release Target 尚未接入 Durable 编排",
+          reason:"本轮自动 Release 只支持已连接的 Vercel Preview → Promote Target；其他 HTTP/Progressive Target 继续保留现有人工发布路径。",
+          stage:"release",riskLevel:"high",blocking:true,questions:[],criterionIds:[],
+          suggestedAction:"连接 Vercel Preview → Promote Release Target，或使用现有发布控制完成真实上线决策。",
+        });
+        return {action:"wait-human",reason:request.reason,stage:request.stage,attention:request};
+      }
+      const candidate=currentReleaseCandidate(project);
+      if(!candidate||project.release.candidateId!==candidate.id||!project.release.deploymentId){
+        const request=attention({
+          type:"capability",title:"需要显式绑定 Preview Deployment",
+          reason:"Release Ready 已授权，但当前 exact Candidate 尚未绑定 READY Preview Deployment；系统禁止自动猜测 Deployment。",
+          stage:"release",riskLevel:"high",blocking:true,questions:[],criterionIds:[],
+          suggestedAction:"在发布控制中选择与当前 Candidate 对应的 READY Preview Deployment，然后继续自主进化。",
+        });
+        return {action:"wait-human",reason:request.reason,stage:request.stage,attention:request};
+      }
+      if(nextDurableReleaseAction(project)){
+        return {action:"run-release",reason:"Release Ready 已授权且 exact Candidate/Deployment 已绑定；Durable Workflow 自动推进 Preview/Health/Promote/Rollback。",stage:"release"};
+      }
       const request = attention({
         type: "capability",
         title: "线上成果已验收，等待真实 Release 决策",
@@ -270,7 +318,7 @@ export function deriveAutonomousDecision(project: EvolveProject): AutonomousDeci
         riskLevel: "high",
         blocking: true,
         questions: [],
-        suggestedAction: "先在最终验收明确授权 Release Ready，再使用 Release 治理入口执行 Preview/Health/Promote，或在异常时 Rollback；产生真实 live 决策后系统会继续沉淀经验与 Next Queue。",
+        suggestedAction: "查看 Preview/Production Health 与 rollback baseline；异常状态不会自动猜测或伪造成功，处理后可从同一 Release Candidate 继续。",
         criterionIds: [],
       });
       return { action: "wait-human", reason: request.reason, stage: request.stage, attention: request };

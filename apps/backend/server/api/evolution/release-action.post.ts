@@ -1,5 +1,6 @@
 import { createError, defineEventHandler, readBody } from "nitro/h3";
 import { VercelReleaseActionRequestSchema, VercelReleaseActionResponseSchema } from "@evolution/contracts";
+import { applyReleaseResultToProject } from "@evolution/core";
 import { getServerVercelReleaseConfig } from "../../../src/server-env";
 import { getServerProductionRuntime } from "../../../src/services/production-runtime";
 import { executeVercelReleaseAction } from "../../../src/services/vercel-release";
@@ -66,13 +67,24 @@ export default defineEventHandler(async(event)=>{
   if(input.action==="rollback"&&!deploymentId)fail(409,"Rollback 缺少稳定 Deployment ID");
 
   try{
-    const result=await executeVercelReleaseAction({
+    const result=VercelReleaseActionResponseSchema.parse(await executeVercelReleaseAction({
       action:input.action,
       deploymentId,
+      stableDeploymentId:mission.release.stableDeploymentId,
       healthPath:releaseTarget.healthPath,
       artifactHashes,
-    });
-    return VercelReleaseActionResponseSchema.parse(result);
+    }));
+    if(input.action==="shadow"||input.action==="promote"||input.action==="rollback"){
+      const updated=applyReleaseResultToProject({
+        project:mission,
+        candidate,
+        requestedAction:input.action,
+        result,
+        at:result.observedAt??new Date().toISOString(),
+      });
+      await runtime.missions.save(updated);
+    }
+    return result;
   }catch(error){
     const code=(error as {code?:string}).code;
     if(code==="VERCEL_RELEASE_CREDENTIAL_REQUIRED")fail(503,"Vercel Release 写操作尚未授权：需要 VERCEL_RELEASE_TOKEN");

@@ -1,4 +1,4 @@
-import { beginReleaseCycle, completeAutonomousMission, experimentNeedsEvidenceRepair, buildExperimentGapAdvicePayload, buildGapAdvicePayload, fallbackExperimentAdvice, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget } from "@evolution/core";
+import { applyReleaseResultToProject, beginReleaseCycle, completeAutonomousMission, experimentNeedsEvidenceRepair, buildExperimentGapAdvicePayload, buildGapAdvicePayload, fallbackExperimentAdvice, nextDurableReleaseAction, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget } from "@evolution/core";
 import { deliveryReadiness } from "./delivery-readiness";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -416,11 +416,19 @@ export function useProjectRuntime(initialProject: EvolveProject) {
     if (id === "release-ready" && !deliveryReadiness(project).ready) blocked = deliveryReadiness(project).reasons.join("；");
     if (blocked) { setStatus({ busy: false, error: blocked }); return false; }
     const approvedAt = now();
-    commit((current) => ({
-      ...current,
-      acceptanceRubricState: id === "target-ready" ? { ...current.acceptanceRubricState, confirmedAt: approvedAt } : current.acceptanceRubricState,
-      gates: current.gates.map((item) => item.id === id ? { ...item, status: "approved", approvedAt, note } : item),
-    }));
+    commit((current) => {
+      const releaseCandidateId=current.experimentRun.winnerId??current.searchChampion?.candidate?.id;
+      const shouldBeginReleaseCycle=id==="release-ready"
+        &&projectHasOnlineReleaseTarget(current)
+        &&Boolean(releaseCandidateId)
+        &&(current.release.candidateId!==releaseCandidateId||current.release.status!=="idle");
+      return {
+        ...current,
+        acceptanceRubricState: id === "target-ready" ? { ...current.acceptanceRubricState, confirmedAt: approvedAt } : current.acceptanceRubricState,
+        release:shouldBeginReleaseCycle&&releaseCandidateId?beginReleaseCycle(current.release,releaseCandidateId):current.release,
+        gates: current.gates.map((item) => item.id === id ? { ...item, status: "approved", approvedAt, note } : item),
+      };
+    });
     setStatus({ busy: false, message: `${id} 已确认` });
     return true;
   }, [commit, project]);
@@ -1091,34 +1099,45 @@ export function useProjectRuntime(initialProject: EvolveProject) {
     if (!winner) throw new Error("没有 Release Candidate");
     const result = await run(`发布动作：${action}`, () => runRelease(project, winner, action));
     const effectiveAction = result.action;
-    commit((current) => ({
-      ...current,
-      version: effectiveAction === "promote" ? `V${Number(current.version.replace(/\D/g, "") || "12") + 1}` : current.version,
-      appliedPatches: effectiveAction === "promote" ? [...current.appliedPatches, ...winner.patches] : current.appliedPatches,
-      // 发布成功自动给当前版本盖章；若灰度异常触发自动回滚，则按真实 effectiveAction 记录。
-      versions: effectiveAction === "promote" ? current.versions.map((version) => (version.id === current.currentVersionId ? { ...version, releasedAt: now() } : version)) : current.versions,
-      release: {
-        ...current.release,
-        status: effectiveAction === "shadow" ? "shadow" : effectiveAction === "canary-5" ? "canary-5" : effectiveAction === "canary-20" ? "canary-20" : effectiveAction === "canary-50" ? "canary-50" : effectiveAction === "promote" ? "promoted" : "rolled-back",
-        candidateId: winner.id,
-        trafficPercent: result.trafficPercent,
-        healthy: result.healthy,
-        observationStatus: result.observationStatus,
-        kpis: result.kpis,
-        evidenceMode: result.evidenceMode,
-        deploymentId: result.deploymentId,
-        stableDeploymentId: result.stableDeploymentId,
-        artifactHash: result.artifactHash,
-        artifactHashes: result.artifactHashes,
-        environment: result.environment,
-        observedAt: result.observedAt ?? now(),
-        sampleSize: result.sampleSize,
-        windowMinutes: result.windowMinutes,
-        history: [...current.release.history, { at: now(), action: effectiveAction, note: action === effectiveAction ? result.note : `${action} → ${effectiveAction}：${result.note}` }],
-      },
-      stage: effectiveAction === "promote" || effectiveAction === "rollback" ? "learning" : "release",
-    }));
-    if (effectiveAction === "promote" || effectiveAction === "rollback") setStage("learning"); else setStage("release");
+    const durablePreviewPromote=project.releaseTarget?.provider==="vercel"
+      &&project.releaseTarget.mode==="preview-promote"
+      &&(action==="shadow"||action==="promote"||action==="rollback");
+    commit((current) => {
+      const base:EvolveProject=durablePreviewPromote
+        ?applyReleaseResultToProject({
+          project:current,
+          candidate:winner,
+          requestedAction:action as "shadow"|"promote"|"rollback",
+          result,
+          at:result.observedAt??now(),
+        })
+        :{
+          ...current,
+          version: effectiveAction === "promote" ? `V${Number(current.version.replace(/\D/g, "") || "12") + 1}` : current.version,
+          appliedPatches: effectiveAction === "promote" ? [...current.appliedPatches, ...winner.patches] : current.appliedPatches,
+          versions: effectiveAction === "promote" ? current.versions.map((version) => (version.id === current.currentVersionId ? { ...version, releasedAt: now() } : version)) : current.versions,
+          release: {
+            ...current.release,
+            status: effectiveAction === "shadow" ? "shadow" : effectiveAction === "canary-5" ? "canary-5" : effectiveAction === "canary-20" ? "canary-20" : effectiveAction === "canary-50" ? "canary-50" : effectiveAction === "promote" ? "promoted" : "rolled-back",
+            candidateId: winner.id,trafficPercent: result.trafficPercent,healthy: result.healthy,observationStatus: result.observationStatus,
+            kpis: result.kpis,evidenceMode: result.evidenceMode,deploymentId: result.deploymentId,stableDeploymentId: result.stableDeploymentId,
+            artifactHash: result.artifactHash,artifactHashes: result.artifactHashes,environment: result.environment,observedAt: result.observedAt ?? now(),
+            sampleSize: result.sampleSize,windowMinutes: result.windowMinutes,
+            history: [...current.release.history, { at: now(), action: effectiveAction, note: action === effectiveAction ? result.note : `${action} → ${effectiveAction}：${result.note}` }],
+          },
+          stage: effectiveAction === "promote" || effectiveAction === "rollback" ? "learning" as const : "release" as const,
+        };
+      return {
+        ...base,
+        campaign:(current.campaign.stopReason??"").includes("[server-release-")
+          ?{...base.campaign,status:"idle" as const,stopReason:undefined}
+          :base.campaign,
+      };
+    });
+    const terminal=durablePreviewPromote
+      ?result.ok&&result.healthy===true&&result.observationStatus==="healthy"&&(effectiveAction==="promote"||effectiveAction==="rollback")
+      :effectiveAction==="promote"||effectiveAction==="rollback";
+    setStage(terminal?"learning":"release");
     return result;
   }, [commit, project, run, winner]);
 
@@ -1127,8 +1146,10 @@ export function useProjectRuntime(initialProject: EvolveProject) {
     const winnerId = current.experimentRun.winnerId ?? current.searchChampion?.candidate?.id;
     const currentWinner = current.candidates.find((candidate) => candidate.id === winnerId) ?? current.searchChampion?.candidate;
     if (!currentWinner) throw new Error("没有已验证 Winner");
-    const hasLiveDecision = current.release.evidenceMode === "live" && (current.release.status === "promoted" || current.release.status === "rolled-back");
-    const hasOfflineAcceptance = current.artifactAcceptance.status === "passed" && current.artifactAcceptance.candidateId === currentWinner.id;
+    const hasLiveDecision = projectHasLiveReleaseDecision(current);
+    const hasOfflineAcceptance = !projectHasOnlineReleaseTarget(current)
+      && current.artifactAcceptance.status === "passed"
+      && current.artifactAcceptance.candidateId === currentWinner.id;
     if (!hasLiveDecision && !hasOfflineAcceptance) throw new Error("请先完成成果验收；线上能力还需要真实发布平台给出 Promote / Rollback 证据");
     const parsed = DistillAiResultSchema.parse(await run("AI 提炼经验", async () => {
       reportProgress("正在提炼本轮可复用经验", 0, 1, "经验提炼", "distill");
@@ -2042,6 +2063,12 @@ export function useProjectRuntime(initialProject: EvolveProject) {
         await materializeOutputs();
         return { control: "continue" };
       },
+      "run-release": async () => {
+        const action=nextDurableReleaseAction(cur());
+        if(!action)throw new Error("当前 Release 状态没有可安全自动推进的 Durable Action");
+        await releaseAction(action);
+        return {control:"continue"};
+      },
       distill: async () => { await distill(); },
       "next-queue": async () => { await generateNextQueue(); },
       "wait-human": async (plan) => {
@@ -2160,7 +2187,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
       setStatus({ busy: false, error: message });
       pushActivity(`Harness Failure Router · ${failure.action} · ${failure.disposition.reason}：${message}`, undefined, projectId);
     }
-  }, [commit, compileAcceptanceRubric, deepenUnderstanding, distill, executeValidation, finishAutonomousSuccess, generateEvalSuite, generateNextQueue, materializeOutputs, projectId, runCampaign, setStatus]);
+  }, [commit, compileAcceptanceRubric, deepenUnderstanding, distill, executeValidation, finishAutonomousSuccess, generateEvalSuite, generateNextQueue, materializeOutputs, projectId, releaseAction, runCampaign, setStatus]);
 
 
   /**

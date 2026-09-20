@@ -6,7 +6,7 @@ import {
   type EvolutionWorkflowResult,
   type EvolutionWorkflowRunInput,
 } from "@evolution/contracts";
-import { applyDeterministicRoundtripEvidence, baselineReadiness, completeAutonomousMission, mapTestsToRubric, materializeAcceptedChampionPackage, normalizeAcceptanceRubric, normalizeEvalSuiteForProject, resetDownstream, rubricSuiteCoverage, rubricValidation } from "@evolution/core";
+import { applyDeterministicRoundtripEvidence, baselineReadiness, completeAutonomousMission, mapTestsToRubric, materializeAcceptedChampionPackage, normalizeAcceptanceRubric, normalizeEvalSuiteForProject, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, resetDownstream, rubricSuiteCoverage, rubricValidation } from "@evolution/core";
 import {
   advanceServerCampaignPreparation,
   buildServerHarnessPlan,
@@ -20,6 +20,7 @@ import { runServerMissionBaseline } from "../../apps/backend/src/services/server
 import { runServerMissionExperiment } from "../../apps/backend/src/services/server-experiment";
 import { runServerMissionHoldout } from "../../apps/backend/src/services/server-holdout";
 import { runServerMissionArtifactAcceptance } from "../../apps/backend/src/services/server-artifact-acceptance";
+import { runServerMissionRelease } from "../../apps/backend/src/services/server-release-orchestration";
 import { serverAiConfigured } from "../../apps/backend/src/server-env";
 
 function controlJob(input:EvolutionWorkflowRunInput,args:{
@@ -678,8 +679,10 @@ export async function executeServerControlStep(
     const winnerId=mission.experimentRun.winnerId??mission.searchChampion?.candidate?.id;
     const winner=mission.candidates.find((candidate)=>candidate.id===winnerId)??mission.searchChampion?.candidate;
     if(!winner)throw new FatalError("没有已验证 Winner，无法提炼经验");
-    const hasLiveDecision=mission.release.evidenceMode==="live"&&(mission.release.status==="promoted"||mission.release.status==="rolled-back");
-    const hasOfflineAcceptance=mission.artifactAcceptance.status==="passed"&&mission.artifactAcceptance.candidateId===winner.id;
+    const hasLiveDecision=projectHasLiveReleaseDecision(mission);
+    const hasOfflineAcceptance=!projectHasOnlineReleaseTarget(mission)
+      &&mission.artifactAcceptance.status==="passed"
+      &&mission.artifactAcceptance.candidateId===winner.id;
     if(!hasLiveDecision&&!hasOfflineAcceptance)throw new FatalError("尚未完成可用于经验提炼的成果验收");
     const parsed=await runServerAi("distill",{
       project:{goal:mission.goal,command:mission.evolutionCommand,artifacts:compactArtifacts(mission)},
@@ -744,6 +747,47 @@ export async function executeServerControlStep(
       type:"ActionCompleted",
       source:"vercel-workflow-control",
       payload:{action,serverNative:true,artifactCount:artifacts.length},
+    }));
+    return {control:"continue"};
+  }
+
+  if(action==="run-release"){
+    const releaseOutcome=await runServerMissionRelease(mission);
+    await runtime.missions.save(releaseOutcome.project);
+    await runtime.events.append(createEvolutionEvent({
+      id:`evt-${input.controlJobId}-release-${iteration}-${releaseOutcome.action??"blocked"}`,
+      missionId:input.missionId,
+      jobId:input.controlJobId,
+      checkpointId:plan.checkpoint.id,
+      type:releaseOutcome.control==="continue"?"ActionCompleted":"JobProgress",
+      source:"vercel-workflow-release",
+      payload:{
+        action,
+        releaseAction:releaseOutcome.action,
+        serverNative:true,
+        terminal:releaseOutcome.terminal,
+        releaseStatus:releaseOutcome.project.release.status,
+        candidateId:releaseOutcome.project.release.candidateId,
+        deploymentId:releaseOutcome.project.release.deploymentId,
+        stableDeploymentId:releaseOutcome.project.release.stableDeploymentId,
+        reason:releaseOutcome.reason,
+      },
+    }));
+    if(releaseOutcome.control==="stop"){
+      await runtime.jobs.put(controlJob(input,{
+        status:"waiting",
+        startedAt:input.requestedAt,
+        progress:{percent:88,detail:releaseOutcome.reason.slice(0,240)},
+      }));
+      return {control:"stop",result:result(input,{
+        status:"waiting-action",iterations:iteration+1,nextAction:action,
+        checkpointId:plan.checkpoint.id,reason:releaseOutcome.reason,
+      })};
+    }
+    await runtime.jobs.put(controlJob(input,{
+      status:"running",
+      startedAt:input.requestedAt,
+      progress:{percent:releaseOutcome.terminal?94:90,detail:releaseOutcome.reason.slice(0,240)},
     }));
     return {control:"continue"};
   }

@@ -42,6 +42,7 @@ describe("server artifact acceptance",()=>{
     expect(outcome.project.campaign.currentRound).toBe(1);
     expect(outcome.project.campaign.checkpoint).toBeUndefined();
     expect(outcome.project.gates.find((gate)=>gate.id==="artifact-ready")?.status).toBe("approved");
+    expect(outcome.project.gates.find((gate)=>gate.id==="release-ready")?.status).toBe("ready");
     expect(campaignGoalSatisfied(outcome.project)).toBe(true);
     expect(campaignStopReason(outcome.project)).toContain("全部通过");
 

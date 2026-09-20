@@ -4,6 +4,7 @@ import { CandidateArtifactSnapshotSchema, CandidateSchema } from "../schemas";
 import { evidenceFingerprint } from "./evidence-binding";
 import type { EvolveProject } from "../schemas";
 import { deriveAttentionRequest, deriveAutonomousDecision, LOCAL_REVIEW_CONTRACT_VERSION, reconcileAttentionRequest } from "./autonomous-orchestrator";
+import { buildServerHarnessPlan } from "@evolution/harness";
 
 function project(patch: Partial<EvolveProject> = {}): EvolveProject {
   return { ...demoProject, ...patch } as EvolveProject;
@@ -355,7 +356,8 @@ describe("autonomous orchestrator", () => {
       artifactSnapshots:[CandidateArtifactSnapshotSchema.parse({id:"snap-online-complete",sourceArtifactId:demoProject.sourceArtifacts[0]!.id,name:"result.txt",mimeType:"text/plain",content:"final",contentHash:"hash-online-complete",createdAt:"now"})],
     });
     const base = project({
-      targetConnection:{adapter:"http",connectionId:"production",status:"connected",label:"Production HTTP"},
+      targetConnection:{adapter:"artifact",connectionId:"artifact",status:"connected",label:"Artifact"},
+      releaseTarget:{provider:"vercel",mode:"preview-promote",status:"connected",label:"Vercel",healthPath:"/"},
       candidates:[candidate],
       experimentRun:{...demoProject.experimentRun,status:"completed",winnerId:candidate.id},
       validationRun:{...demoProject.validationRun,status:"completed",candidateId:candidate.id,recommendation:"release",evaluation:{...demoProject.baselineRun.result!,demoJudged:false},checks:[],runs:[],baselineRuns:[]},
@@ -374,6 +376,23 @@ describe("autonomous orchestrator", () => {
     expect(blocked.stage).toBe("release");
     expect(blocked.attention?.type).toBe("capability");
 
+    base.gates=base.gates.map((gate)=>gate.id==="release-ready"?{...gate,status:"approved" as const}:gate);
+    const needsBinding=deriveAutonomousDecision(base);
+    expect(needsBinding.action).toBe("wait-human");
+    expect(needsBinding.attention?.title).toContain("Preview Deployment");
+    base.release={...base.release,candidateId:candidate.id,deploymentId:"dpl-preview"};
+    base.campaign={...base.campaign,status:"paused",stopReason:"[server-release-provider-pending] promote 结果不确定"};
+    expect(deriveAutonomousDecision(base).action).toBe("wait-human");
+    base.campaign={...base.campaign,status:"idle",stopReason:undefined};
+    expect(deriveAutonomousDecision(base).action).toBe("run-release");
+    const previewPlan=buildServerHarnessPlan(base);
+    expect(previewPlan.decision.action).toBe("run-release");
+    base.release={...base.release,status:"shadow",evidenceMode:"live",healthy:true,observationStatus:"healthy",stableDeploymentId:"dpl-stable"};
+    expect(deriveAutonomousDecision(base).action).toBe("run-release");
+    const promotePlan=buildServerHarnessPlan(base);
+    expect(promotePlan.decision.action).toBe("run-release");
+    expect(promotePlan.checkpoint.id).not.toBe(previewPlan.checkpoint.id);
+    expect(promotePlan.sourceRevision).not.toBe(previewPlan.sourceRevision);
     base.release={...base.release,status:"promoted",evidenceMode:"live",healthy:true,observationStatus:"healthy"};
     expect(deriveAutonomousDecision(base).action).toBe("distill");
     base.lessons=[{id:"lesson-live",title:"线上经验",summary:"有效",reusable:true,effect:"改善",limit:"线上",trigger:[],method:[],validatedOn:["production"],status:"verified-skill"}];

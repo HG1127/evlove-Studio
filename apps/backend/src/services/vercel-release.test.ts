@@ -86,4 +86,30 @@ describe("Vercel release provider",()=>{
     })).rejects.toThrow(/显式绑定|deploymentId/i);
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("replays promote safely when Production already points at the exact Candidate deployment",async()=>{
+    process.env.VERCEL_RELEASE_TOKEN="test_release_token";
+    const fetchMock=vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
+      const url=String(input);
+      if(init?.method==="POST")throw new Error("idempotent replay must not issue another production write");
+      if(url.includes("/v13/deployments/evolution-test.vercel.app")){
+        return new Response(JSON.stringify({uid:"dpl_preview",url:"candidate.vercel.app",readyState:"READY",target:"production"}),{status:200});
+      }
+      if(url.includes("/v13/deployments/dpl_preview")){
+        return new Response(JSON.stringify({uid:"dpl_preview",url:"candidate.vercel.app",readyState:"READY",target:"production"}),{status:200});
+      }
+      if(url.startsWith("https://evolution-test.vercel.app"))return new Response("ok",{status:200});
+      throw new Error("unexpected URL "+url);
+    });
+    vi.stubGlobal("fetch",fetchMock);
+    const result=await executeVercelReleaseAction({
+      action:"promote",
+      deploymentId:"dpl_preview",
+      stableDeploymentId:"dpl_stable",
+      artifactHashes:[{sourceArtifactId:"source-1",contentHash:"a".repeat(64)}],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.stableDeploymentId).toBe("dpl_stable");
+    expect(fetchMock.mock.calls.some(([,init])=>init?.method==="POST")).toBe(false);
+  });
 });

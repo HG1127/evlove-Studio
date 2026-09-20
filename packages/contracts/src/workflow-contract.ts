@@ -51,6 +51,8 @@ export const EvolutionWorkflowCapabilitiesSchema=z.object({
     codeReady:z.boolean().default(false),
     offlineFullAuto:z.boolean().default(false),
     onlineFullAuto:z.boolean().default(false),
+    releaseOrchestrationReady:z.boolean().default(false),
+    onlinePostApprovalAuto:z.boolean().default(false),
     configBlocked:z.array(z.object({capability:z.string(),reason:z.string()})).default([]),
     externalCapabilityBlocked:z.array(z.object({capability:z.string(),reason:z.string()})).default([]),
   }).prefault({}),

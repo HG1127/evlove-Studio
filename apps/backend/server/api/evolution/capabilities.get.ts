@@ -4,31 +4,37 @@ import { serverAiConfigured, vercelReleaseWriteConfigured } from "../../../src/s
 
 const CONTROL_ACTIONS=["adopt-defaults","approve-contract","wait-human","complete","package"] as const;
 const AI_ACTIONS=["understand","compile-contract","build-eval","distill","next-queue"] as const;
-const CONDITIONAL_ACTIONS:string[]=["revalidate","run-campaign"];
+const CONDITIONAL_ACTIONS:string[]=["revalidate","run-campaign","run-release"];
 const MIGRATION_PENDING_ACTIONS:string[]=[];
 
 export default defineEventHandler(()=>{
   const ai=serverAiConfigured();
   const releaseWrite=vercelReleaseWriteConfigured();
-  const blockedActions=ai?[]:[
-    ...AI_ACTIONS.map((action)=>({action,reason:"server-ai-not-configured"})),
-    {action:"run-campaign",reason:"server-ai-not-configured"},
+  const blockedActions=[
+    ...(!ai?[
+      ...AI_ACTIONS.map((action)=>({action,reason:"server-ai-not-configured"})),
+      {action:"run-campaign",reason:"server-ai-not-configured"},
+    ]:[]),
+    ...(!releaseWrite?[{action:"run-release",reason:"vercel-release-credential-required"}]:[]),
   ];
   const configBlocked=[
     ...(!ai?[{capability:"server-ai",reason:"server-ai-not-configured"}]:[]),
     ...(!releaseWrite?[{capability:"vercel-release-write",reason:"vercel-release-credential-required"}]:[]),
   ];
   const externalCapabilityBlocked=[
-    {capability:"online-release-orchestration",reason:"autonomous-live-release-not-integrated"},
     {capability:"online-release-authorization",reason:"human-release-ready-approval-required"},
+    {capability:"preview-deployment-binding",reason:"explicit-preview-deployment-binding-required"},
   ];
   const codeReady=MIGRATION_PENDING_ACTIONS.length===0;
   const offlineFullAuto=codeReady&&ai;
-  const onlineFullAuto=offlineFullAuto&&releaseWrite&&externalCapabilityBlocked.length===0;
+  const releaseOrchestrationReady=true;
+  const onlinePostApprovalAuto=offlineFullAuto&&releaseWrite&&releaseOrchestrationReady;
+  const onlineFullAuto=onlinePostApprovalAuto&&externalCapabilityBlocked.length===0;
   const serverNativeActions=[
     ...CONTROL_ACTIONS,
     ...(ai?AI_ACTIONS:[]),
     ...(ai?["campaign-baseline","campaign-experiment","campaign-holdout","campaign-artifact-acceptance"]:[]),
+    ...(releaseWrite?["run-release"]:[]),
   ];
   return EvolutionWorkflowCapabilitiesSchema.parse({
     available:true,
@@ -39,6 +45,8 @@ export default defineEventHandler(()=>{
       codeReady,
       offlineFullAuto,
       onlineFullAuto,
+      releaseOrchestrationReady,
+      onlinePostApprovalAuto,
       configBlocked,
       externalCapabilityBlocked,
     },

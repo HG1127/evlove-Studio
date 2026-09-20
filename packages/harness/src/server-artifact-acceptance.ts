@@ -194,7 +194,9 @@ export async function runServerArtifactAcceptance(
       experimentRun:{...project.experimentRun,winnerId:candidate.id,pendingEvidenceCandidateId:undefined},
       gates:project.gates.map((gate)=>gate.id==="artifact-ready"
         ?{...gate,status:"approved" as const,approvedAt:now,note:`Server Gate F · Artifact Acceptance ${acceptance.overallScore}/100`}
-        :gate),
+        :gate.id==="release-ready"
+          ?{...gate,status:"ready" as const,approvedAt:undefined,note:`Candidate ${candidate.id} 已通过 Hidden Validation + Gate F；生产 Release 需要重新授权`}
+          :gate),
     };
     const settled=settleRound(project,candidate,true,now);
     return {control:"continue",project:settled,reason:`Round ${round} Gate F 已通过 exact frozen Artifact 验收并完成本轮结算。`,accepted:true,repaired:false,championChanged:settled.searchChampion?.candidate?.id===candidate.id};

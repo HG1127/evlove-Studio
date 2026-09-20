@@ -196,6 +196,7 @@ async function waitForProduction(expectedDeploymentId:string){
 export async function executeVercelReleaseAction(args:{
   action:VercelReleaseAction;
   deploymentId?:string;
+  stableDeploymentId?:string;
   healthPath?:string;
   artifactHashes:Array<{sourceArtifactId:string;contentHash:string}>;
 }):Promise<VercelReleaseActionResponse>{
@@ -231,8 +232,10 @@ export async function executeVercelReleaseAction(args:{
   if(args.action==="promote"){
     const candidate=await getDeployment(deploymentId);
     if(candidate.state!=="READY")throw new Error("候选 Deployment 尚未 READY");
-    await vercelApi("/v10/projects/"+encodeURIComponent(config.projectId)+"/promote/"+encodeURIComponent(candidate.id),{method:"POST",body:"{}"});
-    const productionAfter=await waitForProduction(candidate.id);
+    if(productionBefore?.id!==candidate.id){
+      await vercelApi("/v10/projects/"+encodeURIComponent(config.projectId)+"/promote/"+encodeURIComponent(candidate.id),{method:"POST",body:"{}"});
+    }
+    const productionAfter=productionBefore?.id===candidate.id?productionBefore:await waitForProduction(candidate.id);
     const health=await checkVercelReleaseHealth({url:config.productionUrl??candidate.url,healthPath:args.healthPath});
     const points=health.checks.length;
     return VercelReleaseActionResponseSchema.parse({
@@ -240,7 +243,7 @@ export async function executeVercelReleaseAction(args:{
       note:productionAfter?.id===candidate.id&&health.ready?"Vercel Production 已切换到候选 Deployment，Health Gate 通过。":"Promote 已发起，但 Production 指向或 Health Gate 尚未确认。",
       healthy:health.ready,kpis:[],evidenceMode:"live",effectiveAction:"promote",
       observationStatus:health.ready?"healthy":"unhealthy",
-      stableDeploymentId:productionBefore?.id,deploymentId:candidate.id,
+      stableDeploymentId:args.stableDeploymentId??(productionBefore?.id===candidate.id?undefined:productionBefore?.id),deploymentId:candidate.id,
       artifactHashes:args.artifactHashes,environment:"production",observedAt:observedAt(),
       sampleSize:points,windowMinutes:Math.max(0.01,health.latencyMs/60000),
       provider:"vercel",releaseMode:"preview-promote",deploymentUrl:candidate.url,productionUrl:config.productionUrl,
@@ -249,8 +252,10 @@ export async function executeVercelReleaseAction(args:{
 
   if(args.action==="rollback"){
     const target=await getDeployment(deploymentId);
-    await vercelApi("/v1/projects/"+encodeURIComponent(config.projectId)+"/rollback/"+encodeURIComponent(target.id),{method:"POST",body:"{}"});
-    const productionAfter=await waitForProduction(target.id);
+    if(productionBefore?.id!==target.id){
+      await vercelApi("/v1/projects/"+encodeURIComponent(config.projectId)+"/rollback/"+encodeURIComponent(target.id),{method:"POST",body:"{}"});
+    }
+    const productionAfter=productionBefore?.id===target.id?productionBefore:await waitForProduction(target.id);
     const health=await checkVercelReleaseHealth({url:config.productionUrl??target.url,healthPath:args.healthPath});
     return VercelReleaseActionResponseSchema.parse({
       ok:Boolean(productionAfter?.id===target.id&&health.ready),trafficPercent:0,

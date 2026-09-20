@@ -58,7 +58,7 @@ describe("autonomous evolution policy", () => {
     base.validationRun.evidenceFingerprint=binding;
     base.artifactAcceptance.evidenceFingerprint=binding;
     expect(autonomousEvolutionState(base,false)).not.toBe("completed");
-    base.release={...base.release,status:"promoted",evidenceMode:"live",healthy:true,observationStatus:"healthy"};
+    base.release={...base.release,status:"promoted",candidateId:candidate.id,evidenceMode:"live",healthy:true,observationStatus:"healthy"};
     expect(autonomousEvolutionState(base,false)).not.toBe("completed");
     base.lessons=[{id:"lesson-live",title:"经验",summary:"有效",reusable:true,effect:"改善",limit:"线上",trigger:[],method:[],validatedOn:["production"],status:"verified-skill"}];
     base.nextQueue=[{id:"next-live",title:"下一轮",reason:"继续",priority:"P1",source:"lesson",suggestedMetrics:[]}];

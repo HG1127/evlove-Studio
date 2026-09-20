@@ -64,7 +64,9 @@ function workflowCapabilityMessage(capabilities: EvolutionWorkflowCapabilities) 
         : "离线闭环代码尚未就绪",
     capabilities.closure.onlineFullAuto
       ? "线上闭环：FULL AUTO"
-      : `线上闭环：${capabilities.closure.externalCapabilityBlocked.map((item) => item.capability).join("、") || "待能力接入"}`,
+      : capabilities.closure.onlinePostApprovalAuto
+        ? "线上闭环：授权 + Preview 绑定后 AUTO"
+        : `线上闭环：${capabilities.closure.externalCapabilityBlocked.map((item) => item.capability).join("、") || "待能力接入"}`,
     capabilities.migrationPendingActions.length ? `待迁：${capabilities.migrationPendingActions.join("、")}` : "",
     capabilities.closure.configBlocked.length ? `待配置：${capabilities.closure.configBlocked.map((item) => item.capability).join("、")}` : "",
   ].filter(Boolean).join("；");
@@ -474,7 +476,7 @@ export function EvolutionReadinessCenter() {
               <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>migration</b><div className={workflowCheck.capabilities?.migrationPendingActions.length ? "text-amber-600" : "text-emerald-600"}>{workflowCheck.capabilities?.migrationPendingActions.join(" / ") || "NONE"}</div></div>
               <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>blocked</b><div className={workflowCheck.capabilities?.blockedActions.length ? "text-amber-600" : "text-emerald-600"}>{workflowCheck.capabilities?.blockedActions.map((item)=>item.action).join(" / ") || "NONE"}</div></div>
               <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>offline closure</b><div className={workflowCheck.capabilities?.closure.offlineFullAuto ? "text-emerald-600" : "text-amber-600"}>{workflowCheck.capabilities?.closure.offlineFullAuto ? "FULL AUTO" : workflowCheck.capabilities?.closure.codeReady ? "CODE READY" : "BLOCKED"}</div></div>
-              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>online closure</b><div className={workflowCheck.capabilities?.closure.onlineFullAuto ? "text-emerald-600" : "text-amber-600"}>{workflowCheck.capabilities?.closure.onlineFullAuto ? "FULL AUTO" : workflowCheck.capabilities?.closure.externalCapabilityBlocked.map((item)=>item.capability).join(" / ") || "BLOCKED"}</div></div>
+              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>online closure</b><div className={workflowCheck.capabilities?.closure.onlineFullAuto || workflowCheck.capabilities?.closure.onlinePostApprovalAuto ? "text-emerald-600" : "text-amber-600"}>{workflowCheck.capabilities?.closure.onlineFullAuto ? "FULL AUTO" : workflowCheck.capabilities?.closure.onlinePostApprovalAuto ? "POST-APPROVAL AUTO" : workflowCheck.capabilities?.closure.externalCapabilityBlocked.map((item)=>item.capability).join(" / ") || "BLOCKED"}</div></div>
             </div>
           </div>
           <div className="rounded-xl border bg-white p-3">

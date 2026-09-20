@@ -45,6 +45,7 @@ function handlers(run: HarnessActionHandlers<HarnessPlan>["understand"]): Harnes
     "build-eval": noop,
     revalidate: noop,
     "run-campaign": noop,
+    "run-release": noop,
     package: noop,
     distill: noop,
     "next-queue": noop,

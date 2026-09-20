@@ -1392,7 +1392,10 @@ export async function runRelease(project: EvolveProject, inputCandidate: Candida
     result = await adapter.release({ project: parsed, candidate, action });
   }
   if (result.evidenceMode !== "live") throw new Error("发布接口只返回了模拟结果，未声明 evidenceMode=live；本次不会写入 Shadow / Canary / Promote 状态。请让真实 Target Runner 返回生产证据类型后重试。");
-  if (!result.ok) throw new Error(`真实发布平台拒绝了 ${action}：${result.note}`);
+  const durablePreviewPromote=releaseMode==="preview-promote"
+    &&parsed.releaseTarget?.provider==="vercel"
+    &&["shadow","promote","rollback"].includes(action);
+  if (!result.ok&&!durablePreviewPromote) throw new Error(`真实发布平台拒绝了 ${action}：${result.note}`);
   const effectiveAction = result.effectiveAction ?? action;
   if (!actions.includes(effectiveAction)) throw new Error(`发布平台返回了不支持的 effectiveAction：${String(effectiveAction)}`);
   if (!result.deploymentId || !result.observedAt) throw new Error("真实发布回执缺少 deploymentId 或 observedAt，本次不会写入发布状态。");
@@ -1403,11 +1406,7 @@ export async function runRelease(project: EvolveProject, inputCandidate: Candida
       throw new Error("线上发布回执的 Artifact Hash 与已验收快照不一致或不完整；禁止推进流量。");
     }
   }
-  if (releaseMode === "preview-promote" && effectiveAction === "promote") {
-    if (result.observationStatus !== "healthy" || result.healthy !== true) {
-      throw new Error("Production Promote 后 Health Gate 尚未确认健康；不会把本次发布结算为成功。");
-    }
-  } else if (["canary-5", "canary-20", "canary-50", "promote"].includes(effectiveAction) && result.observationStatus !== "observing" && (!result.sampleSize || !result.windowMinutes)) {
+  if (releaseMode !== "preview-promote" && ["canary-5", "canary-20", "canary-50", "promote"].includes(effectiveAction) && result.observationStatus !== "observing" && (!result.sampleSize || !result.windowMinutes)) {
     throw new Error("Canary/Promote 回执缺少有效 sampleSize 或 windowMinutes；样本和观察窗口不足时不能推进流量。");
   }
   return { ...result, action: effectiveAction };

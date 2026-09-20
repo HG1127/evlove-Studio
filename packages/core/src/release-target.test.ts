@@ -51,12 +51,17 @@ describe("release target domain",()=>{
   it("requires a real live terminal release decision for online closure",()=>{
     const project={
       targetConnection:{adapter:"http"},
-      release:{...baseRelease,status:"promoted",evidenceMode:"live",healthy:true,observationStatus:"healthy"},
+      experimentRun:{winnerId:"candidate-live"},
+      release:{...baseRelease,status:"promoted",candidateId:"candidate-live",evidenceMode:"live",healthy:true,observationStatus:"healthy"},
     } as unknown as EvolveProject;
     expect(projectHasLiveReleaseDecision(project)).toBe(true);
     project.release={...project.release,observationStatus:"observing"};
     expect(projectHasLiveReleaseDecision(project)).toBe(false);
     project.release={...project.release,status:"rolled-back",observationStatus:"healthy"};
     expect(projectHasLiveReleaseDecision(project)).toBe(true);
+    project.release={...project.release,healthy:false};
+    expect(projectHasLiveReleaseDecision(project)).toBe(false);
+    project.release={...project.release,status:"promoted",candidateId:"candidate-old",healthy:true,observationStatus:"healthy"};
+    expect(projectHasLiveReleaseDecision(project)).toBe(false);
   });
 });

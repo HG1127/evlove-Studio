@@ -20,6 +20,13 @@ export function buildServerHarnessPlan(project:EvolveProject):ServerHarnessPlan 
     project.searchChampion?.id,
     project.validationRun.id,
     project.artifactAcceptance.id,
+    project.gates.find((gate)=>gate.id==="release-ready")?.status,
+    project.release.status,
+    project.release.candidateId,
+    project.release.deploymentId,
+    project.release.stableDeploymentId,
+    project.release.evidenceMode,
+    project.release.healthy,
     decision.action,
   ]);
   const checkpointId=`server-checkpoint-${fastHash([
@@ -27,6 +34,8 @@ export function buildServerHarnessPlan(project:EvolveProject):ServerHarnessPlan 
     sourceRevision,
     decision.stage,
     project.campaign.currentRound,
+    project.release.status,
+    project.release.deploymentId,
     decision.action,
   ])}`;
   return {
