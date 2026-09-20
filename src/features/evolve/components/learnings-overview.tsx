@@ -19,6 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { governProductionLessons } from "@evolution/core";
 import type { EvolveProject, Lesson, NextQueueItem } from "../schemas";
 import { useLocalProjects } from "../runtime/use-local-projects";
 
@@ -48,8 +49,9 @@ export function LearningsOverview(){
   const navigate=useNavigate();
   const [filter,setFilter]=useState<Filter>("all");
   const [query,setQuery]=useState("");
-  const lessons=useMemo(()=>projects.flatMap((project)=>project.lessons.map((lesson)=>({project,lesson}))),[projects]);
-  const queue=useMemo(()=>projects.flatMap((project)=>project.nextQueue.map((item)=>({project,item}))),[projects]);
+  const governedProjects=projects.map((project)=>{const governed=governProductionLessons(project);return {...project,lessons:governed.lessons,nextQueue:governed.nextQueue};});
+  const lessons=useMemo(()=>governedProjects.flatMap((project)=>project.lessons.map((lesson)=>({project,lesson}))),[governedProjects]);
+  const queue=useMemo(()=>governedProjects.flatMap((project)=>project.nextQueue.map((item)=>({project,item}))),[governedProjects]);
   const filtered=useMemo(()=>lessons.filter(({project,lesson})=>(filter==='all'||filter===lesson.status)&&(!query||`${project.name} ${lesson.title} ${lesson.summary} ${lesson.method.join(' ')}`.toLowerCase().includes(query.toLowerCase()))),[lessons,filter,query]);
   const [selectedKey,setSelectedKey]=useState<string|undefined>();
   const selected=filtered.find(({project,lesson})=>`${project.id}:${lesson.id}`===selectedKey)??filtered[0];
@@ -115,6 +117,7 @@ export function LearningsOverview(){
         <section className="mt-4 rounded-xl border p-3"><div className="text-xs font-semibold">触发条件 / Trigger</div><div className="mt-2 flex flex-wrap gap-1">{selected.lesson.trigger.length?selected.lesson.trigger.map((item)=><Badge key={item}>{item}</Badge>):<span className="text-xs text-slate-400">未定义</span>}</div></section>
         <section className="mt-3 rounded-xl border p-3"><div className="text-xs font-semibold">方法 / Method</div>{selected.lesson.method.length?<ol className="mt-2 space-y-1 text-xs leading-5 text-slate-500">{selected.lesson.method.map((item,index)=><li key={`${index}-${item}`}>{index+1}. {item}</li>)}</ol>:<p className="mt-1 text-xs text-slate-400">未提炼结构化方法。</p>}</section>
         <section className="mt-3 rounded-xl border p-3"><div className="text-xs font-semibold">验证证据</div><div className="mt-2 flex flex-wrap gap-1">{selected.lesson.validatedOn.length?selected.lesson.validatedOn.map((item)=><Badge className="border-emerald-200 bg-emerald-50 text-emerald-700" key={item}>{item}</Badge>):<span className="text-xs text-slate-400">尚未记录验证范围</span>}</div></section>
+        {selected.lesson.governance&&<section className="mt-3 rounded-xl border p-3"><div className="flex flex-wrap items-center gap-2"><div className="text-xs font-semibold">Skill Governance</div><Badge className={selected.lesson.governance.status==="active"?"border-emerald-200 bg-emerald-50 text-emerald-700":selected.lesson.governance.status==="revoked"?"border-rose-200 bg-rose-50 text-rose-700":"border-amber-200 bg-amber-50 text-amber-700"}>{selected.lesson.governance.status}</Badge></div><p className="mt-2 text-xs leading-5 text-slate-500">{selected.lesson.governance.reason}</p><div className="mt-2 text-[10px] leading-4 text-slate-400">Candidate {selected.lesson.governance.candidateId??"unknown"} · Deployment {selected.lesson.governance.deploymentId??"unknown"} · Trend {selected.lesson.governance.outcomeTrend??"unknown"} · 更新 {new Date(selected.lesson.governance.updatedAt).toLocaleString("zh-CN")}</div></section>}
         <div className="mt-4 grid gap-2 sm:grid-cols-2"><Link to={`/projects/${selected.project.id}?stage=learning`}><Button variant="secondary" className="w-full">查看原始证据</Button></Link>{selected.lesson.status==='verified-skill'&&selected.lesson.reusable?<Button className="w-full" onClick={()=>applySkill(selected.lesson)}>应用到新进化项目 <ArrowUpRight className="size-3.5"/></Button>:<Button disabled className="w-full" variant="secondary">未达到 Skill 复用门槛</Button>}</div>
       </CardContent></Card>}
     </div>}

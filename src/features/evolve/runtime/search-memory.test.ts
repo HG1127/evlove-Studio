@@ -92,6 +92,25 @@ describe("search memory", () => {
     expect(fresh.summary).toContain("暂无足够历史");
   });
 
+  it("把 Production Outcome follow-up 注入 Search Memory，供下一轮规划使用", () => {
+    const base = {
+      evolutionArchive: [],
+      campaign: { noImprovementRounds: 0 },
+      searchChampion: undefined,
+      nextQueue: [{
+        id: "production-outcome:C1:dpl",
+        title: "复核线上趋势",
+        reason: "flapping",
+        priority: "P0",
+        source: "production-outcome",
+        suggestedMetrics: ["health"],
+      }],
+    } as unknown as EvolveProject;
+    const memory = buildSearchMemory(base);
+    expect(memory.productionOutcomeFollowups).toEqual([{ title: "复核线上趋势", reason: "flapping", priority: "P0" }]);
+    expect(memory.summary).toContain("Production Outcome");
+  });
+
   it("自适应探索：夺冠收敛、停滞加码、始终夹在 0.15–0.6", () => {
     expect(nextExploreRatio(0.35, true, 0)).toBe(0.28);
     expect(nextExploreRatio(0.35, false, 1)).toBe(0.35);

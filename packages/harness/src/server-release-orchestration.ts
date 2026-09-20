@@ -1,5 +1,6 @@
 import type { EvolveProject, ReleaseAdapterResult } from "@evolution/contracts";
 import {
+  applyProductionLearningGovernance,
   applyReleaseResultToProject,
   currentReleaseCandidate,
   expectedReleaseArtifactHashes,
@@ -112,28 +113,29 @@ export async function runServerReleaseOrchestration(
   }catch(error){
     return pause(project,`[server-release-receipt-invalid] Provider 回执无法绑定 exact Candidate：${error instanceof Error?error.message:String(error)}`,{status:"manual-check",action});
   }
+  const governed=applyProductionLearningGovernance(updated,{at:options?.now?.()??new Date().toISOString()});
 
   if(action==="shadow"&&(!receipt.ok||receipt.healthy!==true||receipt.observationStatus!=="healthy")){
-    return pause(updated,"[server-release-preview-unhealthy] Preview Health Gate 未通过；没有切换 Production。",{status:"pending",action:"shadow"});
+    return pause(governed,"[server-release-preview-unhealthy] Preview Health Gate 未通过；没有切换 Production。",{status:"pending",action:"shadow"});
   }
   if(action==="promote"&&(!receipt.ok||receipt.healthy!==true||receipt.observationStatus!=="healthy")){
-    if(updated.release.stableDeploymentId){
-      return {control:"continue",project:updated,action,terminal:false,reason:"Promote 后 Production Health 未通过；已保存真实状态，下一 Durable Step 将回滚 stable Deployment。"};
+    if(governed.release.stableDeploymentId){
+      return {control:"continue",project:governed,action,terminal:false,reason:"Promote 后 Production Health 未通过；已保存真实状态，下一 Durable Step 将回滚 stable Deployment。"};
     }
-    return pause(updated,"[server-release-rollback-unavailable] Promote 后 Production Health 未通过且缺少 stableDeploymentId。",{status:"manual-check",action:"promote"});
+    return pause(governed,"[server-release-rollback-unavailable] Promote 后 Production Health 未通过且缺少 stableDeploymentId。",{status:"manual-check",action:"promote"});
   }
   if(action==="rollback"&&(!receipt.ok||receipt.healthy!==true||receipt.observationStatus!=="healthy")){
-    return pause(updated,"[server-release-rollback-unhealthy] Rollback 已执行但 Production Health 尚未确认；禁止宣称已安全恢复。",{status:"pending",action:"rollback"});
+    return pause(governed,"[server-release-rollback-unhealthy] Rollback 已执行但 Production Health 尚未确认；禁止宣称已安全恢复。",{status:"pending",action:"rollback"});
   }
 
   return {
     control:"continue",
     project:{
-      ...updated,
-      campaign:{...updated.campaign,status:"running",stopReason:undefined},
+      ...governed,
+      campaign:{...governed.campaign,status:"running",stopReason:undefined},
     },
     action,
-    terminal:projectHasLiveReleaseDecision(updated),
+    terminal:projectHasLiveReleaseDecision(governed),
     reason:action==="shadow"
       ?"Preview Health Gate 已通过；下一 Durable Step 将推进同一 Deployment 到 Production。"
       : action==="promote"

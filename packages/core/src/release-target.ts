@@ -2,7 +2,7 @@ import type { EvolveProject, ReleaseState } from "@evolution/contracts";
 
 export function projectHasOnlineReleaseTarget(project:EvolveProject){
   if(project.releaseTarget?.provider==="vercel"||project.releaseTarget?.provider==="http")return true;
-  return (!project.releaseTarget||project.releaseTarget.provider==="none")&&project.targetConnection.adapter==="http";
+  return (!project.releaseTarget||project.releaseTarget.provider==="none")&&project.targetConnection?.adapter==="http";
 }
 
 export function projectHasLiveReleaseDecision(project:EvolveProject){

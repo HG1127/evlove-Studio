@@ -792,6 +792,15 @@ export const LessonSchema = z.object({
   method: z.array(z.string()).default([]),
   validatedOn: z.array(z.string()).default([]),
   status: z.enum(["lesson", "verified-skill", "anti-pattern"]).default("lesson"),
+  governance:z.object({
+    status:z.enum(["pending","active","degraded","revoked"]),
+    reason:z.string(),
+    candidateId:z.string().optional(),
+    deploymentId:z.string().optional(),
+    outcomeTrend:z.enum(["stable-healthy","healthy-insufficient","degrading","flapping","stale","unknown"]).optional(),
+    observedAt:z.string().optional(),
+    updatedAt:z.string(),
+  }).optional(),
 });
 export type Lesson = z.infer<typeof LessonSchema>;
 

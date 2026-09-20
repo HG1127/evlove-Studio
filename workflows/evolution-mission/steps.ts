@@ -6,7 +6,7 @@ import {
   type EvolutionWorkflowResult,
   type EvolutionWorkflowRunInput,
 } from "@evolution/contracts";
-import { applyDeterministicRoundtripEvidence, baselineReadiness, completeAutonomousMission, mapTestsToRubric, materializeAcceptedChampionPackage, normalizeAcceptanceRubric, normalizeEvalSuiteForProject, productionOutcomeFreshness, productionOutcomeTrend, projectHasStableHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, resetDownstream, rubricSuiteCoverage, rubricValidation } from "@evolution/core";
+import { applyDeterministicRoundtripEvidence, applyProductionLearningGovernance, attachLessonGovernance, baselineReadiness, completeAutonomousMission, mapTestsToRubric, materializeAcceptedChampionPackage, mergeGovernedNextQueue, normalizeAcceptanceRubric, normalizeEvalSuiteForProject, productionOutcomeFreshness, productionOutcomeTrend, projectHasStableHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, resetDownstream, rubricSuiteCoverage, rubricValidation } from "@evolution/core";
 import {
   advanceServerCampaignPreparation,
   buildServerHarnessPlan,
@@ -683,7 +683,7 @@ export async function executeServerControlStep(
     const hasLiveDecision=projectHasLiveReleaseDecision(mission);
     const releaseFreshness=productionOutcomeFreshness(mission);
     const releaseTrend=productionOutcomeTrend(mission);
-    const hasStableLiveOutcome=hasLiveDecision&&projectHasStableHealthyProductionOutcome(mission);
+    const hasStableLiveOutcome=hasLiveDecision&&mission.release.status==="promoted"&&projectHasStableHealthyProductionOutcome(mission);
     const hasOfflineAcceptance=!projectHasOnlineReleaseTarget(mission)
       &&mission.artifactAcceptance.status==="passed"
       &&mission.artifactAcceptance.candidateId===winner.id;
@@ -702,8 +702,12 @@ export async function executeServerControlStep(
         ?`Production Outcome 尚未达到稳定线上证据门槛：${releaseTrend.reason}`
         :"离线成果验收（尚无线上生产证据）"]}
       : parsed;
-    const record={id:`lesson-${plan.checkpoint.id}`,...lesson};
-    await runtime.missions.save({...mission,lessons:[record,...mission.lessons.filter((item)=>item.id!==record.id)],stage:"learning",updatedAt:now});
+    const record=attachLessonGovernance(mission,{id:`lesson-${plan.checkpoint.id}`,...lesson},{at:now});
+    const learned=applyProductionLearningGovernance(
+      {...mission,lessons:[record,...mission.lessons.filter((item)=>item.id!==record.id)],stage:"learning",updatedAt:now},
+      {at:now,now:Date.parse(now)},
+    );
+    await runtime.missions.save(learned);
     await runtime.events.append(createEvolutionEvent({
       id:`evt-${input.controlJobId}-action-${iteration}-complete`,
       missionId:input.missionId,jobId:input.controlJobId,checkpointId:plan.checkpoint.id,
@@ -727,7 +731,7 @@ export async function executeServerControlStep(
         lastGapAdvice:mission.campaign.lastGapAdvice,
       },
     });
-    await runtime.missions.save({...mission,nextQueue:generated.items,stage:"learning",updatedAt:now});
+    await runtime.missions.save({...mission,nextQueue:mergeGovernedNextQueue(mission.nextQueue,generated.items),stage:"learning",updatedAt:now});
     await runtime.events.append(createEvolutionEvent({
       id:`evt-${input.controlJobId}-action-${iteration}-complete`,
       missionId:input.missionId,jobId:input.controlJobId,checkpointId:plan.checkpoint.id,

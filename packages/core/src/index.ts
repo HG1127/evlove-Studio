@@ -28,3 +28,4 @@ export * from "./autonomous-completion";
 export * from "./release-orchestration";
 export * from "./release-reconciliation";
 export * from "./release-outcome";
+export * from "./learning-governance";

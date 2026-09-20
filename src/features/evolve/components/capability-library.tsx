@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { governProductionLessons } from "@evolution/core";
 import { useLocalProjects } from "../runtime/use-local-projects";
 import { listTemplates } from "../runtime/template-store";
 import type { Lesson } from "../schemas";
@@ -15,8 +16,8 @@ type Tab = "skills" | "recipes" | "lessons" | "anti-patterns";
 export function CapabilityLibrary() {
   const projects = useLocalProjects({ includeDemo: false });
   const navigate = useNavigate();
-  const templates = useMemo(listTemplates, []);
-  const lessons = useMemo(() => projects.flatMap((project) => project.lessons.map((lesson) => ({ project, lesson }))), [projects]);
+  const templates = useMemo(() => listTemplates(), []);
+  const lessons = projects.flatMap((project) => governProductionLessons(project).lessons.map((lesson) => ({ project, lesson })));
   const [tab, setTab] = useState<Tab>("skills");
   const [query, setQuery] = useState("");
   const skills = lessons.filter(({ lesson }) => lesson.status === "verified-skill");

@@ -1,4 +1,5 @@
 import type { EvolutionArchiveEntry, EvolveProject } from "../schemas";
+import { governProductionLessons } from "@evolution/core";
 
 /**
  * 搜索记忆（Search Memory）：把多轮 Archive 压缩成「哪类改动反复无效 / 哪类改动真实有效 /
@@ -27,6 +28,7 @@ export type SearchMemory = {
   deadEnds: FamilyStat[];
   winning: FamilyStat[];
   recurringGaps: Array<{ theme: string; count: number }>;
+  productionOutcomeFollowups: Array<{ title: string; reason: string; priority: "P0" | "P1" | "P2" }>;
   stagnationRounds: number;
   archiveSize: number;
   championScore?: number;
@@ -126,22 +128,29 @@ export function withFamilyVerdicts(families: FamilyStat[], championScore: number
 }
 
 export function buildSearchMemory(project: EvolveProject): SearchMemory {
+  const governed=governProductionLessons(project);
   const archive = project.evolutionArchive;
   const families = withFamilyVerdicts(aggregatePatchFamilies(archive), project.searchChampion?.score);
   const deadEnds = families.filter((item) => item.verdict === "dead-end").slice(0, 8);
   const winning = families.filter((item) => item.verdict === "winning").slice(0, 6);
   const recurringGaps = aggregateRecurringGaps(archive);
+  const productionOutcomeFollowups = governed.nextQueue
+    .filter((item) => item.source === "production-outcome")
+    .map((item) => ({ title: item.title, reason: item.reason, priority: item.priority }))
+    .slice(0, 4);
   const stagnationRounds = project.campaign.noImprovementRounds;
   const parts: string[] = [];
   if (deadEnds.length) parts.push(`${deadEnds.length} 类改动反复无效`);
   if (winning.length) parts.push(`${winning.length} 类改动有效`);
   if (recurringGaps.length) parts.push(`${recurringGaps[0]!.count} 次重复出现「${recurringGaps[0]!.theme}」`);
+  if (productionOutcomeFollowups.length) parts.push(`${productionOutcomeFollowups.length} 个 Production Outcome 问题待处理`);
   if (stagnationRounds >= 2) parts.push(`已连续 ${stagnationRounds} 轮未提升`);
   return {
     families,
     deadEnds,
     winning,
     recurringGaps,
+    productionOutcomeFollowups,
     stagnationRounds,
     archiveSize: archive.length,
     championScore: project.searchChampion?.score,

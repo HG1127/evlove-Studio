@@ -9,6 +9,7 @@ import {
   nextDurableReleaseAction,
   productionOutcomeFreshness,
   productionOutcomeTrend,
+  projectNeedsProductionLearningRedistill,
   projectHasLiveReleaseDecision,
   projectHasOnlineReleaseTarget,
   projectReleaseMode,
@@ -373,6 +374,7 @@ export function deriveAutonomousDecision(project: EvolveProject): AutonomousDeci
       });
       return { action: "wait-human", reason: request.reason, stage: request.stage, attention: request };
     }
+    if (onlineRelease&&projectNeedsProductionLearningRedistill(project)) return {action:"distill",reason:"Production Outcome 已重新稳定；重新提炼一次线上经验，只有新证据再次成立才恢复 Verified Skill。",stage:"learning"};
     if (project.lessons.length === 0) return { action: "distill", reason: onlineRelease ? "真实 Release 决策已完成，自动沉淀本轮 Lesson" : "离线成果已通过完整验收，自动沉淀本轮 Lesson", stage: "learning" };
     if (project.nextQueue.length === 0) return { action: "next-queue", reason: "Lesson 已形成，自动生成下一轮 Evolve Queue", stage: "learning" };
     return { action: "complete", reason: onlineRelease ? "线上 Release 决策、经验与下一轮建议均已完成" : "离线成果、经验与下一轮建议均已准备完成", stage: "learning" };

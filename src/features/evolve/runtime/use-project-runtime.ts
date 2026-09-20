@@ -1,4 +1,4 @@
-import { applyReleaseResultToProject, beginReleaseCycle, completeAutonomousMission, experimentNeedsEvidenceRepair, buildExperimentGapAdvicePayload, buildGapAdvicePayload, fallbackExperimentAdvice, nextDurableReleaseAction, productionOutcomeFreshness, productionOutcomeTrend, projectHasStableHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget } from "@evolution/core";
+import { applyProductionLearningGovernance, applyReleaseResultToProject, attachLessonGovernance, beginReleaseCycle, completeAutonomousMission, experimentNeedsEvidenceRepair, buildExperimentGapAdvicePayload, buildGapAdvicePayload, fallbackExperimentAdvice, mergeGovernedNextQueue, nextDurableReleaseAction, productionOutcomeFreshness, productionOutcomeTrend, projectHasStableHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget } from "@evolution/core";
 import { deliveryReadiness } from "./delivery-readiness";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -1128,12 +1128,14 @@ export function useProjectRuntime(initialProject: EvolveProject) {
           },
           stage: effectiveAction === "promote" || effectiveAction === "rollback" ? "learning" as const : "release" as const,
         };
-      return {
+      const settled:EvolveProject={
         ...base,
         campaign:(current.campaign.stopReason??"").includes("[server-release-")
           ?{...base.campaign,status:"idle" as const,stopReason:undefined}
           :base.campaign,
       };
+      const governedAt=result.observedAt??now();
+      return applyProductionLearningGovernance(settled,{at:governedAt,now:Date.parse(governedAt)});
     });
     const terminal=durablePreviewPromote
       ?result.ok&&result.healthy===true&&result.observationStatus==="healthy"&&(effectiveAction==="promote"||effectiveAction==="rollback")
@@ -1163,7 +1165,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
     const hasLiveDecision = projectHasLiveReleaseDecision(current);
     const releaseFreshness = productionOutcomeFreshness(current);
     const releaseTrend = productionOutcomeTrend(current);
-    const hasStableLiveOutcome = hasLiveDecision && projectHasStableHealthyProductionOutcome(current);
+    const hasStableLiveOutcome = hasLiveDecision && current.release.status === "promoted" && projectHasStableHealthyProductionOutcome(current);
     const hasOfflineAcceptance = !projectHasOnlineReleaseTarget(current)
       && current.artifactAcceptance.status === "passed"
       && current.artifactAcceptance.candidateId === currentWinner.id;
@@ -1186,8 +1188,12 @@ export function useProjectRuntime(initialProject: EvolveProject) {
         ? `Production Outcome 尚未达到稳定线上证据门槛：${releaseTrend.reason}`
         : "离线成果验收（尚无线上生产证据）"] }
       : parsed;
-    const lesson = { id: `lesson-${Date.now()}`, ...result };
-    commit((state) => ({ ...state, lessons: [lesson, ...state.lessons], stage: "learning" }));
+    const governedAt=now();
+    const lesson = attachLessonGovernance(current,{ id: `lesson-${Date.now()}`, ...result },{at:governedAt});
+    commit((state) => applyProductionLearningGovernance(
+      {...state,lessons:[lesson,...state.lessons],stage:"learning"},
+      {at:governedAt,now:Date.parse(governedAt)},
+    ));
     setStage("learning");
     return lesson;
   }, [commit, reportProgress, run, runProjectAi]);
@@ -1214,7 +1220,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
       reportProgress("下一轮建议已生成", 1, 1, "下一轮建议", "next-queue");
       return output;
     }));
-    commit((state) => ({ ...state, nextQueue: result.items, stage: "learning" }));
+    commit((state) => ({ ...state, nextQueue: mergeGovernedNextQueue(state.nextQueue,result.items), stage: "learning" }));
     return result;
   }, [commit, reportProgress, run, runProjectAi]);
 

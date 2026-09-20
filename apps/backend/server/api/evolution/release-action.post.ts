@@ -1,6 +1,6 @@
 import { createError, defineEventHandler, readBody } from "nitro/h3";
 import { createEvolutionEvent, VercelReleaseActionRequestSchema, VercelReleaseActionResponseSchema } from "@evolution/contracts";
-import { applyReleaseResultToProject } from "@evolution/core";
+import { applyProductionLearningGovernance, applyReleaseResultToProject } from "@evolution/core";
 import { getServerVercelReleaseConfig } from "../../../src/server-env";
 import { getServerProductionRuntime } from "../../../src/services/production-runtime";
 import { executeVercelReleaseAction } from "../../../src/services/vercel-release";
@@ -104,13 +104,15 @@ export default defineEventHandler(async(event)=>{
   }
   if(input.action==="shadow"||input.action==="promote"||input.action==="rollback"){
     try{
-      const updated=applyReleaseResultToProject({
+      const released=applyReleaseResultToProject({
         project:mission,
         candidate,
         requestedAction:input.action,
         result,
         at:result.observedAt??new Date().toISOString(),
       });
+      const governanceAt=result.observedAt??new Date().toISOString();
+      const updated=applyProductionLearningGovernance(released,{at:governanceAt,now:Date.parse(governanceAt)});
       await runtime.missions.save(updated);
       await runtime.events.append(createEvolutionEvent({
         missionId:mission.id,

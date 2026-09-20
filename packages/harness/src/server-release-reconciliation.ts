@@ -1,5 +1,5 @@
 import type {EvolveProject,VercelReleaseObservation} from "@evolution/contracts";
-import {currentReleaseCandidate,reconcileReleaseObservation} from "@evolution/core";
+import {applyProductionLearningGovernance,currentReleaseCandidate,reconcileReleaseObservation} from "@evolution/core";
 
 export type ServerReleaseReconciliationPorts={
   observe(args:{boundDeploymentId?:string;healthPath?:string}):Promise<VercelReleaseObservation>;
@@ -24,17 +24,18 @@ export async function runServerReleaseReconciliation(
     healthPath:project.releaseTarget?.healthPath,
   });
   const result=reconcileReleaseObservation({project,candidate,observation});
+  const governed=applyProductionLearningGovernance(result.project,{at:observation.checkedAt,now:Date.parse(observation.checkedAt)});
   const manual=result.disposition==="manual-check";
   const next:EvolveProject=manual?{
-    ...result.project,
+    ...governed,
     stage:"release",
     campaign:{
-      ...result.project.campaign,
+      ...governed.campaign,
       status:"paused",
       stopReason:`[server-release-manual-check] ${result.reason}`,
       schedule:{...result.project.campaign.schedule,enabled:false,nextRunAt:undefined},
     },
-  }:result.project;
+  }:governed;
   return {
     control:manual?"stop":"continue",
     project:next,
