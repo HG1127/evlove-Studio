@@ -75,8 +75,9 @@ describe("system readiness catalog", () => {
     expect(backendRequirementState(requirement,{visualJudgeLive:false,server:{connectors:true}})).toBe("ready");
   });
 
-  it("does not pretend Outcome Science is ready merely because Release is connected",()=>{
+  it("reports Outcome Science only from its own warehouse/analysis health signal",()=>{
     const requirement=BACKEND_REQUIREMENTS.find((item)=>item.id==="outcome-science")!;
-    expect(backendRequirementState(requirement,{visualJudgeLive:false,server:{release:true}})).toBe("missing");
+    expect(backendRequirementState(requirement,{visualJudgeLive:false,server:{release:true,outcome:false}})).toBe("missing");
+    expect(backendRequirementState(requirement,{visualJudgeLive:false,server:{outcome:true}})).toBe("ready");
   });
 });

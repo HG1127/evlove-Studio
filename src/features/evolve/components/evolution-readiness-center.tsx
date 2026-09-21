@@ -35,7 +35,7 @@ import {
 } from "../runtime/system-readiness";
 import { deriveWorkflowSteps } from "../runtime/workflow-engine";
 import { getRunnerGatewayConfig, testRunnerGateway } from "../runtime/target-runner-config";
-import { PRODUCTION_BOUNDARIES, PRODUCTION_SCHEMA_VERSIONS, PRODUCTION_PORTS, type ConnectorRegistryCapabilities, type EvidenceLedgerHealth, type EvolutionBackendHealth, type EvolutionWorkflowCapabilities, type GitTargetCapabilities, type OrganizationCapabilityHealth, type SandboxBrowserHealth, type SandboxHealth, type VercelReleaseCapabilities, type VercelReleaseHealth } from "@evolution/contracts";
+import { PRODUCTION_BOUNDARIES, PRODUCTION_SCHEMA_VERSIONS, PRODUCTION_PORTS, type ConnectorRegistryCapabilities, type EvidenceLedgerHealth, type EvolutionBackendHealth, type EvolutionWorkflowCapabilities, type GitTargetCapabilities, type OrganizationCapabilityHealth, type OutcomeAnalyticsHealth, type SandboxBrowserHealth, type SandboxHealth, type VercelReleaseCapabilities, type VercelReleaseHealth } from "@evolution/contracts";
 import { productionRuntimeMode } from "../runtime/production-runtime";
 import { productionSyncStatus } from "../runtime/production-sync";
 import { checkServerBackendHealth, checkServerBrowserHealth, checkServerSandboxHealth, getServerWorkflowCapabilities } from "../runtime/server-workflow-client";
@@ -44,6 +44,7 @@ import { getServerGitTargetCapabilities } from "../runtime/server-git-client";
 import { getServerOrganizationCapabilityHealth } from "../runtime/server-capability-client";
 import { getServerEvidenceLedgerHealth } from "../runtime/server-evidence-ledger-client";
 import { getServerConnectorCapabilities } from "../runtime/server-connector-client";
+import { getServerOutcomeHealth } from "../runtime/server-outcome-client";
 import { HarnessInspector } from "./harness-inspector";
 
 function readRunnerCapabilities(): RunnerCapabilitySnapshot | undefined {
@@ -120,6 +121,7 @@ export function EvolutionReadinessCenter() {
   const [capabilityCheck,setCapabilityCheck]=useState<{busy:boolean;message:string;health?:OrganizationCapabilityHealth}>({busy:false,message:""});
   const [evidenceLedgerCheck,setEvidenceLedgerCheck]=useState<{busy:boolean;message:string;health?:EvidenceLedgerHealth}>({busy:false,message:""});
   const [connectorCheck,setConnectorCheck]=useState<{busy:boolean;message:string;capabilities?:ConnectorRegistryCapabilities}>({busy:false,message:""});
+  const [outcomeCheck,setOutcomeCheck]=useState<{busy:boolean;message:string;health?:OutcomeAnalyticsHealth}>({busy:false,message:""});
   const visualJudgeLive = getAiProviderStatus("visual-judge").live;
   const signals = useMemo(() => ({
     runner,
@@ -149,8 +151,13 @@ export function EvolutionReadinessCenter() {
       ),
       security: Boolean(backendHealthCheck.health?.security.productionSafe),
       connectors: Boolean(connectorCheck.capabilities?.fullLifecycleCount),
+      outcome: Boolean(
+        outcomeCheck.health?.databaseReady
+        && outcomeCheck.health.ingestionReady
+        && outcomeCheck.health.analysisReady
+      ),
     },
-  }), [backendHealthCheck.health, browserCheck.health, capabilityCheck.health, connectorCheck.capabilities, evidenceLedgerCheck.health, gitCheck.capabilities, releaseCheck.capabilities, runner, sandboxCheck.health, visualJudgeLive, workflowCheck.capabilities]);
+  }), [backendHealthCheck.health, browserCheck.health, capabilityCheck.health, connectorCheck.capabilities, evidenceLedgerCheck.health, gitCheck.capabilities, outcomeCheck.health, releaseCheck.capabilities, runner, sandboxCheck.health, visualJudgeLive, workflowCheck.capabilities]);
   const engines = useMemo(() => deriveEngineReadiness(signals), [signals]);
   const summaries = useMemo(() => projects.map((project) => ({ project, loop: projectLoopSummary(project) })), [projects]);
   const latestProject = useMemo(() => projects.slice().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0], [projects]);
@@ -329,6 +336,17 @@ export function EvolutionReadinessCenter() {
       });
     }).catch((error)=>{
       if(active)setConnectorCheck({busy:false,message:error instanceof Error?error.message:String(error)});
+    });
+    return ()=>{active=false;};
+  },[]);
+
+  useEffect(()=>{
+    let active=true;
+    queueMicrotask(()=>{if(active)setOutcomeCheck({busy:true,message:"正在检测 Outcome Analytics…"});});
+    void getServerOutcomeHealth().then((health)=>{
+      if(active)setOutcomeCheck({busy:false,health,message:health.message});
+    }).catch((error)=>{
+      if(active)setOutcomeCheck({busy:false,message:error instanceof Error?error.message:String(error)});
     });
     return ()=>{active=false;};
   },[]);

@@ -27,6 +27,7 @@ export type ServerCapabilitySnapshot = {
   evidenceLedger?: boolean;
   security?: boolean;
   connectors?: boolean;
+  outcome?: boolean;
 };
 
 export type ReadinessSignals = {
@@ -56,7 +57,7 @@ export type BackendRequirement = {
   frontend: string;
   backend: string[];
   config?: string[];
-  detector?: "control-plane" | "git" | "capability" | "evidence" | "security" | "connectors" | "build" | "release" | "browser" | "visual" | "none";
+  detector?: "control-plane" | "git" | "capability" | "evidence" | "security" | "connectors" | "outcome" | "build" | "release" | "browser" | "visual" | "none";
 };
 
 export const BACKEND_REQUIREMENTS: BackendRequirement[] = [
@@ -150,11 +151,11 @@ export const BACKEND_REQUIREMENTS: BackendRequirement[] = [
     title: "Outcome Analytics / Drift / Statistics",
     category: "Outcome Intelligence",
     why: "达到 KPI 门槛不等于真正优于 Stable；长期进化需要统计显著性、分群、漂移和成本/延迟回归。",
-    current: "Release Controller 已有 KPI/样本量/观察窗口；Stable/Candidate Outcome sample contract 与 Warehouse migration 已准备，但统计分析与 ingest service 尚未完成，因此不能用 Release Ready 冒充 Outcome Science Ready。",
-    frontend: "发布页已有 KPI、健康状态和 Release Audit Trail；统计显著性、分群与漂移结论仍保持未就绪。",
-    backend: ["Outcome sample ingest service", "Stable/Control comparison", "Statistical Test", "Segment Analysis", "Drift Detection", "Cost/Latency/Safety Regression"],
-    config: ["Outcome telemetry source", "Metric Definitions", "Experiment Assignment"],
-    detector: "none",
+    current: "Outcome Warehouse、Stable/Candidate sample ingest、分群比较、近似显著性检验、Candidate 时间漂移和 business/latency/cost/safety regression 已实现；小样本保持 insufficient，不伪造显著性。",
+    frontend: "Readiness 仅在远端 Outcome Health 确认数据库、ingest、analysis 全部可用时显示 ready；发布页可继续消费分析结果。",
+    backend: ["接入真实 Outcome telemetry source", "定义业务 Metric semantics", "建立 Stable/Control assignment", "持续校准统计方法与多重检验"],
+    config: ["EVOLUTION_WORKSPACE_ID", "EVOLUTION_OUTCOME_MIN_SAMPLES_PER_ARM", "Outcome telemetry source", "Metric Definitions"],
+    detector: "outcome",
   },
   {
     id: "connectors",
@@ -212,6 +213,7 @@ export function backendRequirementState(requirement: BackendRequirement, signals
   if (requirement.detector === "evidence") return server.evidenceLedger ? "ready" as const : "missing" as const;
   if (requirement.detector === "security") return server.security ? "ready" as const : "missing" as const;
   if (requirement.detector === "connectors") return server.connectors ? "ready" as const : "missing" as const;
+  if (requirement.detector === "outcome") return server.outcome ? "ready" as const : "missing" as const;
   if (requirement.detector === "build") return runner.build || server.sandbox ? "ready" as const : "missing" as const;
   if (requirement.detector === "release") return runner.release || server.release ? "ready" as const : "missing" as const;
   if (requirement.detector === "browser") return (runner.htmlBrowser && runner.e2e) || server.browser ? "ready" as const : "missing" as const;
