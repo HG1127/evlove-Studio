@@ -8,6 +8,7 @@ import type {
 } from "@evolution/contracts";
 import {serverSupabaseSecureConfigured} from "../server-env";
 import {insertOutcomeSamples} from "./outcome-sample-store";
+import {collectConfiguredOutcomeTelemetry,getOutcomeTelemetryCapabilities} from "./outcome-telemetry-source";
 
 function sampleId(parts:string[]){
   return "release-outcome-"+createHash("sha256").update(parts.join("|")).digest("hex").slice(0,32);
@@ -126,9 +127,39 @@ export async function recordReleaseOutcomeObservation(
   project:EvolveProject,
   observation:VercelReleaseObservation,
 ){
-  if(!serverSupabaseSecureConfigured())return {recorded:false,inserted:0,reason:"secure-data-plane-not-configured"};
-  const batch=buildReleaseOutcomeBatch(project,observation);
-  if(!batch)return {recorded:false,inserted:0,reason:"no-bound-stable-or-candidate-deployment"};
-  const result=await insertOutcomeSamples(batch);
-  return {recorded:true,inserted:result.inserted,reason:result.message};
+  const telemetryCapabilities=getOutcomeTelemetryCapabilities();
+  if(!serverSupabaseSecureConfigured())return {
+    recorded:false,inserted:0,reason:"secure-data-plane-not-configured",
+    telemetry:{...telemetryCapabilities,requestCount:0,sampleCount:0,warnings:[] as string[]},
+  };
+  const healthBatch=buildReleaseOutcomeBatch(project,observation);
+  const telemetry=await collectConfiguredOutcomeTelemetry(project,observation);
+  const samples=[...new Map([
+    ...(healthBatch?.samples??[]),
+    ...telemetry.samples,
+  ].map((sample)=>[sample.id!,sample])).values()];
+  if(!samples.length)return {
+    recorded:false,inserted:0,
+    reason:telemetry.warnings.length?"no-outcome-samples; telemetry warnings: "+telemetry.warnings.join("; "):"no-bound-stable-or-candidate-deployment",
+    telemetry:{...telemetry,sampleCount:0},
+  };
+  let inserted=0;
+  const messages:string[]=[];
+  for(let offset=0;offset<samples.length;offset+=1000){
+    const result=await insertOutcomeSamples({
+      missionId:project.id,
+      candidateId:project.release.candidateId,
+      samples:samples.slice(offset,offset+1000),
+    });
+    inserted+=result.inserted;
+    messages.push(result.message);
+  }
+  return {
+    recorded:true,
+    inserted,
+    reason:telemetry.warnings.length
+      ?messages.join(" ")+" Telemetry warnings: "+telemetry.warnings.join("; ")
+      :messages.join(" "),
+    telemetry:{...telemetry,sampleCount:telemetry.samples.length},
+  };
 }

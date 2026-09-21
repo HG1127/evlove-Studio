@@ -95,6 +95,7 @@ export async function getPublicReadinessSnapshot(){
       database:Boolean(outcome?.databaseReady),
       ingestion:Boolean(outcome?.ingestionReady),
       analysis:Boolean(outcome?.analysisReady),
+      telemetry:Boolean(outcome?.telemetryConfigured&&outcome?.telemetryReady),
     },
     security:{
       configured:security.configured,

@@ -16,7 +16,10 @@ export async function runServerMissionReleaseReconciliation(project:EvolveProjec
     },
   });
   if(observed){
-    await recordReleaseOutcomeObservation(outcome.project,observed).catch(()=>undefined);
+    const recorded=await recordReleaseOutcomeObservation(outcome.project,observed).catch(()=>undefined);
+    if(recorded?.telemetry?.warnings.length){
+      console.warn("[outcome-telemetry] release observation completed with warnings",recorded.telemetry.warnings);
+    }
   }
   return outcome;
 }
