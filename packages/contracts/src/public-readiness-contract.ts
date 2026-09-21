@@ -18,6 +18,7 @@ export const PublicReadinessSnapshotSchema=z.object({
     issueFields:z.array(z.string()),
   }),
   sourceParse:z.boolean(),
+  artifactRenderer:z.boolean(),
   serverAi:z.boolean(),
   sandbox:z.boolean(),
   browser:z.boolean(),

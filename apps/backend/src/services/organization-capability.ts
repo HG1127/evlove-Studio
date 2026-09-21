@@ -20,6 +20,13 @@ import {
 
 type JsonRecord=Record<string,unknown>;
 
+const PGVECTOR_DIMENSIONS=1536;
+
+function pgvectorLiteral(vector:number[]|undefined){
+  if(!vector||vector.length!==PGVECTOR_DIMENSIONS||!vector.every(Number.isFinite))return undefined;
+  return "["+vector.join(",")+"]";
+}
+
 async function embedTexts(texts:string[]){
   const config=getCapabilityEmbeddingConfig();
   if(!config||!texts.length)return undefined;
@@ -196,13 +203,32 @@ export async function getOrganizationCapabilityHealth(){
   try{
     const {request}=restClient();
     await request("organization_capabilities?select=id&limit=1");
+    let vectorSearch=false;
+    let vectorSearchReason="未配置真实 Embedding Provider；当前使用确定性 lexical/fuzzy matching。";
+    if(capabilityEmbeddingConfigured()){
+      try{
+        const zeroVector="["+Array.from({length:PGVECTOR_DIMENSIONS},()=>0).join(",")+"]";
+        await request("rpc/match_organization_capabilities",{
+          method:"POST",
+          body:JSON.stringify({
+            p_workspace_id:workspaceId,
+            p_query_embedding:zeroVector,
+            p_match_count:1,
+            p_reusable_only:false,
+            p_statuses:null,
+          }),
+        });
+        vectorSearch=true;
+        vectorSearchReason="Server Embedding + Supabase pgvector/HNSW RPC 已就绪；搜索使用 semantic + lexical hybrid ranking。";
+      }catch{
+        vectorSearchReason="Embedding Provider 已配置，但 pgvector migration/RPC 尚未就绪；安全回退 lexical/fuzzy。";
+      }
+    }
     return OrganizationCapabilityHealthSchema.parse({
       codeReady:true,configured:true,databaseReady:true,workspaceId,
-      matchingMode:capabilityEmbeddingConfigured()?"hybrid-vector":"lexical-fuzzy",
-      vectorSearch:capabilityEmbeddingConfigured(),
-      vectorSearchReason:capabilityEmbeddingConfigured()
-        ?"真实 Server Embedding 已配置；搜索使用 cosine + lexical hybrid ranking。"
-        :"未配置真实 Embedding Provider；当前使用确定性 lexical/fuzzy matching。",
+      matchingMode:vectorSearch?"hybrid-vector":"lexical-fuzzy",
+      vectorSearch,
+      vectorSearchReason,
       checkedAt,
       message:"Organization Capability Registry 已连接；跨 Mission Registry/Replication/Counter-example 可用。",
     });
@@ -240,7 +266,12 @@ export async function syncMissionCapabilities(project:EvolveProject){
       const vectors=await embedTexts(project.lessons.map(searchText));
       const model=getCapabilityEmbeddingConfig()?.model;
       rows.forEach((row,index)=>{
-        Object.assign(row,{embedding:vectors?.[index]??null,embedding_model:model??null});
+        const vector=vectors?.[index];
+        Object.assign(row,{
+          embedding:vector??null,
+          embedding_vector:pgvectorLiteral(vector)??null,
+          embedding_model:model??null,
+        });
       });
     }catch{
       rows.forEach((row)=>Object.assign(row,{embedding:null,embedding_model:null}));
@@ -293,20 +324,49 @@ export async function searchOrganizationCapabilities(input:OrganizationCapabilit
     });
   }
   const {request}=restClient();
-  const rows=await request(
-    "organization_capabilities?select=*&workspace_id=eq."+encodeURIComponent(workspaceId)
-    +"&archived=eq.false&order=updated_at.desc&limit=500",
-  ) as JsonRecord[];
+  let rows:JsonRecord[]=[];
   let queryEmbedding:number[]|undefined;
   let vectorSearch=false;
+  const semanticById=new Map<string,number>();
   if(query.q&&capabilityEmbeddingConfigured()){
     try{
       queryEmbedding=(await embedTexts([query.q]))?.[0];
-      vectorSearch=Boolean(queryEmbedding);
+      const literal=pgvectorLiteral(queryEmbedding);
+      if(literal){
+        const matches=await request("rpc/match_organization_capabilities",{
+          method:"POST",
+          body:JSON.stringify({
+            p_workspace_id:workspaceId,
+            p_query_embedding:literal,
+            p_match_count:Math.max(query.limit*8,100),
+            p_reusable_only:query.reusableOnly,
+            p_statuses:query.statuses??null,
+          }),
+        }) as Array<{id?:unknown;semantic_score?:unknown}>;
+        for(const match of matches??[]){
+          if(typeof match.id==="string"&&typeof match.semantic_score==="number"){
+            semanticById.set(match.id,match.semantic_score);
+          }
+        }
+        const ids=[...semanticById.keys()];
+        if(ids.length){
+          rows=await request(
+            "organization_capabilities?select=*&id=in.("+ids.map(encodeURIComponent).join(",")+")&archived=eq.false&limit=500",
+          ) as JsonRecord[];
+          vectorSearch=true;
+        }
+      }
     }catch{
       queryEmbedding=undefined;
       vectorSearch=false;
+      semanticById.clear();
     }
+  }
+  if(!vectorSearch){
+    rows=await request(
+      "organization_capabilities?select=*&workspace_id=eq."+encodeURIComponent(workspaceId)
+      +"&archived=eq.false&order=updated_at.desc&limit=500",
+    ) as JsonRecord[];
   }
   const rawById=new Map((rows??[]).map((row)=>[String(row.id),row]));
   const records=(rows??[]).map(rowRecord).filter((record)=>{
@@ -325,7 +385,9 @@ export async function searchOrganizationCapabilities(input:OrganizationCapabilit
   }>();
   for(const record of records){
     const ranked=scoreRecord(record,query.q);
-    const semantic=vectorSearch?cosine(queryEmbedding,embeddingFromRow(rawById.get(record.id)??{})):undefined;
+    const semantic=vectorSearch
+      ?semanticById.get(record.id)
+      :cosine(queryEmbedding,embeddingFromRow(rawById.get(record.id)??{}));
     const semantic01=semantic===undefined?0:Math.max(0,Math.min(1,(semantic+1)/2));
     const combined=vectorSearch?ranked.score*0.65+semantic01*3.5:ranked.score;
     if(query.q&&combined<=0)continue;
@@ -359,7 +421,7 @@ export async function searchOrganizationCapabilities(input:OrganizationCapabilit
   return OrganizationCapabilitySearchResponseSchema.parse({
     configured:true,workspaceId,matchingMode:vectorSearch?"hybrid-vector":"lexical-fuzzy",vectorSearch,hits,totalRows:records.length,
     message:vectorSearch
-      ?`命中 ${hits.length} 个 Capability Group；使用真实 embedding cosine + lexical hybrid ranking。`
+      ?`命中 ${hits.length} 个 Capability Group；使用 Supabase pgvector/HNSW semantic + lexical hybrid ranking。`
       :`命中 ${hits.length} 个 Capability Group；当前使用可审计 lexical/fuzzy matching。`,
   });
 }

@@ -23,6 +23,8 @@ import { runServerMissionArtifactAcceptance } from "../../apps/backend/src/servi
 import { runServerMissionRelease } from "../../apps/backend/src/services/server-release-orchestration";
 import { runServerMissionReleaseReconciliation } from "../../apps/backend/src/services/server-release-reconciliation";
 import { syncMissionCapabilities } from "../../apps/backend/src/services/organization-capability";
+import { publishAcceptedChampionToConfiguredGit } from "../../apps/backend/src/services/git-accepted-publisher";
+import { renderAcceptedProjectArtifacts } from "../../apps/backend/src/services/server-artifact-renderer";
 import { serverAiConfigured } from "../../apps/backend/src/server-env";
 
 function controlJob(input:EvolutionWorkflowRunInput,args:{
@@ -752,14 +754,16 @@ export async function executeServerControlStep(
 
   if(action==="package"){
     const artifacts=materializeAcceptedChampionPackage(mission,now);
+    const serverRendered=await renderAcceptedProjectArtifacts(mission,artifacts);
     const updated={
       ...mission,
-      outputArtifacts:artifacts,
+      outputArtifacts:serverRendered.outputArtifacts,
       artifactAcceptance:mission.searchChampion!.artifactAcceptance!,
       stage:"learning" as const,
       updatedAt:now,
     };
     await runtime.missions.save(updated);
+    const gitPublish=await publishAcceptedChampionToConfiguredGit(updated);
     await runtime.events.append(createEvolutionEvent({
       id:`evt-${input.controlJobId}-action-${iteration}-complete`,
       missionId:input.missionId,
@@ -767,7 +771,19 @@ export async function executeServerControlStep(
       checkpointId:plan.checkpoint.id,
       type:"ActionCompleted",
       source:"vercel-workflow-control",
-      payload:{action,serverNative:true,artifactCount:artifacts.length},
+      payload:{
+        action,
+        serverNative:true,
+        artifactCount:artifacts.length,
+        renderedCount:serverRendered.receipts.length,
+        renderedArtifactRefs:serverRendered.receipts.map((item)=>item.artifactRef),
+        renderedArtifactHashes:serverRendered.receipts.map((item)=>item.sha256),
+        gitPublished:Boolean(gitPublish),
+        gitBranch:gitPublish?.mutation.branch,
+        gitCommitSha:gitPublish?.mutation.commitSha,
+        gitPullNumber:gitPublish?.pullRequest?.pullNumber,
+        gitPullUrl:gitPublish?.pullRequest?.pullUrl,
+      },
     }));
     return {control:"continue"};
   }

@@ -11,7 +11,7 @@ import {
 
 const KEYS=[
   "SUPABASE_URL","SUPABASE_PUBLISHABLE_KEY","VITE_SUPABASE_URL","VITE_SUPABASE_ANON_KEY",
-  "EVOLUTION_WORKSPACE_ID","EVOLUTION_EVIDENCE_SIGNING_KEY","EVOLUTION_EVIDENCE_SIGNING_KEY_ID",
+  "EVOLUTION_WORKSPACE_ID","EVOLUTION_EVIDENCE_SIGNING_KEY","EVOLUTION_EVIDENCE_SIGNING_KEY_ID","EVOLUTION_EVIDENCE_VERIFY_KEYS_JSON",
 ] as const;
 const previous=new Map<string,string|undefined>();
 
@@ -89,6 +89,45 @@ describe("immutable evidence ledger",()=>{
     vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(rows),{status:200,headers:{"Content-Type":"application/json"}})));
     const result=await verifyEvidenceLedger("mission-1");
     expect(result).toMatchObject({valid:true,entries:1,contentHashesValid:true,signaturesValid:true,chainValid:true});
+  });
+
+  it("verifies historical signatures after active signing-key rotation",async()=>{
+    configure();
+    const oldKey="abcdef0123456789abcdef0123456789";
+    process.env.EVOLUTION_EVIDENCE_SIGNING_KEY="fedcba9876543210fedcba9876543210";
+    process.env.EVOLUTION_EVIDENCE_SIGNING_KEY_ID="test-key-v2";
+    process.env.EVOLUTION_EVIDENCE_VERIFY_KEYS_JSON=JSON.stringify({"test-key-v1":oldKey});
+    const first={
+      id:"evidence-old",workspaceId:"workspace-test",missionId:"mission-1",kind:"event",source:"runtime",actor:"evolution-runtime",
+      eventId:"evt-old",payload:{type:"Old"},artifactRefs:[],
+    };
+    const firstHash=evidenceContentHash(first);
+    const firstChain=chain(undefined,firstHash,1,first.id);
+    const second={
+      id:"evidence-new",workspaceId:"workspace-test",missionId:"mission-1",kind:"event",source:"runtime",actor:"evolution-runtime",
+      eventId:"evt-new",payload:{type:"New"},artifactRefs:[],
+    };
+    const secondHash=evidenceContentHash(second);
+    const activeKey=process.env.EVOLUTION_EVIDENCE_SIGNING_KEY!;
+    const rows=[
+      {
+        id:first.id,workspace_id:first.workspaceId,mission_id:first.missionId,sequence:1,kind:first.kind,source:first.source,actor:first.actor,
+        event_id:first.eventId,job_id:null,checkpoint_id:null,model_ref:null,prompt_version:null,test_version:null,decision:null,
+        payload:first.payload,artifact_refs:first.artifactRefs,content_hash:firstHash,
+        signature:createHmac("sha256",oldKey).update(firstHash).digest("hex"),signature_key_id:"test-key-v1",
+        previous_hash:null,chain_hash:firstChain,created_at:"2026-09-21T01:00:00.000Z",
+      },
+      {
+        id:second.id,workspace_id:second.workspaceId,mission_id:second.missionId,sequence:2,kind:second.kind,source:second.source,actor:second.actor,
+        event_id:second.eventId,job_id:null,checkpoint_id:null,model_ref:null,prompt_version:null,test_version:null,decision:null,
+        payload:second.payload,artifact_refs:second.artifactRefs,content_hash:secondHash,
+        signature:createHmac("sha256",activeKey).update(secondHash).digest("hex"),signature_key_id:"test-key-v2",
+        previous_hash:firstChain,chain_hash:chain(firstChain,secondHash,2,second.id),created_at:"2026-09-21T01:01:00.000Z",
+      },
+    ];
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(rows),{status:200,headers:{"Content-Type":"application/json"}})));
+    const result=await verifyEvidenceLedger("mission-1");
+    expect(result).toMatchObject({valid:true,entries:2,signaturesValid:true,chainValid:true});
   });
 
   it("detects tampering even when the stored chain hash itself was not changed",async()=>{

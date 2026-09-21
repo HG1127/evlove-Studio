@@ -78,6 +78,50 @@ describe("GitHub target provider",()=>{
     expect(JSON.stringify(requests)).not.toContain("gh_test_token");
   });
 
+  it("reuses an existing branch commit when its tree already matches the requested mutation",async()=>{
+    const requests:Array<{url:string;method:string}>=[];
+
+    const fetchMock=vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
+      const url=String(input);const method=init?.method??"GET";requests.push({url,method});
+      if(url.endsWith("/git/ref/heads/main"))return json({object:{sha:"base123"}});
+      if(url.includes("/git/ref/heads/evolve/mission-1/C1"))return json({object:{sha:"commit-existing"}});
+      if(url.endsWith("/git/commits/base123")&&method==="GET")return json({tree:{sha:"tree-base"}});
+      if(url.endsWith("/git/blobs"))return json({sha:"blob-new"});
+      if(url.endsWith("/git/trees"))return json({sha:"tree-new"});
+      if(url.endsWith("/git/commits/commit-existing")&&method==="GET")return json({tree:{sha:"tree-new"}});
+      throw new Error("unexpected "+method+" "+url);
+    });
+    vi.stubGlobal("fetch",fetchMock);
+    const result=await executeGitTargetAction({
+      action:"mutate",repository:repo,missionId:"mission-1",candidateId:"C1",expectedBaseSha:"base123",
+      commitMessage:"candidate C1",changes:[{path:"src/a.ts",content:"export const a=2"}],
+    });
+    expect(result).toMatchObject({
+      action:"mutate",branch:"evolve/mission-1/C1",commitSha:"commit-existing",treeSha:"tree-new",
+    });
+    expect(result.note).toContain("Reused existing");
+    expect(requests.some((item)=>item.url.endsWith("/git/commits")&&item.method==="POST")).toBe(false);
+    expect(requests.some((item)=>item.method==="PATCH")).toBe(false);
+  });
+
+  it("refuses to overwrite an existing evolution branch when its tree differs",async()=>{
+    const fetchMock=vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
+      const url=String(input);const method=init?.method??"GET";
+      if(url.endsWith("/git/ref/heads/main"))return json({object:{sha:"base123"}});
+      if(url.includes("/git/ref/heads/evolve/mission-1/C1"))return json({object:{sha:"commit-other"}});
+      if(url.endsWith("/git/commits/base123")&&method==="GET")return json({tree:{sha:"tree-base"}});
+      if(url.endsWith("/git/blobs"))return json({sha:"blob-new"});
+      if(url.endsWith("/git/trees"))return json({sha:"tree-requested"});
+      if(url.endsWith("/git/commits/commit-other")&&method==="GET")return json({tree:{sha:"tree-other"}});
+      throw new Error("unexpected "+method+" "+url);
+    });
+    vi.stubGlobal("fetch",fetchMock);
+    await expect(executeGitTargetAction({
+      action:"mutate",repository:repo,missionId:"mission-1",candidateId:"C1",expectedBaseSha:"base123",
+      commitMessage:"candidate C1",changes:[{path:"src/a.ts",content:"export const a=2"}],
+    })).rejects.toThrow(/different tree/);
+  });
+
   it("rejects path traversal before creating Git blobs",async()=>{
     const fetchMock=vi.fn();
     vi.stubGlobal("fetch",fetchMock);

@@ -23,7 +23,7 @@ const capabilities={
   conditionalActions:["run-campaign","revalidate","run-release"],
   blockedActions:[],
   migrationPendingActions:[],
-  pendingActions:["run-campaign","revalidate"],
+  pendingActions:[],
 };
 
 afterEach(()=>vi.unstubAllGlobals());

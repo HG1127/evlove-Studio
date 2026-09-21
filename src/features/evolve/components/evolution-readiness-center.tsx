@@ -135,6 +135,7 @@ export function EvolutionReadinessCenter() {
       ),
       sourceParse: Boolean(backendHealthCheck.health?.sourceParse.codeReady && backendHealthCheck.health?.sourceParse.configured),
       artifactStore: Boolean(backendHealthCheck.health?.dataPlane.storage),
+      artifactRenderer: Boolean(backendHealthCheck.health?.artifactRenderer.codeReady&&backendHealthCheck.health?.artifactRenderer.configured),
       serverAi: Boolean(backendHealthCheck.health?.serverAi.codeReady && backendHealthCheck.health?.serverAi.configured),
       sandbox: Boolean(sandboxCheck.health?.ready),
       browser: Boolean(browserCheck.health?.ready),
@@ -194,7 +195,7 @@ export function EvolutionReadinessCenter() {
     ? BACKEND_REQUIREMENTS
     : BACKEND_REQUIREMENTS.filter((item) => item.priority === backendPriority);
   const targetCoverage = [
-    { target: "文件 / Office / HTML Artifact", state: "ready", read: "✓", snapshot: "✓", mutate: "✓", validate: "✓", deploy: "交付", observe: "离线", rollback: "✓", gap: "复杂 Renderer 仍需补齐" },
+    { target: "文件 / Office / HTML Artifact", state: backendHealthCheck.health?.artifactRenderer.configured ? "ready" : "partial", read: "✓", snapshot: "✓", mutate: "✓", validate: backendHealthCheck.health?.artifactRenderer.configured ? "Server Render + Reopen Verify" : "Browser Verify", deploy: backendHealthCheck.health?.artifactRenderer.configured ? "Artifact Store" : "本地交付", observe: "结构/Hash Evidence", rollback: "✓", gap: backendHealthCheck.health?.artifactRenderer.configured ? "PDF/设计类保持 external-required；视觉/公式重算继续补强" : "Server Renderer 等待 Artifact Store/Data Plane" },
     { target: "HTML / Web 页面", state: p04BrowserReady || (runner?.htmlBrowser && runner?.e2e) ? "ready" : "partial", read: "✓", snapshot: "✓", mutate: "✓", validate: p04BrowserReady ? "Chromium Steps" : runner?.e2e ? "✓" : "部分", deploy: p04BrowserReady ? "Sandbox Preview" : "Preview", observe: p04BrowserReady ? "真实交互" : runner?.screenshots ? "✓" : "部分", rollback: "✓", gap: p04BrowserReady ? "Route Matrix / 视觉审查继续扩展" : "工程级 Preview / Browser Runtime" },
     { target: "ZIP / Codebase", state: p04BrowserReady ? "partial" : p04Ready ? "partial" : runner?.build ? "partial" : "backend", read: "✓", snapshot: "✓", mutate: "✓", validate: p04BrowserReady ? "Build/Test + Browser" : p04Ready ? "Sandbox Build/Test" : runner?.build ? "Build" : "静态", deploy: p04BrowserReady ? "Sandbox Preview" : "待 Preview", observe: p04BrowserReady ? "Browser Steps / E2E" : p04Ready ? "执行证据" : "待后端", rollback: "ZIP", gap: p04BrowserReady ? "Git Target / Production Deploy 后续补齐" : p04Ready ? "Browser Runtime / Preview" : "Git + Sandbox + Preview Runtime" },
     { target: "Production HTTP Target", state: releaseWriteReady || runner?.release ? "ready" : releaseReadReady ? "partial" : "backend", read: "连接", snapshot: "Hash", mutate: "Deploy", validate: releaseCheck.capabilities?.mode==="preview-promote" ? "Preview Gate" : "Canary", deploy: releaseWriteReady || runner?.release ? "✓" : "只读", observe: releaseReadReady || runner?.release ? "Health" : "待后端", rollback: releaseWriteReady || runner?.release ? "✓" : "待凭据", gap: releaseWriteReady || runner?.release ? "Production Release 已接通" : releaseReadReady ? "生产健康观测已接通；Promote/Rollback 仍需 VERCEL_RELEASE_TOKEN" : "Deploy / Traffic / Telemetry" },

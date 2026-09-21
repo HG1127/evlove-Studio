@@ -144,15 +144,19 @@ async function snapshot(repo:GitRepositoryBinding):Promise<GitTargetActionRespon
   });
 }
 
-async function ensureBranch(repo:GitRepositoryBinding,branch:string,expectedBaseSha:string){
+async function branchHead(repo:GitRepositoryBinding,branch:string){
   try{
     const existing=await getRef(repo,branch);
     const sha=nestedString(existing,"object","sha");
-    if(sha!==expectedBaseSha)throw new Error(`Git branch ${branch} head ${sha??"unknown"} != expected ${expectedBaseSha}`);
-    return;
+    if(!sha)throw new Error(`Git branch ${branch} response missing SHA`);
+    return sha;
   }catch(error){
-    if((error as {status?:number}).status!==404)throw error;
+    if((error as {status?:number}).status===404)return undefined;
+    throw error;
   }
+}
+
+async function createBranch(repo:GitRepositoryBinding,branch:string,expectedBaseSha:string){
   await githubRequest(repo,"git/refs",{
     method:"POST",
     body:JSON.stringify({ref:`refs/heads/${branch}`,sha:expectedBaseSha}),
@@ -171,7 +175,7 @@ async function mutate(input:Extract<GitTargetActionRequest,{action:"mutate"}>):P
     throw new Error(`Base branch moved: ${baseSha??"unknown"} != expected ${input.expectedBaseSha}`);
   }
   const branch=input.branch??`evolve/${safeBranchPart(input.missionId)}/${safeBranchPart(input.candidateId)}`;
-  await ensureBranch(repo,branch,input.expectedBaseSha);
+  const existingBranchHead=await branchHead(repo,branch);
   const parent=await getCommit(repo,input.expectedBaseSha);
   const baseTree=nestedString(parent,"tree","sha");
   if(!baseTree)throw new Error("Base commit missing tree SHA");
@@ -195,6 +199,20 @@ async function mutate(input:Extract<GitTargetActionRequest,{action:"mutate"}>):P
   });
   const treeSha=objectString(treeReceipt,"sha");
   if(!treeSha)throw new Error("GitHub tree response missing SHA");
+  if(existingBranchHead&&existingBranchHead!==input.expectedBaseSha){
+    const existingCommit=await getCommit(repo,existingBranchHead);
+    const existingTreeSha=nestedString(existingCommit,"tree","sha");
+    if(existingTreeSha===treeSha){
+      return GitTargetActionResponseSchema.parse({
+        provider:"github",action:"mutate",ok:true,repository:fullName(repo),branch,
+        baseCommitSha:input.expectedBaseSha,commitSha:existingBranchHead,treeSha,changedPaths,
+        observedAt:new Date().toISOString(),
+        note:"Reused existing auditable branch commit because its tree exactly matches the requested accepted content.",
+      });
+    }
+    throw new Error(`Git branch ${branch} moved to ${existingBranchHead} with a different tree; refusing overwrite`);
+  }
+  if(!existingBranchHead)await createBranch(repo,branch,input.expectedBaseSha);
   const commit=await githubRequest(repo,"git/commits",{
     method:"POST",
     body:JSON.stringify({message:input.commitMessage,tree:treeSha,parents:[input.expectedBaseSha]}),

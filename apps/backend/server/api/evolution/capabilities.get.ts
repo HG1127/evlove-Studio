@@ -67,6 +67,8 @@ export default defineEventHandler((event)=>{
       secureDataPlaneCredential:secureDataPlane,
       httpDataPlaneCodeReady:true,
       artifactStoreConfigured:dataPlane,
+      artifactRendererCodeReady:true,
+      artifactRendererConfigured:dataPlane,
       sourceParseCodeReady:true,
       sourceParseConfigured:dataPlane,
       serverAiCodeReady:true,
@@ -99,7 +101,6 @@ export default defineEventHandler((event)=>{
     migrationPendingActions:[...MIGRATION_PENDING_ACTIONS],
     pendingActions:[...new Set([
       ...blockedActions.map((item)=>item.action),
-      ...CONDITIONAL_ACTIONS,
       ...MIGRATION_PENDING_ACTIONS,
     ])],
   });

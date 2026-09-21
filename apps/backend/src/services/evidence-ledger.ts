@@ -149,6 +149,8 @@ export async function getEvidenceLedgerHealth(){
       hashChain:true,
       workspaceId,
       signingKeyId:signing?.keyId,
+      verificationKeyCount:Object.keys(signing?.verificationKeys??{}).length,
+      rotationReady:Object.keys(signing?.verificationKeys??{}).length>1,
       checkedAt,
       message:"Evidence Ledger 代码已就绪；等待 Supabase + Workspace + 至少 32 字符的 server-only signing key。",
     });
@@ -172,6 +174,8 @@ export async function getEvidenceLedgerHealth(){
       hashChain:true,
       workspaceId,
       signingKeyId:signing.keyId,
+      verificationKeyCount:Object.keys(signing.verificationKeys).length,
+      rotationReady:Object.keys(signing.verificationKeys).length>1,
       checkedAt,
       message:configured
         ?"Immutable Evidence Ledger 已连接：append-only trigger + serialized hash chain + server HMAC signing 均就绪。"
@@ -180,7 +184,9 @@ export async function getEvidenceLedgerHealth(){
   }catch(error){
     return EvidenceLedgerHealthSchema.parse({
       codeReady:true,configured:false,databaseReady:false,signingConfigured:true,
-      appendFunctionReady:false,immutableTriggerReady:false,hashChain:true,workspaceId,signingKeyId:signing.keyId,checkedAt,
+      appendFunctionReady:false,immutableTriggerReady:false,hashChain:true,workspaceId,signingKeyId:signing.keyId,
+      verificationKeyCount:Object.keys(signing.verificationKeys).length,
+      rotationReady:Object.keys(signing.verificationKeys).length>1,checkedAt,
       message:error instanceof Error?error.message:String(error),
     });
   }
@@ -265,7 +271,16 @@ export async function verifyEvidenceLedger(missionId:string){
       promptVersion:entry.promptVersion,testVersion:entry.testVersion,decision:entry.decision,payload:entry.payload,artifactRefs:entry.artifactRefs,
     });
     const contentOk=expectedContent===entry.contentHash;
-    const signatureOk=Boolean(signing&&entry.signature&&safeSignatureEqual(signatureFor(entry.contentHash,signing.key),entry.signature));
+    const verificationKey=signing
+      ?entry.signatureKeyId
+        ?signing.verificationKeys[entry.signatureKeyId]
+        :signing.key
+      :undefined;
+    const signatureOk=Boolean(
+      verificationKey
+      &&entry.signature
+      &&safeSignatureEqual(signatureFor(entry.contentHash,verificationKey),entry.signature)
+    );
     const chainOk=entry.previousHash===previousHash
       &&entry.chainHash===chainHash(previousHash,entry.contentHash,entry.sequence,entry.id);
     if(!contentOk)contentHashesValid=false;

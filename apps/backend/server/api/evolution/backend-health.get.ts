@@ -56,6 +56,7 @@ export default defineEventHandler(async(event)=>{
     dataPlane,
     httpDataPlane:{codeReady:true},
     sourceParse:{codeReady:true,configured,durable:true},
+    artifactRenderer:{codeReady:true,configured:Boolean(configured&&dataPlane.storage)},
     serverAi:{codeReady:true,configured:serverAiConfigured()},
     sandbox:{codeReady:true},
     browser:{codeReady:true},

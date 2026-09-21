@@ -106,6 +106,32 @@ export const GitTargetActionResponseSchema=z.object({
 });
 export type GitTargetActionResponse=z.infer<typeof GitTargetActionResponseSchema>;
 
+export const GitAcceptedPublishRequestSchema=z.object({
+  repository:GitRepositoryBindingSchema,
+  missionId:z.string().min(1),
+  expectedBaseSha:z.string().min(7),
+  branch:z.string().min(1).max(240).optional(),
+  commitMessage:z.string().min(1).max(500).optional(),
+  openPullRequest:z.boolean().default(true),
+  pullTitle:z.string().min(1).max(300).optional(),
+  pullBody:z.string().max(20_000).optional(),
+  includeMetadata:z.boolean().default(true),
+});
+export type GitAcceptedPublishRequest=z.infer<typeof GitAcceptedPublishRequestSchema>;
+
+export const GitAcceptedPublishResponseSchema=z.object({
+  provider:z.literal("github"),
+  missionId:z.string(),
+  candidateId:z.string(),
+  artifactCount:z.number().int().positive(),
+  metadataCount:z.number().int().nonnegative(),
+  mutation:GitTargetActionResponseSchema,
+  pullRequest:GitTargetActionResponseSchema.optional(),
+  observedAt:z.string(),
+  note:z.string(),
+});
+export type GitAcceptedPublishResponse=z.infer<typeof GitAcceptedPublishResponseSchema>;
+
 export const GitWebhookReceiptSchema=z.object({
   accepted:z.boolean(),
   event:z.string(),

@@ -1000,6 +1000,14 @@ export const OutputArtifactSchema = z.object({
   sourceArtifactIds: z.array(z.string()).default([]),
   isChampion: z.boolean().default(false),
   accepted: z.boolean().default(false),
+  renderedArtifactRef: z.string().optional(),
+  renderedSha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  renderedSize: z.number().int().nonnegative().optional(),
+  renderedMimeType: z.string().optional(),
+  renderedAt: z.string().optional(),
+  renderNote: z.string().optional(),
+  renderChecks: z.array(z.string()).optional(),
+  renderLimitations: z.array(z.string()).optional(),
   createdAt: z.string(),
 });
 export type OutputArtifact = z.infer<typeof OutputArtifactSchema>;

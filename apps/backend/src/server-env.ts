@@ -102,14 +102,32 @@ export function organizationCapabilityConfigured(){
 export type EvidenceLedgerSigningConfig={
   key:string;
   keyId:string;
+  verificationKeys:Record<string,string>;
 };
+
+function evidenceVerificationKeyRing(){
+  const raw=value(process.env.EVOLUTION_EVIDENCE_VERIFY_KEYS_JSON);
+  if(!raw)return {} as Record<string,string>;
+  try{
+    const parsed=JSON.parse(raw) as unknown;
+    if(!parsed||typeof parsed!=="object"||Array.isArray(parsed))return {};
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string,unknown>)
+        .filter(([id,key])=>id.trim().length>0&&id.length<=120&&typeof key==="string"&&key.length>=32)
+        .slice(0,32)
+        .map(([id,key])=>[id,key as string]),
+    );
+  }catch{return {};}
+}
 
 export function getEvidenceLedgerSigningConfig():EvidenceLedgerSigningConfig|undefined{
   const key=value(process.env.EVOLUTION_EVIDENCE_SIGNING_KEY);
   if(!key||key.length<32)return undefined;
+  const keyId=value(process.env.EVOLUTION_EVIDENCE_SIGNING_KEY_ID)??"hmac-sha256-v1";
   return {
     key,
-    keyId:value(process.env.EVOLUTION_EVIDENCE_SIGNING_KEY_ID)??"hmac-sha256-v1",
+    keyId,
+    verificationKeys:{...evidenceVerificationKeyRing(),[keyId]:key},
   };
 }
 

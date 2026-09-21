@@ -56,6 +56,7 @@ export async function getPublicReadinessSnapshot(){
       ...dataPlaneConfig,
     },
     sourceParse:Boolean(configured&&dataPlane?.database&&dataPlane?.storage),
+    artifactRenderer:Boolean(configured&&dataPlane?.storage),
     serverAi:serverAiConfigured(),
     sandbox:Boolean(sandbox?.ready),
     browser:Boolean(browser?.ready),

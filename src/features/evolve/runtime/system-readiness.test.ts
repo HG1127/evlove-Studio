@@ -33,6 +33,16 @@ describe("system readiness catalog", () => {
     expect(engines.find((item)=>item.id==="mission")?.state).toBe("ready");
   });
 
+  it("reports Server Artifact Renderer only from a live server renderer signal",()=>{
+    const missing=deriveEngineReadiness({visualJudgeLive:false,server:{artifactRenderer:false}});
+    expect(missing.find((item)=>item.id==="artifact-engineering")?.state).toBe("partial");
+    const ready=deriveEngineReadiness({visualJudgeLive:false,server:{artifactRenderer:true}});
+    expect(ready.find((item)=>item.id==="artifact-engineering")).toMatchObject({
+      state:"ready",
+      stateLabel:"Server Renderer 已连接",
+    });
+  });
+
   it("reports Git Target ready only when the server capability is fully configured",()=>{
     const gitTarget=BACKEND_REQUIREMENTS.find((item)=>item.id==="git-target")!;
     expect(backendRequirementState(gitTarget,{visualJudgeLive:false,server:{git:false}})).toBe("missing");
@@ -50,7 +60,7 @@ describe("system readiness catalog", () => {
     expect(base.find((item)=>item.id==="learning")?.gap).toContain("Embedding");
     const semantic=deriveEngineReadiness({visualJudgeLive:false,server:{capabilityService:true,capabilitySemantic:true}});
     expect(semantic.find((item)=>item.id==="learning")?.stateLabel).toBe("组织级语义 Registry 已连接");
-    expect(semantic.find((item)=>item.id==="learning")?.gap).toContain("pgvector");
+    expect(semantic.find((item)=>item.id==="learning")?.gap).toContain("Organization Sharing");
   });
 
   it("reports Immutable Evidence Ledger ready only when its database and signing health are live",()=>{

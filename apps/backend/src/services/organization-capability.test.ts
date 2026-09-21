@@ -126,17 +126,27 @@ describe("organization capability service",()=>{
     const first=lesson({id:"lesson-a",title:"Stable rollout guard"});
     const second=lesson({id:"lesson-b",title:"Unrelated parser note",trigger:["parser"],method:["parse"]});
     const rows=[
-      {...dbRow({missionId:"mission-1",lesson:first}),embedding:[1,0],embedding_model:"text-embedding-test"},
-      {...dbRow({missionId:"mission-2",lesson:second}),embedding:[0,1],embedding_model:"text-embedding-test"},
+      {...dbRow({missionId:"mission-1",lesson:first}),embedding_model:"text-embedding-test"},
+      {...dbRow({missionId:"mission-2",lesson:second}),embedding_model:"text-embedding-test"},
     ];
+    const vector=Array.from({length:1536},(_,index)=>index===0?1:0);
     const fetchMock=vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
       const url=String(input);
-      if(url.startsWith("https://supabase.test/rest/v1/organization_capabilities")){
-        return new Response(JSON.stringify(rows),{status:200,headers:{"Content-Type":"application/json"}});
-      }
       if(url==="https://embed.test/v1/embeddings"){
         expect((init?.headers as Record<string,string>).Authorization).toBe("Bearer embed-test-key");
-        return new Response(JSON.stringify({data:[{index:0,embedding:[1,0]}]}),{status:200,headers:{"Content-Type":"application/json"}});
+        return new Response(JSON.stringify({data:[{index:0,embedding:vector}]}),{status:200,headers:{"Content-Type":"application/json"}});
+      }
+      if(url==="https://supabase.test/rest/v1/rpc/match_organization_capabilities"){
+        const body=JSON.parse(String(init?.body)) as Record<string,unknown>;
+        expect(String(body.p_query_embedding)).toMatch(/^\[1,0,0,/);
+        expect(body.p_match_count).toBe(100);
+        return new Response(JSON.stringify([
+          {id:"mission-1-lesson-a",semantic_score:1},
+          {id:"mission-2-lesson-b",semantic_score:0.1},
+        ]),{status:200,headers:{"Content-Type":"application/json"}});
+      }
+      if(url.startsWith("https://supabase.test/rest/v1/organization_capabilities?select=*&id=in.")){
+        return new Response(JSON.stringify(rows),{status:200,headers:{"Content-Type":"application/json"}});
       }
       throw new Error("unexpected URL "+url);
     });
@@ -146,6 +156,31 @@ describe("organization capability service",()=>{
     expect(result.vectorSearch).toBe(true);
     expect(result.hits[0]?.representative.lesson.id).toBe("lesson-a");
     expect(result.hits[0]?.semanticScore).toBeCloseTo(1);
+  });
+
+  it("falls back to lexical when embedding dimensions cannot use the pgvector index",async()=>{
+    process.env.SUPABASE_URL="https://supabase.test";
+    process.env.SUPABASE_PUBLISHABLE_KEY="anon-test-key-1234567890";
+    process.env.EVOLUTION_WORKSPACE_ID="workspace-test";
+    process.env.EVOLUTION_CAPABILITY_EMBEDDING_API_KEY="embed-test-key";
+    process.env.EVOLUTION_CAPABILITY_EMBEDDING_MODEL="text-embedding-test";
+    process.env.EVOLUTION_CAPABILITY_EMBEDDING_BASE_URL="https://embed.test/v1";
+    const rows=[dbRow({missionId:"mission-1",lesson:lesson()})];
+    const fetchMock=vi.fn(async(input:RequestInfo|URL)=>{
+      const url=String(input);
+      if(url==="https://embed.test/v1/embeddings"){
+        return new Response(JSON.stringify({data:[{index:0,embedding:[1,0]}]}),{status:200,headers:{"Content-Type":"application/json"}});
+      }
+      if(url.startsWith("https://supabase.test/rest/v1/organization_capabilities?select=*")){
+        return new Response(JSON.stringify(rows),{status:200,headers:{"Content-Type":"application/json"}});
+      }
+      throw new Error("unexpected "+url);
+    });
+    vi.stubGlobal("fetch",fetchMock);
+    const result=await searchOrganizationCapabilities({q:"rollout guard",limit:10,reusableOnly:false});
+    expect(result.vectorSearch).toBe(false);
+    expect(result.matchingMode).toBe("lexical-fuzzy");
+    expect(fetchMock.mock.calls.some(([input])=>String(input).includes("/rpc/match_organization_capabilities"))).toBe(false);
   });
 
   it("falls back to lexical ranking when the configured embedding provider fails",async()=>{
