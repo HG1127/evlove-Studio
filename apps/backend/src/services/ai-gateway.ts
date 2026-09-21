@@ -1,4 +1,3 @@
-import { Output, generateText, gateway } from "ai";
 import type { ZodType } from "zod";
 import {
   AiOperationSchema,
@@ -59,6 +58,12 @@ export type ServerAiOperation=AiOperation;
 
 type StructuredSchema={name:string;schema:Record<string,unknown>};
 type Contract<T>={schema:StructuredSchema;parser:ZodType<T>;instruction:string};
+
+async function loadVercelAiSdk(){
+  // Keep @ai-sdk/gateway out of the shared Nitro function bootstrap. On Vercel,
+  // eager evaluation can make unrelated API routes fail before their handler runs.
+  return import("ai");
+}
 
 const SYSTEM=[
   "You are Evolve Studio's server-side evolution engine.",
@@ -130,6 +135,7 @@ async function callVercelGateway<T>(args:{
   contract:Contract<T>;
   payload:unknown;
 }){
+  const {Output,generateText,gateway}=await loadVercelAiSdk();
   const generated=await generateText({
     model:gateway(args.config.model),
     system:SYSTEM+"\n\nTask: "+args.contract.instruction,
