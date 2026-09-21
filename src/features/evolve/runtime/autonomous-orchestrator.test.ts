@@ -380,6 +380,15 @@ describe("autonomous orchestrator", () => {
     const needsBinding=deriveAutonomousDecision(base);
     expect(needsBinding.action).toBe("wait-human");
     expect(needsBinding.attention?.title).toContain("Preview Deployment");
+    base.release={...base.release,candidateId:candidate.id,sourceGitCommitSha:"sha-exact"};
+    const autoBinding=deriveAutonomousDecision(base);
+    expect(autoBinding.action).toBe("reconcile-release");
+    expect(autoBinding.reason).toContain("sha-exact");
+    expect(autoBinding.reason).toContain("exact SHA");
+    base.releaseTarget={...base.releaseTarget!,mode:"progressive"};
+    base.release={...base.release,deploymentId:"dpl-preview",recovery:undefined};
+    expect(deriveAutonomousDecision(base).action).toBe("run-release");
+    base.releaseTarget={...base.releaseTarget!,mode:"preview-promote"};
     base.release={...base.release,candidateId:candidate.id,deploymentId:"dpl-preview",recovery:{status:"pending",action:"promote",reason:"provider timeout",at:"2026-09-20T15:00:00Z"}};
     base.campaign={...base.campaign,status:"paused",stopReason:"[server-release-provider-pending] promote 结果不确定"};
     expect(deriveAutonomousDecision(base).action).toBe("reconcile-release");

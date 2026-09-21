@@ -11,6 +11,9 @@ export async function runServerMissionRelease(project:EvolveProject){
         ?{ok:true}
         :{ok:false,reason:"当前 Candidate 没有未过期且未撤销的 durable Release Approval grant。"};
     },
-    execute:async(args)=>executeVercelReleaseAction(args),
+    execute:async(args)=>executeVercelReleaseAction({
+      ...args,
+      expectedGitCommitSha:project.release.sourceGitCommitSha,
+    }),
   });
 }

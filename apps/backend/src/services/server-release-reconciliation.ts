@@ -7,12 +7,16 @@ export async function runServerMissionReleaseReconciliation(project:EvolveProjec
   let observed:Awaited<ReturnType<typeof observeVercelReleaseReality>>|undefined;
   const outcome=await runServerReleaseReconciliation(project,{
     observe:async({boundDeploymentId,healthPath})=>{
-      observed=await observeVercelReleaseReality({boundDeploymentId,healthPath});
+      observed=await observeVercelReleaseReality({
+        boundDeploymentId,
+        gitCommitSha:project.release.sourceGitCommitSha,
+        healthPath,
+      });
       return observed;
     },
   });
   if(observed){
-    await recordReleaseOutcomeObservation(project,observed).catch(()=>undefined);
+    await recordReleaseOutcomeObservation(outcome.project,observed).catch(()=>undefined);
   }
   return outcome;
 }

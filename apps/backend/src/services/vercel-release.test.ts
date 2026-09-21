@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   checkVercelReleaseHealth,
   executeVercelReleaseAction,
+  findVercelPreviewDeploymentByGitCommit,
   getVercelReleaseCapabilities,
   observeVercelReleaseReality,
 } from "./vercel-release";
@@ -113,6 +114,89 @@ describe("Vercel release provider",()=>{
     expect(caps.rollingReleaseConfigured).toBe(true);
     expect(caps.rollingReleaseStages).toEqual([5,20,50,100]);
     expect(caps.actions).toEqual(["shadow","canary-5","canary-20","canary-50","promote","rollback"]);
+  });
+
+  it("discovers exactly one non-production Preview by exact Git commit SHA",async()=>{
+    process.env.VERCEL_RELEASE_TOKEN="test_release_token";
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
+      const url=String(input);
+      if(url.includes("/v6/deployments?")){
+        return json({deployments:[
+          {uid:"dpl_prod",url:"prod.vercel.app",readyState:"READY",target:"production",meta:{githubCommitSha:"sha-exact"}},
+          {uid:"dpl_preview",url:"preview.vercel.app",readyState:"READY",target:"preview",meta:{githubCommitSha:"sha-exact"}},
+          {uid:"dpl_other",url:"other.vercel.app",readyState:"READY",target:"preview",meta:{githubCommitSha:"sha-other"}},
+        ]});
+      }
+      throw new Error("unexpected URL "+url);
+    }));
+    const found=await findVercelPreviewDeploymentByGitCommit("sha-exact");
+    expect(found.status).toBe("ready");
+    expect(found.deployment?.id).toBe("dpl_preview");
+    expect(found.matches).toHaveLength(1);
+  });
+
+  it("returns pending for the unique exact-SHA Preview while Vercel is still building",async()=>{
+    process.env.VERCEL_RELEASE_TOKEN="test_release_token";
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
+      const url=String(input);
+      if(url.includes("/v6/deployments?")){
+        return json({deployments:[
+          {uid:"dpl_preview",url:"preview.vercel.app",readyState:"BUILDING",target:"preview",meta:{githubCommitSha:"sha-exact"}},
+        ]});
+      }
+      throw new Error("unexpected URL "+url);
+    }));
+    const found=await findVercelPreviewDeploymentByGitCommit("sha-exact");
+    expect(found).toMatchObject({status:"pending",deployment:{id:"dpl_preview",state:"BUILDING"}});
+  });
+
+  it("fails closed when one exact Git SHA maps to multiple non-production Deployments",async()=>{
+    process.env.VERCEL_RELEASE_TOKEN="test_release_token";
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
+      const url=String(input);
+      if(url.includes("/v6/deployments?")){
+        return json({deployments:[
+          {uid:"dpl_a",url:"a.vercel.app",readyState:"READY",target:"preview",meta:{githubCommitSha:"sha-exact"}},
+          {uid:"dpl_b",url:"b.vercel.app",readyState:"READY",target:"preview",meta:{githubCommitSha:"sha-exact"}},
+        ]});
+      }
+      throw new Error("unexpected URL "+url);
+    }));
+    const found=await findVercelPreviewDeploymentByGitCommit("sha-exact");
+    expect(found.status).toBe("conflict");
+    expect(found.matches.map((item)=>item.id)).toEqual(["dpl_a","dpl_b"]);
+  });
+
+  it("rejects a manually bound Preview before Shadow when its Git SHA differs from the Mission exact commit",async()=>{
+    process.env.VERCEL_RELEASE_TOKEN="test_release_token";
+    const fetchMock=vi.fn(async(input:RequestInfo|URL)=>{
+      const url=String(input);
+      if(url.includes("/v13/deployments/evolution-test.vercel.app")){
+        return json({uid:"dpl_stable",url:"stable.vercel.app",readyState:"READY",target:"production"});
+      }
+      if(url.endsWith("/rolling-release/config"))return json({rollingRelease:null});
+      if(url.includes("/v13/deployments/dpl_preview")){
+        return json({
+          uid:"dpl_preview",
+          url:"candidate.vercel.app",
+          readyState:"READY",
+          target:"preview",
+          meta:{githubCommitSha:"sha-wrong"},
+        });
+      }
+      if(url.startsWith("https://candidate.vercel.app")){
+        throw new Error("Git mismatch must be rejected before Preview Health");
+      }
+      throw new Error("unexpected URL "+url);
+    });
+    vi.stubGlobal("fetch",fetchMock);
+    await expect(executeVercelReleaseAction({
+      action:"shadow",
+      deploymentId:"dpl_preview",
+      expectedGitCommitSha:"sha-exact",
+      artifactHashes:[{sourceArtifactId:"source-1",contentHash:"a".repeat(64)}],
+    })).rejects.toMatchObject({code:"VERCEL_RELEASE_GIT_COMMIT_MISMATCH"});
+    expect(fetchMock.mock.calls.some(([input])=>String(input).startsWith("https://candidate.vercel.app"))).toBe(false);
   });
 
   it("starts a real 5% Rolling Release and binds the returned stable/canary identities",async()=>{

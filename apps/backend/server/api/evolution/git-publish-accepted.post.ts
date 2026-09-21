@@ -16,6 +16,20 @@ export default defineEventHandler(async(event)=>{
   if(!mission)throw createError({statusCode:404,statusMessage:"Mission not found"});
   try{
     const result=await publishAcceptedChampionToGit(mission,input);
+    if(result.mutation.commitSha){
+      await runtime.missions.save({
+        ...mission,
+        stage:"release",
+        release:{
+          ...mission.release,
+          candidateId:result.candidateId,
+          sourceGitCommitSha:result.mutation.commitSha,
+          sourceGitBranch:result.mutation.branch,
+          sourceGitRepository:result.mutation.repository,
+        },
+        updatedAt:new Date().toISOString(),
+      });
+    }
     await runtime.events.append(createEvolutionEvent({
       missionId:mission.id,
       type:"ActionCompleted",
@@ -26,6 +40,7 @@ export default defineEventHandler(async(event)=>{
         repository:result.mutation.repository,
         branch:result.mutation.branch,
         commitSha:result.mutation.commitSha,
+        releasePreviewAutoBinding:Boolean(result.mutation.commitSha),
         treeSha:result.mutation.treeSha,
         pullNumber:result.pullRequest?.pullNumber,
         pullUrl:result.pullRequest?.pullUrl,

@@ -1100,15 +1100,13 @@ export function useProjectRuntime(initialProject: EvolveProject) {
     if (!winner) throw new Error("没有 Release Candidate");
     const result = await run(`发布动作：${action}`, () => runRelease(project, winner, action));
     const effectiveAction = result.action;
-    const durablePreviewPromote=project.releaseTarget?.provider==="vercel"
-      &&project.releaseTarget.mode==="preview-promote"
-      &&(action==="shadow"||action==="promote"||action==="rollback");
+    const durableVercelRelease=project.releaseTarget?.provider==="vercel";
     commit((current) => {
-      const base:EvolveProject=durablePreviewPromote
+      const base:EvolveProject=durableVercelRelease
         ?applyReleaseResultToProject({
           project:current,
           candidate:winner,
-          requestedAction:action as "shadow"|"promote"|"rollback",
+          requestedAction:action,
           result,
           at:result.observedAt??now(),
         })
@@ -1137,7 +1135,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
       const governedAt=result.observedAt??now();
       return applyProductionLearningGovernance(settled,{at:governedAt,now:Date.parse(governedAt)});
     });
-    const terminal=durablePreviewPromote
+    const terminal=durableVercelRelease
       ?result.ok&&result.healthy===true&&result.observationStatus==="healthy"&&(effectiveAction==="promote"||effectiveAction==="rollback")
       :effectiveAction==="promote"||effectiveAction==="rollback";
     setStage(terminal?"learning":"release");

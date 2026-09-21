@@ -12,7 +12,6 @@ import {
   projectNeedsProductionLearningRedistill,
   projectHasLiveReleaseDecision,
   projectHasOnlineReleaseTarget,
-  projectReleaseMode,
   rubricSuiteCoverage,
   rubricValidation,
 } from "@evolution/core";
@@ -273,7 +272,7 @@ export function deriveAutonomousDecision(project: EvolveProject): AutonomousDeci
     if(onlineRelease&&liveReleaseDecision){
       const freshness=productionOutcomeFreshness(project);
       if(freshness.status!=="fresh"){
-        if(project.releaseTarget?.provider==="vercel"&&projectReleaseMode(project)==="preview-promote"){
+        if(project.releaseTarget?.provider==="vercel"){
           return {
             action:"reconcile-release",
             reason:`${freshness.reason} 先只读刷新 Production Outcome，再继续 Learning / Complete。`,
@@ -290,7 +289,7 @@ export function deriveAutonomousDecision(project: EvolveProject): AutonomousDeci
       }
       const trend=productionOutcomeTrend(project);
       if(trend.status==="healthy-insufficient"||trend.status==="unknown"){
-        if(project.releaseTarget?.provider==="vercel"&&projectReleaseMode(project)==="preview-promote"){
+        if(project.releaseTarget?.provider==="vercel"){
           return {
             action:"reconcile-release",
             reason:`${trend.reason} 先补充只读 Production Observation，再判断是否足以进入 Learning。`,
@@ -311,8 +310,7 @@ export function deriveAutonomousDecision(project: EvolveProject): AutonomousDeci
     }
     if (onlineRelease && !liveReleaseDecision) {
       if(project.release.recovery?.status==="pending"
-        &&project.releaseTarget?.provider==="vercel"
-        &&projectReleaseMode(project)==="preview-promote"){
+        &&project.releaseTarget?.provider==="vercel"){
         return {
           action:"reconcile-release",
           reason:"Release 上一步结果需要恢复；先只读核对 Vercel 当前 Production / Preview 真相，再决定是否继续生产动作。",
@@ -339,16 +337,23 @@ export function deriveAutonomousDecision(project: EvolveProject): AutonomousDeci
         });
         return {action:"wait-human",reason:request.reason,stage:request.stage,attention:request};
       }
-      if(project.releaseTarget?.provider!=="vercel"||projectReleaseMode(project)!=="preview-promote"){
+      if(project.releaseTarget?.provider!=="vercel"){
         const request=attention({
           type:"capability",title:"当前线上 Release Target 尚未接入 Durable 编排",
-          reason:"本轮自动 Release 只支持已连接的 Vercel Preview → Promote Target；其他 HTTP/Progressive Target 继续保留现有人工发布路径。",
+          reason:"本轮自动 Release 支持 Vercel Preview → Promote 与 Vercel Progressive；其他 HTTP Target 继续保留现有人工发布路径。",
           stage:"release",riskLevel:"high",blocking:true,questions:[],criterionIds:[],
-          suggestedAction:"连接 Vercel Preview → Promote Release Target，或使用现有发布控制完成真实上线决策。",
+          suggestedAction:"连接 Vercel Release Target，或使用现有发布控制完成真实上线决策。",
         });
         return {action:"wait-human",reason:request.reason,stage:request.stage,attention:request};
       }
       const candidate=currentReleaseCandidate(project);
+      if(candidate&&project.release.candidateId===candidate.id&&!project.release.deploymentId&&project.release.sourceGitCommitSha){
+        return {
+          action:"reconcile-release",
+          reason:`当前 exact Candidate 已发布到 Git commit ${project.release.sourceGitCommitSha}；自动按 exact SHA 发现并绑定唯一 Vercel Preview，不按时间或分支名猜测。`,
+          stage:"release",
+        };
+      }
       if(!candidate||project.release.candidateId!==candidate.id||!project.release.deploymentId){
         const request=attention({
           type:"capability",title:"需要显式绑定 Preview Deployment",

@@ -104,6 +104,7 @@ export default defineEventHandler(async(event)=>{
       action:input.action,
       deploymentId,
       stableDeploymentId:mission.release.stableDeploymentId,
+      expectedGitCommitSha:mission.release.sourceGitCommitSha,
       healthPath:releaseTarget.healthPath,
       artifactHashes,
     }));
@@ -112,13 +113,17 @@ export default defineEventHandler(async(event)=>{
     if(code==="VERCEL_RELEASE_CREDENTIAL_REQUIRED")fail(503,"Vercel Release 写操作尚未授权：需要 VERCEL_RELEASE_TOKEN");
     if(code==="VERCEL_ROLLING_RELEASE_NOT_ENABLED")fail(409,error instanceof Error?error.message:String(error));
     const at=new Date().toISOString();
-    const reason=`[server-release-provider-pending] ${input.action} 结果未能可靠结算：${error instanceof Error?error.message:String(error)}`;
+    const gitCommitMismatch=code==="VERCEL_RELEASE_GIT_COMMIT_MISMATCH";
+    const recoveryStatus=gitCommitMismatch?"manual-check" as const:"pending" as const;
+    const reason=gitCommitMismatch
+      ?`[server-release-manual-check] ${input.action} 绑定的 Vercel Deployment 与 exact Git commit 不一致：${error instanceof Error?error.message:String(error)}`
+      :`[server-release-provider-pending] ${input.action} 结果未能可靠结算：${error instanceof Error?error.message:String(error)}`;
     const recoveryMission={
       ...mission,
       stage:"release" as const,
       release:{
         ...mission.release,
-        recovery:{status:"pending" as const,action:input.action,reason,at},
+        recovery:{status:recoveryStatus,action:input.action,reason,at},
       },
       campaign:{...mission.campaign,status:"paused" as const,stopReason:reason},
       updatedAt:at,
@@ -130,7 +135,7 @@ export default defineEventHandler(async(event)=>{
       source:"manual-release-api",
       payload:{requestedAction:input.action,candidateId:candidate.id,deploymentId,stableDeploymentId:mission.release.stableDeploymentId,recovery:recoveryMission.release.recovery,reason},
     })).catch(()=>undefined);
-    if(code?.startsWith("VERCEL_ROLLING_RELEASE_"))fail(409,error instanceof Error?error.message:String(error));
+    if(gitCommitMismatch||code?.startsWith("VERCEL_ROLLING_RELEASE_"))fail(409,error instanceof Error?error.message:String(error));
     throw error;
   }
   try{

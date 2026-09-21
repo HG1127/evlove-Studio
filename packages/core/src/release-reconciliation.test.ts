@@ -177,6 +177,108 @@ describe("release reconciliation",()=>{
     expect(result.reason).toContain("不会切换 Production");
   });
 
+  it("keeps waiting when the exact Git commit has not produced a Vercel Preview yet",()=>{
+    const x=fixture();
+    x.project.release={
+      ...x.project.release,
+      status:"idle",
+      deploymentId:undefined,
+      stableDeploymentId:undefined,
+      sourceGitCommitSha:"sha-exact",
+      recovery:undefined,
+    };
+    const observed=observation("dpl_current");
+    observed.boundDeployment=undefined;
+    observed.boundHealth=undefined;
+    const result=reconcileReleaseObservation({project:x.project,candidate:x.candidate,observation:observed});
+    expect(result.disposition).toBe("safe-to-resume");
+    expect(result.project.release.deploymentId).toBeUndefined();
+    expect(result.project.release.recovery).toMatchObject({status:"pending",action:"shadow"});
+    expect(result.reason).toContain("sha-exact");
+  });
+
+  it("auto-binds the unique exact-SHA Preview while it is still BUILDING but does not run Health yet",()=>{
+    const x=fixture();
+    x.project.release={
+      ...x.project.release,
+      status:"idle",
+      deploymentId:undefined,
+      stableDeploymentId:undefined,
+      sourceGitCommitSha:"sha-exact",
+      recovery:undefined,
+    };
+    const observed=observation("dpl_current");
+    observed.boundDeployment={
+      id:"dpl_candidate",
+      url:"https://candidate.vercel.app",
+      state:"BUILDING",
+      target:"preview",
+      meta:{githubCommitSha:"sha-exact"},
+    };
+    observed.boundHealth=undefined;
+    const result=reconcileReleaseObservation({project:x.project,candidate:x.candidate,observation:observed});
+    expect(result.disposition).toBe("safe-to-resume");
+    expect(result.project.release.deploymentId).toBe("dpl_candidate");
+    expect(result.project.release.recovery).toMatchObject({status:"pending",action:"shadow"});
+    expect(result.reason).toContain("BUILDING");
+  });
+
+  it("auto-binds a READY exact-SHA Preview, captures current Production as stable, and settles Preview Health",()=>{
+    const x=fixture();
+    x.project.release={
+      ...x.project.release,
+      status:"idle",
+      deploymentId:undefined,
+      stableDeploymentId:undefined,
+      sourceGitCommitSha:"sha-exact",
+      recovery:undefined,
+    };
+    const observed=observation("dpl_current",true,true);
+    observed.boundDeployment={
+      id:"dpl_candidate",
+      url:"https://candidate.vercel.app",
+      state:"READY",
+      target:"preview",
+      meta:{githubCommitSha:"sha-exact"},
+    };
+    const result=reconcileReleaseObservation({project:x.project,candidate:x.candidate,observation:observed});
+    expect(result.disposition).toBe("safe-to-resume");
+    expect(result.project.release).toMatchObject({
+      status:"shadow",
+      candidateId:"C1",
+      deploymentId:"dpl_candidate",
+      stableDeploymentId:"dpl_current",
+      healthy:true,
+      evidenceMode:"live",
+      environment:"preview",
+    });
+  });
+
+  it("fails closed when the discovered Preview Git SHA differs from the Mission exact commit",()=>{
+    const x=fixture();
+    x.project.release={
+      ...x.project.release,
+      status:"idle",
+      deploymentId:undefined,
+      stableDeploymentId:undefined,
+      sourceGitCommitSha:"sha-exact",
+      recovery:undefined,
+    };
+    const observed=observation("dpl_current");
+    observed.boundDeployment={
+      id:"dpl_candidate",
+      url:"https://candidate.vercel.app",
+      state:"READY",
+      target:"preview",
+      meta:{githubCommitSha:"sha-wrong"},
+    };
+    const result=reconcileReleaseObservation({project:x.project,candidate:x.candidate,observation:observed});
+    expect(result.disposition).toBe("manual-check");
+    expect(result.project.release.recovery?.status).toBe("manual-check");
+    expect(result.reason).toContain("sha-wrong");
+    expect(result.reason).toContain("sha-exact");
+  });
+
   it("fails closed when Production points to an unknown deployment",()=>{
     const x=fixture();
     const result=reconcileReleaseObservation({project:x.project,candidate:x.candidate,observation:observation("dpl_unknown")});

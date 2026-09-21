@@ -68,7 +68,7 @@ export async function shouldUseServerAutoPilot(project:EvolveProject){
     if(!capability.available||!capability.durable)return false;
     if(!projectHasOnlineReleaseTarget(project))return capability.closure.offlineFullAuto;
     const authorized=project.gates.find((gate)=>gate.id==="release-ready")?.status==="approved";
-    const supported=project.releaseTarget?.provider==="vercel"&&project.releaseTarget.mode==="preview-promote";
+    const supported=project.releaseTarget?.provider==="vercel";
     return Boolean(authorized&&supported&&capability.closure.onlinePostApprovalAuto);
   }catch{
     return false;

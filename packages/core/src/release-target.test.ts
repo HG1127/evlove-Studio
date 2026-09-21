@@ -37,6 +37,9 @@ describe("release target domain",()=>{
       evidenceMode:"live",
       deploymentId:"dpl-stable",
       stableDeploymentId:"dpl-older",
+      sourceGitCommitSha:"old-sha",
+      sourceGitBranch:"evolve/old",
+      sourceGitRepository:"acme/app",
       healthy:true,
     };
     const next=beginReleaseCycle(current,"candidate-new");
@@ -44,6 +47,9 @@ describe("release target domain",()=>{
     expect(next.candidateId).toBe("candidate-new");
     expect(next.stableDeploymentId).toBe("dpl-stable");
     expect(next.deploymentId).toBeUndefined();
+    expect(next.sourceGitCommitSha).toBeUndefined();
+    expect(next.sourceGitBranch).toBeUndefined();
+    expect(next.sourceGitRepository).toBeUndefined();
     expect(next.trafficPercent).toBe(0);
     expect(next.evidenceMode).toBe("none");
   });

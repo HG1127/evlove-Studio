@@ -44,6 +44,19 @@ function deploymentSummary(input:JsonRecord):VercelDeploymentSummary{
   });
 }
 
+function deploymentGitCommitSha(deployment:VercelDeploymentSummary){
+  const value=deployment.meta?.githubCommitSha;
+  return typeof value==="string"?value.trim():undefined;
+}
+
+export type VercelPreviewDiscovery={
+  status:"not-found"|"pending"|"ready"|"conflict";
+  commitSha:string;
+  deployment?:VercelDeploymentSummary;
+  matches:VercelDeploymentSummary[];
+  message:string;
+};
+
 function requireWriteConfig(){
   const config=getServerVercelReleaseConfig();
   if(!config.token||!config.projectId){
@@ -291,8 +304,51 @@ async function currentProductionDeployment(){
   catch{return undefined;}
 }
 
+export async function findVercelPreviewDeploymentByGitCommit(commitSha:string):Promise<VercelPreviewDiscovery>{
+  const exact=commitSha.trim();
+  if(!exact)throw new Error("Git commit SHA is required for Vercel Preview discovery");
+  const config=requireWriteConfig();
+  const body=await vercelApi("/v6/deployments?projectId="+encodeURIComponent(config.projectId)+"&limit=100");
+  const rows=Array.isArray(body.deployments)?body.deployments:[];
+  const deployments=rows.flatMap((row)=>{
+    try{return [deploymentSummary(row as JsonRecord)];}catch{return [];}
+  });
+  const matches=deployments.filter((deployment)=>
+    deployment.target!=="production"
+    &&deploymentGitCommitSha(deployment)===exact
+  );
+  if(matches.length>1){
+    return {
+      status:"conflict",
+      commitSha:exact,
+      matches,
+      message:`同一 Git commit ${exact} 匹配到 ${matches.length} 个非 Production Vercel Deployments；禁止自动猜测。`,
+    };
+  }
+  const deployment=matches[0];
+  if(!deployment){
+    return {
+      status:"not-found",
+      commitSha:exact,
+      matches:[],
+      message:`尚未发现 Git commit ${exact} 对应的 Vercel Preview Deployment。`,
+    };
+  }
+  const ready=deployment.state==="READY";
+  return {
+    status:ready?"ready":"pending",
+    commitSha:exact,
+    deployment,
+    matches:[deployment],
+    message:ready
+      ?`已唯一匹配 Git commit ${exact} 对应的 READY Vercel Preview ${deployment.id}。`
+      :`已唯一匹配 Git commit ${exact} 对应的 Vercel Preview ${deployment.id}，当前状态 ${deployment.state}。`,
+  };
+}
+
 export async function observeVercelReleaseReality(args?:{
   boundDeploymentId?:string;
+  gitCommitSha?:string;
   healthPath?:string;
 }):Promise<VercelReleaseObservation>{
   const config=getServerVercelReleaseConfig();
@@ -307,8 +363,21 @@ export async function observeVercelReleaseReality(args?:{
     errors.push(`rolling-release: ${error instanceof Error?error.message:String(error)}`);
   }
   const stableId=rollingRelease?.active?rollingRelease.stableDeploymentId:undefined;
-  const candidateId=args?.boundDeploymentId
+  let candidateId=args?.boundDeploymentId
     ??(rollingRelease?.active?rollingRelease.candidateDeploymentId:undefined);
+  if(!candidateId&&args?.gitCommitSha){
+    try{
+      const discovery=await findVercelPreviewDeploymentByGitCommit(args.gitCommitSha);
+      if(discovery.status==="conflict"){
+        errors.push("preview-discovery-conflict: "+discovery.message);
+      }else if(discovery.deployment){
+        boundDeployment=discovery.deployment;
+        candidateId=discovery.deployment.id;
+      }
+    }catch(error){
+      errors.push(`preview-discovery: ${error instanceof Error?error.message:String(error)}`);
+    }
+  }
   if(stableId){
     try{productionDeployment=await getDeployment(stableId);}
     catch(error){errors.push(`stable-deployment: ${error instanceof Error?error.message:String(error)}`);}
@@ -318,7 +387,7 @@ export async function observeVercelReleaseReality(args?:{
   }else{
     errors.push("production-deployment: production URL not configured");
   }
-  if(candidateId){
+  if(candidateId&&!boundDeployment){
     try{boundDeployment=await getDeployment(candidateId);}
     catch(error){errors.push(`bound-deployment: ${error instanceof Error?error.message:String(error)}`);}
   }
@@ -326,7 +395,7 @@ export async function observeVercelReleaseReality(args?:{
     url:productionDeployment?.url??config.productionUrl,
     healthPath:args?.healthPath,
   });
-  const boundHealth=boundDeployment
+  const boundHealth=boundDeployment?.state==="READY"
     ?await checkVercelReleaseHealth({url:boundDeployment.url,healthPath:args?.healthPath})
     :undefined;
   return VercelReleaseObservationSchema.parse({
@@ -373,6 +442,18 @@ function releaseError(message:string,code:string){
   return Object.assign(new Error(message),{code});
 }
 
+function assertDeploymentGitCommit(deployment:VercelDeploymentSummary,expectedGitCommitSha:string|undefined){
+  const expected=expectedGitCommitSha?.trim();
+  if(!expected)return;
+  const observed=deploymentGitCommitSha(deployment);
+  if(observed!==expected){
+    throw releaseError(
+      `Vercel Deployment ${deployment.id} 的 githubCommitSha ${observed??"missing"} 与 Mission exact Git commit ${expected} 不一致。`,
+      "VERCEL_RELEASE_GIT_COMMIT_MISMATCH",
+    );
+  }
+}
+
 function canaryPercentage(action:VercelReleaseAction){
   if(action==="canary-5")return 5;
   if(action==="canary-20")return 20;
@@ -414,6 +495,7 @@ export async function executeVercelReleaseAction(args:{
   action:VercelReleaseAction;
   deploymentId?:string;
   stableDeploymentId?:string;
+  expectedGitCommitSha?:string;
   healthPath?:string;
   artifactHashes:Array<{sourceArtifactId:string;contentHash:string}>;
 }):Promise<VercelReleaseActionResponse>{
@@ -430,6 +512,7 @@ export async function executeVercelReleaseAction(args:{
 
   if(args.action==="shadow"){
     const candidate=await getDeployment(deploymentId);
+    assertDeploymentGitCommit(candidate,args.expectedGitCommitSha);
     if(candidate.state!=="READY")throw new Error("候选 Deployment 尚未 READY");
     if(candidate.target==="production")throw new Error("Preview Gate 不能绑定当前 Production Deployment");
     const health=await checkVercelReleaseHealth({url:candidate.url,healthPath:args.healthPath});
@@ -449,6 +532,7 @@ export async function executeVercelReleaseAction(args:{
   if(targetPercentage!==undefined){
     const progressiveConfig=await requireProgressiveConfig();
     const candidate=await getDeployment(deploymentId);
+    assertDeploymentGitCommit(candidate,args.expectedGitCommitSha);
     if(candidate.state!=="READY")throw new Error("候选 Deployment 尚未 READY");
     let rolling=await rollingReleaseState(progressiveConfig);
     if(!rolling.active){
@@ -513,6 +597,7 @@ export async function executeVercelReleaseAction(args:{
 
   if(args.action==="promote"){
     const candidate=await getDeployment(deploymentId);
+    assertDeploymentGitCommit(candidate,args.expectedGitCommitSha);
     if(candidate.state!=="READY")throw new Error("候选 Deployment 尚未 READY");
     let activeRolling=await rollingReleaseState(rollingConfig).catch(()=>undefined);
     if(activeRolling?.active){

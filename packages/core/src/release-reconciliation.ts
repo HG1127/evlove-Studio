@@ -20,6 +20,7 @@ function withRecovery(
     status:"pending"|"manual-check"|"reconciled";
     reason:string;
     observedAt:string;
+    action?:"shadow"|"canary-5"|"canary-20"|"canary-50"|"promote"|"rollback";
   },
 ){
   return {
@@ -28,7 +29,7 @@ function withRecovery(
       ...project.release,
       recovery:{
         status:args.status,
-        action:project.release.recovery?.action,
+        action:args.action??project.release.recovery?.action,
         reason:args.reason,
         at:project.release.recovery?.at??args.observedAt,
         lastObservedAt:args.observedAt,
@@ -236,14 +237,45 @@ export function reconcileReleaseObservation(args:{
   observation:VercelReleaseObservation;
 }):ReleaseReconcileResult{
   const {candidate,observation}=args;
-  const sourceProject=args.project;
+  const checkedAt=observation.checkedAt;
+  const expectedGitCommit=args.project.release.sourceGitCommitSha;
+  const originalBoundId=args.project.release.deploymentId;
+  const discoveredCommit=observation.boundDeployment?.meta?.githubCommitSha;
+  if(expectedGitCommit&&observation.boundDeployment
+    &&discoveredCommit!==expectedGitCommit){
+    const reason=`Vercel Preview 的 githubCommitSha ${String(discoveredCommit??"missing")} 与 Mission exact Git commit ${expectedGitCommit} 不一致；禁止自动绑定。`;
+    return {
+      project:withRecovery(args.project,{status:"manual-check",reason,observedAt:checkedAt}),
+      disposition:"manual-check",
+      reason,
+    };
+  }
+  const autoDiscoveredId=!originalBoundId&&expectedGitCommit&&observation.boundDeployment
+    ?observation.boundDeployment.id
+    :undefined;
+  const autoBinding=Boolean(autoDiscoveredId);
+  const sourceProject:EvolveProject=autoBinding?{
+    ...args.project,
+    release:{
+      ...args.project.release,
+      candidateId:candidate.id,
+      deploymentId:autoDiscoveredId,
+      recovery:{
+        status:"pending",
+        action:"shadow",
+        reason:`已按 exact Git commit ${expectedGitCommit} 唯一发现 Vercel Preview ${autoDiscoveredId}，等待 READY/Health 确认。`,
+        at:checkedAt,
+        lastObservedAt:checkedAt,
+      },
+    },
+    updatedAt:checkedAt,
+  }:args.project;
   const boundId=sourceProject.release.deploymentId;
   const stableId=sourceProject.release.stableDeploymentId;
   const candidateDeploymentId=sourceProject.release.status==="rolled-back"
     ?[...sourceProject.release.history].reverse().find((entry)=>entry.candidateId===candidate.id&&entry.action==="promote")?.deploymentId
     :boundId;
   const productionId=observation.productionDeployment?.id;
-  const checkedAt=observation.checkedAt;
   const recoveryAction=sourceProject.release.recovery?.action;
   const previewObservation=(recoveryAction==="shadow"
       ||(!recoveryAction&&(sourceProject.release.status==="idle"||sourceProject.release.status==="shadow")))
@@ -288,6 +320,32 @@ export function reconcileReleaseObservation(args:{
   if(observation.errors.length){
     const reason=`Vercel 只读观测不完整：${observation.errors.join("；")}`;
     return {project:withRecovery(project,{status:"manual-check",reason,observedAt:checkedAt}),disposition:"manual-check",reason};
+  }
+  if(expectedGitCommit&&!boundId){
+    const reason=`尚未发现 exact Git commit ${expectedGitCommit} 对应的唯一 Vercel Preview；继续等待 Git Integration 创建 Deployment。`;
+    return {
+      project:withRecovery(project,{status:"pending",action:"shadow",reason,observedAt:checkedAt}),
+      disposition:"safe-to-resume",
+      reason,
+    };
+  }
+  const observedBoundDeployment=observation.boundDeployment;
+  if(expectedGitCommit&&observedBoundDeployment&&observedBoundDeployment.id===boundId
+    &&observedBoundDeployment.state!=="READY"){
+    if(["ERROR","CANCELED","CANCELLED","DELETED"].includes(observedBoundDeployment.state.toUpperCase())){
+      const reason=`exact Git commit ${expectedGitCommit} 对应的 Vercel Preview ${boundId} 已进入失败终态 ${observedBoundDeployment.state}；禁止继续 Release。`;
+      return {
+        project:withRecovery(project,{status:"manual-check",reason,observedAt:checkedAt}),
+        disposition:"manual-check",
+        reason,
+      };
+    }
+    const reason=`已按 exact Git commit ${expectedGitCommit} 绑定 Vercel Preview ${boundId}，当前状态 ${observedBoundDeployment.state}；等待 READY 后再执行 Preview Health。`;
+    return {
+      project:withRecovery(project,{status:"pending",action:"shadow",reason,observedAt:checkedAt}),
+      disposition:"safe-to-resume",
+      reason,
+    };
   }
   const rolling=observation.rollingRelease;
   if(rolling?.active){

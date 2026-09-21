@@ -765,6 +765,19 @@ export async function executeServerControlStep(
     };
     await runtime.missions.save(updated);
     const gitPublish=await publishAcceptedChampionToConfiguredGit(updated);
+    const packaged=gitPublish?.mutation.commitSha?{
+      ...updated,
+      stage:"release" as const,
+      release:{
+        ...updated.release,
+        candidateId:gitPublish.candidateId,
+        sourceGitCommitSha:gitPublish.mutation.commitSha,
+        sourceGitBranch:gitPublish.mutation.branch,
+        sourceGitRepository:gitPublish.mutation.repository,
+      },
+      updatedAt:new Date().toISOString(),
+    }:updated;
+    if(packaged!==updated)await runtime.missions.save(packaged);
     await runtime.events.append(createEvolutionEvent({
       id:`evt-${input.controlJobId}-action-${iteration}-complete`,
       missionId:input.missionId,
@@ -782,6 +795,7 @@ export async function executeServerControlStep(
         gitPublished:Boolean(gitPublish),
         gitBranch:gitPublish?.mutation.branch,
         gitCommitSha:gitPublish?.mutation.commitSha,
+        gitRepository:gitPublish?.mutation.repository,
         gitPullNumber:gitPublish?.pullRequest?.pullNumber,
         gitPullUrl:gitPublish?.pullRequest?.pullUrl,
       },
@@ -858,6 +872,15 @@ export async function executeServerControlStep(
   if(action==="reconcile-release"){
     const reconcileOutcome=await runServerMissionReleaseReconciliation(mission);
     const monitor=nextProductionMonitorDelay(reconcileOutcome.project,reconcileOutcome.observation.checkedAt);
+    const previewBindingPending=Boolean(
+      reconcileOutcome.project.release.sourceGitCommitSha
+      &&reconcileOutcome.project.release.status==="idle"
+      &&reconcileOutcome.project.release.recovery?.status==="pending"
+      &&reconcileOutcome.project.release.recovery.action==="shadow"
+      &&(!reconcileOutcome.project.release.deploymentId
+        ||reconcileOutcome.observation.boundDeployment?.state!=="READY"),
+    );
+    const nextDelayMs=monitor?.delayMs??(previewBindingPending?15_000:undefined);
     await runtime.missions.save(reconcileOutcome.project);
     await runtime.events.append(createEvolutionEvent({
       id:`evt-${input.controlJobId}-release-reconcile-${iteration}`,
@@ -883,7 +906,7 @@ export async function executeServerControlStep(
         checkedAt:reconcileOutcome.observation.checkedAt,
         observationErrors:reconcileOutcome.observation.errors,
         reason:reconcileOutcome.reason,
-        nextObservationDelayMs:monitor?.delayMs,
+        nextObservationDelayMs:nextDelayMs,
         productionTrend:monitor?.trend.status,
         productionMonitorReason:monitor?.reason,
       },
@@ -907,7 +930,7 @@ export async function executeServerControlStep(
         detail:(monitor?.reason??reconcileOutcome.reason).slice(0,240),
       },
     }));
-    return {control:"continue",sleepMs:monitor?.delayMs};
+    return {control:"continue",sleepMs:nextDelayMs};
   }
 
   if(action==="wait-human"){
