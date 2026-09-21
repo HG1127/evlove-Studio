@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { demoProject } from "../data/mock-project";
 import type { EvolveProject } from "../schemas";
 import { acceptMissionOutputs, isMissionUserAccepted, missionArtifactFingerprint } from "./mission-review-store";
+import { getLocalProject } from "./local-store";
 
 function projectWithOutput(content="v1"): EvolveProject {
   return {
@@ -19,14 +20,17 @@ describe("mission user review",()=>{
     const project=projectWithOutput();
     expect(isMissionUserAccepted(project)).toBe(false);
     acceptMissionOutputs(project);
-    expect(isMissionUserAccepted(project)).toBe(true);
+    const persisted = getLocalProject(project.id)!;
+    expect(persisted.userAcceptance?.fingerprint).toBe(missionArtifactFingerprint(project));
+    expect(isMissionUserAccepted(persisted)).toBe(true);
   });
   it("invalidates the human review when the delivered artifact changes",()=>{
     const project=projectWithOutput("v1");
     const oldFingerprint=missionArtifactFingerprint(project);
     acceptMissionOutputs(project);
-    project.outputArtifacts[0]!.content="v2";
-    expect(missionArtifactFingerprint(project)).not.toBe(oldFingerprint);
-    expect(isMissionUserAccepted(project)).toBe(false);
+    const persisted = getLocalProject(project.id)!;
+    persisted.outputArtifacts[0]!.content="v2";
+    expect(missionArtifactFingerprint(persisted)).not.toBe(oldFingerprint);
+    expect(isMissionUserAccepted(persisted)).toBe(false);
   });
 });

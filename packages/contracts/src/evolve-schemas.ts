@@ -1015,6 +1015,12 @@ export const OutputArtifactSchema = z.object({
 });
 export type OutputArtifact = z.infer<typeof OutputArtifactSchema>;
 
+export const MissionUserAcceptanceSchema = z.object({
+  fingerprint: z.string().min(1),
+  acceptedAt: z.string(),
+});
+export type MissionUserAcceptance = z.infer<typeof MissionUserAcceptanceSchema>;
+
 export const ProjectModelRouteSchema = z.object({
   connectionId: z.string(),
   model: z.string(),
@@ -1123,6 +1129,8 @@ export const EvolveProjectSchema = z.object({
   searchChampion: SearchChampionSchema.optional(),
   artifactAcceptance: ArtifactAcceptanceSchema.prefault({}),
   outputArtifacts: z.array(OutputArtifactSchema).default([]),
+  /** 用户对当前已通过系统验收成果的确认；绑定成果指纹，成果变化后自动失效。 */
+  userAcceptance: MissionUserAcceptanceSchema.optional(),
   archivedOutputs: z.array(OutputArtifactSchema).optional(),
   targetConnection: TargetConnectionSchema,
   releaseTarget: ReleaseTargetSchema.optional(),
