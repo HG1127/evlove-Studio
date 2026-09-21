@@ -1,4 +1,4 @@
-import { applyProductionLearningGovernance, applyReleaseResultToProject, attachLessonGovernance, beginReleaseCycle, completeAutonomousMission, experimentNeedsEvidenceRepair, buildExperimentGapAdvicePayload, buildGapAdvicePayload, fallbackExperimentAdvice, mergeGovernedNextQueue, nextDurableReleaseAction, productionOutcomeFreshness, productionOutcomeTrend, projectHasStableHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget } from "@evolution/core";
+import { applyProductionLearningGovernance, applyReleaseResultToProject, beginReleaseCycle, completeAutonomousMission, experimentNeedsEvidenceRepair, buildExperimentGapAdvicePayload, buildGapAdvicePayload, fallbackExperimentAdvice, integrateDistilledLesson, mergeGovernedNextQueue, nextDurableReleaseAction, productionOutcomeFreshness, productionOutcomeTrend, projectHasStableHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget } from "@evolution/core";
 import { deliveryReadiness } from "./delivery-readiness";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -1189,13 +1189,13 @@ export function useProjectRuntime(initialProject: EvolveProject) {
         : "离线成果验收（尚无线上生产证据）"] }
       : parsed;
     const governedAt=now();
-    const lesson = attachLessonGovernance(current,{ id: `lesson-${Date.now()}`, ...result },{at:governedAt});
+    const integrated=integrateDistilledLesson(current,{ id: `lesson-${Date.now()}`, ...result },{at:governedAt});
     commit((state) => applyProductionLearningGovernance(
-      {...state,lessons:[lesson,...state.lessons],stage:"learning"},
+      {...state,lessons:integrated.lessons,stage:"learning"},
       {at:governedAt,now:Date.parse(governedAt)},
     ));
     setStage("learning");
-    return lesson;
+    return integrated.lesson;
   }, [commit, reportProgress, run, runProjectAi]);
 
   const generateNextQueue = useCallback(async () => {

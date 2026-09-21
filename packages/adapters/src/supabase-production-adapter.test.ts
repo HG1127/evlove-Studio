@@ -38,6 +38,7 @@ describe("supabase production adapter contracts", () => {
     const job = EvolutionJobSchema.parse({
       schemaVersion: "job-v1", id: "j1", missionId: "m1", type: "e2e", status: "running",
       label: "E2E", idempotencyKey: "m1:e2e", generation: 1, attempts: 1, priority: 50,
+      metadata:{sessionId:"composer-1",artifactId:"artifact-1"},
       createdAt: at, updatedAt: at,
     });
     expect(supabaseRowToJob(jobToSupabaseRow(job))).toEqual(job);

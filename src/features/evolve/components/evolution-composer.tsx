@@ -25,15 +25,31 @@ import type { IntakeAiResult } from "../ai/schemas";
 import type { ArtifactRole, EvolveProject, ProjectAiProfile, SourceArtifact } from "../schemas";
 import { defaultProjectAiProfile } from "./project-ai-profile-selector";
 import { ingestSources, runIntakeFromArtifacts } from "../runtime/api";
-import { deleteArtifactBlob, putArtifactBlob } from "../runtime/artifact-blob-store";
-import { beginParseJob, clearParseJobs, completeParseJob, createParseJob, discardParseJob, failParseJob, getParseJobBlob, listParseJobs } from "../runtime/parse-job-store";
+import { deleteArtifactBlob, getArtifactBlob, putArtifactBlob } from "../runtime/artifact-blob-store";
+import {
+  cancelServerParseJob,
+  listServerParseJobs,
+  parseJobMetadata,
+  parseServerFile,
+  ServerParseUnavailableError,
+  startServerParseFile,
+  waitForServerParseJob,
+} from "../runtime/server-source-client";
 import { saveLocalProject } from "../runtime/local-store";
 import { getTemplate, recordTemplateUse } from "../runtime/template-store";
 import { assessFileReadiness } from "../sources/extract";
 import { normalizeAcceptanceRubric, rubricValidation } from "../runtime/acceptance-rubric";
 import { compileSemanticEvolution } from "../runtime/semantic-evolution";
 
-type PendingFile = { id: string; file: File; role: ArtifactRole; status: "queued" | "parsing" | "ready" | "error"; artifactId?: string; error?: string };
+type PendingFile = {
+  id: string;
+  file: File;
+  role: ArtifactRole;
+  status: "queued" | "parsing" | "ready" | "error";
+  artifactId?: string;
+  serverJobId?: string;
+  error?: string;
+};
 type ChatLine = { id: string; role: "user" | "assistant"; content: string; files?: string[] };
 
 const departments = ["策略部", "客户部", "AI部", "技术部", "管理部", "其他"];
@@ -42,6 +58,16 @@ const objectTypes = [
   ["workflow", "Workflow"], ["document", "文档"], ["presentation", "PPT/演示文稿"], ["spreadsheet", "表格"], ["codebase", "代码工程"], ["knowledge", "知识库 / Memory"], ["tool", "Tool"], ["template", "内容模板"],
 ] as const;
 const roleLabels: Record<ArtifactRole, string> = { target: "进化对象", reference: "参考材料", eval: "测试样本" };
+const PARSE_SESSION_KEY="evolve-studio:composer-parse-session:v1";
+
+function composerParseSessionId(){
+  if(typeof window==="undefined")return `composer-${Date.now()}`;
+  const existing=window.sessionStorage.getItem(PARSE_SESSION_KEY);
+  if(existing)return existing;
+  const created=`composer-${crypto.randomUUID()}`;
+  window.sessionStorage.setItem(PARSE_SESSION_KEY,created);
+  return created;
+}
 
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
@@ -91,6 +117,7 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
   const navigate = useNavigate();
   const fileRef = useRef<HTMLInputElement>(null);
   const replaceRef = useRef<HTMLInputElement>(null);
+  const parseSessionIdRef=useRef(composerParseSessionId());
   const autoCreatePendingRef = useRef(false);
   const parseJobsRef = useRef(new Map<string, Promise<SourceArtifact | undefined>>());
   const artifactsRef = useRef<SourceArtifact[]>([]);
@@ -214,24 +241,35 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
   const startBackgroundParse = (item: PendingFile) => {
     setFiles((current) => current.map((entry) => entry.id === item.id ? { ...entry, status: "parsing", error: undefined } : entry));
     const job = (async () => {
-      const run = await beginParseJob(item.id);
-      if (!run) throw new Error("解析任务不存在，请重新上传文件");
       try {
-        const [parsed] = await ingestSources({ files: [item.file], role: item.role });
-        if (!parsed) throw new Error("未能读取文件");
-        const accepted = await completeParseJob(item.id, run.generation, parsed);
-        if (!accepted) {
-          await deleteArtifactBlob(parsed.id).catch(() => undefined);
-          return undefined;
+        let parsed: SourceArtifact | undefined;
+        let serverJobId=item.serverJobId;
+        const artifactId=item.artifactId??`artifact-${crypto.randomUUID()}`;
+        if(serverJobId){
+          parsed=await waitForServerParseJob(serverJobId);
+        }else{
+          try{
+            const started=await startServerParseFile(item.file,item.role,artifactId,parseSessionIdRef.current);
+            serverJobId=started.jobId;
+            setFiles((current)=>current.map((entry)=>entry.id===item.id
+              ?{...entry,status:"parsing",serverJobId,artifactId}
+              :entry));
+            parsed=await waitForServerParseJob(serverJobId);
+          }catch(cause){
+            if(!(cause instanceof ServerParseUnavailableError))throw cause;
+            [parsed]=await ingestSources({files:[item.file],role:item.role});
+          }
         }
+        if (!parsed) throw new Error("未能读取文件");
         const nextArtifacts = mergeArtifactState(parsed);
-        setFiles((current) => current.map((entry) => entry.id === item.id ? { ...entry, status: "ready", artifactId: parsed.id, error: undefined } : entry));
+        setFiles((current) => current.map((entry) => entry.id === item.id
+          ? { ...entry, status: "ready", artifactId: parsed!.id, serverJobId, error: undefined }
+          : entry));
         if (intakeRef.current) scheduleProgressiveIntake(nextArtifacts);
         return parsed;
       } catch (cause) {
         const message = cause instanceof Error ? cause.message : "后台解析失败";
-        const current = await failParseJob(item.id, run.generation, message);
-        if (current) setFiles((entries) => entries.map((entry) => entry.id === item.id ? { ...entry, status: "error", error: message } : entry));
+        setFiles((entries) => entries.map((entry) => entry.id === item.id ? { ...entry, status: "error", error: message } : entry));
         return undefined;
       }
     })();
@@ -243,12 +281,7 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
   };
 
   const queueFileForParsing = (item: PendingFile) => {
-    void createParseJob({ id: item.id, file: item.file, role: item.role })
-      .then(() => startBackgroundParse(item))
-      .catch((cause) => {
-        const message = cause instanceof Error ? cause.message : "无法保存后台解析任务";
-        setFiles((current) => current.map((entry) => entry.id === item.id ? { ...entry, status: "error", error: message } : entry));
-      });
+    void startBackgroundParse(item);
   };
 
   const addFiles = (incoming: FileList | File[]) => {
@@ -274,7 +307,7 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
 
   const retryPendingFile = (item: PendingFile) => {
     if (item.status !== "error") return;
-    void startBackgroundParse({ ...item, status: "queued", error: undefined });
+    void startBackgroundParse({ ...item, status: "queued", serverJobId: undefined, error: undefined });
   };
 
   const removePendingFile = (item: PendingFile) => {
@@ -285,49 +318,51 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
       replaceArtifactState(next);
       if (intakeRef.current) scheduleProgressiveIntake(next);
     }
-    void discardParseJob(item.id, { deleteArtifact: true });
+    if(item.serverJobId)void cancelServerParseJob(item.serverJobId,true).catch(()=>undefined);
+    else if(item.artifactId)void deleteArtifactBlob(item.artifactId).catch(()=>undefined);
   };
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const persisted = await listParseJobs();
+      const persisted = await listServerParseJobs(parseSessionIdRef.current);
       const recoveredFiles: PendingFile[] = [];
       const recoveredArtifacts: SourceArtifact[] = [];
       const resume: PendingFile[] = [];
       for (const record of persisted) {
-        const blob = await getParseJobBlob(record);
-        if (!blob) {
-          await discardParseJob(record.id, { deleteArtifact: true });
-          continue;
-        }
-        const file = new File([blob], record.name, { type: record.mimeType, lastModified: record.lastModified });
-        const ready = record.status === "ready" && Boolean(record.artifact);
-        const status: PendingFile["status"] = ready ? "ready" : record.status === "error" ? "error" : "queued";
+        const metadata=parseJobMetadata(record.job);
+        const blob=metadata.artifactId?await getArtifactBlob(metadata.artifactId).catch(()=>undefined):undefined;
+        if(!blob&&record.job.status!=="completed")continue;
+        const file = new File([blob??new Blob()], metadata.name, { type: metadata.mimeType, lastModified: metadata.lastModified });
+        const ready = record.job.status === "completed" && Boolean(record.artifact);
+        const status: PendingFile["status"] = ready ? "ready" : record.job.status === "failed" ? "error" : "parsing";
         const item: PendingFile = {
-          id: record.id,
+          id: `pending-${record.job.id}`,
           file,
-          role: record.role,
+          role: metadata.role,
           status,
-          artifactId: record.artifact?.id,
-          error: record.error,
+          artifactId: metadata.artifactId,
+          serverJobId:record.job.id,
+          error: record.job.error,
         };
         recoveredFiles.push(item);
         if (record.artifact) recoveredArtifacts.push(record.artifact);
-        if (!ready && record.status !== "error") resume.push(item);
+        if (!ready && record.job.status !== "failed" && record.job.status !== "cancelled") resume.push(item);
       }
       if (cancelled) return;
       if (recoveredFiles.length) setFiles(recoveredFiles);
       if (recoveredArtifacts.length) replaceArtifactState(recoveredArtifacts);
       resume.forEach(startBackgroundParse);
     })().catch((cause) => {
-      if (!cancelled) setError(`恢复后台解析任务失败：${cause instanceof Error ? cause.message : String(cause)}`);
+      if (!cancelled && !(cause instanceof ServerParseUnavailableError)) {
+        setError(`恢复 Server Parse 任务失败：${cause instanceof Error ? cause.message : String(cause)}`);
+      }
     });
     return () => {
       cancelled = true;
       if (progressiveTimerRef.current) window.clearTimeout(progressiveTimerRef.current);
     };
-    // Recovery intentionally runs once; resumed jobs are guarded by persisted generations.
+    // Recovery intentionally runs once; durable server jobs keep parsing across refreshes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -338,7 +373,8 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
     const pending = files.find((item) => item.artifactId === id);
     if (pending) {
       setFiles((current) => current.filter((item) => item.id !== pending.id));
-      void discardParseJob(pending.id, { deleteArtifact: true });
+      if(pending.serverJobId)void cancelServerParseJob(pending.serverJobId,true).catch(()=>undefined);
+      else void deleteArtifactBlob(id).catch(()=>undefined);
     } else {
       void deleteArtifactBlob(id).catch(() => undefined);
     }
@@ -357,12 +393,22 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
     setBusy(true);
     setError(undefined);
     try {
-      const [fresh] = await ingestSources({ files: [file], role: old.role });
-      if (!fresh) throw new Error("未能读取新文件");
-      // 保持原 id / 角色，让后续方案、补丁对附件的引用继续有效。
-      await putArtifactBlob(old.id, file);
-      await deleteArtifactBlob(fresh.id).catch(() => undefined);
-      const replacement: SourceArtifact = { ...fresh, id: old.id, role: old.role, textExcerpt: fresh.textExcerpt || `[附件] ${file.name}` };
+      let replacement:SourceArtifact;
+      try{
+        replacement=await parseServerFile({
+          file,
+          role:old.role,
+          artifactId:old.id,
+          sessionId:parseSessionIdRef.current,
+        });
+      }catch(cause){
+        if(!(cause instanceof ServerParseUnavailableError))throw cause;
+        const [fresh]=await ingestSources({files:[file],role:old.role});
+        if(!fresh)throw new Error("未能读取新文件");
+        await putArtifactBlob(old.id,file);
+        if(fresh.id!==old.id)await deleteArtifactBlob(fresh.id).catch(()=>undefined);
+        replacement={...fresh,id:old.id,role:old.role,textExcerpt:fresh.textExcerpt||`[附件] ${file.name}`};
+      }
       const next = artifactsRef.current.map((item) => (item.id === artifactId ? replacement : item));
       replaceArtifactState(next);
       let summary = `附件已替换为「${file.name}」，${replacement.parseStatus === "binary" ? "但新文件仍未解析成功，可再检查格式或改为文字粘贴。" : "内容读取成功。"}`;
@@ -554,7 +600,7 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
       updatedAt: new Date().toISOString(),
     };
     saveLocalProject(project);
-    void clearParseJobs();
+    if(typeof window!=="undefined")window.sessionStorage.removeItem(PARSE_SESSION_KEY);
     if (appliedTemplate) recordTemplateUse(appliedTemplate.id);
     navigate(`/projects/${id}?autostart=1`);
   };

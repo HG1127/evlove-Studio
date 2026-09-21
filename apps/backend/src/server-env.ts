@@ -23,6 +23,16 @@ export function getServerSupabaseConfig():SupabaseBackendConfig {
   }
   return parsed.data;
 }
+
+export function serverSupabaseConfigured(){
+  const url=value(process.env.SUPABASE_URL,process.env.VITE_SUPABASE_URL);
+  const key=value(process.env.SUPABASE_PUBLISHABLE_KEY,process.env.VITE_SUPABASE_ANON_KEY);
+  return SupabaseBackendConfigSchema.safeParse({
+    url,
+    anonKey:key,
+    artifactBucket:value(process.env.SUPABASE_ARTIFACT_BUCKET,process.env.VITE_SUPABASE_ARTIFACT_BUCKET)??"evolution-artifacts",
+  }).success;
+}
 export type ServerAiConfig=
   | {mode:"vercel-gateway";model:string;timeoutMs:number}
   | {mode:"openai-compatible";apiKey:string;model:string;baseUrl:string;timeoutMs:number};

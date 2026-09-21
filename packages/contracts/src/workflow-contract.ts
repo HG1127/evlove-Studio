@@ -47,6 +47,17 @@ export const EvolutionWorkflowCapabilitiesSchema=z.object({
   fullAuto:z.boolean(),
   durable:z.boolean(),
   serverAi:z.boolean(),
+  backend:z.object({
+    dataPlaneConfigured:z.boolean().default(false),
+    httpDataPlaneCodeReady:z.boolean().default(false),
+    artifactStoreConfigured:z.boolean().default(false),
+    sourceParseCodeReady:z.boolean().default(false),
+    sourceParseConfigured:z.boolean().default(false),
+    serverAiCodeReady:z.boolean().default(false),
+    sandboxCodeReady:z.boolean().default(false),
+    browserCodeReady:z.boolean().default(false),
+    releaseCodeReady:z.boolean().default(false),
+  }).prefault({}),
   closure:z.object({
     codeReady:z.boolean().default(false),
     offlineFullAuto:z.boolean().default(false),
@@ -64,3 +75,26 @@ export const EvolutionWorkflowCapabilitiesSchema=z.object({
   pendingActions:z.array(z.string()),
 });
 export type EvolutionWorkflowCapabilities=z.infer<typeof EvolutionWorkflowCapabilitiesSchema>;
+
+export const EvolutionBackendHealthSchema=z.object({
+  checkedAt:z.string(),
+  dataPlane:z.object({
+    configured:z.boolean(),
+    database:z.boolean(),
+    storage:z.boolean(),
+    tables:z.object({
+      missions:z.boolean(),
+      jobs:z.boolean(),
+      events:z.boolean(),
+      artifacts:z.boolean(),
+    }),
+    message:z.string(),
+  }),
+  httpDataPlane:z.object({codeReady:z.boolean()}),
+  sourceParse:z.object({codeReady:z.boolean(),configured:z.boolean(),durable:z.boolean()}),
+  serverAi:z.object({codeReady:z.boolean(),configured:z.boolean()}),
+  sandbox:z.object({codeReady:z.boolean()}),
+  browser:z.object({codeReady:z.boolean()}),
+  release:z.object({codeReady:z.boolean(),writeConfigured:z.boolean()}),
+});
+export type EvolutionBackendHealth=z.infer<typeof EvolutionBackendHealthSchema>;

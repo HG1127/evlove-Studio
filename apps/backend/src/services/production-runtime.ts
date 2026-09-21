@@ -45,7 +45,7 @@ function jobRow(job:EvolutionJob){
     type:value.type,status:value.status,label:value.label,idempotency_key:value.idempotencyKey,
     generation:value.generation,attempts:value.attempts,priority:value.priority,
     checkpoint_id:value.checkpointId??null,input_ref:value.inputRef??null,output_ref:value.outputRef??null,
-    progress:value.progress??null,error:value.error??null,created_at:value.createdAt,
+    metadata:value.metadata??{},progress:value.progress??null,error:value.error??null,created_at:value.createdAt,
     started_at:value.startedAt??null,heartbeat_at:value.heartbeatAt??null,
     finished_at:value.finishedAt??null,updated_at:value.updatedAt,
   };
@@ -57,7 +57,7 @@ function rowJob(row:JsonRecord):EvolutionJob{
     type:row.type,status:row.status,label:row.label,idempotencyKey:row.idempotency_key,
     generation:row.generation,attempts:row.attempts,priority:row.priority,
     checkpointId:row.checkpoint_id??undefined,inputRef:row.input_ref??undefined,
-    outputRef:row.output_ref??undefined,progress:row.progress??undefined,error:row.error??undefined,
+    outputRef:row.output_ref??undefined,metadata:row.metadata??undefined,progress:row.progress??undefined,error:row.error??undefined,
     createdAt:row.created_at,startedAt:row.started_at??undefined,heartbeatAt:row.heartbeat_at??undefined,
     finishedAt:row.finished_at??undefined,updatedAt:row.updated_at,
   });

@@ -5,6 +5,7 @@ import {
   applyProductionLearningGovernance,
   attachLessonGovernance,
   governProductionLessons,
+  integrateDistilledLesson,
   mergeGovernedNextQueue,
   projectNeedsProductionLearningRedistill,
 } from "./index";
@@ -12,6 +13,7 @@ import {
 function baseProject():EvolveProject{
   const observedAt="2026-09-20T15:00:00.000Z";
   return {
+    id:"mission-learning",
     releaseTarget:{provider:"vercel",mode:"preview-promote",status:"connected",label:"Vercel"},
     targetConnection:{adapter:"artifact",connectionId:"artifact",status:"connected",label:"Artifact"},
     release:{
@@ -23,8 +25,10 @@ function baseProject():EvolveProject{
         {id:"h2",at:observedAt,source:"reconcile",action:"reconcile",candidateId:"C1",deploymentId:"dpl-c1",evidenceMode:"live",environment:"production",healthy:true,observationStatus:"healthy",reason:"refresh"},
       ],
     },
+    candidates:[{id:"C1",artifactSnapshots:[{id:"snap-c1",contentHash:"hash-c1"}]}],
     searchChampion:{candidate:{id:"C1"}},
     experimentRun:{winnerId:"C1"},
+    validationRun:{id:"validation-c1"},
     lessons:[],
     nextQueue:[],
   } as unknown as EvolveProject;
@@ -42,6 +46,16 @@ describe("production learning governance",()=>{
     const project=baseProject();
     const lesson=skill(project);
     expect(lesson.governance).toMatchObject({status:"active",candidateId:"C1",deploymentId:"dpl-c1",outcomeTrend:"stable-healthy"});
+    expect(lesson.provenance).toMatchObject({
+      missionId:"mission-learning",
+      candidateId:"C1",
+      deploymentId:"dpl-c1",
+      validationRunId:"validation-c1",
+      artifactSnapshotIds:["snap-c1"],
+      artifactHashes:["hash-c1"],
+      releaseEvidenceMode:"live",
+    });
+    expect(lesson.governance?.history?.map((entry)=>entry.status)).toEqual(["active"]);
   });
 
   it("downgrades legacy online verified skills that lack production governance binding",()=>{
@@ -59,7 +73,36 @@ describe("production learning governance",()=>{
     project.lessons=[skill(project)];
     const governed=governProductionLessons(project,{now:Date.parse("2026-09-20T16:00:00.000Z"),at:"2026-09-20T16:00:00.000Z"});
     expect(governed.lessons[0]).toMatchObject({status:"lesson",reusable:false,governance:{status:"degraded",outcomeTrend:"stale"}});
+    expect(governed.lessons[0]?.governance?.history?.map((entry)=>entry.status)).toEqual(["active","degraded"]);
     expect(governed.nextQueue[0]).toMatchObject({priority:"P1",source:"production-outcome"});
+  });
+
+  it("supersedes degraded knowledge when a fresh verified skill is re-distilled on the same production binding",()=>{
+    const project=baseProject();
+    const previous=skill(project);
+    project.lessons=[{
+      ...previous,
+      status:"lesson",
+      reusable:false,
+      governance:{...previous.governance!,status:"degraded",updatedAt:"2026-09-20T14:58:00.000Z"},
+    }];
+    const integrated=integrateDistilledLesson(project,{
+      id:"L2",title:"Recovered Skill",summary:"revalidated",reusable:true,effect:"healthy",limit:"production",
+      trigger:["prod"],method:["repeat"],validatedOn:["production"],status:"verified-skill",
+    },{at:"2026-09-20T15:02:00.000Z"});
+    expect(integrated.lesson).toMatchObject({
+      id:"L2",
+      status:"verified-skill",
+      governance:{status:"active"},
+      provenance:{missionId:"mission-learning",supersedesLessonIds:["L1"]},
+    });
+    const old=integrated.lessons.find((lesson)=>lesson.id==="L1");
+    expect(old).toMatchObject({
+      status:"lesson",
+      reusable:false,
+      governance:{status:"superseded",supersededByLessonId:"L2"},
+    });
+    expect(old?.governance?.history?.at(-1)?.status).toBe("superseded");
   });
 
   it("revokes a skill when the production candidate/deployment is replaced",()=>{
@@ -128,6 +171,7 @@ describe("production learning governance",()=>{
       governance:{
         status:"pending",reason:"re-distill attempted",candidateId:"C1",deploymentId:"dpl-c1",
         outcomeTrend:"stable-healthy",observedAt:"2026-09-20T15:00:00.000Z",updatedAt:"2026-09-20T15:02:00.000Z",
+        history:[],
       },
     });
     expect(projectNeedsProductionLearningRedistill(governed,{now:Date.parse("2026-09-20T15:02:00.000Z")})).toBe(false);

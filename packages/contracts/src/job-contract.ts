@@ -23,6 +23,7 @@ export const EvolutionJobSchema = z.object({
   checkpointId: z.string().optional(),
   inputRef: z.string().optional(),
   outputRef: z.string().optional(),
+  metadata:z.record(z.string(),z.unknown()).optional(),
   progress: z.object({ done:z.number().optional(), total:z.number().optional(), percent:z.number().optional(), detail:z.string().optional() }).optional(),
   error: z.string().optional(),
   createdAt: z.string(),

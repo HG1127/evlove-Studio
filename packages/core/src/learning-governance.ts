@@ -12,6 +12,63 @@ export type LearningGovernanceResult={
   reason:string;
 };
 
+type LessonGovernance=NonNullable<Lesson["governance"]>;
+
+function governanceHistoryEntry(governance:LessonGovernance){
+  return {
+    at:governance.updatedAt,
+    status:governance.status,
+    reason:governance.reason,
+    candidateId:governance.candidateId,
+    deploymentId:governance.deploymentId,
+    outcomeTrend:governance.outcomeTrend,
+  };
+}
+
+function transitionGovernance(
+  lesson:Lesson,
+  next:Omit<LessonGovernance,"history"> & {history?:LessonGovernance["history"]},
+):LessonGovernance{
+  const previous=lesson.governance;
+  const history=previous?.history??[];
+  const changed=!previous
+    ||previous.status!==next.status
+    ||previous.reason!==next.reason
+    ||previous.candidateId!==next.candidateId
+    ||previous.deploymentId!==next.deploymentId
+    ||previous.outcomeTrend!==next.outcomeTrend
+    ||previous.supersededByLessonId!==next.supersededByLessonId;
+  const value={...next,history};
+  return changed
+    ?{...value,history:[...history,governanceHistoryEntry(value)].slice(-40)}
+    :value;
+}
+
+function buildLessonProvenance(
+  project:EvolveProject,
+  at:string,
+  supersedesLessonIds:string[]=[],
+  binding?:{candidateId?:string;deploymentId?:string},
+):NonNullable<Lesson["provenance"]>{
+  const candidateId=binding?.candidateId??project.release.candidateId??project.searchChampion?.candidate?.id??project.experimentRun.winnerId;
+  const championCandidate=project.searchChampion?.candidate;
+  const candidate=(project.candidates??[]).find((item)=>item.id===candidateId)
+    ??(championCandidate?.id===candidateId?championCandidate:undefined);
+  const snapshots=candidate?.artifactSnapshots??[];
+  return {
+    missionId:project.id,
+    candidateId,
+    deploymentId:binding?.deploymentId??project.release.deploymentId,
+    validationRunId:project.validationRun?.id,
+    artifactSnapshotIds:snapshots.map((snapshot)=>snapshot.id),
+    artifactHashes:snapshots.flatMap((snapshot)=>snapshot.contentHash?[snapshot.contentHash]:[]),
+    releaseEvidenceMode:project.release.evidenceMode,
+    releaseObservedAt:project.release.observedAt,
+    derivedAt:at,
+    supersedesLessonIds,
+  };
+}
+
 function sameReleaseBinding(lesson:Lesson,project:EvolveProject){
   const currentCandidateId=project.release.candidateId??project.searchChampion?.candidate?.id;
   const currentDeploymentId=project.release.deploymentId;
@@ -80,6 +137,25 @@ export function governProductionLessons(
   const currentDeploymentId=project.release.deploymentId;
   let changed=false;
   const lessons=(project.lessons??[]).map((lesson)=>{
+    if(lesson.governance?.status==="superseded")return lesson;
+    if(lesson.status==="verified-skill"&&!lesson.provenance){
+      changed=true;
+      return {
+        ...lesson,
+        status:"lesson" as const,
+        reusable:false,
+        governance:transitionGovernance(lesson,{
+          status:"degraded",
+          reason:"Verified Skill 缺少可追溯 Provenance（Mission / Candidate / Artifact / Validation / Production binding），已降级为 Lesson，等待重新 Distill。",
+          candidateId:lesson.governance?.candidateId??currentCandidateId,
+          deploymentId:lesson.governance?.deploymentId??currentDeploymentId,
+          outcomeTrend:trend.status,
+          observedAt:project.release.observedAt,
+          updatedAt:at,
+          supersededByLessonId:lesson.governance?.supersededByLessonId,
+        }),
+      };
+    }
     if(!lesson.governance){
       if(lesson.status!=="verified-skill")return lesson;
       changed=true;
@@ -87,7 +163,7 @@ export function governProductionLessons(
         ...lesson,
         status:"lesson" as const,
         reusable:false,
-        governance:{
+        governance:transitionGovernance(lesson,{
           status:"degraded" as const,
           reason:"历史 Verified Skill 缺少 exact Candidate / Deployment 的 Production governance 绑定；降级为 Lesson，等待重新线上验证。",
           candidateId:currentCandidateId,
@@ -95,7 +171,8 @@ export function governProductionLessons(
           outcomeTrend:trend.status,
           observedAt:project.release.observedAt,
           updatedAt:at,
-        },
+          supersededByLessonId:undefined,
+        }),
       };
     }
     const sameCandidate=!lesson.governance.candidateId||!currentCandidateId||lesson.governance.candidateId===currentCandidateId;
@@ -107,14 +184,14 @@ export function governProductionLessons(
         ...lesson,
         status:lesson.status==="verified-skill"?"lesson" as const:lesson.status,
         reusable:false,
-        governance:{
+        governance:transitionGovernance(lesson,{
           ...lesson.governance,
           status:"revoked" as const,
           reason:"该经验绑定的 Production Candidate / Deployment 已不再是当前线上版本，取消 Verified Skill 复用资格。",
           outcomeTrend:trend.status,
           observedAt:project.release.observedAt,
           updatedAt:at,
-        },
+        }),
       };
     }
     if(rolledBack){
@@ -124,20 +201,20 @@ export function governProductionLessons(
         ...lesson,
         status:lesson.status==="verified-skill"?"lesson" as const:lesson.status,
         reusable:false,
-        governance:{
+        governance:transitionGovernance(lesson,{
           ...lesson.governance,
           status:"revoked" as const,
           reason:"当前 Candidate 已 Rollback；撤销该 Verified Skill 的线上复用资格，保留为 Lesson 等待重新验证。",
           outcomeTrend:trend.status,
           observedAt:project.release.observedAt,
           updatedAt:at,
-        },
+        }),
       };
     }
     if(project.release.status==="promoted"&&trend.status==="stable-healthy"&&freshness.status==="fresh"){
       const active=lesson.status==="verified-skill";
       const previouslyInvalid=lesson.governance.status==="degraded"||lesson.governance.status==="revoked";
-      const nextGovernance={
+      const nextGovernance=transitionGovernance(lesson,{
         ...lesson.governance,
         status:active?"active" as const:previouslyInvalid?lesson.governance.status:"pending" as const,
         reason:active
@@ -148,7 +225,7 @@ export function governProductionLessons(
         outcomeTrend:trend.status,
         observedAt:project.release.observedAt,
         updatedAt:at,
-      };
+      });
       if(JSON.stringify(nextGovernance)!==JSON.stringify(lesson.governance))changed=true;
       return {...lesson,governance:nextGovernance};
     }
@@ -159,14 +236,14 @@ export function governProductionLessons(
         ...lesson,
         status:"lesson" as const,
         reusable:false,
-        governance:{
+        governance:transitionGovernance(lesson,{
           ...lesson.governance,
           status:severe?"revoked" as const:"degraded" as const,
           reason:`Production Outcome 不再满足 Verified Skill 门槛：${trend.reason}`,
           outcomeTrend:trend.status,
           observedAt:project.release.observedAt,
           updatedAt:at,
-        },
+        }),
       };
     }
     return lesson;
@@ -210,27 +287,71 @@ export function governProductionLessons(
 export function attachLessonGovernance(
   project:EvolveProject,
   lesson:Lesson,
-  options?:{at?:string},
+  options?:{at?:string;supersedesLessonIds?:string[]},
 ):Lesson{
-  if(!projectHasOnlineReleaseTarget(project))return lesson;
   const at=options?.at??new Date().toISOString();
+  const provenance=lesson.provenance??buildLessonProvenance(project,at,options?.supersedesLessonIds??[]);
+  if(!projectHasOnlineReleaseTarget(project))return {...lesson,provenance};
   const trend=productionOutcomeTrend(project,{now:Date.parse(at)});
+  const status=lesson.status==="verified-skill"&&project.release.status==="promoted"&&trend.status==="stable-healthy"?"active":"pending";
+  const reason=lesson.status==="verified-skill"&&project.release.status==="promoted"&&trend.status==="stable-healthy"
+    ?trend.reason
+    :project.release.status==="rolled-back"
+      ?"当前 Release 已 Rollback，不能把本轮方法升级为 Verified Skill。"
+      :`等待稳定 Production Outcome：${trend.reason}`;
   return {
     ...lesson,
-    governance:{
-      status:lesson.status==="verified-skill"&&project.release.status==="promoted"&&trend.status==="stable-healthy"?"active":"pending",
-      reason:lesson.status==="verified-skill"&&project.release.status==="promoted"&&trend.status==="stable-healthy"
-        ?trend.reason
-        :project.release.status==="rolled-back"
-          ?"当前 Release 已 Rollback，不能把本轮方法升级为 Verified Skill。"
-          :`等待稳定 Production Outcome：${trend.reason}`,
+    provenance,
+    governance:transitionGovernance(lesson,{
+      status,
+      reason,
       candidateId:project.release.candidateId??project.searchChampion?.candidate?.id,
       deploymentId:project.release.deploymentId,
       outcomeTrend:trend.status,
       observedAt:project.release.observedAt,
       updatedAt:at,
-    },
+      supersededByLessonId:undefined,
+    }),
   };
+}
+
+export function integrateDistilledLesson(
+  project:EvolveProject,
+  lesson:Lesson,
+  options?:{at?:string},
+):{lesson:Lesson;lessons:Lesson[]}{
+  const at=options?.at??new Date().toISOString();
+  const related=project.lessons.filter((existing)=>
+    existing.id!==lesson.id
+    &&existing.governance
+    &&existing.governance.status!=="superseded"
+    &&sameReleaseBinding(existing,project)
+    &&["pending","degraded","revoked"].includes(existing.governance.status),
+  );
+  const initiallyAttached=attachLessonGovernance(project,lesson,{at});
+  const shouldSupersede=initiallyAttached.status==="verified-skill"&&initiallyAttached.governance?.status==="active";
+  if(!shouldSupersede)return {lesson:initiallyAttached,lessons:[initiallyAttached,...project.lessons]};
+  const supersedesLessonIds=related.map((existing)=>existing.id);
+  const attached=attachLessonGovernance(project,{
+    ...initiallyAttached,
+    provenance:{...initiallyAttached.provenance!,supersedesLessonIds},
+  },{at,supersedesLessonIds});
+  const lessons=project.lessons.map((existing)=>{
+    if(!supersedesLessonIds.includes(existing.id)||!existing.governance)return existing;
+    return {
+      ...existing,
+      status:existing.status==="verified-skill"?"lesson" as const:existing.status,
+      reusable:false,
+      governance:transitionGovernance(existing,{
+        ...existing.governance,
+        status:"superseded" as const,
+        reason:`已由新知识资产 ${attached.id} 在同一 Production binding 上重新 Distill 并替代；旧资产仅保留审计/历史用途。`,
+        updatedAt:at,
+        supersededByLessonId:attached.id,
+      }),
+    };
+  });
+  return {lesson:attached,lessons:[attached,...lessons]};
 }
 
 export function applyProductionLearningGovernance(

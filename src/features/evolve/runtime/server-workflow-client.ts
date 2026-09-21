@@ -1,8 +1,10 @@
 import {
+  EvolutionBackendHealthSchema,
   EvolutionWorkflowCapabilitiesSchema,
   EvolutionWorkflowStartResponseSchema,
   SandboxBrowserHealthSchema,
   SandboxHealthSchema,
+  type EvolutionBackendHealth,
   type EvolutionWorkflowCapabilities,
   type EvolutionWorkflowStartResponse,
   type EvolveProject,
@@ -25,6 +27,10 @@ export async function getServerWorkflowCapabilities(force=false){
   const value=EvolutionWorkflowCapabilitiesSchema.parse(await apiJson("/api/evolution/capabilities"));
   capabilityCache={value,at:Date.now()};
   return value;
+}
+
+export async function checkServerBackendHealth():Promise<EvolutionBackendHealth>{
+  return EvolutionBackendHealthSchema.parse(await apiJson("/api/evolution/backend-health"));
 }
 
 export async function startServerEvolutionWorkflow(missionId:string):Promise<EvolutionWorkflowStartResponse>{

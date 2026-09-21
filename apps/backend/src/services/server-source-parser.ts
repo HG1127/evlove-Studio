@@ -1,0 +1,334 @@
+import JSZip from "jszip";
+import mammoth from "mammoth";
+import * as XLSX from "xlsx";
+import {
+  SourceArtifactSchema,
+  type ArtifactKind,
+  type ArtifactRole,
+  type SourceArtifact,
+} from "@evolution/contracts";
+import {describeArtifact} from "@evolution/core";
+
+const MAX_TEXT_CHARS=160_000;
+const MAX_ZIP_FILES=2_000;
+const MAX_ZIP_TEXT_FILES=220;
+const MAX_ZIP_FILE_CHARS=24_000;
+const MAX_ZIP_TOTAL_CHARS=520_000;
+const TEXT_EXTS=new Set([
+  "txt","md","mdx","html","htm","css","scss","less","js","jsx","ts","tsx","mjs","cjs",
+  "json","yaml","yml","xml","svg","csv","tsv","py","go","rs","java","kt","php","sql","vue","svelte",
+]);
+const CODE_EXTS=new Set(["js","jsx","ts","tsx","mjs","cjs","py","go","rs","java","kt","php","sql","vue","svelte","css","scss"]);
+
+function extension(name:string){
+  const clean=name.toLowerCase().split(/[?#]/)[0]??"";
+  const part=clean.split(".").pop()??"";
+  return part===clean?"":part;
+}
+function xmlUnescape(value:string){
+  return value.replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,'"').replace(/&apos;/g,"'").replace(/&amp;/g,"&");
+}
+function decode(buffer:Uint8Array){
+  return new TextDecoder("utf-8",{fatal:false}).decode(buffer);
+}
+function binaryLike(text:string){
+  if(!text)return true;
+  const sample=text.slice(0,8000);
+  let controls=0;
+  for(const ch of sample){
+    const code=ch.charCodeAt(0);
+    if(code===0||(code<9)||(code>13&&code<32))controls+=1;
+  }
+  return controls/Math.max(1,sample.length)>0.02;
+}
+function stripXml(value:string){
+  return xmlUnescape(
+    value
+      .replace(/<text:tab[^>]*\/?>/g,"\t")
+      .replace(/<text:line-break[^>]*\/?>/g,"\n")
+      .replace(/<\/(?:text:p|text:h|text:list-item|table:table-row)>/g,"\n")
+      .replace(/<[^>]+>/g," "),
+  ).replace(/[ \t]+/g," ").replace(/\n\s+/g,"\n").trim();
+}
+function parseRtf(buffer:Uint8Array){
+  const raw=new TextDecoder("windows-1252",{fatal:false}).decode(buffer);
+  const text=raw
+    .replace(/\\par[d]?\b/g,"\n")
+    .replace(/\\tab\b/g,"\t")
+    .replace(/\\'[0-9a-fA-F]{2}/g,(token)=>String.fromCharCode(Number.parseInt(token.slice(2),16)))
+    .replace(/\\u(-?\d+)\??/g,(_,value)=>String.fromCharCode((Number(value)+65536)%65536))
+    .replace(/\\[a-zA-Z]+-?\d* ?/g,"")
+    .replace(/[{}]/g,"")
+    .replace(/\n{3,}/g,"\n\n")
+    .trim();
+  return {text,structure:["rtf-body"],structuredContent:{kind:"document",subtype:"rtf",approximate:true}};
+}
+async function parseOpenDocument(buffer:Uint8Array,ext:string){
+  const zip=await JSZip.loadAsync(buffer);
+  const content=await zip.file("content.xml")?.async("string");
+  if(!content)throw new Error("OpenDocument 中未找到 content.xml");
+  const text=stripXml(content);
+  const kind=ext==="ods"?"spreadsheet":ext==="odp"?"presentation":"document";
+  const structure=["content.xml",...Object.keys(zip.files).filter((name)=>/^(styles|meta|settings)\.xml$/.test(name))];
+  return {text,structure,structuredContent:{kind,subtype:ext,source:"content.xml"}};
+}
+function familyForPath(path:string){
+  const ext=extension(path);
+  if(CODE_EXTS.has(ext))return "code";
+  if(["md","mdx","txt","html","htm","json","yaml","yml","xml","csv","tsv"].includes(ext))return "document";
+  if(["docx","pdf","odt"].includes(ext))return "document";
+  if(["pptx","odp"].includes(ext))return "presentation";
+  if(["xlsx","xls","ods"].includes(ext))return "spreadsheet";
+  if(["png","jpg","jpeg","gif","webp","svg"].includes(ext))return "image";
+  return "binary";
+}
+function roleForPath(path:string){
+  const lower=path.toLowerCase();
+  if(/(^|\/)(test|tests|__tests__|fixtures?|snapshots?)(\/|$)/.test(lower)||/\.(test|spec)\.[^.]+$/.test(lower))return "test-evidence";
+  if(/(^|\/)(docs?|examples?|samples?)(\/|$)/.test(lower))return "reference-evidence";
+  if(/(^|\/)(package\.json|tsconfig[^/]*|vite\.config\.|pyproject\.toml|requirements\.txt|go\.mod|cargo\.toml)/.test(lower))return "configuration";
+  if(CODE_EXTS.has(extension(lower)))return "implementation";
+  return "content";
+}
+function inferKind(name:string,mimeType:string,structure:string[]):ArtifactKind{
+  const ext=extension(name);
+  if(ext==="zip"){
+    const code=structure.some((path)=>/(^|\/)(package\.json|src\/|app\/|pyproject\.toml|requirements\.txt|go\.mod|cargo\.toml)/i.test(path));
+    return code?"codebase":"generic";
+  }
+  if(["pptx","ppt","odp"].includes(ext))return "presentation";
+  if(["xlsx","xls","ods","csv","tsv"].includes(ext))return "spreadsheet";
+  if(CODE_EXTS.has(ext))return "codebase";
+  if(["json","yaml","yml"].includes(ext)&&/workflow|pipeline|dag|flow/i.test(name))return "workflow";
+  if(mimeType.startsWith("image/"))return "image";
+  if(mimeType.startsWith("audio/")||mimeType.startsWith("video/"))return "media";
+  if(/prompt|instruction|system-prompt/i.test(name))return "prompt";
+  if(/knowledge|corpus|kb|知识/i.test(name))return "knowledge";
+  if(["pdf","docx","doc","odt","rtf","md","mdx","txt","html","htm"].includes(ext))return "document";
+  return "generic";
+}
+
+async function parseDocx(buffer:Uint8Array){
+  let text="";
+  try{text=(await mammoth.extractRawText({buffer:Buffer.from(buffer)})).value;}catch{/* package fallback below */}
+  const zip=await JSZip.loadAsync(buffer);
+  const paths=["word/document.xml",...Object.keys(zip.files).filter((name)=>/^word\/(footnotes|endnotes|header\d*|footer\d*)\.xml$/.test(name))];
+  const parts:Array<{path:string;textRuns:Array<{index:number;text:string}>}>=[];
+  const chunks:string[]=[];
+  for(const path of paths){
+    const file=zip.file(path);
+    if(!file)continue;
+    const xml=await file.async("string");
+    const runs=[...xml.matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)].map((match,index)=>({index,text:xmlUnescape(match[1]??"")}));
+    if(runs.length)parts.push({path,textRuns:runs});
+    const part=runs.map((run)=>run.text).join(" ").trim();
+    if(part)chunks.push(part);
+  }
+  text=text.trim()||chunks.join("\n\n");
+  return {text,structure:parts.map((part)=>part.path),structuredContent:{kind:"document",subtype:"docx",parts}};
+}
+
+async function parsePptx(buffer:Uint8Array){
+  const zip=await JSZip.loadAsync(buffer);
+  const slides=Object.keys(zip.files).filter((name)=>/^ppt\/slides\/slide\d+\.xml$/.test(name)).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+  const rows:Array<{number:number;path:string;textRuns:Array<{index:number;text:string}>}>=[];
+  const chunks:string[]=[];
+  for(const path of slides){
+    const xml=await zip.file(path)!.async("string");
+    const textRuns=[...xml.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)].map((match,index)=>({index,text:xmlUnescape(match[1]??"")}));
+    const number=Number(path.match(/slide(\d+)/)?.[1]??rows.length+1);
+    rows.push({number,path,textRuns});
+    const text=textRuns.map((run)=>run.text).filter(Boolean).join("\n").trim();
+    if(text)chunks.push(`===== SLIDE ${number} =====\n${text}`);
+  }
+  return {text:chunks.join("\n\n"),structure:slides,structuredContent:{kind:"presentation",slides:rows}};
+}
+
+function parseSpreadsheet(buffer:Uint8Array){
+  const workbook=XLSX.read(buffer,{type:"array",cellFormula:true,cellStyles:true,cellDates:true,bookVBA:true});
+  const sheets=workbook.SheetNames.slice(0,30).map((name)=>{
+    const sheet=workbook.Sheets[name];
+    const csv=sheet?XLSX.utils.sheet_to_csv(sheet).slice(0,40_000):"";
+    const rows=sheet?XLSX.utils.sheet_to_json<Array<string|number|boolean|Date|null>>(sheet,{header:1,defval:null,raw:true}).slice(0,600):[];
+    const cells=sheet?Object.entries(sheet).filter(([address])=>!address.startsWith("!")).slice(0,7000).map(([address,cell])=>{
+      const value=cell as XLSX.CellObject;
+      return {address,value:value.v??null,formula:value.f,type:value.t,format:value.z};
+    }):[];
+    return {name,csv,rows,cells};
+  });
+  return {
+    text:sheets.map((sheet)=>`===== SHEET: ${sheet.name} =====\n${sheet.csv}`).join("\n\n"),
+    structure:workbook.SheetNames,
+    structuredContent:{kind:"spreadsheet",sheets},
+  };
+}
+
+async function parsePdf(buffer:Uint8Array){
+  const pdfjs=await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const doc=await pdfjs.getDocument({data:buffer,useWorkerFetch:false}).promise;
+  const chunks:string[]=[];
+  const structure:string[]=[];
+  for(let index=1;index<=Math.min(doc.numPages,300);index+=1){
+    const page=await doc.getPage(index);
+    const content=await page.getTextContent();
+    const text=content.items.map((item)=>"str" in item?item.str:"").join(" ").trim();
+    structure.push(`page-${index}`);
+    if(text)chunks.push(`===== PAGE ${index} =====\n${text}`);
+  }
+  return {text:chunks.join("\n\n"),structure,structuredContent:{kind:"document",subtype:"pdf",pages:structure.length}};
+}
+
+async function parseZip(buffer:Uint8Array){
+  const zip=await JSZip.loadAsync(buffer);
+  const files=Object.values(zip.files).filter((file)=>!file.dir).slice(0,MAX_ZIP_FILES);
+  const manifest=files.map((file)=>file.name);
+  const entries:Array<{path:string;family:string;role:string;content?:string;sizeChars?:number}>=[];
+  let totalChars=0;
+  for(const file of files){
+    if(entries.length>=MAX_ZIP_TEXT_FILES||totalChars>=MAX_ZIP_TOTAL_CHARS)break;
+    const ext=extension(file.name);
+    if(!TEXT_EXTS.has(ext)&&!["package.json","pyproject.toml","go.mod","cargo.toml"].some((name)=>file.name.toLowerCase().endsWith(name)))continue;
+    try{
+      const raw=await file.async("string");
+      const content=raw.slice(0,Math.min(MAX_ZIP_FILE_CHARS,MAX_ZIP_TOTAL_CHARS-totalChars));
+      totalChars+=content.length;
+      entries.push({path:file.name,family:familyForPath(file.name),role:roleForPath(file.name),content,sizeChars:content.length});
+    }catch{/* one bad entry must not collapse package */}
+  }
+  const inventory=manifest.reduce<Record<string,number>>((acc,path)=>{
+    const family=familyForPath(path);acc[family]=(acc[family]??0)+1;return acc;
+  },{});
+  const digest=entries.slice(0,30).map((entry)=>`===== FILE: ${entry.path} =====\n${entry.content?.slice(0,5000)??""}`).join("\n\n");
+  return {
+    text:`ZIP PACKAGE MANIFEST (${manifest.length} files):\n${manifest.join("\n")}\n\nRETRIEVABLE SEMANTIC DIGEST:\n${digest}`,
+    structure:manifest,
+    structuredContent:{
+      kind:"package",
+      manifest,
+      entries,
+      inventory,
+      selectedTextFiles:entries.length,
+      selectedTextChars:totalChars,
+      semanticPrimaryPaths:entries.filter((entry)=>["implementation","configuration","content"].includes(entry.role)).map((entry)=>entry.path),
+      evidenceOnlyPaths:entries.filter((entry)=>["test-evidence","reference-evidence"].includes(entry.role)).map((entry)=>entry.path),
+      codeIndex:{files:[],importEdges:[],parseOk:0,parseFailed:0},
+      parserPolicy:"server-native deep text index; repository intelligence rebuilt on demand",
+    },
+    stats:{
+      totalEntries:manifest.length,
+      indexedEntries:manifest.length,
+      parsedEntries:entries.length,
+      eligibleEntries:entries.length,
+      deepIndexedEntries:entries.length,
+      codeFiles:inventory.code??0,
+      documentFiles:inventory.document??0,
+      officeFiles:(inventory.presentation??0)+(inventory.spreadsheet??0),
+      imageFiles:inventory.image??0,
+    },
+  };
+}
+
+export async function parseServerSource(args:{
+  artifactId:string;
+  name:string;
+  mimeType:string;
+  size:number;
+  role:ArtifactRole;
+  blob:Blob;
+  storageRef:string;
+}):Promise<SourceArtifact>{
+  const buffer=new Uint8Array(await args.blob.arrayBuffer());
+  const ext=extension(args.name);
+  const warnings:string[]=[];
+  let text="";
+  let structure:string[]=[];
+  let structuredContent:unknown;
+  let stats={totalEntries:0,indexedEntries:0,parsedEntries:0,eligibleEntries:0,deepIndexedEntries:0,codeFiles:0,documentFiles:0,officeFiles:0,imageFiles:0};
+  try{
+    if(ext==="docx"){
+      ({text,structure,structuredContent}=await parseDocx(buffer));
+    }else if(ext==="pptx"){
+      ({text,structure,structuredContent}=await parsePptx(buffer));
+    }else if(["xlsx","xls"].includes(ext)){
+      ({text,structure,structuredContent}=parseSpreadsheet(buffer));
+    }else if(["odt","ods","odp"].includes(ext)){
+      ({text,structure,structuredContent}=await parseOpenDocument(buffer,ext));
+    }else if(ext==="rtf"){
+      ({text,structure,structuredContent}=parseRtf(buffer));
+      warnings.push("RTF 已按文本近似抽取；样式信息不作为结构化证据。");
+    }else if(ext==="pdf"){
+      ({text,structure,structuredContent}=await parsePdf(buffer));
+    }else if(ext==="zip"){
+      const parsed=await parseZip(buffer);
+      ({text,structure,structuredContent}=parsed);stats=parsed.stats;
+    }else{
+      const decoded=decode(buffer);
+      if(TEXT_EXTS.has(ext)||args.mimeType.startsWith("text/")||!binaryLike(decoded)){
+        text=decoded.slice(0,MAX_TEXT_CHARS);
+        if(ext==="json"){
+          try{structuredContent={kind:"json",value:JSON.parse(decoded)};}catch{warnings.push("JSON 文本无法完整解析为结构化对象，已保留原文。");}
+        }
+      }else{
+        warnings.push("当前 Server Native Parser 未识别该二进制格式；原文件已安全保留，可连接外部 Parser 扩展。");
+      }
+    }
+  }catch(error){
+    warnings.push(`Server Native Parser 部分解析失败：${error instanceof Error?error.message:String(error)}`);
+  }
+  const artifactKind=inferKind(args.name,args.mimeType,structure);
+  const parseStatus=args.mimeType.startsWith("image/")?"image":text?"ready":warnings.length?"unsupported":"binary";
+  const artifactDescriptor=describeArtifact({
+    name:args.name,mimeType:args.mimeType,extension:ext,artifactKind,structure,structuredContent,
+  });
+  const parsedEntries=stats.parsedEntries||(text?1:0);
+  const totalEntries=stats.totalEntries||(text?1:0);
+  const now=new Date().toISOString();
+  return SourceArtifactSchema.parse({
+    id:args.artifactId,
+    name:args.name,
+    role:args.role,
+    artifactKind,
+    artifactDescriptor,
+    mimeType:args.mimeType,
+    size:args.size,
+    extension:ext,
+    inputMode:"upload",
+    parseStatus,
+    textContent:text||undefined,
+    textExcerpt:text?text.slice(0,2800):`[附件] ${args.name}`,
+    storageRef:args.storageRef,
+    structure,
+    structuredContent,
+    parsingProfile:{
+      engine:"server-native",
+      engineLabel:"Server Native Parser",
+      confidence:text?0.9:0.45,
+      completeness:text?Math.min(1,Math.max(0.55,parsedEntries/Math.max(1,totalEntries))):0.15,
+      structuralCoverage:structure.length?Math.min(1,structure.length/Math.max(1,totalEntries)):text?0.8:0.15,
+      totalEntries,
+      indexedEntries:stats.indexedEntries||structure.length||(text?1:0),
+      parsedEntries,
+      eligibleEntries:stats.eligibleEntries||parsedEntries,
+      deepIndexedEntries:stats.deepIndexedEntries||parsedEntries,
+      deepIndexCoverage:parsedEntries?1:0,
+      codeFiles:stats.codeFiles,
+      documentFiles:stats.documentFiles,
+      officeFiles:stats.officeFiles,
+      imageFiles:stats.imageFiles,
+      contextWindowChars:text.length,
+      executableEvidence:false,
+      visualEvidence:false,
+      limitations:warnings,
+      recommendations:parseStatus==="unsupported"?["如需更深层二进制语义解析，请配置 Server Parser Plugin（Docling/Unstructured/Tika）。"]:[],
+      generatedAt:now,
+    },
+    warnings,
+    createdAt:now,
+  });
+}
+
+export const SERVER_SOURCE_PARSE_EXTENSIONS=[
+  "txt","md","mdx","html","htm","json","yaml","yml","xml","csv","tsv",
+  "js","jsx","ts","tsx","mjs","cjs","py","go","rs","java","kt","php","sql","vue","svelte",
+  "docx","pptx","xlsx","xls","odt","ods","odp","rtf","pdf","zip",
+];

@@ -35,11 +35,10 @@ import {
 } from "../runtime/system-readiness";
 import { deriveWorkflowSteps } from "../runtime/workflow-engine";
 import { getRunnerGatewayConfig, testRunnerGateway } from "../runtime/target-runner-config";
-import { PRODUCTION_BOUNDARIES, PRODUCTION_SCHEMA_VERSIONS, PRODUCTION_PORTS, type EvolutionWorkflowCapabilities, type SandboxBrowserHealth, type SandboxHealth, type VercelReleaseCapabilities, type VercelReleaseHealth } from "@evolution/contracts";
-import { checkSupabaseBackendHealth, checkSupabaseRealtimeHealth, type SupabaseBackendHealth, type SupabaseRealtimeHealth } from "@evolution/adapters";
-import { getSupabaseRuntimeConfig, productionRuntimeMode } from "../runtime/production-runtime";
+import { PRODUCTION_BOUNDARIES, PRODUCTION_SCHEMA_VERSIONS, PRODUCTION_PORTS, type EvolutionBackendHealth, type EvolutionWorkflowCapabilities, type SandboxBrowserHealth, type SandboxHealth, type VercelReleaseCapabilities, type VercelReleaseHealth } from "@evolution/contracts";
+import { productionRuntimeMode } from "../runtime/production-runtime";
 import { productionSyncStatus } from "../runtime/production-sync";
-import { checkServerBrowserHealth, checkServerSandboxHealth, getServerWorkflowCapabilities } from "../runtime/server-workflow-client";
+import { checkServerBackendHealth, checkServerBrowserHealth, checkServerSandboxHealth, getServerWorkflowCapabilities } from "../runtime/server-workflow-client";
 import { checkServerVercelReleaseHealth, getServerVercelReleaseCapabilities } from "../runtime/server-release-client";
 import { HarnessInspector } from "./harness-inspector";
 
@@ -107,9 +106,9 @@ export function EvolutionReadinessCenter() {
   const [backendPriority, setBackendPriority] = useState<"all" | "P0" | "P1" | "P2">("P0");
   const [runner, setRunner] = useState<RunnerCapabilitySnapshot | undefined>(() => readRunnerCapabilities());
   const [runnerCheck, setRunnerCheck] = useState<{ busy: boolean; message: string }>({ busy: false, message: "" });
-  const [supabaseCheck, setSupabaseCheck] = useState<{ busy: boolean; message: string; health?: SupabaseBackendHealth }>({ busy: false, message: "" });
-  const [realtimeCheck, setRealtimeCheck] = useState<{ busy: boolean; message: string; health?: SupabaseRealtimeHealth; liveStatus: string }>(() => ({ busy: false, message: "", liveStatus: productionSyncStatus().realtimeStatus }));
+  const [syncCheck, setSyncCheck] = useState<{ liveStatus: string }>(() => ({ liveStatus: productionSyncStatus().realtimeStatus }));
   const [workflowCheck, setWorkflowCheck] = useState<{ busy: boolean; message: string; capabilities?: EvolutionWorkflowCapabilities }>({ busy: false, message: "" });
+  const [backendHealthCheck,setBackendHealthCheck]=useState<{busy:boolean;message:string;health?:EvolutionBackendHealth}>({busy:false,message:""});
   const [sandboxCheck, setSandboxCheck] = useState<{ busy: boolean; message: string; health?: SandboxHealth }>({ busy: false, message: "" });
   const [browserCheck, setBrowserCheck] = useState<{ busy: boolean; message: string; health?: SandboxBrowserHealth }>({ busy: false, message: "" });
   const [releaseCheck, setReleaseCheck] = useState<{ busy: boolean; message: string; capabilities?: VercelReleaseCapabilities; health?: VercelReleaseHealth }>({ busy: false, message: "" });
@@ -126,10 +125,11 @@ export function EvolutionReadinessCenter() {
   const p0Ready = p0.filter((item) => backendRequirementState(item, signals) === "ready").length;
   const productionMode = productionRuntimeMode();
   const productionContractsReady = PRODUCTION_BOUNDARIES.filter((item) => item.ready).length;
-  const productionModeLabel = productionMode === "http" ? "REMOTE API" : productionMode === "supabase" ? "SUPABASE" : "LOCAL ADAPTER";
-  const supabaseConfig = getSupabaseRuntimeConfig();
-  const supabaseReady = Boolean(supabaseCheck.health?.database && supabaseCheck.health?.storage);
-  const p02Ready = Boolean(supabaseReady && realtimeCheck.health?.ready);
+  const productionModeLabel = productionMode === "http" ? "SERVER API" : "LOCAL ADAPTER";
+  const serverDataPlaneReady=Boolean(backendHealthCheck.health?.dataPlane.database&&backendHealthCheck.health?.dataPlane.storage);
+  const dataPlaneReady=productionMode==="http"?serverDataPlaneReady:false;
+  const remoteSyncReady=productionMode==="http"&&syncCheck.liveStatus==="http-polling";
+  const p02Ready = Boolean(dataPlaneReady && remoteSyncReady);
   const p03Connected = Boolean(workflowCheck.capabilities?.available && workflowCheck.capabilities?.durable);
   const p03FullAuto = Boolean(workflowCheck.capabilities?.fullAuto);
   const p03OfflineAuto = Boolean(workflowCheck.capabilities?.closure.offlineFullAuto);
@@ -178,22 +178,9 @@ export function EvolutionReadinessCenter() {
   }, []);
 
   useEffect(() => {
-    const config = getSupabaseRuntimeConfig();
-    if (!config) return;
-    let active = true;
-    queueMicrotask(() => { if (active) setSupabaseCheck({ busy: true, message: "正在检测 Supabase 数据底座…" }); });
-    void checkSupabaseBackendHealth(config).then((health) => {
-      if (active) setSupabaseCheck({ busy: false, message: health.message, health });
-    }).catch((error) => {
-      if (active) setSupabaseCheck({ busy: false, message: error instanceof Error ? error.message : String(error) });
-    });
-    return () => { active = false; };
-  }, []);
-
-  useEffect(() => {
     const onRealtimeStatus = (event: Event) => {
       const status = (event as CustomEvent<{ status?: string }>).detail?.status;
-      if (status) setRealtimeCheck((current) => ({ ...current, liveStatus: status }));
+      if (status) setSyncCheck({ liveStatus: status });
     };
     window.addEventListener("evolve-production-realtime-status", onRealtimeStatus);
     return () => window.removeEventListener("evolve-production-realtime-status", onRealtimeStatus);
@@ -214,6 +201,17 @@ export function EvolutionReadinessCenter() {
     });
     return () => { active = false; };
   }, []);
+
+  useEffect(()=>{
+    let active=true;
+    queueMicrotask(()=>{if(active)setBackendHealthCheck({busy:true,message:"正在检测 Server Backend Data Plane…"});});
+    void checkServerBackendHealth().then((health)=>{
+      if(active)setBackendHealthCheck({busy:false,health,message:health.dataPlane.message});
+    }).catch((error)=>{
+      if(active)setBackendHealthCheck({busy:false,message:error instanceof Error?error.message:String(error)});
+    });
+    return ()=>{active=false;};
+  },[]);
 
   useEffect(() => {
     let active = true;
@@ -236,28 +234,6 @@ export function EvolutionReadinessCenter() {
     return () => { active = false; };
   }, []);
 
-  const refreshSupabase = () => {
-    const config = getSupabaseRuntimeConfig();
-    if (!config) {
-      setSupabaseCheck({ busy: false, message: "未配置 VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY" });
-      return;
-    }
-    setSupabaseCheck((current) => ({ ...current, busy: true, message: "正在重新检测 Supabase…" }));
-    void checkSupabaseBackendHealth(config).then((health) => setSupabaseCheck({ busy: false, message: health.message, health }))
-      .catch((error) => setSupabaseCheck({ busy: false, message: error instanceof Error ? error.message : String(error) }));
-  };
-
-  const refreshRealtime = () => {
-    const config = getSupabaseRuntimeConfig();
-    if (!config) {
-      setRealtimeCheck((current) => ({ ...current, busy: false, message: "未配置 Supabase" }));
-      return;
-    }
-    setRealtimeCheck((current) => ({ ...current, busy: true, message: "正在做真实 Realtime 自检…" }));
-    void checkSupabaseRealtimeHealth(config).then((health) => setRealtimeCheck((current) => ({ ...current, busy: false, message: health.message, health })))
-      .catch((error) => setRealtimeCheck((current) => ({ ...current, busy: false, message: error instanceof Error ? error.message : String(error) })));
-  };
-
   const refreshWorkflow = () => {
     setWorkflowCheck((current) => ({ ...current, busy: true, message: "正在重新检测 Workflow…" }));
     void getServerWorkflowCapabilities(true).then((capabilities) => setWorkflowCheck({
@@ -265,6 +241,13 @@ export function EvolutionReadinessCenter() {
       capabilities,
       message: workflowCapabilityMessage(capabilities),
     })).catch((error) => setWorkflowCheck({ busy: false, message: error instanceof Error ? error.message : String(error) }));
+  };
+
+  const refreshBackendHealth=()=>{
+    setBackendHealthCheck((current)=>({...current,busy:true,message:"正在重新检测 Server Backend…"}));
+    void checkServerBackendHealth()
+      .then((health)=>setBackendHealthCheck({busy:false,health,message:health.dataPlane.message}))
+      .catch((error)=>setBackendHealthCheck({busy:false,message:error instanceof Error?error.message:String(error)}));
   };
 
   const refreshSandbox = () => {
@@ -427,33 +410,37 @@ export function EvolutionReadinessCenter() {
           <div className="rounded-xl border bg-white p-3">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <div className="text-xs font-semibold text-slate-800">P0-1 · Supabase Data Foundation</div>
-                <div className="mt-1 text-[11px] text-slate-500">{supabaseConfig ? (supabaseCheck.message || "已配置，等待健康检查") : "未配置 Supabase；当前继续使用 Local Adapter"}</div>
+                <div className="text-xs font-semibold text-slate-800">P0-1 · Server Data Foundation</div>
+                <div className="mt-1 text-[11px] text-slate-500">{productionMode==="http"
+                  ?(backendHealthCheck.message||"等待 Server Data Plane 健康检查")
+                  :"开发环境当前使用 Local Adapter；生产构建默认走同源 /api/evolution。"}</div>
               </div>
               <div className="flex items-center gap-2">
-                <Badge className={supabaseReady ? "border-emerald-200 bg-emerald-50 text-emerald-700" : supabaseConfig ? "border-amber-200 bg-amber-50 text-amber-700" : "border-slate-200 bg-slate-50 text-slate-600"}>{supabaseReady ? "READY" : supabaseConfig ? "CHECK" : "NOT CONFIGURED"}</Badge>
-                <Button size="sm" variant="secondary" onClick={refreshSupabase} disabled={supabaseCheck.busy}><RefreshCcw className={`size-3.5 ${supabaseCheck.busy ? "animate-spin" : ""}`} />检测</Button>
+                <Badge className={dataPlaneReady ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}>{dataPlaneReady ? "READY" : "CHECK"}</Badge>
+                <Button size="sm" variant="secondary" onClick={refreshBackendHealth} disabled={backendHealthCheck.busy||productionMode!=="http"}><RefreshCcw className={`size-3.5 ${backendHealthCheck.busy ? "animate-spin" : ""}`} />检测 Server</Button>
               </div>
             </div>
             <div className="mt-3 grid grid-cols-2 gap-2 text-[10px] sm:grid-cols-5">
-              {(["missions","jobs","events","artifacts"] as const).map((name) => <div key={name} className="rounded-lg bg-slate-50 px-2 py-1.5"><b>{name}</b><div className={supabaseCheck.health?.tables[name] ? "text-emerald-600" : "text-slate-400"}>{supabaseCheck.health?.tables[name] ? "READY" : "—"}</div></div>)}
-              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>storage</b><div className={supabaseCheck.health?.storage ? "text-emerald-600" : "text-slate-400"}>{supabaseCheck.health?.storage ? "READY" : "—"}</div></div>
+              {(["missions","jobs","events","artifacts"] as const).map((name) => {const ready=backendHealthCheck.health?.dataPlane.tables[name];return <div key={name} className="rounded-lg bg-slate-50 px-2 py-1.5"><b>{name}</b><div className={ready ? "text-emerald-600" : "text-slate-400"}>{ready ? "READY" : "—"}</div></div>;})}
+              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>storage</b><div className={dataPlaneReady ? "text-emerald-600" : "text-slate-400"}>{dataPlaneReady ? "READY" : "—"}</div></div>
             </div>
           </div>
           <div className="rounded-xl border bg-white p-3">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <div className="text-xs font-semibold text-slate-800">P0-2 · Realtime + Artifact Remote</div>
-                <div className="mt-1 text-[11px] text-slate-500">{realtimeCheck.message || `Channel: ${realtimeCheck.liveStatus} · Artifact: ${supabaseCheck.health?.storage ? "REMOTE READY" : "WAITING"}`}</div>
+                <div className="text-xs font-semibold text-slate-800">P0-2 · HTTP Projection + Artifact Remote</div>
+                <div className="mt-1 text-[11px] text-slate-500">{productionMode==="http"
+                  ?`HTTP projection: ${syncCheck.liveStatus} · Artifact: ${serverDataPlaneReady ? "REMOTE READY" : "WAITING"}`
+                  :"Local Adapter 不做远端同步；生产环境通过 Server API 统一读写。"}</div>
               </div>
               <div className="flex items-center gap-2">
                 <Badge className={p02Ready ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}>{p02Ready ? "READY" : "PENDING"}</Badge>
-                <Button size="sm" variant="secondary" onClick={refreshRealtime} disabled={realtimeCheck.busy || !supabaseConfig}><RefreshCcw className={`size-3.5 ${realtimeCheck.busy ? "animate-spin" : ""}`} />检测 Realtime</Button>
+                <Button size="sm" variant="secondary" onClick={refreshBackendHealth} disabled={backendHealthCheck.busy||productionMode!=="http"}><RefreshCcw className={`size-3.5 ${backendHealthCheck.busy ? "animate-spin" : ""}`} />检测 Backend</Button>
               </div>
             </div>
             <div className="mt-3 grid grid-cols-2 gap-2 text-[10px] sm:grid-cols-3">
-              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>realtime</b><div className={realtimeCheck.health?.ready ? "text-emerald-600" : "text-slate-400"}>{realtimeCheck.health?.ready ? `READY ${realtimeCheck.health.latencyMs ?? ""}ms` : realtimeCheck.liveStatus}</div></div>
-              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>artifact remote</b><div className={supabaseCheck.health?.storage ? "text-emerald-600" : "text-slate-400"}>{supabaseCheck.health?.storage ? "READY" : "—"}</div></div>
+              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>sync</b><div className={remoteSyncReady ? "text-emerald-600" : "text-slate-400"}>{syncCheck.liveStatus}</div></div>
+              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>artifact remote</b><div className={dataPlaneReady ? "text-emerald-600" : "text-slate-400"}>{dataPlaneReady ? "READY" : "—"}</div></div>
               <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>local cache</b><div className="text-sky-600">IndexedDB CACHE</div></div>
             </div>
           </div>
@@ -468,9 +455,12 @@ export function EvolutionReadinessCenter() {
                 <Button size="sm" variant="secondary" onClick={refreshWorkflow} disabled={workflowCheck.busy}><RefreshCcw className={`size-3.5 ${workflowCheck.busy ? "animate-spin" : ""}`} />检测 Workflow</Button>
               </div>
             </div>
-            <div className="mt-3 grid grid-cols-2 gap-2 text-[10px] sm:grid-cols-4 xl:grid-cols-9">
+            <div className="mt-3 grid grid-cols-2 gap-2 text-[10px] sm:grid-cols-4 xl:grid-cols-12">
               <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>durable</b><div className={workflowCheck.capabilities?.durable ? "text-emerald-600" : "text-slate-400"}>{workflowCheck.capabilities?.durable ? "READY" : "—"}</div></div>
               <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>server AI</b><div className={workflowCheck.capabilities?.serverAi ? "text-emerald-600" : "text-amber-600"}>{workflowCheck.capabilities?.serverAi ? "READY" : "NOT CONFIGURED"}</div></div>
+              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>server data</b><div className={workflowCheck.capabilities?.backend.dataPlaneConfigured ? "text-emerald-600" : "text-amber-600"}>{workflowCheck.capabilities?.backend.dataPlaneConfigured ? "READY" : "NOT CONFIGURED"}</div></div>
+              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>HTTP API</b><div className={workflowCheck.capabilities?.backend.httpDataPlaneCodeReady ? "text-emerald-600" : "text-slate-400"}>{workflowCheck.capabilities?.backend.httpDataPlaneCodeReady ? "CODE READY" : "—"}</div></div>
+              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>source parse</b><div className={workflowCheck.capabilities?.backend.sourceParseConfigured ? "text-emerald-600" : workflowCheck.capabilities?.backend.sourceParseCodeReady ? "text-amber-600" : "text-slate-400"}>{workflowCheck.capabilities?.backend.sourceParseConfigured ? "READY" : workflowCheck.capabilities?.backend.sourceParseCodeReady ? "CODE READY" : "—"}</div></div>
               <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>server actions</b><div className="text-sky-600">{workflowCheck.capabilities?.serverNativeActions.length ?? 0}</div></div>
               <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>conditional</b><div className={workflowCheck.capabilities?.conditionalActions.length ? "text-sky-600" : "text-slate-400"}>{workflowCheck.capabilities?.conditionalActions.join(" / ") || "NONE"}</div></div>
               <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>migration</b><div className={workflowCheck.capabilities?.migrationPendingActions.length ? "text-amber-600" : "text-emerald-600"}>{workflowCheck.capabilities?.migrationPendingActions.join(" / ") || "NONE"}</div></div>
@@ -554,7 +544,7 @@ export function EvolutionReadinessCenter() {
               </div>
             </div>
           </div>
-          <div className="rounded-xl border border-violet-100 bg-violet-50/60 px-3 py-2.5 text-[11px] leading-5 text-violet-800"><b>当前优先级：</b>{!supabaseReady ? "先完成 P0-1 Supabase Data Foundation。" : !p02Ready ? "先完成 P0-2 Realtime 验收。" : !hybridFunctionalReady ? "先完成 P0-4 Vercel Sandbox 真实执行接入。" : !hybridInteractionReady ? "Sandbox Build/Test 已 READY；当前继续完成 Browser Runtime Snapshot、真实 Preview 与 Browser Steps/E2E。" : !releaseReadReady ? "Hybrid 功能闭环已 READY；当前补 Production Release Health 观测。" : !releaseWriteReady ? "Hybrid + Production Health 已 READY；Promote / Rollback 代码已 fail-closed，待后续配置 VERCEL_RELEASE_TOKEN 时再开放写操作。" : !p03FullAuto ? "Hybrid + Production Release Read/Write 已 READY；Server AI / FULL AUTO 仍按既定计划后置。" : "P0-3/P0-4/Production Release 已完整闭环。"}</div>
+          <div className="rounded-xl border border-violet-100 bg-violet-50/60 px-3 py-2.5 text-[11px] leading-5 text-violet-800"><b>当前优先级：</b>{!serverDataPlaneReady ? "先完成 Server Data Plane 配置与健康检查。" : !p02Ready ? "先完成 HTTP Projection / Artifact Remote 验收。" : !hybridFunctionalReady ? "先完成 P0-4 Vercel Sandbox 真实执行接入。" : !hybridInteractionReady ? "Sandbox Build/Test 已 READY；当前继续完成 Browser Runtime Snapshot、真实 Preview 与 Browser Steps/E2E。" : !releaseReadReady ? "Hybrid 功能闭环已 READY；当前补 Production Release Health 观测。" : !releaseWriteReady ? "Hybrid + Production Health 已 READY；Promote / Rollback 代码已 fail-closed，待后续配置 VERCEL_RELEASE_TOKEN 时再开放写操作。" : !p03FullAuto ? "Hybrid + Production Release Read/Write 已 READY；Server AI / FULL AUTO 仍按既定计划后置。" : "P0-3/P0-4/Production Release 已完整闭环。"}</div>
         </CardContent>
       </Card>
       <div className="mb-3 flex flex-wrap items-end justify-between gap-3"><div><h2 className="font-semibold">Backend Readiness Backlog</h2><p className="mt-1 text-xs text-slate-500">默认只看 P0。这里列的是必须配置真实后端/基础设施才能升级证据等级的能力。</p></div><div className="flex flex-wrap gap-2"><div className="flex rounded-xl bg-slate-200/60 p-1">{(["P0","P1","P2","all"] as const).map((priority)=><Button key={priority} size="sm" variant={backendPriority===priority?"default":"ghost"} onClick={()=>setBackendPriority(priority)}>{priority==="all"?"全部":priority}</Button>)}</div><Link to="/settings"><Button variant="secondary" size="sm">AI 模型与连接 <ArrowRight className="size-3.5" /></Button></Link></div></div>

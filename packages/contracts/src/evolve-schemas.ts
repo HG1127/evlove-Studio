@@ -136,7 +136,7 @@ export type SemanticEvolution = z.infer<typeof SemanticEvolutionSchema>;
 
 
 export const ParsingProfileSchema = z.object({
-  engine: z.enum(["browser-local", "docling", "unstructured", "tika", "code-ast", "hybrid"]).default("browser-local"),
+  engine: z.enum(["browser-local", "server-native", "docling", "unstructured", "tika", "code-ast", "hybrid"]).default("browser-local"),
   engineLabel: z.string().default("浏览器本地解析"),
   confidence: z.number().min(0).max(1).default(0.5),
   completeness: z.number().min(0).max(1).default(0),
@@ -781,6 +781,30 @@ export const ReleaseStateSchema = z.object({
 });
 export type ReleaseState = z.infer<typeof ReleaseStateSchema>;
 
+export const LessonProvenanceSchema = z.object({
+  missionId:z.string(),
+  candidateId:z.string().optional(),
+  deploymentId:z.string().optional(),
+  validationRunId:z.string().optional(),
+  artifactSnapshotIds:z.array(z.string()).default([]),
+  artifactHashes:z.array(z.string()).default([]),
+  releaseEvidenceMode:z.enum(["none","live","simulation"]).optional(),
+  releaseObservedAt:z.string().optional(),
+  derivedAt:z.string(),
+  supersedesLessonIds:z.array(z.string()).default([]),
+});
+export type LessonProvenance = z.infer<typeof LessonProvenanceSchema>;
+
+export const LessonGovernanceHistoryEntrySchema = z.object({
+  at:z.string(),
+  status:z.enum(["pending","active","degraded","revoked","superseded"]),
+  reason:z.string(),
+  candidateId:z.string().optional(),
+  deploymentId:z.string().optional(),
+  outcomeTrend:z.enum(["stable-healthy","healthy-insufficient","degrading","flapping","stale","unknown"]).optional(),
+});
+export type LessonGovernanceHistoryEntry = z.infer<typeof LessonGovernanceHistoryEntrySchema>;
+
 export const LessonSchema = z.object({
   id: z.string(),
   title: z.string(),
@@ -792,14 +816,17 @@ export const LessonSchema = z.object({
   method: z.array(z.string()).default([]),
   validatedOn: z.array(z.string()).default([]),
   status: z.enum(["lesson", "verified-skill", "anti-pattern"]).default("lesson"),
+  provenance:LessonProvenanceSchema.optional(),
   governance:z.object({
-    status:z.enum(["pending","active","degraded","revoked"]),
+    status:z.enum(["pending","active","degraded","revoked","superseded"]),
     reason:z.string(),
     candidateId:z.string().optional(),
     deploymentId:z.string().optional(),
     outcomeTrend:z.enum(["stable-healthy","healthy-insufficient","degrading","flapping","stale","unknown"]).optional(),
     observedAt:z.string().optional(),
     updatedAt:z.string(),
+    supersededByLessonId:z.string().optional(),
+    history:z.array(LessonGovernanceHistoryEntrySchema).default([]),
   }).optional(),
 });
 export type Lesson = z.infer<typeof LessonSchema>;

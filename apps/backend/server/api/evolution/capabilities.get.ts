@@ -1,6 +1,6 @@
 import { defineEventHandler } from "nitro/h3";
 import { EvolutionWorkflowCapabilitiesSchema } from "@evolution/contracts";
-import { serverAiConfigured, vercelReleaseWriteConfigured } from "../../../src/server-env";
+import { serverAiConfigured, serverSupabaseConfigured, vercelReleaseWriteConfigured } from "../../../src/server-env";
 
 const CONTROL_ACTIONS=["adopt-defaults","approve-contract","wait-human","complete","package"] as const;
 const AI_ACTIONS=["understand","compile-contract","build-eval","distill","next-queue"] as const;
@@ -9,6 +9,7 @@ const MIGRATION_PENDING_ACTIONS:string[]=[];
 
 export default defineEventHandler(()=>{
   const ai=serverAiConfigured();
+  const dataPlane=serverSupabaseConfigured();
   const releaseWrite=vercelReleaseWriteConfigured();
   const blockedActions=[
     ...(!ai?[
@@ -19,17 +20,22 @@ export default defineEventHandler(()=>{
       {action:"run-release",reason:"vercel-release-credential-required"},
       {action:"reconcile-release",reason:"vercel-release-credential-required"},
     ]:[]),
+    ...(!dataPlane?[
+      {action:"revalidate",reason:"server-data-plane-not-configured"},
+      {action:"run-campaign",reason:"server-data-plane-not-configured"},
+    ]:[]),
   ];
   const configBlocked=[
     ...(!ai?[{capability:"server-ai",reason:"server-ai-not-configured"}]:[]),
     ...(!releaseWrite?[{capability:"vercel-release-write",reason:"vercel-release-credential-required"}]:[]),
+    ...(!dataPlane?[{capability:"server-data-plane",reason:"supabase-server-config-required"}]:[]),
   ];
   const externalCapabilityBlocked=[
     {capability:"online-release-authorization",reason:"human-release-ready-approval-required"},
     {capability:"preview-deployment-binding",reason:"explicit-preview-deployment-binding-required"},
   ];
   const codeReady=MIGRATION_PENDING_ACTIONS.length===0;
-  const offlineFullAuto=codeReady&&ai;
+  const offlineFullAuto=codeReady&&ai&&dataPlane;
   const releaseOrchestrationReady=true;
   const releaseReconciliationReady=releaseWrite;
   const onlinePostApprovalAuto=offlineFullAuto&&releaseWrite&&releaseOrchestrationReady&&releaseReconciliationReady;
@@ -45,6 +51,17 @@ export default defineEventHandler(()=>{
     fullAuto:offlineFullAuto&&onlineFullAuto,
     durable:true,
     serverAi:ai,
+    backend:{
+      dataPlaneConfigured:dataPlane,
+      httpDataPlaneCodeReady:true,
+      artifactStoreConfigured:dataPlane,
+      sourceParseCodeReady:true,
+      sourceParseConfigured:dataPlane,
+      serverAiCodeReady:true,
+      sandboxCodeReady:true,
+      browserCodeReady:true,
+      releaseCodeReady:true,
+    },
     closure:{
       codeReady,
       offlineFullAuto,

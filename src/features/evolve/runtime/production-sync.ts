@@ -1,16 +1,16 @@
-import { subscribeSupabaseProductionRealtime } from "@evolution/adapters";
 import { cacheLocalEvolutionEvent } from "./event-contract";
 import { getLocalProject, listLocalProjects, saveLocalProject, deleteLocalProject } from "./local-store";
-import { cacheRemoteEvolutionJob, localProductionPorts, removeCachedEvolutionJob } from "./local-production-adapters";
-import { getProductionRuntime, getSupabaseRuntimeConfig, productionRuntimeMode } from "./production-runtime";
+import { cacheRemoteEvolutionJob, localProductionPorts } from "./local-production-adapters";
+import { getProductionRuntime, productionRuntimeMode } from "./production-runtime";
 
 let initialized=false;
 let applyingRemote=false;
 let missionTimer:number|undefined;
 let jobTimer:number|undefined;
+let httpPollTimer:number|undefined;
+let httpPollRunning=false;
 let knownRemoteIds=new Set<string>();
 let realtimeStatus="disabled";
-let stopRealtime:(()=>Promise<void>)|undefined;
 
 function withRemoteProjection(fn:()=>void){
   applyingRemote=true;
@@ -63,34 +63,41 @@ async function hydrateRemoteProjection(){
   });
 }
 
-function startSupabaseRealtime(){
-  const config=getSupabaseRuntimeConfig();
-  if(!config||productionRuntimeMode()!=="supabase")return;
-  setRealtimeStatus("connecting");
-  const subscription=subscribeSupabaseProductionRealtime(config,{
-    onMissionUpsert:(project)=>{
-      withRemoteProjection(()=>{
+async function pollHttpProjection(){
+  if(productionRuntimeMode()!=="http"||httpPollRunning)return;
+  httpPollRunning=true;
+  try{
+    const ports=getProductionRuntime();
+    const [missions,jobs,events]=await Promise.all([
+      ports.missions.list(),
+      ports.jobs.list(),
+      ports.events.list(undefined,500),
+    ]);
+    const remoteIds=new Set(missions.map((project)=>project.id));
+    withRemoteProjection(()=>{
+      for(const project of missions){
         const current=getLocalProject(project.id);
         if(!current||project.updatedAt>=current.updatedAt)saveLocalProject(project);
-        knownRemoteIds.add(project.id);
-      });
-    },
-    onMissionDelete:(id)=>{
-      withRemoteProjection(()=>{deleteLocalProject(id);knownRemoteIds.delete(id);});
-    },
-    onJobUpsert:(job)=>withRemoteProjection(()=>{cacheRemoteEvolutionJob(job);}),
-    onJobDelete:(id)=>withRemoteProjection(()=>{removeCachedEvolutionJob(id);}),
-    onEventInsert:(event)=>withRemoteProjection(()=>{cacheLocalEvolutionEvent(event);}),
-    onArtifactChange:(artifactId,event)=>{
-      if(typeof window!=="undefined")window.dispatchEvent(new CustomEvent("evolve-artifact-metadata-changed",{detail:{artifactId,event}}));
-    },
-    onStatus:setRealtimeStatus,
-    onError:(error)=>{
-      console.error("Supabase Realtime error",error);
-      setRealtimeStatus("error");
-    },
-  });
-  stopRealtime=subscription.unsubscribe;
+      }
+      for(const id of knownRemoteIds)if(!remoteIds.has(id))deleteLocalProject(id);
+      for(const job of jobs)cacheRemoteEvolutionJob(job);
+      for(const event of [...events].reverse())cacheLocalEvolutionEvent(event);
+      knownRemoteIds=remoteIds;
+    });
+    setRealtimeStatus("http-polling");
+  }catch(error){
+    console.error("HTTP production projection polling failed",error);
+    setRealtimeStatus("http-error");
+  }finally{
+    httpPollRunning=false;
+  }
+}
+
+function startHttpPolling(){
+  if(productionRuntimeMode()!=="http")return;
+  setRealtimeStatus("http-polling");
+  if(httpPollTimer)window.clearInterval(httpPollTimer);
+  httpPollTimer=window.setInterval(()=>{void pollHttpProjection();},3_000);
 }
 
 export async function initializeProductionSync(){
@@ -117,7 +124,7 @@ export async function initializeProductionSync(){
   window.addEventListener("evolve-parse-job-changed",scheduleJobPush);
   window.addEventListener("evolve-evidence-job-changed",scheduleJobPush);
   window.addEventListener("evolve-run-tasks-changed",scheduleJobPush);
-  startSupabaseRealtime();
+  startHttpPolling();
 }
 
 export async function stopProductionSync(){
@@ -125,8 +132,9 @@ export async function stopProductionSync(){
   window.removeEventListener("evolve-parse-job-changed",scheduleJobPush);
   window.removeEventListener("evolve-evidence-job-changed",scheduleJobPush);
   window.removeEventListener("evolve-run-tasks-changed",scheduleJobPush);
-  if(stopRealtime)await stopRealtime();
-  stopRealtime=undefined;
+  if(httpPollTimer)window.clearInterval(httpPollTimer);
+  httpPollTimer=undefined;
+  httpPollRunning=false;
   initialized=false;
   setRealtimeStatus("disabled");
 }

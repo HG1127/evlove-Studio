@@ -1,37 +1,61 @@
 import { Output, generateText, gateway } from "ai";
 import type { ZodType } from "zod";
 import {
+  AiOperationSchema,
+  ArtifactAcceptanceAiResultSchema,
   BuildCandidateAiResultSchema,
+  CommandAiResultSchema,
+  CopilotAiResultSchema,
   DistillAiResultSchema,
   DiagnosisAiResultSchema,
   EvalSuiteAiResultSchema,
   EvaluateAiResultSchema,
+  ExecuteArtifactAiResultSchema,
   ExecuteArtifactBatchAiResultSchema,
+  GapAdviceAiResultSchema,
+  GapClusterAiResultSchema,
+  IntakeAiResultSchema,
+  MaterializeAiResultSchema,
   NextQueueAiResultSchema,
   PlanAiResultSchema,
+  PopulationEvaluationAiResultSchema,
   ProblemAnalysisAiResultSchema,
   RepairArtifactAiResultSchema,
   ReleaseReviewAiResultSchema,
   RubricAiResultSchema,
+  TargetAiResultSchema,
   UnderstandAiResultSchema,
+  VisualJudgeAiResultSchema,
   jsonSchemas,
+  type AiOperation,
+  type ArtifactAcceptanceAiResult,
   type BuildCandidateAiResult,
+  type CommandAiResult,
+  type CopilotAiResult,
   type DistillAiResult,
   type DiagnosisAiResult,
   type EvalSuiteAiResult,
   type EvaluateAiResult,
+  type ExecuteArtifactAiResult,
   type ExecuteArtifactBatchAiResult,
+  type GapAdviceAiResult,
+  type GapClusterAiResult,
+  type IntakeAiResult,
+  type MaterializeAiResult,
   type NextQueueAiResult,
   type PlanAiResult,
+  type PopulationEvaluationAiResult,
   type ProblemAnalysisAiResult,
   type RepairArtifactAiResult,
   type ReleaseReviewAiResult,
   type RubricAiResult,
+  type TargetAiResult,
   type UnderstandAiResult,
+  type VisualJudgeAiResult,
 } from "@evolution/contracts";
 import { getServerAiConfig } from "../server-env";
 
-export type ServerAiOperation="understand"|"rubric"|"eval-suite"|"build-candidate"|"repair-artifact"|"execute-artifact-batch"|"evaluate"|"problem-analysis"|"diagnose"|"plan"|"release-review"|"distill"|"next-queue";
+export type ServerAiOperation=AiOperation;
 
 type StructuredSchema={name:string;schema:Record<string,unknown>};
 type Contract<T>={schema:StructuredSchema;parser:ZodType<T>;instruction:string};
@@ -43,85 +67,33 @@ const SYSTEM=[
   "Return only JSON matching the requested schema. Use concise business-readable Chinese.",
 ].join("\n");
 
-function contract(operation:"understand"):Contract<UnderstandAiResult>;
-function contract(operation:"rubric"):Contract<RubricAiResult>;
-function contract(operation:"eval-suite"):Contract<EvalSuiteAiResult>;
-function contract(operation:"build-candidate"):Contract<BuildCandidateAiResult>;
-function contract(operation:"repair-artifact"):Contract<RepairArtifactAiResult>;
-function contract(operation:"execute-artifact-batch"):Contract<ExecuteArtifactBatchAiResult>;
-function contract(operation:"evaluate"):Contract<EvaluateAiResult>;
-function contract(operation:"problem-analysis"):Contract<ProblemAnalysisAiResult>;
-function contract(operation:"diagnose"):Contract<DiagnosisAiResult>;
-function contract(operation:"plan"):Contract<PlanAiResult>;
-function contract(operation:"release-review"):Contract<ReleaseReviewAiResult>;
-function contract(operation:"distill"):Contract<DistillAiResult>;
-function contract(operation:"next-queue"):Contract<NextQueueAiResult>;
-function contract(operation:ServerAiOperation):Contract<UnderstandAiResult|RubricAiResult|EvalSuiteAiResult|BuildCandidateAiResult|RepairArtifactAiResult|ExecuteArtifactBatchAiResult|EvaluateAiResult|ProblemAnalysisAiResult|DiagnosisAiResult|PlanAiResult|ReleaseReviewAiResult|DistillAiResult|NextQueueAiResult>{
-  if(operation==="understand")return{
-    schema:jsonSchemas.understand,
-    parser:UnderstandAiResultSchema,
-    instruction:"Deeply understand the supplied command and artifact evidence. Restate true intent, implicit requirements, explicit assumptions, at most four material clarifications with safe defaults, observable acceptance focus, and confidence. Do not ask about parser/runtime capability.",
-  };
-  if(operation==="rubric")return{
-    schema:jsonSchemas.rubric,
-    parser:RubricAiResultSchema,
-    instruction:"Compile a compact project-specific Acceptance Rubric from user intent, business object, protected scope, artifact structures and current goal. Criteria must be user/business outcomes, not parser or implementation details. Choose truthful validationMethod and hard gates.",
-  };
-  if(operation==="eval-suite")return{
-    schema:jsonSchemas.evalSuite,
-    parser:EvalSuiteAiResultSchema,
-    instruction:"Create a compact discriminative Eval Suite mapped to the supplied Acceptance Rubric. Every test must include criterionIds, executionMode and evidenceScope. Cover every criterion and every hard gate in hidden holdout. Do not invent selectors or runtime capabilities.",
-  };
-  if(operation==="build-candidate")return{
-    schema:jsonSchemas.buildCandidate,
-    parser:BuildCandidateAiResultSchema,
-    instruction:"Construct the exact Candidate artifacts from the supplied CURRENT target version and Candidate plan. Return exactly one artifact per target sourceArtifactId and no extras. Text/HTML/Markdown must be a complete usable artifact, not a patch explanation. For codebase/package targets return JSON content {kind:'codebase',overlay:true,files:[{path,content}],deletions:[path]} containing only real changed/deleted files; the server will merge them onto the actual frozen current ZIP. Preserve protected scope and untouched behavior. Do not claim tests passed.",
-  };
-  if(operation==="repair-artifact")return{
-    schema:jsonSchemas.repairArtifact,
-    parser:RepairArtifactAiResultSchema,
-    instruction:"Repair only the explicitly supplied VERIFIED failed criteria on the exact current Candidate artifacts. Preserve every unrelated and protected behavior. Return exactly one artifact per target and no extras. Text/HTML/Markdown must be the complete repaired artifact. For codebase/package return a cumulative JSON overlay {kind:'codebase',overlay:true,files:[{path,content}],deletions:[path]} containing all current Candidate changes plus this targeted repair relative to the current Search Champion base. Never claim validation passed.",
-  };
-  if(operation==="execute-artifact-batch")return{
-    schema:jsonSchemas.executeArtifactBatch,
-    parser:ExecuteArtifactBatchAiResultSchema,
-    instruction:"Inspect the supplied CURRENT target artifact evidence against every supplied test case. Return one result per testCaseId with concrete observations from the supplied artifact only. Never cite diagnosis, plans, patches or future candidate claims as proof. If the supplied evidence cannot prove an expected behavior, explicitly say UNVERIFIED and explain what is missing.",
-  };
-  if(operation==="evaluate")return{
-    schema:jsonSchemas.evaluate,
-    parser:EvaluateAiResultSchema,
-    instruction:"Act as an independent evidence judge. Score only the supplied current-artifact runs and acceptance criteria. Missing/unverified evidence is not a product failure and must not be invented as one. PARTIAL evidence cannot fully satisfy a hard gate. Never cite diagnosis, sourceUnderstanding, designRationale, patches or plans as evidence. Return every supplied testCaseId in cases and every supplied acceptance criterion in criteria.",
-  };
-  if(operation==="problem-analysis")return{
-    schema:jsonSchemas.problemAnalysis,
-    parser:ProblemAnalysisAiResultSchema,
-    instruction:"Analyze the supplied measured Baseline and current artifact evidence. Return only concrete user/business problems supported by the supplied source, test or trace evidence. Do not treat missing runtime capability as a product defect. Prefer the smallest high-impact problem that can be falsified.",
-  };
-  if(operation==="diagnose")return{
-    schema:jsonSchemas.diagnosis,
-    parser:DiagnosisAiResultSchema,
-    instruction:"Diagnose the selected problem from the supplied Baseline, source excerpts and traces. Every evidence item must quote or closely identify supplied evidence so the server can resolve it to a source/test/trace. Give counter-evidence and a falsifier. Do not invent implementation facts.",
-  };
-  if(operation==="plan")return{
-    schema:jsonSchemas.plan,
-    parser:PlanAiResultSchema,
-    instruction:"Generate a small diverse Candidate population for the selected diagnosed problem. Each Candidate must include a concrete patch hypothesis and complete designRationale: exact supplied source evidence, command alignment, causal mechanism, covered acceptance criteria, protected-scope compliance and falsifier. Do not claim measured improvement before experiment.",
-  };
-  if(operation==="release-review")return{
-    schema:jsonSchemas.releaseReview,
-    parser:ReleaseReviewAiResultSchema,
-    instruction:"Perform the final release review from measured aggregate Baseline/Holdout evidence and deterministic checks only. Do not ask for hidden test contents and do not infer missing evidence. Return release only when all supplied hard gates and evidence requirements are satisfied; otherwise hold or reject with concrete reasons.",
-  };
-  if(operation==="distill")return{
-    schema:jsonSchemas.distill,
-    parser:DistillAiResultSchema,
-    instruction:"Distill the causal lesson from source, baseline, accepted winner, validation and release evidence. Treat releaseFreshness and releaseTrend as authoritative: only call it verified-skill when Production Outcome is fresh, live, healthy and has a stable-healthy trend with the required consecutive observations. A single healthy point, stale/unknown evidence, degrading health or flapping must not justify verified-skill. Otherwise return lesson or anti-pattern. State effect, limit, triggers, method and validation surfaces.",
-  };
-  return{
-    schema:jsonSchemas.nextQueue,
-    parser:NextQueueAiResultSchema,
-    instruction:"Generate the next Evolution Queue from remaining failures, lessons, uncertainty, edge cases and business value. Return concrete priorities and measurable suggested metrics. Do not invent production failures.",
-  };
+function contract(operation:ServerAiOperation):Contract<unknown>{
+  if(operation==="intake")return{schema:jsonSchemas.intake,parser:IntakeAiResultSchema,instruction:"Understand the user command and parsed artifact evidence. Infer the semantic business object, exactly six workflow stages, a compact acceptance rubric, goals, metrics, protected/editable scope, risks and artifact summaries. Parsing/runtime limitations are not product defects; never claim unseen evidence."};
+  if(operation==="understand")return{schema:jsonSchemas.understand,parser:UnderstandAiResultSchema,instruction:"Deeply understand supplied command and artifact evidence. Restate intent, implicit requirements, assumptions, material clarifications, acceptance focus and confidence. Do not ask about parser/runtime capability."};
+  if(operation==="command")return{schema:jsonSchemas.command,parser:CommandAiResultSchema,instruction:"Interpret the new command against current mission and artifact evidence. Preserve prior intent unless explicitly changed and return the consolidated command, scope additions and safe next action."};
+  if(operation==="target")return{schema:jsonSchemas.target,parser:TargetAiResultSchema,instruction:"Compile source understanding and command into an executable target contract with goal, metrics, protected/editable scope, acceptance criteria and risks. Use only supplied evidence."};
+  if(operation==="rubric")return{schema:jsonSchemas.rubric,parser:RubricAiResultSchema,instruction:"Compile a compact project-specific Acceptance Rubric from user intent, business object, protected scope, artifact structures and current goal. Criteria are user/business outcomes, not parser details."};
+  if(operation==="eval-suite")return{schema:jsonSchemas.evalSuite,parser:EvalSuiteAiResultSchema,instruction:"Create a compact discriminative Eval Suite mapped to the Acceptance Rubric. Cover every criterion and hard gate with truthful execution modes."};
+  if(operation==="build-candidate")return{schema:jsonSchemas.buildCandidate,parser:BuildCandidateAiResultSchema,instruction:"Construct exact Candidate artifacts from the CURRENT target version and Candidate plan. Preserve protected/untouched scope; never claim tests passed."};
+  if(operation==="execute-artifact")return{schema:jsonSchemas.executeArtifact,parser:ExecuteArtifactAiResultSchema,instruction:"Inspect or execute one supplied current artifact against the test intent. Return concrete output/trace from supplied evidence; say UNVERIFIED when behavior cannot be established."};
+  if(operation==="repair-artifact")return{schema:jsonSchemas.repairArtifact,parser:RepairArtifactAiResultSchema,instruction:"Repair only explicitly supplied VERIFIED failed criteria on exact current Candidate artifacts. Preserve unrelated/protected behavior; never claim validation passed."};
+  if(operation==="execute-artifact-batch")return{schema:jsonSchemas.executeArtifactBatch,parser:ExecuteArtifactBatchAiResultSchema,instruction:"Inspect CURRENT artifact evidence against each supplied test. Return concrete observations only; missing evidence is UNVERIFIED, not invented failure."};
+  if(operation==="evaluate-population")return{schema:jsonSchemas.evaluatePopulation,parser:PopulationEvaluationAiResultSchema,instruction:"Compare the candidate population only from measured evidence. Score every candidate and enforce hard gates/safety without treating missing evidence as product failure."};
+  if(operation==="artifact-acceptance")return{schema:jsonSchemas.artifactAcceptance,parser:ArtifactAcceptanceAiResultSchema,instruction:"Perform Gate F acceptance on exact supplied Candidate artifacts. Return every supplied criterion result and truthful coverage/integrity/pairwise/hard-gate conclusions."};
+  if(operation==="materialize")return{schema:jsonSchemas.materialize,parser:MaterializeAiResultSchema,instruction:"Materialize only supplied accepted content, preserving sourceArtifactId and exact accepted content. Do not regenerate a different deliverable or claim unsupported binary fidelity."};
+  if(operation==="evaluate")return{schema:jsonSchemas.evaluate,parser:EvaluateAiResultSchema,instruction:"Act as an independent evidence judge. Score only supplied current-artifact runs/criteria. Missing evidence is not product failure and must not be invented."};
+  if(operation==="problem-analysis")return{schema:jsonSchemas.problemAnalysis,parser:ProblemAnalysisAiResultSchema,instruction:"Analyze measured Baseline and current artifact evidence. Return only concrete user/business problems supported by supplied evidence; capability limitations are not product defects."};
+  if(operation==="diagnose")return{schema:jsonSchemas.diagnosis,parser:DiagnosisAiResultSchema,instruction:"Diagnose the selected problem from supplied Baseline/source/traces. Give evidence, counter-evidence and falsifier; do not invent implementation facts."};
+  if(operation==="plan")return{schema:jsonSchemas.plan,parser:PlanAiResultSchema,instruction:"Generate a small diverse Candidate population for the selected diagnosed problem. Ground every design rationale in supplied evidence and never claim measured improvement before experiment."};
+  if(operation==="release-review")return{schema:jsonSchemas.releaseReview,parser:ReleaseReviewAiResultSchema,instruction:"Perform final release review from measured evidence/deterministic checks only. Release only when supplied hard gates/evidence requirements are satisfied."};
+  if(operation==="distill")return{schema:jsonSchemas.distill,parser:DistillAiResultSchema,instruction:"Distill the causal lesson. Verified-skill requires fresh, live, stable-healthy Production Outcome; stale/degrading/flapping evidence cannot justify it."};
+  if(operation==="next-queue")return{schema:jsonSchemas.nextQueue,parser:NextQueueAiResultSchema,instruction:"Generate the next Evolution Queue from remaining failures, lessons, uncertainty, edge cases and business value. Do not invent production failures."};
+  if(operation==="copilot")return{schema:jsonSchemas.copilot,parser:CopilotAiResultSchema,instruction:"Answer as mission copilot from supplied current state/evidence and suggest only safe executable actions."};
+  if(operation==="gap-cluster")return{schema:jsonSchemas.gapCluster,parser:GapClusterAiResultSchema,instruction:"Cluster measured validation gaps by common observable failure pattern. Keep caseIds grounded and give concrete remediation."};
+  if(operation==="gap-advice")return{schema:jsonSchemas.gapAdvice,parser:GapAdviceAiResultSchema,instruction:"Translate measured experiment/validation gaps into concrete next modifications. Do not invent causes, scores or production failures."};
+  if(operation==="visual-judge")return{schema:jsonSchemas.visualJudge,parser:VisualJudgeAiResultSchema,instruction:"Judge only supplied rendered visual evidence for usability, aesthetics, responsiveness and interaction. Do not infer unseen states."};
+  const exhaustive:never=operation;
+  throw new Error("Unsupported Server AI operation: "+exhaustive);
 }
 
 type ResponsesJson={
@@ -236,12 +208,19 @@ async function structured<T>(payload:unknown,schema:Contract<T>):Promise<T>{
   }
 }
 
+export function runServerAi(operation:"intake",payload:unknown):Promise<IntakeAiResult>;
 export function runServerAi(operation:"understand",payload:unknown):Promise<UnderstandAiResult>;
+export function runServerAi(operation:"command",payload:unknown):Promise<CommandAiResult>;
+export function runServerAi(operation:"target",payload:unknown):Promise<TargetAiResult>;
 export function runServerAi(operation:"rubric",payload:unknown):Promise<RubricAiResult>;
 export function runServerAi(operation:"eval-suite",payload:unknown):Promise<EvalSuiteAiResult>;
 export function runServerAi(operation:"build-candidate",payload:unknown):Promise<BuildCandidateAiResult>;
+export function runServerAi(operation:"execute-artifact",payload:unknown):Promise<ExecuteArtifactAiResult>;
 export function runServerAi(operation:"repair-artifact",payload:unknown):Promise<RepairArtifactAiResult>;
 export function runServerAi(operation:"execute-artifact-batch",payload:unknown):Promise<ExecuteArtifactBatchAiResult>;
+export function runServerAi(operation:"evaluate-population",payload:unknown):Promise<PopulationEvaluationAiResult>;
+export function runServerAi(operation:"artifact-acceptance",payload:unknown):Promise<ArtifactAcceptanceAiResult>;
+export function runServerAi(operation:"materialize",payload:unknown):Promise<MaterializeAiResult>;
 export function runServerAi(operation:"evaluate",payload:unknown):Promise<EvaluateAiResult>;
 export function runServerAi(operation:"problem-analysis",payload:unknown):Promise<ProblemAnalysisAiResult>;
 export function runServerAi(operation:"diagnose",payload:unknown):Promise<DiagnosisAiResult>;
@@ -249,20 +228,14 @@ export function runServerAi(operation:"plan",payload:unknown):Promise<PlanAiResu
 export function runServerAi(operation:"release-review",payload:unknown):Promise<ReleaseReviewAiResult>;
 export function runServerAi(operation:"distill",payload:unknown):Promise<DistillAiResult>;
 export function runServerAi(operation:"next-queue",payload:unknown):Promise<NextQueueAiResult>;
+export function runServerAi(operation:"copilot",payload:unknown):Promise<CopilotAiResult>;
+export function runServerAi(operation:"gap-cluster",payload:unknown):Promise<GapClusterAiResult>;
+export function runServerAi(operation:"gap-advice",payload:unknown):Promise<GapAdviceAiResult>;
+export function runServerAi(operation:"visual-judge",payload:unknown):Promise<VisualJudgeAiResult>;
+export function runServerAi(operation:AiOperation,payload:unknown):Promise<unknown>;
 export function runServerAi(operation:ServerAiOperation,payload:unknown){
-  if(operation==="understand")return structured(payload,contract("understand"));
-  if(operation==="rubric")return structured(payload,contract("rubric"));
-  if(operation==="eval-suite")return structured(payload,contract("eval-suite"));
-  if(operation==="build-candidate")return structured(payload,contract("build-candidate"));
-  if(operation==="repair-artifact")return structured(payload,contract("repair-artifact"));
-  if(operation==="execute-artifact-batch")return structured(payload,contract("execute-artifact-batch"));
-  if(operation==="evaluate")return structured(payload,contract("evaluate"));
-  if(operation==="problem-analysis")return structured(payload,contract("problem-analysis"));
-  if(operation==="diagnose")return structured(payload,contract("diagnose"));
-  if(operation==="plan")return structured(payload,contract("plan"));
-  if(operation==="release-review")return structured(payload,contract("release-review"));
-  if(operation==="distill")return structured(payload,contract("distill"));
-  return structured(payload,contract("next-queue"));
+  AiOperationSchema.parse(operation);
+  return structured(payload,contract(operation));
 }
 
 export function isServerAiUnavailable(error:unknown){
