@@ -84,6 +84,11 @@ export async function runServerReleaseOrchestration(
     if(project.release.status==="shadow"&&project.release.healthy===false){
       return pause(project,"[server-release-preview-unhealthy] Preview Health Gate 未通过；Production 未切换，保留稳定版本与当前 Candidate 证据。",{status:"pending",action:"shadow"});
     }
+    if(["canary-5","canary-20","canary-50"].includes(project.release.status)
+      &&project.release.healthy===false
+      &&!project.release.stableDeploymentId){
+      return pause(project,"[server-release-rollback-unavailable] Canary Health 异常但缺少 stableDeploymentId；禁止继续放量或猜测回滚目标。",{status:"manual-check",action:project.release.status as DurableReleaseAction});
+    }
     if(project.release.status==="promoted"&&project.release.healthy===false&&!project.release.stableDeploymentId){
       return pause(project,"[server-release-rollback-unavailable] Production Health 异常但缺少 stableDeploymentId；禁止自动猜测回滚目标。",{status:"manual-check",action:"promote"});
     }
@@ -139,6 +144,13 @@ export async function runServerReleaseOrchestration(
     }
     return pause(governed,"[server-release-rollback-unavailable] Promote 后 Production Health 未通过且缺少 stableDeploymentId。",{status:"manual-check",action:"promote"});
   }
+  if(["canary-5","canary-20","canary-50"].includes(action)
+    &&(!receipt.ok||receipt.healthy!==true||receipt.observationStatus!=="healthy")){
+    if(governed.release.stableDeploymentId){
+      return {control:"continue",project:governed,action,terminal:false,reason:`${action} Health 未通过；已保存真实流量阶段，下一 Durable Step 将回滚 stable Deployment。`};
+    }
+    return pause(governed,`[server-release-rollback-unavailable] ${action} Health 未通过且缺少 stableDeploymentId。`,{status:"manual-check",action});
+  }
   if(action==="rollback"&&(!receipt.ok||receipt.healthy!==true||receipt.observationStatus!=="healthy")){
     return pause(governed,"[server-release-rollback-unhealthy] Rollback 已执行但 Production Health 尚未确认；禁止宣称已安全恢复。",{status:"pending",action:"rollback"});
   }
@@ -152,7 +164,11 @@ export async function runServerReleaseOrchestration(
     action,
     terminal:projectHasLiveReleaseDecision(governed),
     reason:action==="shadow"
-      ?"Preview Health Gate 已通过；下一 Durable Step 将推进同一 Deployment 到 Production。"
+      ?project.releaseTarget?.mode==="progressive"
+        ?"Preview Health Gate 已通过；下一 Durable Step 将启动 5% Canary。"
+        :"Preview Health Gate 已通过；下一 Durable Step 将推进同一 Deployment 到 Production。"
+      :["canary-5","canary-20","canary-50"].includes(action)
+        ?`${action} 已确认健康；下一 Durable Step 将继续逐级放量。`
       : action==="promote"
         ?"Production Promote 与 Health Gate 已确认；进入 Outcome Learning。"
         :"Production Rollback 与 Health Gate 已确认；进入 Outcome Learning。",

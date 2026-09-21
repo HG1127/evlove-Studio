@@ -101,6 +101,65 @@ describe("release reconciliation",()=>{
     expect(result.project.release.healthy).toBe(true);
   });
 
+  it("recovers an active 20% Rolling Release and resumes from the exact canary stage",()=>{
+    const x=fixture();
+    x.project.releaseTarget={...x.project.releaseTarget!,mode:"progressive"};
+    x.project.release={
+      ...x.project.release,
+      status:"canary-5",
+      trafficPercent:5,
+      recovery:{status:"pending",action:"canary-20",reason:"provider timeout",at:"2026-09-20T15:00:00Z"},
+    };
+    const observed=observation("dpl_stable",true,true);
+    observed.rollingRelease={
+      active:true,
+      enabled:true,
+      advancementType:"manual-approval",
+      candidateDeploymentId:"dpl_candidate",
+      stableDeploymentId:"dpl_stable",
+      currentStageIndex:1,
+      currentPercentage:20,
+      stages:[{targetPercentage:5},{targetPercentage:20},{targetPercentage:50},{targetPercentage:100}],
+    };
+    const result=reconcileReleaseObservation({project:x.project,candidate:x.candidate,observation:observed});
+    expect(result.disposition).toBe("safe-to-resume");
+    expect(result.project.release).toMatchObject({
+      status:"canary-20",
+      trafficPercent:20,
+      healthy:true,
+      environment:"production-canary",
+      stableDeploymentId:"dpl_stable",
+    });
+    expect(nextDurableReleaseAction(result.project)).toBe("canary-50");
+  });
+
+  it("recovers an unhealthy active canary and resumes directly into rollback",()=>{
+    const x=fixture();
+    x.project.releaseTarget={...x.project.releaseTarget!,mode:"progressive"};
+    x.project.release={
+      ...x.project.release,
+      status:"canary-5",
+      trafficPercent:5,
+      recovery:{status:"pending",action:"canary-20",reason:"provider timeout",at:"2026-09-20T15:00:00Z"},
+    };
+    const observed=observation("dpl_stable",true,false);
+    observed.rollingRelease={
+      active:true,
+      enabled:true,
+      advancementType:"manual-approval",
+      candidateDeploymentId:"dpl_candidate",
+      stableDeploymentId:"dpl_stable",
+      currentStageIndex:1,
+      currentPercentage:20,
+      stages:[{targetPercentage:5},{targetPercentage:20},{targetPercentage:50},{targetPercentage:100}],
+    };
+    const result=reconcileReleaseObservation({project:x.project,candidate:x.candidate,observation:observed});
+    expect(result.disposition).toBe("safe-to-resume");
+    expect(result.project.release.status).toBe("canary-20");
+    expect(result.project.release.healthy).toBe(false);
+    expect(nextDurableReleaseAction(result.project)).toBe("rollback");
+  });
+
   it("captures the current Production as stable baseline when a read-only Preview receipt was lost",()=>{
     const x=fixture();
     x.project.release={...x.project.release,status:"idle",stableDeploymentId:undefined,recovery:{status:"pending",action:"shadow",reason:"timeout",at:"2026-09-20T15:00:00Z"}};

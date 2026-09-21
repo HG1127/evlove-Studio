@@ -12,6 +12,8 @@ export const VercelReleaseCapabilitiesSchema=z.object({
   credentialStatus:z.enum(["ready","required"]),
   mode:z.enum(["preview-promote","progressive"]),
   rollingReleaseSupported:z.boolean(),
+  rollingReleaseConfigured:z.boolean().default(false),
+  rollingReleaseStages:z.array(z.number().min(0).max(100)).default([]),
   rollingReleaseReason:z.string().optional(),
   projectId:z.string().optional(),
   projectName:z.string().optional(),
@@ -54,6 +56,25 @@ export const VercelReleaseDeploymentsSchema=z.object({
 });
 export type VercelReleaseDeployments=z.infer<typeof VercelReleaseDeploymentsSchema>;
 
+export const VercelRollingReleaseStageSchema=z.object({
+  targetPercentage:z.number().min(0).max(100),
+  duration:z.number().nonnegative().optional(),
+});
+export type VercelRollingReleaseStage=z.infer<typeof VercelRollingReleaseStageSchema>;
+
+export const VercelRollingReleaseSummarySchema=z.object({
+  active:z.boolean(),
+  enabled:z.boolean().default(false),
+  advancementType:z.string().optional(),
+  candidateDeploymentId:z.string().optional(),
+  stableDeploymentId:z.string().optional(),
+  currentStageIndex:z.number().int().nonnegative().optional(),
+  currentPercentage:z.number().min(0).max(100).optional(),
+  stages:z.array(VercelRollingReleaseStageSchema).default([]),
+  status:z.string().optional(),
+});
+export type VercelRollingReleaseSummary=z.infer<typeof VercelRollingReleaseSummarySchema>;
+
 export const VercelReleaseObservationSchema=z.object({
   provider:z.literal("vercel").default("vercel"),
   checkedAt:z.string(),
@@ -61,6 +82,7 @@ export const VercelReleaseObservationSchema=z.object({
   boundDeployment:VercelDeploymentSummarySchema.optional(),
   productionHealth:VercelReleaseHealthSchema,
   boundHealth:VercelReleaseHealthSchema.optional(),
+  rollingRelease:VercelRollingReleaseSummarySchema.optional(),
   errors:z.array(z.string()).default([]),
 });
 export type VercelReleaseObservation=z.infer<typeof VercelReleaseObservationSchema>;
@@ -125,5 +147,6 @@ export const VercelReleaseActionResponseSchema=ReleaseAdapterResultSchema.extend
   releaseMode:z.enum(["preview-promote","progressive"]).default("preview-promote"),
   deploymentUrl:z.string().url().optional(),
   productionUrl:z.string().url().optional(),
+  rollingRelease:VercelRollingReleaseSummarySchema.optional(),
 });
 export type VercelReleaseActionResponse=z.infer<typeof VercelReleaseActionResponseSchema>;

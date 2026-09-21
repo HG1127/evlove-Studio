@@ -39,6 +39,9 @@ function healthSamples(args:{
     metadata:{
       provider:"vercel",
       releaseStatus:args.project.release.status,
+      trafficPercent:args.observation.rollingRelease?.currentPercentage??args.project.release.trafficPercent,
+      rollingReleaseActive:args.observation.rollingRelease?.active??false,
+      rollingStageIndex:args.observation.rollingRelease?.currentStageIndex,
       observationSource:args.sourceKind,
       deploymentId,
     },

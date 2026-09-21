@@ -173,6 +173,63 @@ function settleShadow(
   };
 }
 
+function settleCanary(
+  project:EvolveProject,
+  candidate:Candidate,
+  observation:VercelReleaseObservation,
+  args:{status:"canary-5"|"canary-20"|"canary-50";trafficPercent:5|20|50;stableDeploymentId:string},
+):EvolveProject{
+  const at=observation.checkedAt;
+  const candidateHealth=observation.boundHealth;
+  const stableHealth=observation.productionHealth;
+  const healthy=Boolean(candidateHealth?.ready&&stableHealth.ready);
+  return {
+    ...project,
+    release:{
+      ...project.release,
+      status:args.status,
+      candidateId:candidate.id,
+      trafficPercent:args.trafficPercent,
+      healthy,
+      evidenceMode:"live",
+      observationStatus:healthy?"healthy":"unhealthy",
+      stableDeploymentId:args.stableDeploymentId,
+      artifactHashes:expectedReleaseArtifactHashes(candidate),
+      environment:"production-canary",
+      observedAt:at,
+      sampleSize:(candidateHealth?.checks.length??0)+stableHealth.checks.length,
+      windowMinutes:Math.max(0.01,Math.max(candidateHealth?.latencyMs??0,stableHealth.latencyMs)/60000),
+      recovery:{
+        status:"reconciled",
+        action:project.release.recovery?.action,
+        reason:healthy
+          ?`Reconcile 已确认 ${args.trafficPercent}% Canary 与 stable/candidate Health 均通过。`
+          :`Reconcile 已确认 ${args.trafficPercent}% Canary，但 stable 或 candidate Health 未通过。`,
+        at:project.release.recovery?.at??at,
+        lastObservedAt:at,
+      },
+      history:releaseHistory(
+        project,
+        at,
+        healthy
+          ?`Reconcile：Vercel Rolling Release 已确认 ${args.trafficPercent}% Canary，Health 通过。`
+          :`Reconcile：Vercel Rolling Release 已确认 ${args.trafficPercent}% Canary，但 Health 未通过。`,
+        {
+          candidateId:candidate.id,
+          deploymentId:project.release.deploymentId,
+          artifactHashes:expectedReleaseArtifactHashes(candidate),
+          healthy,
+          observationStatus:healthy?"healthy":"unhealthy",
+          environment:"production-canary",
+        },
+      ),
+    },
+    stage:"release",
+    campaign:{...project.campaign,status:"running",stopReason:undefined},
+    updatedAt:at,
+  };
+}
+
 export function reconcileReleaseObservation(args:{
   project:EvolveProject;
   candidate:Candidate;
@@ -231,6 +288,52 @@ export function reconcileReleaseObservation(args:{
   if(observation.errors.length){
     const reason=`Vercel 只读观测不完整：${observation.errors.join("；")}`;
     return {project:withRecovery(project,{status:"manual-check",reason,observedAt:checkedAt}),disposition:"manual-check",reason};
+  }
+  const rolling=observation.rollingRelease;
+  if(rolling?.active){
+    if(rolling.candidateDeploymentId!==boundId){
+      const reason=`Active Rolling Release candidate ${rolling.candidateDeploymentId??"unknown"} 与 Mission 绑定 Candidate Deployment ${boundId??"unknown"} 不一致。`;
+      return {project:withRecovery(project,{status:"manual-check",reason,observedAt:checkedAt}),disposition:"manual-check",reason};
+    }
+    if(!rolling.stableDeploymentId){
+      const reason="Active Rolling Release 缺少 stable/current deployment identity；禁止自动续跑。";
+      return {project:withRecovery(project,{status:"manual-check",reason,observedAt:checkedAt}),disposition:"manual-check",reason};
+    }
+    if(stableId&&stableId!==rolling.stableDeploymentId){
+      const reason=`Rolling Release stable ${rolling.stableDeploymentId} 与 Mission stable ${stableId} 不一致。`;
+      return {project:withRecovery(project,{status:"manual-check",reason,observedAt:checkedAt}),disposition:"manual-check",reason};
+    }
+    const stage=rolling.currentPercentage===5
+      ?{status:"canary-5" as const,trafficPercent:5 as const}
+      :rolling.currentPercentage===20
+        ?{status:"canary-20" as const,trafficPercent:20 as const}
+        :rolling.currentPercentage===50
+          ?{status:"canary-50" as const,trafficPercent:50 as const}
+          :undefined;
+    if(!stage){
+      const reason=`Active Rolling Release 当前流量阶段 ${rolling.currentPercentage??"unknown"}% 不在受控 5/20/50 阶段。`;
+      return {project:withRecovery(project,{status:"manual-check",reason,observedAt:checkedAt}),disposition:"manual-check",reason};
+    }
+    const candidateDeployment=observation.boundDeployment;
+    if(!candidateDeployment||candidateDeployment.id!==boundId||!observation.boundHealth){
+      const reason="Active Rolling Release 无法确认绑定 Candidate Deployment 与 Health；禁止自动续跑。";
+      return {project:withRecovery(project,{status:"manual-check",reason,observedAt:checkedAt}),disposition:"manual-check",reason};
+    }
+    const withStable:EvolveProject={
+      ...project,
+      release:{...project.release,stableDeploymentId:rolling.stableDeploymentId},
+    };
+    const updated=settleCanary(withStable,candidate,observation,{
+      ...stage,
+      stableDeploymentId:rolling.stableDeploymentId,
+    });
+    return {
+      project:updated,
+      disposition:"safe-to-resume",
+      reason:updated.release.healthy
+        ?`Reconcile 已恢复 ${stage.trafficPercent}% Canary 真值，可安全继续下一阶段。`
+        :`Reconcile 已恢复 ${stage.trafficPercent}% Canary 真值且 Health 异常，可安全进入 stable rollback。`,
+    };
   }
   if(!boundId){
     const reason="Mission 尚未绑定 exact Preview Deployment；无法 reconcile。";

@@ -2,6 +2,8 @@ import {describe,expect,it,vi} from "vitest";
 import type {Candidate,EvolveProject,ReleaseAdapterResult} from "@evolution/contracts";
 import {runServerReleaseOrchestration} from "./server-release-orchestration";
 
+type ReleaseAction=NonNullable<ReleaseAdapterResult["effectiveAction"]>;
+
 function fixture(){
   const candidate={id:"C1",name:"candidate",change:"x",patches:[],artifactSnapshots:[{id:"s",sourceArtifactId:"source",name:"a.txt",mimeType:"text/plain",content:"new",contentHash:"hash-c1",createdAt:"now"}]} as unknown as Candidate;
   const project={
@@ -16,20 +18,21 @@ function fixture(){
   return {project,candidate};
 }
 
-function receipt(action:"shadow"|"promote"|"rollback",healthy=true):ReleaseAdapterResult{
+function receipt(action:ReleaseAction,healthy=true):ReleaseAdapterResult{
+  const traffic=action==="canary-5"?5:action==="canary-20"?20:action==="canary-50"?50:action==="promote"?100:0;
   return {
-    ok:healthy,trafficPercent:action==="promote"?100:0,note:action,healthy,kpis:[],evidenceMode:"live",
+    ok:healthy,trafficPercent:traffic,note:action,healthy,kpis:[],evidenceMode:"live",
     effectiveAction:action,observationStatus:healthy?"healthy":"unhealthy",
     stableDeploymentId:"dpl-stable",deploymentId:action==="rollback"?"dpl-stable":"dpl-preview",
     artifactHashes:action==="rollback"?undefined:[{sourceArtifactId:"source",contentHash:"hash-c1"}],
-    environment:action==="shadow"?"preview":"production",observedAt:"2026-09-20T15:00:00Z",sampleSize:1,windowMinutes:0.1,
+    environment:action==="shadow"?"preview":action.startsWith("canary-")?"production-canary":"production",observedAt:"2026-09-20T15:00:00Z",sampleSize:1,windowMinutes:0.1,
   };
 }
 
 describe("server release orchestration",()=>{
   it("runs preview then promote on the same bound deployment",async()=>{
     const x=fixture();
-    const execute=vi.fn(async({action}:{action:"shadow"|"promote"|"rollback"})=>receipt(action));
+    const execute=vi.fn(async({action}:{action:ReleaseAction})=>receipt(action));
     const authorize=vi.fn(async()=>({ok:true}));
     const preview=await runServerReleaseOrchestration(x.project,{authorize,execute});
     expect(preview.action).toBe("shadow");
@@ -53,6 +56,43 @@ describe("server release orchestration",()=>{
     const rolled=await runServerReleaseOrchestration(unhealthy.project,{authorize:rollbackAuthorize,execute:async({action})=>receipt(action)});
     expect(rolled.action).toBe("rollback");
     expect(rolled.terminal).toBe(true);
+    expect(rolled.project.release.status).toBe("rolled-back");
+    expect(rollbackAuthorize).not.toHaveBeenCalled();
+  });
+
+  it("runs progressive shadow → 5 → 20 → 50 → promote as durable steps",async()=>{
+    const x=fixture();
+    x.project.releaseTarget={...x.project.releaseTarget!,mode:"progressive"};
+    const execute=vi.fn(async({action}:{action:ReleaseAction})=>receipt(action));
+    const authorize=vi.fn(async()=>({ok:true}));
+    let outcome=await runServerReleaseOrchestration(x.project,{authorize,execute});
+    expect(outcome.action).toBe("shadow");
+    for(const expected of ["canary-5","canary-20","canary-50","promote"] as ReleaseAction[]){
+      outcome=await runServerReleaseOrchestration(outcome.project,{authorize,execute});
+      expect(outcome.action).toBe(expected);
+    }
+    expect(outcome.terminal).toBe(true);
+    expect(outcome.project.release.status).toBe("promoted");
+    expect(execute.mock.calls.map((call)=>call[0].action)).toEqual(["shadow","canary-5","canary-20","canary-50","promote"]);
+  });
+
+  it("stops rollout and routes an unhealthy canary to rollback",async()=>{
+    const x=fixture();
+    x.project.releaseTarget={...x.project.releaseTarget!,mode:"progressive"};
+    const allow=async()=>({ok:true});
+    const shadow=await runServerReleaseOrchestration(x.project,{authorize:allow,execute:async()=>receipt("shadow")});
+    const canary=await runServerReleaseOrchestration(shadow.project,{
+      authorize:allow,
+      execute:async()=>receipt("canary-5",false),
+    });
+    expect(canary.project.release.status).toBe("canary-5");
+    expect(canary.control).toBe("continue");
+    const rollbackAuthorize=vi.fn(async()=>({ok:false}));
+    const rolled=await runServerReleaseOrchestration(canary.project,{
+      authorize:rollbackAuthorize,
+      execute:async({action})=>receipt(action),
+    });
+    expect(rolled.action).toBe("rollback");
     expect(rolled.project.release.status).toBe("rolled-back");
     expect(rollbackAuthorize).not.toHaveBeenCalled();
   });

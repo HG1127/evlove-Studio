@@ -724,7 +724,7 @@ export const ReleaseObservationSchema = z.object({
   id:z.string(),
   at:z.string(),
   source:z.enum(["release-action","reconcile"]),
-  action:z.enum(["shadow","promote","rollback","reconcile"]),
+  action:z.enum(["shadow","canary-5","canary-20","canary-50","promote","rollback","reconcile"]),
   candidateId:z.string().optional(),
   deploymentId:z.string().optional(),
   stableDeploymentId:z.string().optional(),
@@ -758,7 +758,7 @@ export const ReleaseStateSchema = z.object({
   windowMinutes: z.number().min(0).optional(),
   recovery: z.object({
     status: z.enum(["pending", "manual-check", "reconciled"]),
-    action: z.enum(["shadow", "promote", "rollback"]).optional(),
+    action: z.enum(["shadow","canary-5","canary-20","canary-50","promote","rollback"]).optional(),
     reason: z.string(),
     at: z.string(),
     lastObservedAt: z.string().optional(),

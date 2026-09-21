@@ -2,6 +2,8 @@ import {describe,expect,it} from "vitest";
 import type {Candidate,EvolveProject,ReleaseAdapterResult} from "@evolution/contracts";
 import {applyReleaseResultToProject,nextDurableReleaseAction,projectHasLiveReleaseDecision} from "./index";
 
+type ReleaseAction=NonNullable<ReleaseAdapterResult["effectiveAction"]>;
+
 function fixture(){
   const candidate={id:"C1",name:"candidate",change:"x",patches:[],artifactSnapshots:[{id:"s",sourceArtifactId:"source",name:"a.txt",mimeType:"text/plain",content:"new",contentHash:"hash-c1",createdAt:"now"}]} as unknown as Candidate;
   const project={
@@ -18,10 +20,11 @@ function fixture(){
   return {project,candidate};
 }
 
-function receipt(action:"shadow"|"promote"|"rollback",healthy=true):ReleaseAdapterResult{
+function receipt(action:ReleaseAction,healthy=true):ReleaseAdapterResult{
+  const traffic=action==="canary-5"?5:action==="canary-20"?20:action==="canary-50"?50:action==="promote"?100:0;
   return {
     ok:healthy,
-    trafficPercent:action==="promote"?100:0,
+    trafficPercent:traffic,
     note:`${action} receipt`,
     healthy,
     kpis:[],
@@ -31,7 +34,7 @@ function receipt(action:"shadow"|"promote"|"rollback",healthy=true):ReleaseAdapt
     stableDeploymentId:"dpl-stable",
     deploymentId:action==="rollback"?"dpl-stable":"dpl-preview",
     artifactHashes:action==="rollback"?undefined:[{sourceArtifactId:"source",contentHash:"hash-c1"}],
-    environment:action==="shadow"?"preview":"production",
+    environment:action==="shadow"?"preview":action.startsWith("canary-")?"production-canary":"production",
     observedAt:"2026-09-20T15:00:00Z",
     latencyMs:12,
     sampleSize:1,
@@ -61,6 +64,37 @@ describe("durable release orchestration",()=>{
     expect(nextDurableReleaseAction(unhealthy)).toBe("rollback");
     const rolledBack=applyReleaseResultToProject({project:unhealthy,candidate,requestedAction:"rollback",result:receipt("rollback")});
     expect(projectHasLiveReleaseDecision(rolledBack)).toBe(true);
+  });
+
+  it("advances a progressive release through 5/20/50 before full promote",()=>{
+    const {project,candidate}=fixture();
+    project.releaseTarget={...project.releaseTarget!,mode:"progressive"};
+    const shadow=applyReleaseResultToProject({project,candidate,requestedAction:"shadow",result:receipt("shadow")});
+    expect(nextDurableReleaseAction(shadow)).toBe("canary-5");
+    const canary5=applyReleaseResultToProject({project:shadow,candidate,requestedAction:"canary-5",result:receipt("canary-5")});
+    expect(canary5.release).toMatchObject({status:"canary-5",trafficPercent:5,environment:"production-canary"});
+    expect(nextDurableReleaseAction(canary5)).toBe("canary-20");
+    const canary20=applyReleaseResultToProject({project:canary5,candidate,requestedAction:"canary-20",result:receipt("canary-20")});
+    expect(nextDurableReleaseAction(canary20)).toBe("canary-50");
+    const canary50=applyReleaseResultToProject({project:canary20,candidate,requestedAction:"canary-50",result:receipt("canary-50")});
+    expect(nextDurableReleaseAction(canary50)).toBe("promote");
+    const promoted=applyReleaseResultToProject({project:canary50,candidate,requestedAction:"promote",result:receipt("promote")});
+    expect(promoted.release.status).toBe("promoted");
+    expect(promoted.release.trafficPercent).toBe(100);
+    expect(projectHasLiveReleaseDecision(promoted)).toBe(true);
+    expect(promoted.version).toBe("V13");
+  });
+
+  it("routes an unhealthy progressive canary to stable rollback without further rollout",()=>{
+    const {project,candidate}=fixture();
+    project.releaseTarget={...project.releaseTarget!,mode:"progressive"};
+    const shadow=applyReleaseResultToProject({project,candidate,requestedAction:"shadow",result:receipt("shadow")});
+    const canary5=applyReleaseResultToProject({
+      project:shadow,candidate,requestedAction:"canary-5",result:receipt("canary-5",false),
+    });
+    expect(canary5.release.status).toBe("canary-5");
+    expect(canary5.release.healthy).toBe(false);
+    expect(nextDurableReleaseAction(canary5)).toBe("rollback");
   });
 
   it("treats ok=false as non-terminal even when the raw health probe was green",()=>{

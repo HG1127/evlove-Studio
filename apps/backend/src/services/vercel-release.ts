@@ -5,12 +5,14 @@ import {
   VercelReleaseDeploymentsSchema,
   VercelReleaseHealthSchema,
   VercelReleaseObservationSchema,
+  VercelRollingReleaseSummarySchema,
   type VercelDeploymentSummary,
   type VercelReleaseAction,
   type VercelReleaseActionResponse,
   type VercelReleaseCapabilities,
   type VercelReleaseHealth,
   type VercelReleaseObservation,
+  type VercelRollingReleaseSummary,
 } from "@evolution/contracts";
 import { getServerVercelReleaseConfig } from "../server-env";
 
@@ -91,13 +93,129 @@ async function rollingBilling(){
   }
 }
 
+type RollingConfig={
+  enabled:boolean;
+  advancementType?:string;
+  stages:Array<{targetPercentage:number;duration?:number}>;
+};
+
+function record(value:unknown):JsonRecord|undefined{
+  return value&&typeof value==="object"&&!Array.isArray(value)?value as JsonRecord:undefined;
+}
+
+function deploymentId(value:unknown){
+  if(typeof value==="string"&&value.trim())return value.trim();
+  const row=record(value);
+  const id=row?.id??row?.uid??row?.deploymentId;
+  return typeof id==="string"&&id.trim()?id.trim():undefined;
+}
+
+function rollingStages(value:unknown){
+  if(!Array.isArray(value))return[] as Array<{targetPercentage:number;duration?:number}>;
+  return value.flatMap((item)=>{
+    const row=record(item);
+    const targetPercentage=Number(row?.targetPercentage);
+    if(!Number.isFinite(targetPercentage)||targetPercentage<0||targetPercentage>100)return[];
+    const duration=Number(row?.duration);
+    return [{targetPercentage,duration:Number.isFinite(duration)&&duration>=0?duration:undefined}];
+  });
+}
+
+function parseRollingConfig(body:JsonRecord):RollingConfig{
+  const raw=record(body.rollingRelease);
+  if(!raw)return {enabled:false,stages:[]};
+  return {
+    enabled:raw.enabled===true,
+    advancementType:typeof raw.advancementType==="string"?raw.advancementType:undefined,
+    stages:rollingStages(raw.stages),
+  };
+}
+
+async function rollingReleaseConfig(){
+  const config=requireWriteConfig();
+  return parseRollingConfig(await vercelApi("/v1/projects/"+encodeURIComponent(config.projectId)+"/rolling-release/config"));
+}
+
+function rollingConfigReady(config:RollingConfig){
+  return config.enabled
+    &&config.advancementType==="manual-approval"
+    &&config.stages.map((stage)=>stage.targetPercentage).join(",")==="5,20,50,100";
+}
+
+function parseRollingState(body:JsonRecord,config:RollingConfig):VercelRollingReleaseSummary{
+  const raw=record(body.rollingRelease);
+  if(!raw){
+    return VercelRollingReleaseSummarySchema.parse({
+      active:false,
+      enabled:config.enabled,
+      advancementType:config.advancementType,
+      stages:config.stages,
+    });
+  }
+  const currentStageIndexRaw=Number(raw.currentStageIndex??raw.stageIndex);
+  const currentStageIndex=Number.isInteger(currentStageIndexRaw)&&currentStageIndexRaw>=0
+    ?currentStageIndexRaw
+    :undefined;
+  const stageRow=record(raw.currentStage);
+  const explicitPercentage=Number(
+    stageRow?.targetPercentage
+      ??raw.targetPercentage
+      ??raw.currentPercentage
+      ??raw.percentage,
+  );
+  const currentPercentage=Number.isFinite(explicitPercentage)
+    ?explicitPercentage
+    :currentStageIndex!==undefined
+      ?config.stages[currentStageIndex]?.targetPercentage
+      :undefined;
+  return VercelRollingReleaseSummarySchema.parse({
+    active:true,
+    enabled:config.enabled,
+    advancementType:config.advancementType,
+    candidateDeploymentId:deploymentId(raw.canaryDeployment)
+      ??deploymentId(raw.candidateDeployment)
+      ??deploymentId(raw.deployment)
+      ??deploymentId(raw.deploymentId),
+    stableDeploymentId:deploymentId(raw.currentDeployment)
+      ??deploymentId(raw.stableDeployment)
+      ??deploymentId(raw.previousDeployment),
+    currentStageIndex,
+    currentPercentage:Number.isFinite(currentPercentage)?currentPercentage:undefined,
+    stages:config.stages,
+    status:typeof raw.status==="string"
+      ?raw.status
+      :typeof raw.state==="string"
+        ?raw.state
+        :undefined,
+  });
+}
+
+async function rollingReleaseState(config?:RollingConfig){
+  const releaseConfig=config??await rollingReleaseConfig();
+  const server=requireWriteConfig();
+  const body=await vercelApi("/v1/projects/"+encodeURIComponent(server.projectId)+"/rolling-release");
+  return parseRollingState(body,releaseConfig);
+}
+
+function progressiveReason(billing:{supported:boolean;reason?:string},config:RollingConfig){
+  if(!billing.supported&&!config.enabled)return billing.reason??"rolling_release_unavailable";
+  if(!config.enabled)return "rolling_release_not_configured";
+  if(config.advancementType!=="manual-approval")return "manual_approval_required";
+  if(config.stages.map((stage)=>stage.targetPercentage).join(",")!=="5,20,50,100"){
+    return "requires_manual_5_20_50_100_stages";
+  }
+  return undefined;
+}
+
 export async function getVercelReleaseCapabilities():Promise<VercelReleaseCapabilities>{
   const config=getServerVercelReleaseConfig();
   const writeEnabled=Boolean(config.token&&config.projectId);
   const rolling=writeEnabled?await rollingBilling():{supported:false,reason:"credential_required"};
-  // V1 deliberately stays on preview→promote even if a paid project supports rolling release.
-  // This avoids pretending 5/20/50 traffic splitting is implemented before the adapter has stage telemetry.
-  const mode="preview-promote" as const;
+  const rollingConfig=writeEnabled
+    ?await rollingReleaseConfig().catch(()=>({enabled:false,stages:[]} as RollingConfig))
+    :{enabled:false,stages:[]} as RollingConfig;
+  const progressive=writeEnabled&&rollingConfigReady(rollingConfig);
+  const mode=progressive?"progressive" as const:"preview-promote" as const;
   return VercelReleaseCapabilitiesSchema.parse({
     provider:"vercel",
     available:Boolean(config.projectId||config.productionUrl),
@@ -105,12 +223,18 @@ export async function getVercelReleaseCapabilities():Promise<VercelReleaseCapabi
     writeEnabled,
     credentialStatus:writeEnabled?"ready":"required",
     mode,
-    rollingReleaseSupported:rolling.supported,
-    rollingReleaseReason:rolling.reason,
+    rollingReleaseSupported:rolling.supported||rollingConfig.enabled,
+    rollingReleaseConfigured:rollingConfig.enabled,
+    rollingReleaseStages:rollingConfig.stages.map((stage)=>stage.targetPercentage),
+    rollingReleaseReason:progressive?undefined:progressiveReason(rolling,rollingConfig),
     projectId:config.projectId,
     projectName:config.projectName,
     productionUrl:config.productionUrl,
-    actions:writeEnabled?["shadow","promote","rollback"]:[],
+    actions:writeEnabled
+      ?progressive
+        ?["shadow","canary-5","canary-20","canary-50","promote","rollback"]
+        :["shadow","promote","rollback"]
+      :[],
   });
 }
 
@@ -175,17 +299,33 @@ export async function observeVercelReleaseReality(args?:{
   const errors:string[]=[];
   let productionDeployment:VercelDeploymentSummary|undefined;
   let boundDeployment:VercelDeploymentSummary|undefined;
-  if(config.productionUrl){
+  let rollingRelease:VercelRollingReleaseSummary|undefined;
+  try{
+    const rollingConfig=await rollingReleaseConfig();
+    rollingRelease=await rollingReleaseState(rollingConfig);
+  }catch(error){
+    errors.push(`rolling-release: ${error instanceof Error?error.message:String(error)}`);
+  }
+  const stableId=rollingRelease?.active?rollingRelease.stableDeploymentId:undefined;
+  const candidateId=args?.boundDeploymentId
+    ??(rollingRelease?.active?rollingRelease.candidateDeploymentId:undefined);
+  if(stableId){
+    try{productionDeployment=await getDeployment(stableId);}
+    catch(error){errors.push(`stable-deployment: ${error instanceof Error?error.message:String(error)}`);}
+  }else if(config.productionUrl){
     try{productionDeployment=await getDeployment(config.productionUrl);}
     catch(error){errors.push(`production-deployment: ${error instanceof Error?error.message:String(error)}`);}
   }else{
     errors.push("production-deployment: production URL not configured");
   }
-  if(args?.boundDeploymentId){
-    try{boundDeployment=await getDeployment(args.boundDeploymentId);}
+  if(candidateId){
+    try{boundDeployment=await getDeployment(candidateId);}
     catch(error){errors.push(`bound-deployment: ${error instanceof Error?error.message:String(error)}`);}
   }
-  const productionHealth=await checkVercelReleaseHealth({url:config.productionUrl,healthPath:args?.healthPath});
+  const productionHealth=await checkVercelReleaseHealth({
+    url:productionDeployment?.url??config.productionUrl,
+    healthPath:args?.healthPath,
+  });
   const boundHealth=boundDeployment
     ?await checkVercelReleaseHealth({url:boundDeployment.url,healthPath:args?.healthPath})
     :undefined;
@@ -196,6 +336,7 @@ export async function observeVercelReleaseReality(args?:{
     boundDeployment,
     productionHealth,
     boundHealth,
+    rollingRelease,
     errors,
   });
 }
@@ -228,6 +369,47 @@ async function waitForProduction(expectedDeploymentId:string){
   return currentProductionDeployment();
 }
 
+function releaseError(message:string,code:string){
+  return Object.assign(new Error(message),{code});
+}
+
+function canaryPercentage(action:VercelReleaseAction){
+  if(action==="canary-5")return 5;
+  if(action==="canary-20")return 20;
+  if(action==="canary-50")return 50;
+  return undefined;
+}
+
+function priorCanaryPercentage(action:VercelReleaseAction){
+  if(action==="canary-20")return 5;
+  if(action==="canary-50")return 20;
+  return undefined;
+}
+
+function assertRollingCandidate(state:VercelRollingReleaseSummary,deploymentId:string){
+  if(!state.active)throw releaseError("Vercel Rolling Release 当前没有 active rollout。","VERCEL_ROLLING_RELEASE_NOT_ACTIVE");
+  if(!state.candidateDeploymentId){
+    throw releaseError("Vercel Rolling Release 未返回 canary deployment identity。","VERCEL_ROLLING_RELEASE_STATE_INCOMPLETE");
+  }
+  if(state.candidateDeploymentId!==deploymentId){
+    throw releaseError(
+      `Active Rolling Release candidate ${state.candidateDeploymentId} 与当前绑定 Deployment ${deploymentId} 不一致。`,
+      "VERCEL_ROLLING_RELEASE_CANDIDATE_MISMATCH",
+    );
+  }
+}
+
+async function requireProgressiveConfig(){
+  const config=await rollingReleaseConfig();
+  if(!rollingConfigReady(config)){
+    throw releaseError(
+      "Vercel Rolling Release 必须启用 manual-approval，并配置 5% → 20% → 50% → 100% 阶段。",
+      "VERCEL_ROLLING_RELEASE_NOT_ENABLED",
+    );
+  }
+  return config;
+}
+
 export async function executeVercelReleaseAction(args:{
   action:VercelReleaseAction;
   deploymentId?:string;
@@ -236,9 +418,6 @@ export async function executeVercelReleaseAction(args:{
   artifactHashes:Array<{sourceArtifactId:string;contentHash:string}>;
 }):Promise<VercelReleaseActionResponse>{
   const config=requireWriteConfig();
-  if(["canary-5","canary-20","canary-50"].includes(args.action)){
-    throw Object.assign(new Error("当前 Vercel Release Provider 使用 Preview → Promote；5/20/50 Rolling Release 未启用。"),{code:"VERCEL_ROLLING_RELEASE_NOT_ENABLED"});
-  }
   const deploymentId=args.deploymentId;
   if(!deploymentId){
     const label=args.action==="shadow"?"Preview Gate":args.action==="promote"?"Promote":"Rollback";
@@ -246,6 +425,8 @@ export async function executeVercelReleaseAction(args:{
   }
   const productionBefore=await currentProductionDeployment();
   const observedAt=()=>new Date().toISOString();
+  const rollingConfig=await rollingReleaseConfig().catch(()=>({enabled:false,stages:[]} as RollingConfig));
+  const progressiveConfigured=rollingConfigReady(rollingConfig);
 
   if(args.action==="shadow"){
     const candidate=await getDeployment(deploymentId);
@@ -260,14 +441,94 @@ export async function executeVercelReleaseAction(args:{
       stableDeploymentId:productionBefore?.id,deploymentId:candidate.id,
       artifactHashes:args.artifactHashes,environment:"preview",observedAt:observedAt(),
       latencyMs:health.latencyMs,sampleSize:health.checks.length,windowMinutes:Math.max(0.01,health.latencyMs/60000),
-      provider:"vercel",releaseMode:"preview-promote",deploymentUrl:candidate.url,productionUrl:config.productionUrl,
+      provider:"vercel",releaseMode:progressiveConfigured?"progressive":"preview-promote",deploymentUrl:candidate.url,productionUrl:config.productionUrl,
+    });
+  }
+
+  const targetPercentage=canaryPercentage(args.action);
+  if(targetPercentage!==undefined){
+    const progressiveConfig=await requireProgressiveConfig();
+    const candidate=await getDeployment(deploymentId);
+    if(candidate.state!=="READY")throw new Error("候选 Deployment 尚未 READY");
+    let rolling=await rollingReleaseState(progressiveConfig);
+    if(!rolling.active){
+      if(args.action!=="canary-5"){
+        throw releaseError("Rolling Release 尚未开始，只能从 canary-5 启动。","VERCEL_ROLLING_RELEASE_STAGE_MISMATCH");
+      }
+      await vercelApi("/v1/projects/"+encodeURIComponent(config.projectId)+"/rolling-release/start",{
+        method:"POST",
+        body:JSON.stringify({deploymentId:candidate.id}),
+      });
+      rolling=await rollingReleaseState(progressiveConfig);
+    }else{
+      assertRollingCandidate(rolling,candidate.id);
+      const prior=priorCanaryPercentage(args.action);
+      if(rolling.currentPercentage===targetPercentage){
+        // Idempotent replay: external Vercel state is already at the requested stage.
+      }else{
+        if(prior===undefined||rolling.currentPercentage!==prior||rolling.currentStageIndex===undefined){
+          throw releaseError(
+            `Rolling Release 当前为 ${rolling.currentPercentage??"unknown"}%，不能执行 ${args.action}。`,
+            "VERCEL_ROLLING_RELEASE_STAGE_MISMATCH",
+          );
+        }
+        await vercelApi("/v1/projects/"+encodeURIComponent(config.projectId)+"/rolling-release/approve-stage",{
+          method:"POST",
+          body:JSON.stringify({deploymentId:candidate.id,currentStageIndex:rolling.currentStageIndex}),
+        });
+        rolling=await rollingReleaseState(progressiveConfig);
+      }
+    }
+    assertRollingCandidate(rolling,candidate.id);
+    if(rolling.currentPercentage!==targetPercentage){
+      throw releaseError(
+        `Vercel Rolling Release 未确认 ${targetPercentage}% 阶段，当前为 ${rolling.currentPercentage??"unknown"}%。`,
+        "VERCEL_ROLLING_RELEASE_STAGE_MISMATCH",
+      );
+    }
+    const health=await checkVercelReleaseHealth({url:candidate.url,healthPath:args.healthPath});
+    return VercelReleaseActionResponseSchema.parse({
+      ok:health.ready,
+      trafficPercent:targetPercentage,
+      note:health.ready
+        ?`Vercel Rolling Release 已确认 ${targetPercentage}% Canary，候选 Health 通过。`
+        :`Vercel Rolling Release 已到 ${targetPercentage}% Canary，但候选 Health 未通过。`,
+      healthy:health.ready,kpis:[],evidenceMode:"live",effectiveAction:args.action,
+      observationStatus:health.ready?"healthy":"unhealthy",
+      stableDeploymentId:rolling.stableDeploymentId??args.stableDeploymentId??productionBefore?.id,
+      deploymentId:candidate.id,
+      artifactHashes:args.artifactHashes,
+      environment:"production-canary",
+      observedAt:observedAt(),
+      latencyMs:health.latencyMs,
+      sampleSize:health.checks.length,
+      windowMinutes:Math.max(0.01,health.latencyMs/60000),
+      provider:"vercel",
+      releaseMode:"progressive",
+      deploymentUrl:candidate.url,
+      productionUrl:config.productionUrl,
+      rollingRelease:rolling,
     });
   }
 
   if(args.action==="promote"){
     const candidate=await getDeployment(deploymentId);
     if(candidate.state!=="READY")throw new Error("候选 Deployment 尚未 READY");
-    if(productionBefore?.id!==candidate.id){
+    let activeRolling=await rollingReleaseState(rollingConfig).catch(()=>undefined);
+    if(activeRolling?.active){
+      assertRollingCandidate(activeRolling,candidate.id);
+      if(activeRolling.currentPercentage!==50){
+        throw releaseError(
+          `Rolling Release 当前为 ${activeRolling.currentPercentage??"unknown"}%，Promote 前必须完成 50% Canary。`,
+          "VERCEL_ROLLING_RELEASE_STAGE_MISMATCH",
+        );
+      }
+      await vercelApi("/v1/projects/"+encodeURIComponent(config.projectId)+"/rolling-release/complete",{
+        method:"POST",
+        body:JSON.stringify({deploymentId:candidate.id}),
+      });
+      activeRolling=await rollingReleaseState(rollingConfig).catch(()=>activeRolling);
+    }else if(productionBefore?.id!==candidate.id){
       await vercelApi("/v10/projects/"+encodeURIComponent(config.projectId)+"/promote/"+encodeURIComponent(candidate.id),{method:"POST",body:"{}"});
     }
     const productionAfter=productionBefore?.id===candidate.id?productionBefore:await waitForProduction(candidate.id);
@@ -281,13 +542,27 @@ export async function executeVercelReleaseAction(args:{
       stableDeploymentId:args.stableDeploymentId??(productionBefore?.id===candidate.id?undefined:productionBefore?.id),deploymentId:candidate.id,
       artifactHashes:args.artifactHashes,environment:"production",observedAt:observedAt(),
       latencyMs:health.latencyMs,sampleSize:points,windowMinutes:Math.max(0.01,health.latencyMs/60000),
-      provider:"vercel",releaseMode:"preview-promote",deploymentUrl:candidate.url,productionUrl:config.productionUrl,
+      provider:"vercel",releaseMode:activeRolling?"progressive":"preview-promote",deploymentUrl:candidate.url,productionUrl:config.productionUrl,
+      rollingRelease:activeRolling,
     });
   }
 
   if(args.action==="rollback"){
     const target=await getDeployment(deploymentId);
-    if(productionBefore?.id!==target.id){
+    let activeRolling=await rollingReleaseState(rollingConfig).catch(()=>undefined);
+    if(activeRolling?.active&&activeRolling.candidateDeploymentId){
+      if(activeRolling.stableDeploymentId&&activeRolling.stableDeploymentId!==target.id){
+        throw releaseError(
+          "Rolling Release stable Deployment 与 Mission rollback target 不一致。",
+          "VERCEL_ROLLING_RELEASE_STABLE_MISMATCH",
+        );
+      }
+      await vercelApi("/v1/projects/"+encodeURIComponent(config.projectId)+"/rolling-release/abort",{
+        method:"POST",
+        body:JSON.stringify({deploymentId:activeRolling.candidateDeploymentId}),
+      });
+      activeRolling=await rollingReleaseState(rollingConfig).catch(()=>activeRolling);
+    }else if(productionBefore?.id!==target.id){
       await vercelApi("/v1/projects/"+encodeURIComponent(config.projectId)+"/rollback/"+encodeURIComponent(target.id),{method:"POST",body:"{}"});
     }
     const productionAfter=productionBefore?.id===target.id?productionBefore:await waitForProduction(target.id);
@@ -300,7 +575,8 @@ export async function executeVercelReleaseAction(args:{
       stableDeploymentId:target.id,deploymentId:target.id,
       environment:"production",observedAt:observedAt(),
       latencyMs:health.latencyMs,sampleSize:health.checks.length,windowMinutes:Math.max(0.01,health.latencyMs/60000),
-      provider:"vercel",releaseMode:"preview-promote",deploymentUrl:target.url,productionUrl:config.productionUrl,
+      provider:"vercel",releaseMode:activeRolling?"progressive":"preview-promote",deploymentUrl:target.url,productionUrl:config.productionUrl,
+      rollingRelease:activeRolling,
     });
   }
 

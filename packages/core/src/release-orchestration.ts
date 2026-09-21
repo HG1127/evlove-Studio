@@ -2,7 +2,13 @@ import type { Candidate, EvolveProject, ReleaseAdapterResult } from "@evolution/
 import { appendReleaseObservation } from "./release-outcome";
 import { projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, projectReleaseMode } from "./release-target";
 
-export type DurableReleaseAction = "shadow" | "promote" | "rollback";
+export type DurableReleaseAction =
+  |"shadow"
+  |"canary-5"
+  |"canary-20"
+  |"canary-50"
+  |"promote"
+  |"rollback";
 
 export function currentReleaseCandidate(project:EvolveProject):Candidate|undefined{
   const id=project.experimentRun.winnerId??project.searchChampion?.candidate?.id;
@@ -27,11 +33,17 @@ function hasExactArtifactHashes(candidate:Candidate,result:ReleaseAdapterResult)
 
 export function nextDurableReleaseAction(project:EvolveProject):DurableReleaseAction|undefined{
   if(!projectHasOnlineReleaseTarget(project)||projectHasLiveReleaseDecision(project))return undefined;
-  if(project.releaseTarget?.provider!=="vercel"||projectReleaseMode(project)!=="preview-promote")return undefined;
+  if(project.releaseTarget?.provider!=="vercel")return undefined;
   if(project.gates.find((gate)=>gate.id==="release-ready")?.status!=="approved")return undefined;
   const candidate=currentReleaseCandidate(project);
   if(!candidate)return undefined;
   if(project.release.candidateId!==candidate.id||!project.release.deploymentId)return undefined;
+  const mode=projectReleaseMode(project);
+  const liveHealthy=project.release.evidenceMode==="live"
+    &&project.release.healthy===true
+    &&project.release.observationStatus==="healthy";
+  const liveUnhealthy=project.release.evidenceMode==="live"
+    &&project.release.healthy===false;
 
   if(project.release.status==="idle")return "shadow";
   if(project.release.status==="promoted"
@@ -39,16 +51,18 @@ export function nextDurableReleaseAction(project:EvolveProject):DurableReleaseAc
     &&project.release.recovery.action==="rollback"
     &&project.release.stableDeploymentId)return "rollback";
   if(project.release.status==="shadow"){
-    return project.release.evidenceMode==="live"
-      &&project.release.healthy===true
-      &&project.release.observationStatus==="healthy"
-      ?"promote"
-      :undefined;
+    if(!liveHealthy)return undefined;
+    return mode==="progressive"?"canary-5":"promote";
   }
-  if(project.release.status==="promoted"
-    &&project.release.evidenceMode==="live"
-    &&project.release.healthy===false
-    &&project.release.stableDeploymentId)return "rollback";
+  if(mode==="progressive"){
+    if(["canary-5","canary-20","canary-50"].includes(project.release.status)
+      &&liveUnhealthy
+      &&project.release.stableDeploymentId)return "rollback";
+    if(project.release.status==="canary-5"&&liveHealthy)return "canary-20";
+    if(project.release.status==="canary-20"&&liveHealthy)return "canary-50";
+    if(project.release.status==="canary-50"&&liveHealthy)return "promote";
+  }
+  if(project.release.status==="promoted"&&liveUnhealthy&&project.release.stableDeploymentId)return "rollback";
   return undefined;
 }
 
@@ -61,15 +75,15 @@ export function applyReleaseResultToProject(args:{
 }):EvolveProject{
   const at=args.at??new Date().toISOString();
   const effective=args.result.effectiveAction??args.requestedAction;
-  if(!["shadow","promote","rollback"].includes(effective))throw new Error(`Unsupported durable release action: ${effective}`);
+  if(!["shadow","canary-5","canary-20","canary-50","promote","rollback"].includes(effective))throw new Error(`Unsupported durable release action: ${effective}`);
   if(effective!==args.requestedAction)throw new Error(`Release Provider effectiveAction ${effective} 与请求 ${args.requestedAction} 不一致`);
   if(args.result.evidenceMode!=="live")throw new Error("Release Provider 未返回 live evidence");
   if(!args.result.deploymentId||!args.result.observedAt)throw new Error("Release receipt 缺少 deploymentId / observedAt");
   if(effective!=="rollback"&&!hasExactArtifactHashes(args.candidate,args.result)){
     throw new Error("Release receipt Artifact Hash 与 exact Candidate 不一致");
   }
-  if(effective==="promote"&&args.result.deploymentId!==args.project.release.deploymentId){
-    throw new Error("Promote receipt deploymentId 与 Preview 绑定不一致");
+  if(effective!=="rollback"&&args.result.deploymentId!==args.project.release.deploymentId){
+    throw new Error(`${effective} receipt deploymentId 与绑定 Candidate Deployment 不一致`);
   }
   const durableAction=effective as DurableReleaseAction;
   const observation= {
@@ -91,7 +105,11 @@ export function applyReleaseResultToProject(args:{
     windowMinutes:args.result.windowMinutes,
     reason:args.result.note,
   };
-  const status=effective==="shadow"?"shadow":effective==="promote"?"promoted":"rolled-back";
+  const status=effective==="promote"
+    ?"promoted"
+    :effective==="rollback"
+      ?"rolled-back"
+      :effective;
   if(args.project.release.status===status
     &&args.project.release.candidateId===args.candidate.id
     &&args.project.release.deploymentId===args.result.deploymentId

@@ -34,6 +34,16 @@ function observation():VercelReleaseObservation{
       ready:true,url:"https://candidate.example.com",checkedAt:"2026-09-21T03:00:00.000Z",latencyMs:90,
       checks:[{path:"/health",ok:true,status:200,latencyMs:80}],message:"ok",
     },
+    rollingRelease:{
+      active:true,
+      enabled:true,
+      advancementType:"manual-approval",
+      candidateDeploymentId:"dpl-candidate",
+      stableDeploymentId:"dpl-stable",
+      currentStageIndex:1,
+      currentPercentage:20,
+      stages:[{targetPercentage:5},{targetPercentage:20},{targetPercentage:50},{targetPercentage:100}],
+    },
     errors:[],
   };
 }
@@ -50,6 +60,9 @@ describe("release outcome telemetry",()=>{
       expect.objectContaining({arm:"stable",metricKey:"http_ok",segment:"path:/health",value:1}),
       expect.objectContaining({arm:"candidate",metricKey:"http_ok",segment:"path:/health",value:1}),
     ]));
+    expect(batch?.samples.every((sample)=>sample.metadata?.trafficPercent===20)).toBe(true);
+    expect(batch?.samples.every((sample)=>sample.metadata?.rollingReleaseActive===true)).toBe(true);
+    expect(batch?.samples.every((sample)=>sample.metadata?.rollingStageIndex===1)).toBe(true);
   });
 
   it("does not double-count a promoted Candidate as both stable and candidate",()=>{
