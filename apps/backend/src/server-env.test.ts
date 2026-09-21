@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach,beforeEach,describe,expect,it } from "vitest";
-import { getServerSupabaseConfig, serverSupabaseCredentialMode, serverSupabaseSecureConfigured } from "./server-env";
+import { getCapabilityEmbeddingConfig, getServerSupabaseConfig, serverSupabaseCredentialMode, serverSupabaseSecureConfigured } from "./server-env";
 
 const KEYS=[
   "SUPABASE_URL",
@@ -12,6 +12,14 @@ const KEYS=[
   "VITE_SUPABASE_ANON_KEY",
   "SUPABASE_ARTIFACT_BUCKET",
   "VITE_SUPABASE_ARTIFACT_BUCKET",
+  "VERCEL",
+  "VERCEL_ENV",
+  "VERCEL_OIDC_TOKEN",
+  "EVOLUTION_AI_GATEWAY_ENABLED",
+  "EVOLUTION_CAPABILITY_EMBEDDING_API_KEY",
+  "EVOLUTION_CAPABILITY_EMBEDDING_MODEL",
+  "EVOLUTION_CAPABILITY_EMBEDDING_BASE_URL",
+  "EVOLUTION_CAPABILITY_EMBEDDING_DIMENSIONS",
 ] as const;
 
 const previous=new Map<string,string|undefined>();
@@ -50,5 +58,28 @@ describe("server Supabase env",()=>{
     expect(config.anonKey).toBe("sb_publishable_test_fixture_1111111111111111");
     expect(serverSupabaseCredentialMode()).toBe("publishable");
     expect(serverSupabaseSecureConfigured()).toBe(false);
+  });
+
+  it("uses Vercel AI Gateway OIDC for capability embeddings without a static API key",()=>{
+    process.env.VERCEL_ENV="production";
+    process.env.EVOLUTION_AI_GATEWAY_ENABLED="true";
+    expect(getCapabilityEmbeddingConfig()).toEqual({
+      mode:"vercel-gateway",
+      model:"openai/text-embedding-3-small",
+      dimensions:1536,
+      timeoutMs:90_000,
+    });
+  });
+
+  it("keeps OpenAI-compatible embedding credentials as the non-Vercel fallback",()=>{
+    process.env.EVOLUTION_CAPABILITY_EMBEDDING_API_KEY="embed-key";
+    process.env.EVOLUTION_CAPABILITY_EMBEDDING_MODEL="text-embedding-test";
+    process.env.EVOLUTION_CAPABILITY_EMBEDDING_BASE_URL="https://embed.test/v1";
+    expect(getCapabilityEmbeddingConfig()).toMatchObject({
+      mode:"openai-compatible",
+      apiKey:"embed-key",
+      model:"text-embedding-test",
+      baseUrl:"https://embed.test/v1",
+    });
   });
 });

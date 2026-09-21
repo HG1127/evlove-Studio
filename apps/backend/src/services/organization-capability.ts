@@ -27,9 +27,29 @@ function pgvectorLiteral(vector:number[]|undefined){
   return "["+vector.join(",")+"]";
 }
 
+function validateEmbeddingRows(rows:unknown[],expected:number){
+  if(rows.length!==expected)throw new Error("Capability Embedding response count mismatch");
+  return rows.map((embedding,index)=>{
+    if(!Array.isArray(embedding)||!embedding.length||!embedding.every((value)=>typeof value==="number"&&Number.isFinite(value))){
+      throw new Error("Capability Embedding response invalid at index "+index);
+    }
+    return embedding as number[];
+  });
+}
+
 async function embedTexts(texts:string[]){
   const config=getCapabilityEmbeddingConfig();
   if(!config||!texts.length)return undefined;
+  if(config.mode==="vercel-gateway"){
+    const {embedMany,gateway}=await import("ai");
+    const result=await embedMany({
+      model:gateway.embeddingModel(config.model),
+      values:texts,
+      maxRetries:2,
+      abortSignal:AbortSignal.timeout(config.timeoutMs),
+    });
+    return validateEmbeddingRows(result.embeddings,texts.length);
+  }
   const response=await fetch(config.baseUrl+"/embeddings",{
     method:"POST",
     headers:{"Content-Type":"application/json",Authorization:"Bearer "+config.apiKey},
@@ -46,13 +66,7 @@ async function embedTexts(texts:string[]){
   }
   const json=await response.json() as {data?:Array<{index?:number;embedding?:unknown}>};
   const rows=[...(json.data??[])].sort((a,b)=>(a.index??0)-(b.index??0));
-  if(rows.length!==texts.length)throw new Error("Capability Embedding response count mismatch");
-  return rows.map((row,index)=>{
-    if(!Array.isArray(row.embedding)||!row.embedding.length||!row.embedding.every((value)=>typeof value==="number"&&Number.isFinite(value))){
-      throw new Error("Capability Embedding response invalid at index "+index);
-    }
-    return row.embedding as number[];
-  });
+  return validateEmbeddingRows(rows.map((row)=>row.embedding),texts.length);
 }
 
 function embeddingFromRow(row:JsonRecord){

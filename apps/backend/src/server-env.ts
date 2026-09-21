@@ -137,22 +137,26 @@ export function evidenceLedgerConfigured(){
     &&Boolean(getEvidenceLedgerSigningConfig());
 }
 
-export type CapabilityEmbeddingConfig={
-  apiKey:string;
-  baseUrl:string;
-  model:string;
-  dimensions?:number;
-  timeoutMs:number;
-};
+export type CapabilityEmbeddingConfig=
+  | {mode:"vercel-gateway";model:string;dimensions:1536;timeoutMs:number}
+  | {mode:"openai-compatible";apiKey:string;baseUrl:string;model:string;dimensions?:number;timeoutMs:number};
 
 export function getCapabilityEmbeddingConfig():CapabilityEmbeddingConfig|undefined{
+  const configuredModel=value(process.env.EVOLUTION_CAPABILITY_EMBEDDING_MODEL);
+  if(serverAiOidcAvailable()&&serverAiGatewayEnabled()){
+    return {
+      mode:"vercel-gateway",
+      model:configuredModel??"openai/text-embedding-3-small",
+      dimensions:1536,
+      timeoutMs:serverAiTimeoutMs(),
+    };
+  }
   const apiKey=value(
     process.env.EVOLUTION_CAPABILITY_EMBEDDING_API_KEY,
     process.env.EVOLUTION_AI_API_KEY,
     process.env.OPENAI_API_KEY,
   );
-  const model=value(process.env.EVOLUTION_CAPABILITY_EMBEDDING_MODEL);
-  if(!apiKey||!model)return undefined;
+  if(!apiKey||!configuredModel)return undefined;
   const baseUrl=(value(
     process.env.EVOLUTION_CAPABILITY_EMBEDDING_BASE_URL,
     process.env.EVOLUTION_AI_BASE_URL,
@@ -160,7 +164,7 @@ export function getCapabilityEmbeddingConfig():CapabilityEmbeddingConfig|undefin
   )??"https://api.openai.com/v1").replace(/\/+$/,"");
   const dimensionsRaw=value(process.env.EVOLUTION_CAPABILITY_EMBEDDING_DIMENSIONS);
   const dimensions=dimensionsRaw?Math.max(8,Math.min(Number(dimensionsRaw)||0,8192)):undefined;
-  return {apiKey,baseUrl,model,dimensions,timeoutMs:serverAiTimeoutMs()};
+  return {mode:"openai-compatible",apiKey,baseUrl,model:configuredModel,dimensions,timeoutMs:serverAiTimeoutMs()};
 }
 
 export function capabilityEmbeddingConfigured(){return Boolean(getCapabilityEmbeddingConfig());}
