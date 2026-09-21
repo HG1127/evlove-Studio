@@ -7,6 +7,7 @@ import {
   githubWebhookConfigured,
   serverAiConfigured,
   serverSupabaseConfigured,
+  serverSupabaseConfigDiagnostics,
   serverSupabaseSecureConfigured,
   targetProxyCapabilities,
 } from "../server-env";
@@ -23,6 +24,7 @@ function fulfilled<T>(result:PromiseSettledResult<T>):T|undefined{
 
 export async function getPublicReadinessSnapshot(){
   const configured=serverSupabaseConfigured();
+  const dataPlaneConfig=serverSupabaseConfigDiagnostics();
   const checks=await Promise.allSettled([
     configured?checkSupabaseBackendHealth(getServerSupabaseConfig()):Promise.resolve(undefined),
     checkVercelSandboxHealth(),
@@ -51,6 +53,7 @@ export async function getPublicReadinessSnapshot(){
       database:Boolean(dataPlane?.database),
       storage:Boolean(dataPlane?.storage),
       coreTables:Boolean(dataPlane&&Object.values(dataPlane.tables).every(Boolean)),
+      ...dataPlaneConfig,
     },
     sourceParse:Boolean(configured&&dataPlane?.database&&dataPlane?.storage),
     serverAi:serverAiConfigured(),

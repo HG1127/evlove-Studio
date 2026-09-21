@@ -48,6 +48,29 @@ export function serverSupabaseSecureConfigured(){
   return serverSupabaseConfigured()&&serverSupabaseCredentialMode()==="secret";
 }
 
+export function serverSupabaseConfigDiagnostics(){
+  const url=value(process.env.SUPABASE_URL,process.env.VITE_SUPABASE_URL);
+  const secret=value(process.env.SUPABASE_SECRET_KEY,process.env.SUPABASE_SERVICE_ROLE_KEY);
+  const publishable=value(process.env.SUPABASE_PUBLISHABLE_KEY,process.env.VITE_SUPABASE_ANON_KEY);
+  const allowPublishable=/^(1|true|yes|on)$/i.test(value(process.env.EVOLUTION_ALLOW_PUBLISHABLE_DATA_PLANE)??"")
+    ||process.env.NODE_ENV!=="production";
+  const key=secret??(allowPublishable?publishable:undefined);
+  const artifactBucket=value(process.env.SUPABASE_ARTIFACT_BUCKET,process.env.VITE_SUPABASE_ARTIFACT_BUCKET)
+    ??"evolution-artifacts";
+  const parsed=SupabaseBackendConfigSchema.safeParse({url,anonKey:key,artifactBucket});
+  return {
+    credentialMode:serverSupabaseCredentialMode(),
+    urlPresent:Boolean(url),
+    secretPresent:Boolean(secret),
+    publishablePresent:Boolean(publishable),
+    artifactBucketPresent:Boolean(value(process.env.SUPABASE_ARTIFACT_BUCKET,process.env.VITE_SUPABASE_ARTIFACT_BUCKET)),
+    configValid:parsed.success,
+    issueFields:parsed.success
+      ?[]
+      :[...new Set(parsed.error.issues.map((issue)=>String(issue.path[0]??"config")))].sort(),
+  };
+}
+
 export function getEvolutionWorkspaceId(){
   return value(process.env.EVOLUTION_WORKSPACE_ID);
 }
