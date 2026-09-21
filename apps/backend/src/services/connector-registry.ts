@@ -7,6 +7,7 @@ import {
   type ConnectorLifecycleOperation,
   type ConnectorServerManifest,
 } from "@evolution/contracts";
+import {getVaultSecretMetadata,resolveVaultSecret} from "./server-vault";
 
 const OPERATIONS=["read","snapshot","mutate","validate","deploy","observe","rollback"] as const;
 
@@ -51,27 +52,38 @@ export function getServerConnectorManifests(){
   return manifests;
 }
 
-function credentialConfigured(manifest:ConnectorServerManifest){
-  return !manifest.credentialEnv||Boolean(process.env[manifest.credentialEnv]?.trim());
+async function vaultRefConfigured(id:string|undefined){
+  if(!id)return true;
+  return Boolean(await getVaultSecretMetadata(id).catch(()=>undefined));
 }
 
-function webhookConfigured(manifest:ConnectorServerManifest){
-  return !manifest.webhookSecretEnv||Boolean(process.env[manifest.webhookSecretEnv]?.trim());
+async function credentialConfigured(manifest:ConnectorServerManifest){
+  if(manifest.credentialEnv)return Boolean(process.env[manifest.credentialEnv]?.trim());
+  if(manifest.credentialVaultId)return vaultRefConfigured(manifest.credentialVaultId);
+  return true;
+}
+
+async function webhookConfigured(manifest:ConnectorServerManifest){
+  if(manifest.webhookSecretEnv)return Boolean(process.env[manifest.webhookSecretEnv]?.trim());
+  if(manifest.webhookSecretVaultId)return vaultRefConfigured(manifest.webhookSecretVaultId);
+  return true;
 }
 
 function lifecycle(manifest:ConnectorServerManifest){
   return Object.fromEntries(OPERATIONS.map((operation)=>[operation,Boolean(manifest.paths[operation])])) as Record<ConnectorLifecycleOperation,boolean>;
 }
 
-export function getConnectorRegistryCapabilities(){
-  const connectors=getServerConnectorManifests().map((manifest)=>({
+export async function getConnectorRegistryCapabilities(){
+  const connectors=await Promise.all(getServerConnectorManifests().map(async(manifest)=>({
     id:manifest.id,
     label:manifest.label,
     targetType:manifest.targetType,
     lifecycle:lifecycle(manifest),
-    credentialConfigured:credentialConfigured(manifest),
-    webhookConfigured:webhookConfigured(manifest),
-  }));
+    credentialConfigured:await credentialConfigured(manifest),
+    webhookConfigured:await webhookConfigured(manifest),
+    credentialProvider:manifest.credentialVaultId?"vault":manifest.credentialEnv?"env":"none",
+    webhookProvider:manifest.webhookSecretVaultId?"vault":manifest.webhookSecretEnv?"env":"none",
+  })));
   const fullLifecycleCount=connectors.filter((connector)=>
     connector.credentialConfigured&&OPERATIONS.every((operation)=>connector.lifecycle[operation]),
   ).length;
@@ -104,9 +116,11 @@ function endpoint(manifest:ConnectorServerManifest,operation:ConnectorLifecycleO
   return new URL(path,manifest.baseUrl.endsWith("/")?manifest.baseUrl:manifest.baseUrl+"/").toString();
 }
 
-function authHeader(manifest:ConnectorServerManifest):Record<string,string>{
-  if(!manifest.credentialEnv)return {};
-  const token=process.env[manifest.credentialEnv]?.trim();
+async function authHeader(manifest:ConnectorServerManifest):Promise<Record<string,string>>{
+  if(!manifest.credentialEnv&&!manifest.credentialVaultId)return {};
+  const token=manifest.credentialVaultId
+    ?await resolveVaultSecret(manifest.credentialVaultId,`connector:${manifest.id}:credential`)
+    :process.env[manifest.credentialEnv!]?.trim();
   if(!token){
     const error=new Error(`Connector ${manifest.id} credential is not configured`);
     (error as Error&{code?:string}).code="CONNECTOR_CREDENTIAL_REQUIRED";
@@ -122,7 +136,7 @@ export async function executeConnectorAction(raw:ConnectorActionRequest){
   const requestHeaders:Record<string,string>={
     "Content-Type":"application/json",
     "X-Evolution-Connector-Operation":input.operation,
-    ...authHeader(manifest),
+    ...await authHeader(manifest),
   };
   if(input.idempotencyKey)requestHeaders["Idempotency-Key"]=input.idempotencyKey;
   const response=await fetch(url,{
@@ -152,14 +166,16 @@ export async function executeConnectorAction(raw:ConnectorActionRequest){
   });
 }
 
-export function connectorWebhookSecret(connectorId:string){
+export async function connectorWebhookSecret(connectorId:string){
   const manifest=resolveManifest(connectorId);
-  if(!manifest.webhookSecretEnv){
+  if(!manifest.webhookSecretEnv&&!manifest.webhookSecretVaultId){
     const error=new Error(`Connector ${connectorId} webhook is not configured`);
     (error as Error&{code?:string}).code="CONNECTOR_WEBHOOK_NOT_CONFIGURED";
     throw error;
   }
-  const secret=process.env[manifest.webhookSecretEnv]?.trim();
+  const secret=manifest.webhookSecretVaultId
+    ?await resolveVaultSecret(manifest.webhookSecretVaultId,`connector:${manifest.id}:webhook`)
+    :process.env[manifest.webhookSecretEnv!]?.trim();
   if(!secret){
     const error=new Error(`Connector ${connectorId} webhook secret is missing`);
     (error as Error&{code?:string}).code="CONNECTOR_WEBHOOK_SECRET_REQUIRED";

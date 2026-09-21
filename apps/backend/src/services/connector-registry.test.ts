@@ -26,21 +26,22 @@ describe("connector registry",()=>{
     for(const key of KEYS){const value=previous.get(key);if(value===undefined)delete process.env[key];else process.env[key]=value;}
   });
 
-  it("reports an empty registry without inventing connector support",()=>{
-    expect(getConnectorRegistryCapabilities()).toMatchObject({codeReady:true,configured:false,connectorCount:0,fullLifecycleCount:0});
+  it("reports an empty registry without inventing connector support",async()=>{
+    expect(await getConnectorRegistryCapabilities()).toMatchObject({codeReady:true,configured:false,connectorCount:0,fullLifecycleCount:0});
   });
 
-  it("returns sanitized capabilities without exposing credential values",()=>{
+  it("returns sanitized capabilities without exposing credential values",async()=>{
     process.env.EVOLUTION_CONNECTORS_JSON=manifest({
       read:"/read",snapshot:"/snapshot",mutate:"/mutate",validate:"/validate",
       deploy:"/deploy",observe:"/observe",rollback:"/rollback",
     });
     process.env.TEST_CONNECTOR_TOKEN="super-secret-token";
     process.env.TEST_CONNECTOR_WEBHOOK="webhook-secret";
-    const caps=getConnectorRegistryCapabilities();
+    const caps=await getConnectorRegistryCapabilities();
     expect(caps).toMatchObject({configured:true,connectorCount:1,fullLifecycleCount:1});
     expect(caps.connectors[0]).toMatchObject({
       id:"test-connector",targetType:"workflow",credentialConfigured:true,webhookConfigured:true,
+      credentialProvider:"env",webhookProvider:"env",
       lifecycle:{read:true,snapshot:true,mutate:true,validate:true,deploy:true,observe:true,rollback:true},
     });
     expect(JSON.stringify(caps)).not.toContain("super-secret-token");

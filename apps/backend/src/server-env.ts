@@ -80,6 +80,42 @@ export function releaseApprovalTtlSeconds(){
   return Math.max(300,Math.min(raw,86_400));
 }
 
+export type VaultEncryptionConfig={
+  keyId:string;
+  activeKey:string;
+  decryptKeys:Record<string,string>;
+};
+
+function vaultDecryptKeyRing(){
+  const raw=value(process.env.EVOLUTION_VAULT_DECRYPT_KEYS_JSON);
+  if(!raw)return {} as Record<string,string>;
+  try{
+    const parsed=JSON.parse(raw) as unknown;
+    if(!parsed||typeof parsed!=="object"||Array.isArray(parsed))return {};
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string,unknown>)
+        .filter(([id,key])=>id.trim().length>0&&id.length<=120&&typeof key==="string"&&key.length>=32)
+        .slice(0,32)
+        .map(([id,key])=>[id,key as string]),
+    );
+  }catch{return {};}
+}
+
+export function getVaultEncryptionConfig():VaultEncryptionConfig|undefined{
+  const activeKey=value(process.env.EVOLUTION_VAULT_MASTER_KEY);
+  if(!activeKey||activeKey.length<32)return undefined;
+  const keyId=value(process.env.EVOLUTION_VAULT_KEY_ID)??"vault-aes-gcm-v1";
+  return {
+    keyId,
+    activeKey,
+    decryptKeys:{...vaultDecryptKeyRing(),[keyId]:activeKey},
+  };
+}
+
+export function vaultEncryptionConfigured(){
+  return Boolean(getVaultEncryptionConfig())&&serverSupabaseConfigured()&&Boolean(getEvolutionWorkspaceId());
+}
+
 export type ServerSecurityConfig={
   mode:"trusted-header"|"internal-dev"|"blocked";
   identitySecret?:string;

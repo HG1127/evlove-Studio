@@ -13,7 +13,7 @@ export default defineEventHandler(async(event)=>{
   const connectorId=getRouterParam(event,"id");
   if(!connectorId)throw createError({statusCode:400,statusMessage:"Connector id is required"});
   let secret:string;
-  try{secret=connectorWebhookSecret(connectorId);}
+  try{secret=await connectorWebhookSecret(connectorId);}
   catch(error){throw createError({statusCode:503,statusMessage:error instanceof Error?error.message:String(error)});}
   const raw=await readRawBody(event,"utf8")??"";
   const signature=getHeader(event,"x-evolution-connector-signature")??"";

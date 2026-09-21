@@ -14,6 +14,8 @@ import {
 } from "../../../src/server-env";
 import {getSecurityCapabilities} from "../../../src/services/security-policy";
 import {requireEvolutionPermission} from "../../../src/services/security-policy";
+import {releaseApprovalStoreHealth} from "../../../src/services/release-approval-store";
+import {serverVaultHealth} from "../../../src/services/server-vault";
 
 export default defineEventHandler(async(event)=>{
   requireEvolutionPermission(event,"data.read");
@@ -51,6 +53,11 @@ export default defineEventHandler(async(event)=>{
       };
     }
   }
+  const [vault,approval]=await Promise.all([serverVaultHealth(),releaseApprovalStoreHealth()]);
+  const security=getSecurityCapabilities();
+  const governanceProductionSafe=security.productionSafe
+    &&approval.databaseReady
+    &&(!vault.configured||vault.databaseReady);
   return EvolutionBackendHealthSchema.parse({
     checkedAt:new Date().toISOString(),
     dataPlane,
@@ -63,6 +70,19 @@ export default defineEventHandler(async(event)=>{
     release:{codeReady:true,writeConfigured:vercelReleaseWriteConfigured()},
     git:{codeReady:true,configured:githubTargetConfigured(),webhookConfigured:githubWebhookConfigured()},
     targetProxy:targetProxyCapabilities(),
-    security:getSecurityCapabilities(),
+    security,
+    securityGovernance:{
+      codeReady:true,
+      identityConfigured:security.configured,
+      identityEnforced:security.enforced,
+      secureDataPlane:serverSupabaseSecureConfigured(),
+      vaultConfigured:vault.configured,
+      vaultDatabaseReady:vault.databaseReady,
+      approvalStoreReady:approval.databaseReady,
+      productionSafe:governanceProductionSafe,
+      workspaceId:security.workspaceId,
+      checkedAt:new Date().toISOString(),
+      message:governanceProductionSafe?"Governance healthy.":"Governance requires Vault/data-plane/approval configuration.",
+    },
   });
 });

@@ -15,7 +15,9 @@ import {getConnectorRegistryCapabilities} from "./connector-registry";
 import {getEvidenceLedgerHealth} from "./evidence-ledger";
 import {getOrganizationCapabilityHealth} from "./organization-capability";
 import {getOutcomeAnalyticsHealth} from "./outcome-analytics";
+import {releaseApprovalStoreHealth} from "./release-approval-store";
 import {getSecurityCapabilities} from "./security-policy";
+import {serverVaultHealth} from "./server-vault";
 import {getVercelReleaseCapabilities} from "./vercel-release";
 
 function fulfilled<T>(result:PromiseSettledResult<T>):T|undefined{
@@ -33,6 +35,9 @@ export async function getPublicReadinessSnapshot(){
     getOrganizationCapabilityHealth(),
     getEvidenceLedgerHealth(),
     getOutcomeAnalyticsHealth(),
+    getConnectorRegistryCapabilities(),
+    serverVaultHealth(),
+    releaseApprovalStoreHealth(),
   ] as const);
   const dataPlane=fulfilled(checks[0]);
   const sandbox=fulfilled(checks[1]);
@@ -41,8 +46,10 @@ export async function getPublicReadinessSnapshot(){
   const capability=fulfilled(checks[4]);
   const evidence=fulfilled(checks[5]);
   const outcome=fulfilled(checks[6]);
+  const connectors=fulfilled(checks[7]);
+  const vault=fulfilled(checks[8]);
+  const approval=fulfilled(checks[9]);
   const security=getSecurityCapabilities();
-  const connectors=getConnectorRegistryCapabilities();
   const targetProxy=targetProxyCapabilities();
   return PublicReadinessSnapshotSchema.parse({
     checkedAt:new Date().toISOString(),
@@ -81,10 +88,12 @@ export async function getPublicReadinessSnapshot(){
       configured:security.configured,
       enforced:security.enforced,
       productionSafe:security.productionSafe,
+      vault:Boolean(vault?.configured&&vault.databaseReady),
+      approvalStore:Boolean(approval?.configured&&approval.databaseReady),
     },
     connectors:{
-      configured:connectors.configured,
-      fullLifecycle:connectors.fullLifecycleCount>0,
+      configured:Boolean(connectors?.configured),
+      fullLifecycle:Boolean(connectors?.fullLifecycleCount),
     },
     targetProxy:{run:targetProxy.runConfigured,release:targetProxy.releaseConfigured},
   });

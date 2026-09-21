@@ -47,6 +47,8 @@ export const VaultSecretMetadataSchema=z.object({
   purpose:z.string().min(1).max(300),
   scopes:z.array(z.string()).default([]),
   version:z.number().int().positive(),
+  keyId:z.string().min(1).max(120),
+  algorithm:z.literal("aes-256-gcm").default("aes-256-gcm"),
   createdBy:z.string().min(1),
   createdAt:z.string(),
   updatedAt:z.string(),
@@ -61,6 +63,27 @@ export const VaultSecretPutRequestSchema=z.object({
   value:z.string().min(1).max(100_000),
 });
 export type VaultSecretPutRequest=z.infer<typeof VaultSecretPutRequestSchema>;
+
+export const VaultSecretPutResponseSchema=z.object({
+  metadata:VaultSecretMetadataSchema,
+  message:z.string(),
+});
+export type VaultSecretPutResponse=z.infer<typeof VaultSecretPutResponseSchema>;
+
+export const VaultSecretListResponseSchema=z.object({
+  configured:z.boolean(),
+  workspaceId:z.string().optional(),
+  secrets:z.array(VaultSecretMetadataSchema),
+  message:z.string(),
+});
+export type VaultSecretListResponse=z.infer<typeof VaultSecretListResponseSchema>;
+
+export const VaultSecretDeleteResponseSchema=z.object({
+  id:z.string(),
+  deleted:z.boolean(),
+  message:z.string(),
+});
+export type VaultSecretDeleteResponse=z.infer<typeof VaultSecretDeleteResponseSchema>;
 
 export const SecurityGovernanceHealthSchema=z.object({
   codeReady:z.literal(true),

@@ -13,8 +13,13 @@ export const ConnectorServerManifestSchema=z.object({
   targetType:ConnectorTargetTypeSchema,
   baseUrl:z.string().url(),
   credentialEnv:z.string().min(1).max(120).regex(/^[A-Z][A-Z0-9_]*$/).optional(),
+  credentialVaultId:z.string().min(1).max(120).optional(),
   webhookSecretEnv:z.string().min(1).max(120).regex(/^[A-Z][A-Z0-9_]*$/).optional(),
+  webhookSecretVaultId:z.string().min(1).max(120).optional(),
   paths:z.partialRecord(ConnectorLifecycleOperationSchema,z.string().min(1).max(300)).default({}),
+}).superRefine((value,ctx)=>{
+  if(value.credentialEnv&&value.credentialVaultId)ctx.addIssue({code:"custom",path:["credentialVaultId"],message:"Use either credentialEnv or credentialVaultId, not both"});
+  if(value.webhookSecretEnv&&value.webhookSecretVaultId)ctx.addIssue({code:"custom",path:["webhookSecretVaultId"],message:"Use either webhookSecretEnv or webhookSecretVaultId, not both"});
 });
 export type ConnectorServerManifest=z.infer<typeof ConnectorServerManifestSchema>;
 
@@ -25,6 +30,8 @@ export const ConnectorPublicManifestSchema=z.object({
   lifecycle:TargetLifecycleCapabilitiesSchema,
   credentialConfigured:z.boolean(),
   webhookConfigured:z.boolean(),
+  credentialProvider:z.enum(["none","env","vault"]).default("none"),
+  webhookProvider:z.enum(["none","env","vault"]).default("none"),
 });
 export type ConnectorPublicManifest=z.infer<typeof ConnectorPublicManifestSchema>;
 

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { SecurityCapabilitiesSchema } from "./security-contract";
+import { SecurityCapabilitiesSchema, SecurityGovernanceHealthSchema } from "./security-contract";
 
 export const EvolutionWorkflowStatusSchema = z.enum([
   "queued",
@@ -115,5 +115,6 @@ export const EvolutionBackendHealthSchema=z.object({
   git:z.object({codeReady:z.boolean(),configured:z.boolean(),webhookConfigured:z.boolean()}),
   targetProxy:z.object({codeReady:z.boolean(),runConfigured:z.boolean(),releaseConfigured:z.boolean(),credentialConfigured:z.boolean()}),
   security:SecurityCapabilitiesSchema,
+  securityGovernance:SecurityGovernanceHealthSchema,
 });
 export type EvolutionBackendHealth=z.infer<typeof EvolutionBackendHealthSchema>;

@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach,beforeEach,describe,expect,it } from "vitest";
-import { getCapabilityEmbeddingConfig, getServerSupabaseConfig, serverSupabaseCredentialMode, serverSupabaseSecureConfigured } from "./server-env";
+import { getCapabilityEmbeddingConfig, getServerSupabaseConfig, getVaultEncryptionConfig, serverSupabaseCredentialMode, serverSupabaseSecureConfigured, vaultEncryptionConfigured } from "./server-env";
 
 const KEYS=[
   "SUPABASE_URL",
@@ -20,6 +20,10 @@ const KEYS=[
   "EVOLUTION_CAPABILITY_EMBEDDING_MODEL",
   "EVOLUTION_CAPABILITY_EMBEDDING_BASE_URL",
   "EVOLUTION_CAPABILITY_EMBEDDING_DIMENSIONS",
+  "EVOLUTION_WORKSPACE_ID",
+  "EVOLUTION_VAULT_MASTER_KEY",
+  "EVOLUTION_VAULT_KEY_ID",
+  "EVOLUTION_VAULT_DECRYPT_KEYS_JSON",
 ] as const;
 
 const previous=new Map<string,string|undefined>();
@@ -81,5 +85,27 @@ describe("server Supabase env",()=>{
       model:"text-embedding-test",
       baseUrl:"https://embed.test/v1",
     });
+  });
+
+  it("builds a Vault active key plus historical decrypt key ring without exposing values",()=>{
+    process.env.SUPABASE_URL="https://example.supabase.co";
+    process.env.SUPABASE_PUBLISHABLE_KEY="sb_publishable_test_fixture_1111111111111111";
+    process.env.EVOLUTION_WORKSPACE_ID="workspace-test";
+    process.env.EVOLUTION_VAULT_MASTER_KEY="b".repeat(64);
+    process.env.EVOLUTION_VAULT_KEY_ID="vault-v2";
+    process.env.EVOLUTION_VAULT_DECRYPT_KEYS_JSON=JSON.stringify({"vault-v1":"a".repeat(64)});
+    const config=getVaultEncryptionConfig();
+    expect(config?.keyId).toBe("vault-v2");
+    expect(Object.keys(config?.decryptKeys??{}).sort()).toEqual(["vault-v1","vault-v2"]);
+    expect(vaultEncryptionConfigured()).toBe(true);
+  });
+
+  it("does not enable Vault with short key material",()=>{
+    process.env.SUPABASE_URL="https://example.supabase.co";
+    process.env.SUPABASE_PUBLISHABLE_KEY="sb_publishable_test_fixture_1111111111111111";
+    process.env.EVOLUTION_WORKSPACE_ID="workspace-test";
+    process.env.EVOLUTION_VAULT_MASTER_KEY="too-short";
+    expect(getVaultEncryptionConfig()).toBeUndefined();
+    expect(vaultEncryptionConfigured()).toBe(false);
   });
 });

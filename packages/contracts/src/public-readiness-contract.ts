@@ -27,7 +27,13 @@ export const PublicReadinessSnapshotSchema=z.object({
   capability:z.object({database:z.boolean(),semantic:z.boolean(),sharing:z.boolean()}),
   evidence:z.object({database:z.boolean(),signing:z.boolean(),immutable:z.boolean()}),
   outcome:z.object({database:z.boolean(),ingestion:z.boolean(),analysis:z.boolean()}),
-  security:z.object({configured:z.boolean(),enforced:z.boolean(),productionSafe:z.boolean()}),
+  security:z.object({
+    configured:z.boolean(),
+    enforced:z.boolean(),
+    productionSafe:z.boolean(),
+    vault:z.boolean(),
+    approvalStore:z.boolean(),
+  }),
   connectors:z.object({configured:z.boolean(),fullLifecycle:z.boolean()}),
   targetProxy:z.object({run:z.boolean(),release:z.boolean()}),
 });

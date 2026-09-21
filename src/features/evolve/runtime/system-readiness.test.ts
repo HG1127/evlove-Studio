@@ -80,6 +80,9 @@ describe("system readiness catalog", () => {
     expect(backendRequirementState(requirement,{visualJudgeLive:false,server:{security:true}})).toBe("ready");
     const engines=deriveEngineReadiness({visualJudgeLive:false,server:{security:true}});
     expect(engines.find((item)=>item.id==="governance")?.stateLabel).toBe("Server RBAC 已强制");
+    const full=deriveEngineReadiness({visualJudgeLive:false,server:{security:true,vault:true,approvalStore:true}});
+    expect(full.find((item)=>item.id==="governance")?.stateLabel).toBe("RBAC + Encrypted Vault + Durable Approval");
+    expect(full.find((item)=>item.id==="governance")?.gap).toContain("外部 KMS");
   });
 
   it("reports External Connector SDK ready only when a full lifecycle connector is configured",()=>{
