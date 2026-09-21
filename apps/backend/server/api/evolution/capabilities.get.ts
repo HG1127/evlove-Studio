@@ -54,6 +54,7 @@ export default defineEventHandler(async(event)=>{
     ...CONTROL_ACTIONS,
     ...(ai?AI_ACTIONS:[]),
     ...(ai?["campaign-baseline","campaign-experiment","campaign-holdout","campaign-artifact-acceptance"]:[]),
+    ...(dataPlane?["campaign-schedule"]:[]),
     ...(releaseWrite?["run-release","reconcile-release"]:[]),
   ];
   return EvolutionWorkflowCapabilitiesSchema.parse({

@@ -5,6 +5,8 @@ import {
   failLoopGuardStep,
   initializeWorkflowControlStep,
   planMissionStep,
+  prepareScheduledTriggerStep,
+  settleScheduledManualRoundStep,
 } from "./evolution-mission/steps";
 
 const MAX_CONTROL_STEPS=32;
@@ -13,11 +15,43 @@ export async function evolutionMissionWorkflow(rawInput:unknown):Promise<Evoluti
   "use workflow";
   const input=EvolutionWorkflowRunInputSchema.parse(rawInput);
   await initializeWorkflowControlStep(input);
-  for(let iteration=0;iteration<MAX_CONTROL_STEPS;iteration+=1){
-    const plan=await planMissionStep(input,iteration);
-    const execution=await executeServerControlStep(input,plan,iteration);
-    if(execution.control==="stop"&&execution.result)return execution.result;
-    if(execution.control==="continue"&&execution.sleepMs)await sleep(execution.sleepMs);
+
+  let scheduledFor=input.scheduledFor;
+  let scheduledSleepMs=scheduledFor
+    ?Math.max(0,Date.parse(scheduledFor)-Date.parse(input.requestedAt))
+    :0;
+  let cycle=0;
+
+  while(true){
+    let targetRound:number|undefined;
+    if(scheduledFor){
+      if(scheduledSleepMs>0)await sleep(scheduledSleepMs);
+      const trigger=await prepareScheduledTriggerStep(input,scheduledFor,cycle);
+      if(trigger.control==="stop")return trigger.result;
+      targetRound=trigger.targetRound;
+    }
+
+    let rearmed=false;
+    for(let localIteration=0;localIteration<MAX_CONTROL_STEPS;localIteration+=1){
+      const iteration=cycle*MAX_CONTROL_STEPS+localIteration;
+      const plan=await planMissionStep(input,iteration);
+      const execution=await executeServerControlStep(input,plan,iteration);
+      if(execution.control==="stop"&&execution.result)return execution.result;
+
+      if(targetRound!==undefined){
+        const settlement=await settleScheduledManualRoundStep(input,targetRound,iteration);
+        if(settlement.settled){
+          if("result" in settlement)return settlement.result;
+          scheduledFor=settlement.nextScheduledFor;
+          scheduledSleepMs=settlement.sleepMs;
+          cycle+=1;
+          rearmed=true;
+          break;
+        }
+      }
+      if(execution.control==="continue"&&execution.sleepMs)await sleep(execution.sleepMs);
+    }
+    if(rearmed)continue;
+    return failLoopGuardStep(input,(cycle+1)*MAX_CONTROL_STEPS);
   }
-  return failLoopGuardStep(input,MAX_CONTROL_STEPS);
 }

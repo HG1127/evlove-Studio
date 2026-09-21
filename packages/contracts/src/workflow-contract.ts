@@ -14,6 +14,7 @@ export type EvolutionWorkflowStatus = z.infer<typeof EvolutionWorkflowStatusSche
 
 export const EvolutionWorkflowStartRequestSchema = z.object({
   missionId: z.string().min(1),
+  scheduledFor: z.string().optional(),
 });
 export type EvolutionWorkflowStartRequest = z.infer<typeof EvolutionWorkflowStartRequestSchema>;
 
@@ -21,6 +22,7 @@ export const EvolutionWorkflowRunInputSchema = z.object({
   missionId: z.string().min(1),
   controlJobId: z.string().min(1),
   requestedAt: z.string(),
+  scheduledFor: z.string().optional(),
 });
 export type EvolutionWorkflowRunInput = z.infer<typeof EvolutionWorkflowRunInputSchema>;
 
@@ -40,6 +42,7 @@ export const EvolutionWorkflowStartResponseSchema = z.object({
   controlJobId: z.string(),
   runId: z.string(),
   status: z.literal("queued"),
+  scheduledFor: z.string().optional(),
 });
 export type EvolutionWorkflowStartResponse = z.infer<typeof EvolutionWorkflowStartResponseSchema>;
 

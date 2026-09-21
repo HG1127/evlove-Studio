@@ -6,7 +6,7 @@ import {
   type EvolutionWorkflowResult,
   type EvolutionWorkflowRunInput,
 } from "@evolution/contracts";
-import { applyDeterministicRoundtripEvidence, applyProductionLearningGovernance, baselineReadiness, completeAutonomousMission, integrateDistilledLesson, mapTestsToRubric, materializeAcceptedChampionPackage, mergeGovernedNextQueue, normalizeAcceptanceRubric, normalizeEvalSuiteForProject, productionOutcomeFreshness, productionOutcomeTrend, projectHasStableHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, resetDownstream, rubricSuiteCoverage, rubricValidation } from "@evolution/core";
+import { advanceCampaignScheduleAfterServerRun, applyDeterministicRoundtripEvidence, applyProductionLearningGovernance, baselineReadiness, campaignGoalSatisfied, campaignStopReason, completeAutonomousMission, integrateDistilledLesson, mapTestsToRubric, materializeAcceptedChampionPackage, mergeGovernedNextQueue, normalizeAcceptanceRubric, normalizeEvalSuiteForProject, productionOutcomeFreshness, productionOutcomeTrend, projectHasStableHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, resetDownstream, rubricSuiteCoverage, rubricValidation } from "@evolution/core";
 import {
   advanceServerCampaignPreparation,
   buildServerHarnessPlan,
@@ -65,9 +65,9 @@ export async function initializeWorkflowControlStep(input:EvolutionWorkflowRunIn
   if(!mission)throw new FatalError(`Mission 不存在：${input.missionId}`);
   const startedAt=new Date().toISOString();
   await runtime.jobs.put(controlJob(input,{
-    status:"running",
+    status:input.scheduledFor?"waiting":"running",
     startedAt,
-    progress:{percent:1,detail:"Durable Workflow 已接管 Mission control loop"},
+    progress:{percent:1,detail:input.scheduledFor?`Durable Scheduler 已武装，等待 ${input.scheduledFor}`:"Durable Workflow 已接管 Mission control loop"},
   }));
   await runtime.events.append(createEvolutionEvent({
     id:`evt-${input.controlJobId}-started`,
@@ -75,9 +75,251 @@ export async function initializeWorkflowControlStep(input:EvolutionWorkflowRunIn
     jobId:input.controlJobId,
     type:"JobStarted",
     source:"vercel-workflow-control",
-    payload:{runtime:"workflow",phase:"control-loop"},
+    payload:{runtime:"workflow",phase:input.scheduledFor?"scheduled-wait":"control-loop",scheduledFor:input.scheduledFor},
   }));
   return {missionId:mission.id};
+}
+
+function withoutDurableScheduleBinding<T extends {
+  durableJobId?:string;
+  durableRunId?:string;
+  durableScheduledFor?:string;
+}>(schedule:T){
+  const rest={...schedule};
+  delete rest.durableJobId;
+  delete rest.durableRunId;
+  delete rest.durableScheduledFor;
+  return rest;
+}
+
+export async function prepareScheduledTriggerStep(
+  input:EvolutionWorkflowRunInput,
+  scheduledFor:string,
+  cycle:number,
+):Promise<
+  | {control:"run";targetRound?:number}
+  | {control:"stop";result:EvolutionWorkflowResult}
+>{
+  "use step";
+  const runtime=getServerProductionRuntime();
+  const mission=await runtime.missions.get(input.missionId);
+  if(!mission)throw new FatalError(`Mission 不存在：${input.missionId}`);
+  const schedule=mission.campaign.schedule;
+  const bindingMatches=Boolean(
+    schedule.enabled
+    &&schedule.nextRunAt===scheduledFor
+    &&schedule.durableScheduledFor===scheduledFor
+    &&schedule.durableJobId===input.controlJobId,
+  );
+  if(!bindingMatches||mission.campaign.status==="completed"||mission.campaign.status==="stopped"){
+    const now=new Date().toISOString();
+    await runtime.jobs.put(controlJob(input,{
+      status:"completed",
+      startedAt:input.requestedAt,
+      finishedAt:now,
+      progress:{percent:100,detail:"计划已取消、改期或失效；本次 Durable 唤醒安全跳过"},
+    }));
+    await runtime.events.append(createEvolutionEvent({
+      id:`evt-${input.controlJobId}-schedule-stale-${cycle}`,
+      missionId:input.missionId,
+      jobId:input.controlJobId,
+      type:"JobProgress",
+      source:"vercel-workflow-control",
+      payload:{phase:"scheduled-trigger",scheduledFor,stale:true,cycle},
+    }));
+    return {control:"stop",result:result(input,{
+      status:"completed",
+      iterations:cycle,
+      reason:"计划已取消、改期或已由其他执行路径处理，本次唤醒未执行 Mission。",
+    })};
+  }
+
+  const now=new Date().toISOString();
+  const targetRound=mission.campaign.executionMode==="manual"
+    ? mission.campaign.currentRound+1
+    : undefined;
+  await runtime.missions.save({
+    ...mission,
+    campaign:{
+      ...mission.campaign,
+      status:"running",
+      startedAt:mission.campaign.startedAt??now,
+      completedAt:undefined,
+      stopReason:undefined,
+    },
+    updatedAt:now,
+  });
+  await runtime.jobs.put(controlJob(input,{
+    status:"running",
+    startedAt:input.requestedAt,
+    progress:{percent:3,detail:targetRound?`计划触发：执行 Round ${targetRound}`:"计划触发：启动 Auto Campaign"},
+  }));
+  await runtime.events.append(createEvolutionEvent({
+    id:`evt-${input.controlJobId}-schedule-trigger-${cycle}`,
+    missionId:input.missionId,
+    jobId:input.controlJobId,
+    type:"JobProgress",
+    source:"vercel-workflow-control",
+    payload:{phase:"scheduled-trigger",scheduledFor,stale:false,cycle,targetRound,executionMode:mission.campaign.executionMode},
+  }));
+  return targetRound===undefined?{control:"run"}:{control:"run",targetRound};
+}
+
+export async function settleScheduledManualRoundStep(
+  input:EvolutionWorkflowRunInput,
+  targetRound:number,
+  iteration:number,
+):Promise<
+  | {settled:false}
+  | {settled:true;nextScheduledFor:string;sleepMs:number}
+  | {settled:true;result:EvolutionWorkflowResult}
+>{
+  "use step";
+  const runtime=getServerProductionRuntime();
+  const mission=await runtime.missions.get(input.missionId);
+  if(!mission)throw new FatalError(`Mission 不存在：${input.missionId}`);
+  if(mission.campaign.currentRound<targetRound)return {settled:false};
+
+  const nowDate=new Date();
+  const now=nowDate.toISOString();
+  const stopReason=campaignStopReason(mission);
+  if(stopReason){
+    const satisfied=campaignGoalSatisfied(mission);
+    const champion=mission.searchChampion;
+    const hasAcceptedChampion=Boolean(champion?.candidate&&champion.validation&&champion.artifactAcceptance?.status==="passed");
+    const outputArtifacts=hasAcceptedChampion
+      ? materializeAcceptedChampionPackage(mission,now)
+      : mission.outputArtifacts;
+    const updated={
+      ...mission,
+      campaign:{
+        ...mission.campaign,
+        status:satisfied?"completed" as const:"paused" as const,
+        completedAt:satisfied?now:undefined,
+        startedAt:undefined,
+        stopReason,
+        schedule:{
+          ...withoutDurableScheduleBinding(mission.campaign.schedule),
+          enabled:false,
+          lastRunAt:now,
+          nextRunAt:undefined,
+        },
+      },
+      outputArtifacts,
+      ...(champion?.candidate&&champion.validation&&champion.artifactAcceptance?{
+        candidates:[champion.candidate,...mission.candidates.filter((item)=>item.id!==champion.candidate?.id)],
+        experimentRun:{...mission.experimentRun,status:"completed" as const,winnerId:champion.candidate.id},
+        validationRun:champion.validation,
+        artifactAcceptance:champion.artifactAcceptance,
+        gates:mission.gates.map((gate)=>gate.id==="artifact-ready"
+          ?{...gate,status:"approved" as const,approvedAt:champion.artifactAcceptance?.acceptedAt??now,note:`Campaign 最终 Champion ${champion.versionLabel} · Artifact Acceptance ${champion.artifactAcceptance?.overallScore??0}`}
+          :gate.id==="release-ready"
+            ?{...gate,status:champion.validation?.recommendation==="release"?"ready" as const:"blocked" as const,approvedAt:undefined,note:`Campaign 完成，最终 Search Champion ${champion.versionLabel}`}
+            :gate),
+        stage:"validation" as const,
+      }:{stage:"learning" as const}),
+      updatedAt:now,
+    };
+    await runtime.missions.save(updated);
+    await runtime.jobs.put(controlJob(input,{
+      status:"completed",
+      startedAt:input.requestedAt,
+      finishedAt:now,
+      progress:{percent:100,detail:stopReason.slice(0,240)},
+    }));
+    await runtime.events.append(createEvolutionEvent({
+      id:`evt-${input.controlJobId}-scheduled-round-stop-${iteration}`,
+      missionId:input.missionId,
+      jobId:input.controlJobId,
+      type:"JobProgress",
+      source:"vercel-workflow-control",
+      payload:{phase:"scheduled-round-settlement",targetRound,completed:satisfied,reason:stopReason},
+    }));
+    return {settled:true,result:result(input,{
+      status:satisfied?"completed":"blocked",
+      iterations:iteration+1,
+      reason:stopReason,
+    })};
+  }
+
+  const durableRunId=mission.campaign.schedule.durableRunId;
+  const advanced=advanceCampaignScheduleAfterServerRun(mission.campaign.schedule,nowDate);
+  const recurring=Boolean(advanced.enabled&&advanced.nextRunAt);
+  const suffix=Date.parse(now)||iteration;
+  const nextSchedule=recurring&&advanced.nextRunAt
+    ? {
+        ...advanced,
+        durableJobId:input.controlJobId,
+        ...(durableRunId?{durableRunId}:{}),
+        durableScheduledFor:advanced.nextRunAt,
+      }
+    : advanced;
+  const updated={
+    ...mission,
+    campaign:{
+      ...mission.campaign,
+      status:recurring?"scheduled" as const:"paused" as const,
+      startedAt:undefined,
+      stopReason:undefined,
+      schedule:nextSchedule,
+      checkpoint:undefined,
+    },
+    stage:"baseline" as const,
+    candidates:[],
+    selectedCandidateIds:[],
+    baselineRun:{id:`baseline-r${targetRound+1}-${suffix}`,status:"idle" as const,suiteName:"Core Validation Suite",totalCases:mission.evalSuite.length,runs:[]},
+    experimentRun:{id:`experiment-r${targetRound+1}-${suffix}`,status:"idle" as const,candidateResults:[]},
+    validationRun:{id:`validation-r${targetRound+1}-${suffix}`,status:"idle" as const,checks:[],runs:[],baselineRuns:[]},
+    artifactAcceptance:{
+      ...mission.artifactAcceptance,
+      id:`artifact-acceptance-r${targetRound+1}-${suffix}`,
+      status:"idle" as const,
+      candidateId:undefined,
+      results:[],
+      attempts:0,
+      overallScore:0,
+      coverageScore:0,
+      integrityScore:0,
+      pairwiseScore:0,
+      hardGatePass:false,
+      summary:"等待下一轮 Artifact Acceptance",
+      acceptedAt:undefined,
+      lastCheckedAt:undefined,
+    },
+    gates:mission.gates.map((gate)=>gate.id==="target-ready"?gate:{...gate,status:"pending" as const,approvedAt:undefined,note:undefined}),
+    updatedAt:now,
+  };
+  await runtime.missions.save(updated);
+
+  if(recurring&&advanced.nextRunAt){
+    const sleepMs=Math.max(0,Date.parse(advanced.nextRunAt)-nowDate.getTime());
+    await runtime.jobs.put(controlJob(input,{
+      status:"waiting",
+      startedAt:input.requestedAt,
+      progress:{percent:5,detail:`Round ${targetRound} 已完成；下一次计划 ${advanced.nextRunAt}`},
+    }));
+    await runtime.events.append(createEvolutionEvent({
+      id:`evt-${input.controlJobId}-scheduled-round-rearm-${iteration}`,
+      missionId:input.missionId,
+      jobId:input.controlJobId,
+      type:"JobProgress",
+      source:"vercel-workflow-control",
+      payload:{phase:"scheduled-round-settlement",targetRound,nextScheduledFor:advanced.nextRunAt,sleepMs},
+    }));
+    return {settled:true,nextScheduledFor:advanced.nextRunAt,sleepMs};
+  }
+
+  await runtime.jobs.put(controlJob(input,{
+    status:"completed",
+    startedAt:input.requestedAt,
+    finishedAt:now,
+    progress:{percent:100,detail:`计划 Round ${targetRound} 已完成`},
+  }));
+  return {settled:true,result:result(input,{
+    status:"completed",
+    iterations:iteration+1,
+    reason:`计划 Round ${targetRound} 已完成；当前计划没有下一次触发。`,
+  })};
 }
 
 export async function planMissionStep(input:EvolutionWorkflowRunInput,iteration:number):Promise<ServerHarnessPlan>{

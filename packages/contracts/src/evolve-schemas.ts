@@ -878,6 +878,10 @@ export const CampaignScheduleSchema = z.object({
   timezone: z.string().default("local"),
   nextRunAt: z.string().optional(),
   lastRunAt: z.string().optional(),
+  /** Durable Workflow ownership. Matching nextRunAt prevents browser/server double firing. */
+  durableJobId: z.string().optional(),
+  durableRunId: z.string().optional(),
+  durableScheduledFor: z.string().optional(),
 });
 export type CampaignSchedule = z.infer<typeof CampaignScheduleSchema>;
 

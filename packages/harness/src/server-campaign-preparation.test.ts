@@ -58,6 +58,18 @@ describe("server campaign preparation",()=>{
     expect(third.project.candidates[0]?.status).toBe("draft");
   });
 
+  it("preserves manual execution mode instead of silently upgrading it to auto-rounds",async()=>{
+    const project=fixture();
+    project.campaign={...project.campaign,executionMode:"manual"};
+    const ai={
+      problemAnalysis:async()=>({problems:[{id:"P",title:"流程缺口",impact:90,severity:"high" as const,status:"recommended" as const,summary:"流程未闭环",rootCause:"缺少证据闭环",evidence:["当前文本存在流程缺口"],evidenceRefs:[],confidence:0.9,affectedComponent:"source"}],recommendedProblemId:"P",summary:"问题"}),
+      diagnose:async()=>{throw new Error("not reached");},
+      plan:async()=>{throw new Error("not reached");},
+    };
+    const outcome=await advanceServerCampaignPreparation(project,ai,{now:()=>"2026-09-20T12:30:00.000Z"});
+    expect(outcome.project.campaign.executionMode).toBe("manual");
+  });
+
   it("fails closed before planning when baseline evidence is not ready",async()=>{
     const project=fixture();
     project.baselineRun={...project.baselineRun,status:"idle",result:undefined,runs:[]};

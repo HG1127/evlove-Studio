@@ -1,7 +1,7 @@
 import {afterEach,describe,expect,it,vi} from "vitest";
 import {demoProject} from "../data/mock-project";
 import type {EvolveProject} from "../schemas";
-import {getServerWorkflowCapabilities,shouldUseServerAutoPilot} from "./server-workflow-client";
+import {getServerWorkflowCapabilities,shouldUseServerAutoPilot,startServerEvolutionWorkflow} from "./server-workflow-client";
 
 const capabilities={
   available:true,
@@ -34,6 +34,24 @@ describe("server workflow routing",()=>{
     await getServerWorkflowCapabilities(true);
     const offline={...demoProject,targetConnection:{adapter:"artifact",connectionId:"artifact",status:"connected",label:"Artifact"}} as EvolveProject;
     expect(await shouldUseServerAutoPilot(offline)).toBe(true);
+  });
+
+  it("passes scheduledFor through the durable workflow start request",async()=>{
+    const fetchMock=vi.fn(async(url:RequestInfo|URL,init?:RequestInit)=>{
+      expect(String(url)).toContain("/api/evolution/start");
+      expect(JSON.parse(String(init?.body))).toEqual({missionId:"mission-1",scheduledFor:"2026-09-22T01:00:00.000Z"});
+      return new Response(JSON.stringify({
+        missionId:"mission-1",
+        controlJobId:"job-1",
+        runId:"run-1",
+        status:"queued",
+        scheduledFor:"2026-09-22T01:00:00.000Z",
+      }),{status:200,headers:{"Content-Type":"application/json"}});
+    });
+    vi.stubGlobal("fetch",fetchMock);
+    const result=await startServerEvolutionWorkflow("mission-1",{scheduledFor:"2026-09-22T01:00:00.000Z"});
+    expect(result.scheduledFor).toBe("2026-09-22T01:00:00.000Z");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("keeps online missions out until Release Ready is approved, then enables post-approval Durable AutoPilot",async()=>{

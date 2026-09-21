@@ -118,7 +118,6 @@ function campaignBase(project: EvolveProject, now: string) {
     campaign: {
       ...project.campaign,
       status: "running" as const,
-      executionMode: "auto-rounds" as const,
       startedAt: project.campaign.startedAt ?? now,
       completedAt: undefined,
       stopReason: undefined,

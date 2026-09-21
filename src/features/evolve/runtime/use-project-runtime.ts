@@ -63,6 +63,7 @@ import { evolutionHarness, type HarnessPlan } from "./evolution-harness";
 import { createHarnessActionExecutor } from "@evolution/harness";
 import { getProductionRuntime, productionRuntimeMode } from "./production-runtime";
 import { shouldUseServerAutoPilot, startServerEvolutionWorkflow } from "./server-workflow-client";
+import { flushProductionMissionSync } from "./production-sync";
 import { classifyRuntimeFailure, retryDelayMs } from "./failure-router";
 import { reconcileServerVercelRelease } from "./server-release-client";
 import { withProjectAiProfile } from "../ai/service";
@@ -1419,10 +1420,13 @@ export function useProjectRuntime(initialProject: EvolveProject) {
           ...state.campaign,
           // 取消定时只取消计划，不能把 paused/completed/running 等真实执行状态抹成 idle。
           status: state.campaign.status === "scheduled" ? "idle" : state.campaign.status,
-          schedule: { ...state.campaign.schedule, enabled: false, nextRunAt: undefined },
+          schedule: { ...state.campaign.schedule, enabled: false, nextRunAt: undefined, durableJobId: undefined, durableRunId: undefined, durableScheduledFor: undefined },
         },
       }));
       // 取消计划不能篡改正在执行节点的 busy 状态；只记录控制面动作。
+      if (productionRuntimeMode() !== "local") void flushProductionMissionSync().catch((error) => {
+        console.error("Durable schedule cancellation sync failed", error);
+      });
       pushActivity("定时计划已取消 · 当前 Campaign 执行状态保持不变", undefined, projectId);
       return true;
     }
@@ -1441,6 +1445,12 @@ export function useProjectRuntime(initialProject: EvolveProject) {
     const schedule = {
       ...current.campaign.schedule,
       enabled: true,
+      timezone: current.campaign.schedule.timezone === "local"
+        ? (Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC")
+        : current.campaign.schedule.timezone,
+      durableJobId: undefined,
+      durableRunId: undefined,
+      durableScheduledFor: undefined,
       daysOfWeek: current.campaign.schedule.mode === "weekly" && current.campaign.schedule.daysOfWeek.length === 0 ? [1] : current.campaign.schedule.daysOfWeek,
     };
     const issue = campaignScheduleIssue(schedule);
@@ -1455,8 +1465,33 @@ export function useProjectRuntime(initialProject: EvolveProject) {
     }
     commit((state) => ({ ...state, campaign: { ...state.campaign, status: "scheduled", stopReason: undefined, schedule: { ...schedule, nextRunAt } } }));
     setStatus({ busy: false, message: `定时计划已启用：${new Date(nextRunAt).toLocaleString()}` });
+    if (productionRuntimeMode() !== "local") {
+      void (async () => {
+        try {
+          await flushProductionMissionSync();
+          const armed = await startServerEvolutionWorkflow(projectId, { scheduledFor: nextRunAt });
+          const latest = projectRef.current;
+          if (!latest.campaign.schedule.enabled || latest.campaign.schedule.nextRunAt !== nextRunAt) return;
+          commit((state) => state.campaign.schedule.nextRunAt !== nextRunAt ? state : ({
+            ...state,
+            campaign: {
+              ...state.campaign,
+              schedule: {
+                ...state.campaign.schedule,
+                durableJobId: armed.controlJobId,
+                durableRunId: armed.runId,
+                durableScheduledFor: nextRunAt,
+              },
+            },
+          }));
+          pushActivity(`Durable Scheduler 已接管：${new Date(nextRunAt).toLocaleString()}`, undefined, projectId);
+        } catch (error) {
+          pushActivity(`Durable Scheduler 未能武装，保留浏览器定时兜底：${error instanceof Error ? error.message : String(error)}`, undefined, projectId);
+        }
+      })();
+    }
     return true;
-  }, [commit, setStatus, status.busy]);
+  }, [commit, projectId, setStatus, status.busy]);
 
   const runCampaignRound = useCallback(async () => {
     return run("运行一轮 Evolution Search", async () => {
@@ -2359,6 +2394,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
   useEffect(() => {
     const schedule = project.campaign.schedule;
     if (!schedule.enabled || !schedule.nextRunAt || status.busy || project.campaign.status === "running" || project.campaign.status === "completed") return;
+    if (schedule.durableJobId && schedule.durableScheduledFor === schedule.nextRunAt) return;
     // setTimeout 最大可靠延迟约 24.8 天。较远的一次性计划采用分段唤醒，
     // 不能简单 return，否则页面即使一直打开也永远不会触发。
     const MAX_TIMER_MS = 2_147_000_000;
@@ -2393,7 +2429,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [project.campaign.schedule.enabled, project.campaign.schedule.nextRunAt, project.campaign.executionMode, project.campaign.status, runCampaign, runCampaignRound, status.busy]);
+  }, [project.campaign.schedule, project.campaign.executionMode, project.campaign.status, projectId, runCampaign, runCampaignRound, status.busy]);
 
   const askCopilot = useCallback(async (message: string): Promise<CopilotAiResult> => {
     return CopilotAiResultSchema.parse(await run("Evolve Copilot", () => runProjectAi("copilot", {

@@ -33,11 +33,14 @@ export async function checkServerBackendHealth():Promise<EvolutionBackendHealth>
   return EvolutionBackendHealthSchema.parse(await apiJson("/api/evolution/backend-health"));
 }
 
-export async function startServerEvolutionWorkflow(missionId:string):Promise<EvolutionWorkflowStartResponse>{
+export async function startServerEvolutionWorkflow(
+  missionId:string,
+  options?:{scheduledFor?:string},
+):Promise<EvolutionWorkflowStartResponse>{
   const data=await apiJson("/api/evolution/start",{
     method:"POST",
     headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({missionId}),
+    body:JSON.stringify({missionId,...(options?.scheduledFor?{scheduledFor:options.scheduledFor}:{})}),
   });
   return EvolutionWorkflowStartResponseSchema.parse(data);
 }

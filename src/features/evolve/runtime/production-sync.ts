@@ -28,6 +28,14 @@ async function pushLocalProjection(){
   knownRemoteIds=new Set(localIds);
 }
 
+export async function flushProductionMissionSync(){
+  if(missionTimer){
+    window.clearTimeout(missionTimer);
+    missionTimer=undefined;
+  }
+  await pushLocalProjection();
+}
+
 async function pushLocalJobs(){
   if(productionRuntimeMode()==="local"||applyingRemote)return;
   const remote=getProductionRuntime();
