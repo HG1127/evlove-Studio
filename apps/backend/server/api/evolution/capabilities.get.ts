@@ -43,7 +43,6 @@ export default defineEventHandler(async(event)=>{
   ];
   const externalCapabilityBlocked=[
     {capability:"online-release-authorization",reason:"human-release-ready-approval-required"},
-    {capability:"preview-deployment-binding",reason:"explicit-preview-deployment-binding-required"},
   ];
   const codeReady=MIGRATION_PENDING_ACTIONS.length===0;
   const offlineFullAuto=codeReady&&ai&&dataPlane;
