@@ -8,7 +8,7 @@ function signedWebhook(path:string){
 export default defineEventHandler((event)=>{
   const path=getRequestURL(event).pathname;
   if(!path.startsWith("/api/evolution"))return;
-  if(signedWebhook(path))return;
+  if(path.endsWith("/public-readiness")||signedWebhook(path))return;
   // Defense-in-depth only: every normal Evolution API requires at least an authenticated reader.
   // Route handlers enforce the stronger operation-specific permission (write/execute/approve/etc.).
   requireEvolutionPermission(event,"data.read");

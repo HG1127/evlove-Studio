@@ -1,0 +1,26 @@
+import {z} from "zod";
+
+export const PublicReadinessSnapshotSchema=z.object({
+  checkedAt:z.string(),
+  workflow:z.object({durable:z.boolean()}),
+  dataPlane:z.object({
+    configured:z.boolean(),
+    secureCredential:z.boolean(),
+    database:z.boolean(),
+    storage:z.boolean(),
+    coreTables:z.boolean(),
+  }),
+  sourceParse:z.boolean(),
+  serverAi:z.boolean(),
+  sandbox:z.boolean(),
+  browser:z.boolean(),
+  release:z.object({read:z.boolean(),write:z.boolean()}),
+  git:z.object({configured:z.boolean(),webhook:z.boolean()}),
+  capability:z.object({database:z.boolean(),semantic:z.boolean()}),
+  evidence:z.object({database:z.boolean(),signing:z.boolean(),immutable:z.boolean()}),
+  outcome:z.object({database:z.boolean(),ingestion:z.boolean(),analysis:z.boolean()}),
+  security:z.object({configured:z.boolean(),enforced:z.boolean(),productionSafe:z.boolean()}),
+  connectors:z.object({configured:z.boolean(),fullLifecycle:z.boolean()}),
+  targetProxy:z.object({run:z.boolean(),release:z.boolean()}),
+});
+export type PublicReadinessSnapshot=z.infer<typeof PublicReadinessSnapshotSchema>;

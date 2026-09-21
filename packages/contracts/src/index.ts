@@ -10,6 +10,7 @@ export * from "./evidence-ledger-contract";
 export * from "./outcome-analytics-contract";
 export * from "./target-proxy-contract";
 export * from "./connector-contract";
+export * from "./public-readiness-contract";
 export * from "./security-contract";
 export * from "./backend-config";
 export * from "./workflow-contract";
