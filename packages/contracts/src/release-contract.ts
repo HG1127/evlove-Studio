@@ -90,6 +90,7 @@ export type VercelReleaseActionRequest=z.infer<typeof VercelReleaseActionRequest
 export const ReleaseApprovalRequestSchema=z.object({
   missionId:z.string().min(1),
   note:z.string().max(1000).optional(),
+  ttlSeconds:z.number().int().min(300).max(86_400).optional(),
 });
 export type ReleaseApprovalRequest=z.infer<typeof ReleaseApprovalRequestSchema>;
 
@@ -99,8 +100,25 @@ export const ReleaseApprovalResponseSchema=z.object({
   approvedAt:z.string(),
   candidateId:z.string().optional(),
   actorId:z.string(),
+  grantId:z.string().optional(),
+  expiresAt:z.string().optional(),
 });
 export type ReleaseApprovalResponse=z.infer<typeof ReleaseApprovalResponseSchema>;
+
+export const ReleaseApprovalRevokeRequestSchema=z.object({
+  missionId:z.string().min(1),
+  note:z.string().max(1000).optional(),
+});
+export type ReleaseApprovalRevokeRequest=z.infer<typeof ReleaseApprovalRevokeRequestSchema>;
+
+export const ReleaseApprovalRevokeResponseSchema=z.object({
+  missionId:z.string(),
+  status:z.literal("revoked"),
+  revokedAt:z.string(),
+  revokedCount:z.number().int().nonnegative(),
+  actorId:z.string(),
+});
+export type ReleaseApprovalRevokeResponse=z.infer<typeof ReleaseApprovalRevokeResponseSchema>;
 
 export const VercelReleaseActionResponseSchema=ReleaseAdapterResultSchema.extend({
   provider:z.literal("vercel").default("vercel"),

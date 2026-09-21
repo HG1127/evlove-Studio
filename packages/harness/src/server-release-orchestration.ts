@@ -10,6 +10,10 @@ import {
 } from "@evolution/core";
 
 export type ServerReleasePorts={
+  authorize(args:{
+    action:Exclude<DurableReleaseAction,"rollback">;
+    candidateId:string;
+  }):Promise<{ok:boolean;reason?:string}>;
   execute(args:{
     action:DurableReleaseAction;
     deploymentId:string;
@@ -84,6 +88,17 @@ export async function runServerReleaseOrchestration(
       return pause(project,"[server-release-rollback-unavailable] Production Health 异常但缺少 stableDeploymentId；禁止自动猜测回滚目标。",{status:"manual-check",action:"promote"});
     }
     return pause(project,"[server-release-binding-pending] 需要显式绑定当前 Candidate 的 READY Preview Deployment，或当前 Release 状态暂不支持自动推进。");
+  }
+  if(action!=="rollback"){
+    let authorization:{ok:boolean;reason?:string};
+    try{
+      authorization=await ports.authorize({action,candidateId:candidate.id});
+    }catch(error){
+      return pause(project,`[server-release-authorization-pending] Release Approval 无法验证：${error instanceof Error?error.message:String(error)}`);
+    }
+    if(!authorization.ok){
+      return pause(project,`[server-release-authorization-pending] ${authorization.reason??"Release Approval 已过期、撤销或与当前 Candidate 不匹配。"}`);
+    }
   }
   const deploymentId=action==="rollback"?project.release.stableDeploymentId:project.release.deploymentId;
   if(!deploymentId)return pause(project,`[server-release-binding-pending] ${action} 缺少显式 deploymentId。`);

@@ -3,6 +3,7 @@ import { createEvolutionEvent, VercelReleaseActionRequestSchema, VercelReleaseAc
 import { applyProductionLearningGovernance, applyReleaseResultToProject } from "@evolution/core";
 import { getServerVercelReleaseConfig } from "../../../src/server-env";
 import { getServerProductionRuntime } from "../../../src/services/production-runtime";
+import { requireActiveReleaseApprovalGrant } from "../../../src/services/release-approval-store";
 import { executeVercelReleaseAction } from "../../../src/services/vercel-release";
 import {requireEvolutionPermission} from "../../../src/services/security-policy";
 
@@ -29,6 +30,7 @@ export default defineEventHandler(async(event)=>{
   if(!candidate)fail(404,"Release Candidate not found");
   if(mission.experimentRun.winnerId!==candidate.id)fail(409,"Only the experiment winner can be released");
 
+  let approvalGrantId:string|undefined;
   if(input.action!=="rollback"){
     if(mission.validationRun.recommendation!=="release")fail(409,"Validation did not recommend release");
     if(mission.artifactAcceptance.status!=="passed"||mission.artifactAcceptance.candidateId!==candidate.id){
@@ -36,6 +38,14 @@ export default defineEventHandler(async(event)=>{
     }
     if(mission.gates.find((gate)=>gate.id==="artifact-ready")?.status!=="approved")fail(409,"Artifact Ready gate is not approved");
     if(mission.gates.find((gate)=>gate.id==="release-ready")?.status!=="approved")fail(409,"Release Ready gate is not approved");
+    try{
+      approvalGrantId=(await requireActiveReleaseApprovalGrant({
+        missionId:mission.id,
+        candidateId:candidate.id,
+      })).id;
+    }catch(error){
+      fail(409,error instanceof Error?error.message:"Release approval is required");
+    }
   }
 
   const mode=releaseTarget.mode;
@@ -131,6 +141,7 @@ export default defineEventHandler(async(event)=>{
           observedAt:updated.release.observedAt,
           healthy:updated.release.healthy,
           observationStatus:updated.release.observationStatus,
+          approvalGrantId,
           reason:result.note,
         },
       })).catch(()=>undefined);

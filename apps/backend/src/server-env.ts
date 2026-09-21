@@ -75,6 +75,11 @@ export function getEvolutionWorkspaceId(){
   return value(process.env.EVOLUTION_WORKSPACE_ID);
 }
 
+export function releaseApprovalTtlSeconds(){
+  const raw=Number(value(process.env.EVOLUTION_RELEASE_APPROVAL_TTL_SECONDS)??"3600")||3600;
+  return Math.max(300,Math.min(raw,86_400));
+}
+
 export type ServerSecurityConfig={
   mode:"trusted-header"|"internal-dev"|"blocked";
   identitySecret?:string;

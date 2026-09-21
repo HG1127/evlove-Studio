@@ -6,6 +6,7 @@ import {
 } from "@evolution/contracts";
 import {beginReleaseCycle,deliveryReadiness,projectHasOnlineReleaseTarget} from "@evolution/core";
 import {getServerProductionRuntime} from "../../../src/services/production-runtime";
+import {createReleaseApprovalGrant} from "../../../src/services/release-approval-store";
 import {requireEvolutionPermission} from "../../../src/services/security-policy";
 
 export default defineEventHandler(async(event)=>{
@@ -21,6 +22,21 @@ export default defineEventHandler(async(event)=>{
     throw createError({statusCode:409,statusMessage:"没有 exact Release Candidate，不能授权上线"});
   }
   const approvedAt=new Date().toISOString();
+  let grant:Awaited<ReturnType<typeof createReleaseApprovalGrant>>|undefined;
+  if(projectHasOnlineReleaseTarget(mission)&&candidateId){
+    try{
+      grant=await createReleaseApprovalGrant({
+        missionId:mission.id,
+        candidateId,
+        actor,
+        note:input.note,
+        ttlSeconds:input.ttlSeconds,
+        now:approvedAt,
+      });
+    }catch(error){
+      throw createError({statusCode:503,statusMessage:error instanceof Error?error.message:String(error)});
+    }
+  }
   const release=projectHasOnlineReleaseTarget(mission)&&candidateId
     &&(mission.release.candidateId!==candidateId||mission.release.status!=="idle")
       ?beginReleaseCycle(mission.release,candidateId)
@@ -29,14 +45,14 @@ export default defineEventHandler(async(event)=>{
     ...mission,
     release,
     gates:mission.gates.map((gate)=>gate.id==="release-ready"
-      ?{...gate,status:"approved" as const,approvedAt,note:input.note??"Release Ready approved by authorized actor"}
+      ?{...gate,status:"approved" as const,approvedAt,note:input.note??(grant?`Release Ready approved until ${grant.expiresAt}`:"Release Ready approved by authorized actor")}
       :gate),
     updatedAt:approvedAt,
   };
   await runtime.missions.save(updated);
   await runtime.events.append(createEvolutionEvent({
     missionId:mission.id,type:"ActionCompleted",source:"release-approval",
-    payload:{action:"approve-release-ready",actorId:actor.id,role:actor.role,candidateId,approvedAt,note:input.note},
+    payload:{action:"approve-release-ready",actorId:actor.id,role:actor.role,candidateId,approvedAt,grantId:grant?.id,expiresAt:grant?.expiresAt,note:input.note},
   }));
-  return ReleaseApprovalResponseSchema.parse({missionId:mission.id,status:"approved",approvedAt,candidateId,actorId:actor.id});
+  return ReleaseApprovalResponseSchema.parse({missionId:mission.id,status:"approved",approvedAt,candidateId,actorId:actor.id,grantId:grant?.id,expiresAt:grant?.expiresAt});
 });
