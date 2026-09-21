@@ -21,7 +21,7 @@ import {
   isRunnerGatewayReady,
   testRunnerGateway,
 } from "./target-runner-config";
-import { addVisualEvidence, getVisualEvidence, saveVisualJudge } from "./visual-evidence";
+import { addVisualEvidence, getVisualEvidence, hydrateVisualEvidence, saveVisualJudge } from "./visual-evidence";
 
 export type AutomaticEvidenceResult = {
   status: "completed" | "partial" | "skipped";
@@ -293,7 +293,7 @@ async function judgeCurrentVisualEvidence(project: EvolveProject, force = false)
         screenshotCount: evidence.items.length,
         note: "后台自动采集的截图证据。只依据截图可见内容评审；不同文件版本不可合并为同一版本证据。",
       }, { imageDataUrls: evidence.items.map((item) => item.dataUrl) }));
-      saveVisualJudge(project.id, {
+      await saveVisualJudge(project.id, {
         report,
         engine: visualStatus.model,
         screenshotIds: evidence.items.map((item) => item.id),
@@ -314,6 +314,7 @@ async function judgeCurrentVisualEvidence(project: EvolveProject, force = false)
 /** Background Evidence Runtime: upload evidence → Runner discovery → Build/Browser/E2E → screenshots → Visual Judge. */
 async function runAutomaticEvidence(project: EvolveProject, force = false): Promise<AutomaticEvidenceResult> {
   const messages: string[] = [];
+  await hydrateVisualEvidence(project.id);
   const images = await registerUploadedImages(project);
   if (images.added) messages.push(`已自动登记 ${images.added} 张图片证据`);
   if (images.skipped) messages.push(`${images.skipped} 张图片暂未进入证据池`);

@@ -2,10 +2,11 @@ import {runEvolveAi} from "../ai/service";
 import {VisualJudgeAiResultSchema} from "../ai/schemas";
 import type {EvolveProject,TargetRunResult,TestCase} from "../schemas";
 import type {TargetVariant} from "../target/types";
-import {getVisualEvidence} from "./visual-evidence";
+import {getVisualEvidence,hydrateVisualEvidence} from "./visual-evidence";
 import {textDigest} from "./frozen-artifact";
 export async function runVisualCase(project:EvolveProject,testCase:TestCase,variant?:TargetVariant,shots?:NonNullable<TargetRunResult["screenshots"]>):Promise<TargetRunResult>{
  const started=Date.now();
+ await hydrateVisualEvidence(project.id);
  const targets=project.sourceArtifacts.filter(a=>a.role==="target");
  const hashes=await Promise.all(targets.map(a=>textDigest(variant?variant.artifactSnapshots.find(s=>s.sourceArtifactId===a.id)?.content??"":a.textContent??"")));
  const images=shots??getVisualEvidence(project.id).items.filter(i=>i.artifactHash&&hashes.includes(i.artifactHash));

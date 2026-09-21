@@ -57,7 +57,7 @@ import { GoalConfirmationCard } from "./goal-confirmation-card";
 import { goalReadiness } from "../runtime/goal-readiness";
 import { baselineReadiness } from "../runtime/baseline-readiness";
 import { evidenceRefSummary } from "../runtime/evidence-provenance";
-import { addVisualEvidence, getVisualEvidence } from "../runtime/visual-evidence";
+import { addVisualEvidence, getVisualEvidence, VISUAL_EVIDENCE_EVENT } from "../runtime/visual-evidence";
 import { connectedTargetConnection, getRunnerGatewayConfig, testRunnerGateway } from "../runtime/target-runner-config";
 import { latestSupplementalEvidenceForCriterion } from "../runtime/supplemental-validation-evidence";
 import { criterionCanUseLocalSnapshotEvidence } from "../runtime/eval-suite-normalization";
@@ -760,7 +760,17 @@ function PendingEvidenceCard({ runtime, criterion }: { runtime: ProjectRuntime; 
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [, setVisualEvidenceTick] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (route !== "visual") return;
+    const refresh = (event: Event) => {
+      const detail = (event as CustomEvent<{ projectId?: string }>).detail;
+      if (!detail?.projectId || detail.projectId === p.id) setVisualEvidenceTick((value) => value + 1);
+    };
+    window.addEventListener(VISUAL_EVIDENCE_EVENT, refresh);
+    return () => window.removeEventListener(VISUAL_EVIDENCE_EVENT, refresh);
+  }, [route, p.id]);
   const saved = winner ? latestSupplementalEvidenceForCriterion(p, winner, criterion.id) : undefined;
   const relevantSnapshot = winner?.artifactSnapshots.find((snapshot) => criterion.artifactIds.includes(snapshot.sourceArtifactId) && snapshot.contentHash)
     ?? winner?.artifactSnapshots.find((snapshot) => Boolean(snapshot.contentHash));

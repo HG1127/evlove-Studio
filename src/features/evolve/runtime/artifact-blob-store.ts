@@ -20,10 +20,15 @@ export async function putArtifactBlobs(entries:Array<{id:string;blob:Blob}>){
   await putLocalArtifactBlobs(entries);
 }
 
-export async function getArtifactBlob(id:string):Promise<Blob|undefined>{
+export async function getArtifactBlob(id:string,options?:{preferRemote?:boolean}):Promise<Blob|undefined>{
+  const mode=productionRuntimeMode();
+  if(options?.preferRemote&&mode!=="local"){
+    const remote=await getProductionRuntime().artifacts.get(id);
+    if(remote){await putLocalArtifactBlob(id,remote).catch(()=>undefined);return remote;}
+  }
   const local=await getLocalArtifactBlob(id);
   if(local)return local;
-  if(productionRuntimeMode()==="local")return undefined;
+  if(mode==="local")return undefined;
   const remote=await getProductionRuntime().artifacts.get(id);
   if(remote)await putLocalArtifactBlob(id,remote).catch(()=>undefined);
   return remote;
