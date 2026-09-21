@@ -1,11 +1,15 @@
 import {createHash,createHmac,randomUUID,timingSafeEqual} from "node:crypto";
 import {
+  EvidenceLedgerArchiveResponseSchema,
   EvidenceLedgerAppendRequestSchema,
   EvidenceLedgerEntrySchema,
+  EvidenceLedgerExportBundleSchema,
+  EvidenceLedgerExportVerifyResponseSchema,
   EvidenceLedgerHealthSchema,
   EvidenceLedgerVerifyResponseSchema,
   type EvidenceLedgerAppendRequest,
   type EvidenceLedgerEntry,
+  type EvidenceLedgerExportBundle,
   type EvolutionEvent,
 } from "@evolution/contracts";
 import {
@@ -17,6 +21,7 @@ import {
   getEvolutionWorkspaceId,
   getServerSupabaseConfig,
 } from "../server-env";
+import {getServerArtifactStore} from "./artifact-runtime";
 import {resolveVaultSecret} from "./server-vault";
 
 type JsonRecord=Record<string,unknown>;
@@ -26,6 +31,8 @@ type ResolvedSigningConfig={
   verificationKeys:Record<string,string>;
   provider:"env"|"vault";
 };
+const EVIDENCE_EXPORT_MAX_ENTRIES=50_000;
+const EVIDENCE_EXPORT_PAGE_SIZE=1_000;
 
 async function resolveEvidenceSigningConfig():Promise<ResolvedSigningConfig|undefined>{
   const env=getEvidenceLedgerSigningConfig();
@@ -189,6 +196,8 @@ export async function getEvidenceLedgerHealth(){
       signingProvider:signing?.provider,
       verificationKeyCount:Object.keys(signing?.verificationKeys??{}).length,
       rotationReady:Object.keys(signing?.verificationKeys??{}).length>1,
+      exportReady:false,
+      retentionMode:"immutable-artifact-archive",
       checkedAt,
       message:"Evidence Ledger 代码已就绪；等待 Supabase + Workspace + Env/Vault server-only signing key。",
     });
@@ -215,6 +224,8 @@ export async function getEvidenceLedgerHealth(){
       signingProvider:signing.provider,
       verificationKeyCount:Object.keys(signing.verificationKeys).length,
       rotationReady:Object.keys(signing.verificationKeys).length>1,
+      exportReady:configured,
+      retentionMode:"immutable-artifact-archive",
       checkedAt,
       message:configured
         ?"Immutable Evidence Ledger 已连接：append-only trigger + serialized hash chain + "+signing.provider+" HMAC signing 均就绪。"
@@ -226,7 +237,8 @@ export async function getEvidenceLedgerHealth(){
       appendFunctionReady:false,immutableTriggerReady:false,hashChain:true,workspaceId,signingKeyId:signing.keyId,
       signingProvider:signing.provider,
       verificationKeyCount:Object.keys(signing.verificationKeys).length,
-      rotationReady:Object.keys(signing.verificationKeys).length>1,checkedAt,
+      rotationReady:Object.keys(signing.verificationKeys).length>1,
+      exportReady:false,retentionMode:"immutable-artifact-archive",checkedAt,
       message:error instanceof Error?error.message:String(error),
     });
   }
@@ -289,39 +301,80 @@ export async function listEvidenceLedger(missionId:string,limit=500){
   return (rows??[]).map(rowEntry);
 }
 
+export async function listEvidenceLedgerAll(
+  missionId:string,
+  options?:{pageSize?:number;maxEntries?:number},
+){
+  const workspaceId=getEvolutionWorkspaceId();
+  if(!workspaceId||!evidenceLedgerConfigured())return[] as EvidenceLedgerEntry[];
+  const pageSize=Math.max(1,Math.min(options?.pageSize??EVIDENCE_EXPORT_PAGE_SIZE,2_000));
+  const maxEntries=Math.max(pageSize,Math.min(options?.maxEntries??EVIDENCE_EXPORT_MAX_ENTRIES,100_000));
+  const {request}=restClient();
+  const entries:EvidenceLedgerEntry[]=[];
+  while(entries.length<maxEntries){
+    const limit=Math.min(pageSize,maxEntries-entries.length);
+    const rows=await request(
+      "evidence_ledger?select=*&workspace_id=eq."+encodeURIComponent(workspaceId)
+      +"&mission_id=eq."+encodeURIComponent(missionId)
+      +"&order=sequence.asc&limit="+limit
+      +"&offset="+entries.length,
+    ) as JsonRecord[];
+    const page=(rows??[]).map(rowEntry);
+    entries.push(...page);
+    if(page.length<limit)return entries;
+  }
+  const extra=await request(
+    "evidence_ledger?select=id&workspace_id=eq."+encodeURIComponent(workspaceId)
+    +"&mission_id=eq."+encodeURIComponent(missionId)
+    +"&order=sequence.asc&limit=1&offset="+entries.length,
+  ) as JsonRecord[];
+  if(extra?.length){
+    throw new Error("Evidence Ledger export exceeds the maximum supported entry count of "+maxEntries);
+  }
+  return entries;
+}
+
 function safeSignatureEqual(a:string,b:string){
   if(a.length!==b.length)return false;
   return timingSafeEqual(Buffer.from(a,"hex"),Buffer.from(b,"hex"));
 }
 
-export async function verifyEvidenceLedger(missionId:string){
-  const checkedAt=new Date().toISOString();
-  const signing=await resolveEvidenceSigningConfig();
-  const rows=await listEvidenceLedger(missionId,2000);
-  let previousHash: string|undefined;
+function verifyEvidenceEntries(args:{
+  missionId:string;
+  workspaceId?:string;
+  entries:EvidenceLedgerEntry[];
+  signing:ResolvedSigningConfig|undefined;
+  checkedAt:string;
+}){
+  let previousHash:string|undefined;
   let contentHashesValid=true;
-  let signaturesValid=Boolean(signing);
+  let signaturesValid=Boolean(args.signing);
   let chainValid=true;
   let firstBrokenEntryId:string|undefined;
 
-  for(const entry of rows){
+  for(let index=0;index<args.entries.length;index+=1){
+    const entry=args.entries[index]!;
     const expectedContent=evidenceContentHash({
       id:entry.id,workspaceId:entry.workspaceId,missionId:entry.missionId,kind:entry.kind,source:entry.source,actor:entry.actor,
       eventId:entry.eventId,jobId:entry.jobId,checkpointId:entry.checkpointId,modelRef:entry.modelRef,
       promptVersion:entry.promptVersion,testVersion:entry.testVersion,decision:entry.decision,payload:entry.payload,artifactRefs:entry.artifactRefs,
     });
+    const identityOk=entry.missionId===args.missionId
+      &&(!args.workspaceId||entry.workspaceId===args.workspaceId)
+      &&entry.sequence===index+1;
     const contentOk=expectedContent===entry.contentHash;
-    const verificationKey=signing
+    const verificationKey=args.signing
       ?entry.signatureKeyId
-        ?signing.verificationKeys[entry.signatureKeyId]
-        :signing.key
+        ?args.signing.verificationKeys[entry.signatureKeyId]
+        :args.signing.key
       :undefined;
     const signatureOk=Boolean(
       verificationKey
       &&entry.signature
       &&safeSignatureEqual(signatureFor(entry.contentHash,verificationKey),entry.signature)
     );
-    const chainOk=entry.previousHash===previousHash
+    const chainOk=identityOk
+      &&entry.previousHash===previousHash
       &&entry.chainHash===chainHash(previousHash,entry.contentHash,entry.sequence,entry.id);
     if(!contentOk)contentHashesValid=false;
     if(!signatureOk)signaturesValid=false;
@@ -331,10 +384,174 @@ export async function verifyEvidenceLedger(missionId:string){
   }
   const valid=contentHashesValid&&signaturesValid&&chainValid;
   return EvidenceLedgerVerifyResponseSchema.parse({
-    missionId,valid,entries:rows.length,contentHashesValid,signaturesValid,chainValid,firstBrokenEntryId,checkedAt,
+    missionId:args.missionId,
+    valid,
+    entries:args.entries.length,
+    contentHashesValid,
+    signaturesValid,
+    chainValid,
+    firstBrokenEntryId,
+    checkedAt:args.checkedAt,
     message:valid
-      ?`Evidence Ledger ${rows.length} 条记录的 content hash、HMAC signature 与 chain 均通过验证。`
+      ?`Evidence Ledger ${args.entries.length} 条记录的 content hash、HMAC signature 与 chain 均通过验证。`
       :`Evidence Ledger 校验失败${firstBrokenEntryId?`，首个异常记录 ${firstBrokenEntryId}`:""}。`,
+  });
+}
+
+export async function verifyEvidenceLedger(missionId:string){
+  const checkedAt=new Date().toISOString();
+  const signing=await resolveEvidenceSigningConfig();
+  const workspaceId=getEvolutionWorkspaceId();
+  const entries=await listEvidenceLedgerAll(missionId);
+  return verifyEvidenceEntries({
+    missionId,
+    workspaceId,
+    entries,
+    signing,
+    checkedAt,
+  });
+}
+
+function evidenceExportMaterial(bundle:{
+  formatVersion:"evolution-evidence-export-v1";
+  workspaceId:string;
+  missionId:string;
+  exportedAt:string;
+  entryCount:number;
+  headChainHash?:string;
+  entries:EvidenceLedgerEntry[];
+  verification:ReturnType<typeof verifyEvidenceEntries>;
+  retention:{mode:"immutable-artifact-archive";sourceLedgerAppendOnly:true;sourceDeletionAllowed:false};
+}){
+  return {
+    formatVersion:bundle.formatVersion,
+    workspaceId:bundle.workspaceId,
+    missionId:bundle.missionId,
+    exportedAt:bundle.exportedAt,
+    entryCount:bundle.entryCount,
+    headChainHash:bundle.headChainHash,
+    entries:bundle.entries,
+    verification:bundle.verification,
+    retention:bundle.retention,
+  };
+}
+
+export async function createEvidenceLedgerExport(
+  missionId:string,
+  options?:{now?:string},
+){
+  const workspaceId=getEvolutionWorkspaceId();
+  const signing=await resolveEvidenceSigningConfig();
+  if(!workspaceId||!signing||!evidenceLedgerConfigured()){
+    throw new Error("Evidence Ledger export requires configured workspace, immutable ledger, and Env/Vault signing key.");
+  }
+  const exportedAt=options?.now??new Date().toISOString();
+  const entries=await listEvidenceLedgerAll(missionId);
+  const verification=verifyEvidenceEntries({
+    missionId,
+    workspaceId,
+    entries,
+    signing,
+    checkedAt:exportedAt,
+  });
+  if(!verification.valid){
+    throw new Error("Evidence Ledger export refused because the source ledger failed integrity verification.");
+  }
+  const headChainHash=entries.at(-1)?.chainHash;
+  const material=evidenceExportMaterial({
+    formatVersion:"evolution-evidence-export-v1",
+    workspaceId,
+    missionId,
+    exportedAt,
+    entryCount:entries.length,
+    headChainHash,
+    entries,
+    verification,
+    retention:{
+      mode:"immutable-artifact-archive",
+      sourceLedgerAppendOnly:true,
+      sourceDeletionAllowed:false,
+    },
+  });
+  const bundleHash=sha256(canonicalEvidenceJson(material));
+  return EvidenceLedgerExportBundleSchema.parse({
+    ...material,
+    bundleHash,
+    signature:signatureFor(bundleHash,signing.key),
+    signatureKeyId:signing.keyId,
+    signingProvider:signing.provider,
+  });
+}
+
+export async function verifyEvidenceLedgerExport(raw:EvidenceLedgerExportBundle){
+  const checkedAt=new Date().toISOString();
+  const bundle=EvidenceLedgerExportBundleSchema.parse(raw);
+  const signing=await resolveEvidenceSigningConfig();
+  const material=evidenceExportMaterial(bundle);
+  const expectedBundleHash=sha256(canonicalEvidenceJson(material));
+  const bundleHashValid=expectedBundleHash===bundle.bundleHash;
+  const verificationKey=signing?.verificationKeys[bundle.signatureKeyId];
+  const bundleSignatureValid=Boolean(
+    verificationKey
+    &&safeSignatureEqual(signatureFor(bundle.bundleHash,verificationKey),bundle.signature)
+  );
+  const computedHead=bundle.entries.at(-1)?.chainHash;
+  const manifestValid=bundle.entryCount===bundle.entries.length
+    &&bundle.headChainHash===computedHead
+    &&bundle.verification.missionId===bundle.missionId
+    &&bundle.verification.entries===bundle.entryCount
+    &&bundle.verification.valid;
+  const ledgerVerification=verifyEvidenceEntries({
+    missionId:bundle.missionId,
+    workspaceId:bundle.workspaceId,
+    entries:bundle.entries,
+    signing,
+    checkedAt,
+  });
+  const valid=manifestValid&&bundleHashValid&&bundleSignatureValid&&ledgerVerification.valid;
+  return EvidenceLedgerExportVerifyResponseSchema.parse({
+    valid,
+    missionId:bundle.missionId,
+    entries:bundle.entries.length,
+    manifestValid,
+    bundleHashValid,
+    bundleSignatureValid,
+    ledgerValid:ledgerVerification.valid,
+    checkedAt,
+    message:valid
+      ?"Evidence export bundle hash, signature, manifest, and embedded ledger chain are valid."
+      :"Evidence export bundle verification failed.",
+  });
+}
+
+function evidenceArchiveArtifactId(bundle:EvidenceLedgerExportBundle){
+  const mission=bundle.missionId.replace(/[^A-Za-z0-9._-]/g,"_").slice(0,80)||"mission";
+  const stamp=bundle.exportedAt.replace(/[^0-9]/g,"").slice(0,14);
+  return `evidence-ledger-export-${mission}-${stamp}-${bundle.bundleHash.slice(0,16)}.json`;
+}
+
+export async function archiveEvidenceLedgerExport(
+  missionId:string,
+  options?:{now?:string},
+){
+  const bundle=await createEvidenceLedgerExport(missionId,options);
+  const artifactId=evidenceArchiveArtifactId(bundle);
+  const body=canonicalEvidenceJson(bundle);
+  await getServerArtifactStore().put(
+    artifactId,
+    new Blob([body],{type:"application/vnd.evolution.evidence-export+json"}),
+  );
+  return EvidenceLedgerArchiveResponseSchema.parse({
+    missionId:bundle.missionId,
+    artifactId,
+    exportedAt:bundle.exportedAt,
+    entryCount:bundle.entryCount,
+    headChainHash:bundle.headChainHash,
+    bundleHash:bundle.bundleHash,
+    signatureKeyId:bundle.signatureKeyId,
+    signingProvider:bundle.signingProvider,
+    retentionMode:bundle.retention.mode,
+    message:"Signed Evidence Ledger export archived without modifying the append-only source ledger.",
   });
 }
 

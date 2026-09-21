@@ -57,6 +57,8 @@ export const EvidenceLedgerHealthSchema=z.object({
   signingProvider:z.enum(["env","vault"]).optional(),
   verificationKeyCount:z.number().int().nonnegative().default(0),
   rotationReady:z.boolean().default(false),
+  exportReady:z.boolean().default(false),
+  retentionMode:z.literal("immutable-artifact-archive").default("immutable-artifact-archive"),
   checkedAt:z.string(),
   message:z.string(),
 });
@@ -74,3 +76,59 @@ export const EvidenceLedgerVerifyResponseSchema=z.object({
   message:z.string(),
 });
 export type EvidenceLedgerVerifyResponse=z.infer<typeof EvidenceLedgerVerifyResponseSchema>;
+
+export const EvidenceLedgerExportRetentionSchema=z.object({
+  mode:z.literal("immutable-artifact-archive"),
+  sourceLedgerAppendOnly:z.literal(true),
+  sourceDeletionAllowed:z.literal(false),
+});
+export type EvidenceLedgerExportRetention=z.infer<typeof EvidenceLedgerExportRetentionSchema>;
+
+export const EvidenceLedgerExportBundleSchema=z.object({
+  formatVersion:z.literal("evolution-evidence-export-v1"),
+  workspaceId:z.string().min(1),
+  missionId:z.string().min(1),
+  exportedAt:z.string(),
+  entryCount:z.number().int().nonnegative(),
+  headChainHash:z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  entries:z.array(EvidenceLedgerEntrySchema),
+  verification:EvidenceLedgerVerifyResponseSchema,
+  retention:EvidenceLedgerExportRetentionSchema,
+  bundleHash:z.string().regex(/^[a-f0-9]{64}$/),
+  signature:z.string().regex(/^[a-f0-9]{64}$/),
+  signatureKeyId:z.string().min(1),
+  signingProvider:z.enum(["env","vault"]),
+});
+export type EvidenceLedgerExportBundle=z.infer<typeof EvidenceLedgerExportBundleSchema>;
+
+export const EvidenceLedgerExportVerifyResponseSchema=z.object({
+  valid:z.boolean(),
+  missionId:z.string(),
+  entries:z.number().int().nonnegative(),
+  manifestValid:z.boolean(),
+  bundleHashValid:z.boolean(),
+  bundleSignatureValid:z.boolean(),
+  ledgerValid:z.boolean(),
+  checkedAt:z.string(),
+  message:z.string(),
+});
+export type EvidenceLedgerExportVerifyResponse=z.infer<typeof EvidenceLedgerExportVerifyResponseSchema>;
+
+export const EvidenceLedgerArchiveRequestSchema=z.object({
+  missionId:z.string().min(1),
+});
+export type EvidenceLedgerArchiveRequest=z.infer<typeof EvidenceLedgerArchiveRequestSchema>;
+
+export const EvidenceLedgerArchiveResponseSchema=z.object({
+  missionId:z.string(),
+  artifactId:z.string(),
+  exportedAt:z.string(),
+  entryCount:z.number().int().nonnegative(),
+  headChainHash:z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  bundleHash:z.string().regex(/^[a-f0-9]{64}$/),
+  signatureKeyId:z.string(),
+  signingProvider:z.enum(["env","vault"]),
+  retentionMode:z.literal("immutable-artifact-archive"),
+  message:z.string(),
+});
+export type EvidenceLedgerArchiveResponse=z.infer<typeof EvidenceLedgerArchiveResponseSchema>;

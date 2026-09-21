@@ -88,6 +88,7 @@ export async function getPublicReadinessSnapshot(){
       database:Boolean(evidence?.databaseReady),
       signing:Boolean(evidence?.signingConfigured),
       immutable:Boolean(evidence?.appendFunctionReady&&evidence?.immutableTriggerReady),
+      export:Boolean(evidence?.exportReady),
     },
     outcome:{
       database:Boolean(outcome?.databaseReady),
