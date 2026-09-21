@@ -1,11 +1,13 @@
 // @vitest-environment node
 import { afterEach,beforeEach,describe,expect,it } from "vitest";
-import { getServerSupabaseConfig } from "./server-env";
+import { getServerSupabaseConfig, serverSupabaseCredentialMode, serverSupabaseSecureConfigured } from "./server-env";
 
 const KEYS=[
   "SUPABASE_URL",
   "SUPABASE_PUBLISHABLE_KEY",
+  "SUPABASE_SECRET_KEY",
   "SUPABASE_SERVICE_ROLE_KEY",
+  "EVOLUTION_ALLOW_PUBLISHABLE_DATA_PLANE",
   "VITE_SUPABASE_URL",
   "VITE_SUPABASE_ANON_KEY",
   "SUPABASE_ARTIFACT_BUCKET",
@@ -30,13 +32,14 @@ describe("server Supabase env",()=>{
     }
   });
 
-  it("prefers publishable credentials and ignores a leftover service-role key",()=>{
+  it("prefers server-only secret credentials when available",()=>{
     process.env.SUPABASE_URL="https://example.supabase.co";
     process.env.SUPABASE_PUBLISHABLE_KEY="sb_publishable_test_fixture_0000000000000000";
-    process.env.SUPABASE_SERVICE_ROLE_KEY="service_role_should_never_be_selected";
+    process.env.SUPABASE_SERVICE_ROLE_KEY="service_role_server_fixture_0000000000000000";
     const config=getServerSupabaseConfig();
-    expect(config.anonKey).toBe("sb_publishable_test_fixture_0000000000000000");
-    expect(config.anonKey).not.toContain("service_role");
+    expect(config.anonKey).toBe("service_role_server_fixture_0000000000000000");
+    expect(serverSupabaseCredentialMode()).toBe("secret");
+    expect(serverSupabaseSecureConfigured()).toBe(true);
   });
 
   it("falls back to the internal-MVP Vite publishable key",()=>{
@@ -45,5 +48,7 @@ describe("server Supabase env",()=>{
     const config=getServerSupabaseConfig();
     expect(config.url).toBe("https://example.supabase.co");
     expect(config.anonKey).toBe("sb_publishable_test_fixture_1111111111111111");
+    expect(serverSupabaseCredentialMode()).toBe("publishable");
+    expect(serverSupabaseSecureConfigured()).toBe(false);
   });
 });

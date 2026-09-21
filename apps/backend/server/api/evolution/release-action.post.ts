@@ -4,12 +4,14 @@ import { applyProductionLearningGovernance, applyReleaseResultToProject } from "
 import { getServerVercelReleaseConfig } from "../../../src/server-env";
 import { getServerProductionRuntime } from "../../../src/services/production-runtime";
 import { executeVercelReleaseAction } from "../../../src/services/vercel-release";
+import {requireEvolutionPermission} from "../../../src/services/security-policy";
 
 function fail(statusCode:number,statusMessage:string):never{
   throw createError({statusCode,statusMessage});
 }
 
 export default defineEventHandler(async(event)=>{
+  requireEvolutionPermission(event,"release.execute");
   const input=VercelReleaseActionRequestSchema.parse(await readBody(event));
   const runtime=getServerProductionRuntime();
   const mission=await runtime.missions.get(input.missionId);

@@ -1,8 +1,10 @@
 import {createError,defineEventHandler,readBody} from "nitro/h3";
 import {AiRequestSchema} from "@evolution/contracts";
 import {isServerAiUnavailable,runServerAi} from "../../../src/services/ai-gateway";
+import {requireEvolutionPermission} from "../../../src/services/security-policy";
 
 export default defineEventHandler(async(event)=>{
+  requireEvolutionPermission(event,"ai.execute");
   const input=AiRequestSchema.parse(await readBody(event));
   try{
     const result=await runServerAi(input.operation,input.payload);

@@ -12,6 +12,29 @@ export type RunnerCapabilitySnapshot = {
   release?: boolean;
 };
 
+export type ServerCapabilitySnapshot = {
+  controlPlane?: boolean;
+  dataPlane?: boolean;
+  sourceParse?: boolean;
+  artifactStore?: boolean;
+  serverAi?: boolean;
+  sandbox?: boolean;
+  browser?: boolean;
+  release?: boolean;
+  git?: boolean;
+  capabilityService?: boolean;
+  capabilitySemantic?: boolean;
+  evidenceLedger?: boolean;
+  security?: boolean;
+  connectors?: boolean;
+};
+
+export type ReadinessSignals = {
+  runner?: RunnerCapabilitySnapshot;
+  server?: ServerCapabilitySnapshot;
+  visualJudgeLive: boolean;
+};
+
 export const EVOLUTION_PHASES = [
   { id: "target", title: "目标与契约", range: [1, 3] as const, input: "完整材料 + 原始要求", output: "Goal / Protected Scope / Acceptance Rubric", closedLoopRole: "定义可机器执行的目标函数" },
   { id: "baseline", title: "原版基线", range: [4, 5] as const, input: "冻结后的目标 + 原版", output: "Baseline Runs / Trace / Evidence", closedLoopRole: "知道当前版本真实表现" },
@@ -33,7 +56,7 @@ export type BackendRequirement = {
   frontend: string;
   backend: string[];
   config?: string[];
-  detector?: "build" | "release" | "browser" | "visual" | "none";
+  detector?: "control-plane" | "git" | "capability" | "evidence" | "security" | "connectors" | "build" | "release" | "browser" | "visual" | "none";
 };
 
 export const BACKEND_REQUIREMENTS: BackendRequirement[] = [
@@ -43,11 +66,11 @@ export const BACKEND_REQUIREMENTS: BackendRequirement[] = [
     title: "Server-side Evolution Control Plane",
     category: "Autonomous Runtime",
     why: "让 Mission 在关闭浏览器后仍能持续执行、调度、续跑和恢复。",
-    current: "Evolution Harness v1 + Action Executor 已收口；Mission/Job/Event/Artifact Port、统一 Job Contract、Target Lifecycle Contract 与 Versioned Schema v1 已完成，本地与 HTTP Adapter 均已具备。执行主体当前仍在浏览器。",
-    frontend: "Backend-ready Contract 6/6 已完成；前端可在 local/remote Runtime 间切换，并保留 Mission 本地投影、Artifact 远端回读、统一 Job 镜像与 Event Contract。",
-    backend: ["Mission DB", "Persistent Job Queue", "Worker Pool", "Scheduler", "Lease / Heartbeat", "Cancellation", "Event Stream / SSE/WebSocket"],
-    config: ["VITE_EVOLUTION_API_URL", "Postgres", "Queue / Worker", "Object Storage", "SSE / WebSocket"],
-    detector: "none",
+    current: "Durable Workflow、Mission/Job/Event HTTP Data Plane、Artifact Store、Job metadata、取消/恢复与服务端 AI 路由均已落到 Nitro + Supabase/Vercel Workflow；浏览器只保留投影与控制入口。",
+    frontend: "前端已切到 Server API Runtime，并可显示 Durable Workflow、Backend Health、Job/Event 与跨刷新恢复状态。",
+    backend: ["部署 Supabase migration", "配置 Supabase Service Role / Storage", "配置 Vercel Workflow runtime", "生产环境健康检查与告警"],
+    config: ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "Vercel Workflow"],
+    detector: "control-plane",
   },
   {
     id: "git-target",
@@ -55,11 +78,11 @@ export const BACKEND_REQUIREMENTS: BackendRequirement[] = [
     title: "Git-native Target Adapter",
     category: "Target Adapter",
     why: "代码工程需要用 Branch / Commit / PR / Merge 作为真实版本身份，而不是长期依赖 ZIP。",
-    current: "ZIP 工程可解析、修改、重打包、做 AST/Dependency，但没有真实 Git 生命周期。",
-    frontend: "前端已具备 Candidate、版本、Diff、Lineage、Rollback、Artifact Hash 等呈现。",
-    backend: ["SCM OAuth", "Clone/Fetch", "Branch", "Commit", "PR", "Merge", "Webhook", "Commit SHA Evidence"],
-    config: ["GitHub/GitLab App 或 OAuth", "SCM webhook secret", "Repo allowlist"],
-    detector: "none",
+    current: "GitHub Target 已实现精确 Commit/Tree Snapshot、受控 Branch Mutation、Check Runs、PR、Merge、Webhook 与非 force 的可审计 Rollback；所有写操作绑定 Mission/Candidate 并要求 Repo allowlist。",
+    frontend: "Readiness 可从服务端 capability 判断 Git Target 是否真实配置；Candidate、Diff、Lineage、Rollback 与 Commit SHA Evidence 可继续复用现有视图。",
+    backend: ["配置 GitHub Token", "配置 Repo allowlist", "配置 Webhook Secret 与 /api/evolution/git-webhook", "生产仓库权限最小化"],
+    config: ["EVOLUTION_GITHUB_TOKEN", "EVOLUTION_GITHUB_REPO_ALLOWLIST", "EVOLUTION_GITHUB_WEBHOOK_SECRET"],
+    detector: "git",
   },
   {
     id: "sandbox",
@@ -91,11 +114,11 @@ export const BACKEND_REQUIREMENTS: BackendRequirement[] = [
     title: "Organization Capability Service",
     category: "Learning Runtime",
     why: "让 Lesson/Skill 跨项目、跨用户自动匹配，而不是只存在当前浏览器。",
-    current: "能力库已有 Verified Skill / Lesson / Anti-pattern / Recipe，但主要来自本地项目与手动 Skill Seed。",
-    frontend: "能力库、经验中心、Next Queue、复用入口已具备。",
-    backend: ["Capability Registry", "Vector Search", "Semantic Matching", "Replication Evidence", "Counter-example Store", "Organization Sharing"],
-    config: ["CAPABILITY_API_URL", "Vector DB", "Organization/Workspace ID"],
-    detector: "none",
+    current: "Supabase Organization Capability Registry 已实现跨 Mission 同步、Provenance、Replication Evidence、Counter-example；可选真实 Server Embedding 会持久化向量并用 cosine + lexical 做 hybrid ranking。当前不是 pgvector/ANN，规模化向量索引仍待补。",
+    frontend: "能力库、经验中心、Next Queue、复用入口已具备；Readiness 按真实 Registry health 与 Embedding Provider 状态区分基础 Registry / 语义匹配。",
+    backend: ["部署 organization_capabilities migration", "配置 Workspace ID", "可选真实 Embedding Provider", "pgvector/ANN 规模化检索", "Organization RBAC/Sharing"],
+    config: ["SUPABASE_URL", "SUPABASE_PUBLISHABLE_KEY", "EVOLUTION_WORKSPACE_ID", "EVOLUTION_CAPABILITY_EMBEDDING_MODEL/API KEY"],
+    detector: "capability",
   },
   {
     id: "vault-rbac",
@@ -103,11 +126,11 @@ export const BACKEND_REQUIREMENTS: BackendRequirement[] = [
     title: "Vault + RBAC + Approval Policy",
     category: "Governance",
     why: "生产级自主进化不能把 API Key、权限和高风险操作边界只放在浏览器。",
-    current: "已有 Autonomy Policy、Human Gate、AI Audit；BYOK 密钥仍主要在浏览器 localStorage。",
-    frontend: "前端已区分机器动作、人类 Gate、发布确认和审计留痕。",
-    backend: ["Secrets Vault", "Credential Reference", "RBAC", "Environment Permission", "Approval Policy", "Service Identity"],
-    config: ["VAULT/KMS", "Auth Provider", "Role Mapping", "Approval Policy Service"],
-    detector: "none",
+    current: "Server 已实现 trusted signed actor、Viewer/Operator/Approver/Admin/Service RBAC、Approver/Operator 职责分离、专用 Release Approval API、Release Gate 防旁路修改，以及仅返回引用/状态、不回传密钥的 Server Credential Reference。生产数据面要求 Supabase Secret/Service Role。",
+    frontend: "浏览器只负责交互；生产 Server API 统一执行权限校验。旧 BYOK localStorage 仍仅属于本地兼容模式，不作为 Server Runtime 的生产凭据来源。",
+    backend: ["Trusted Identity Proxy/Header", "Server Secret Manager/Env References", "RBAC", "Release Approval Gate", "Workspace Binding", "后续外部 Vault/KMS 与 Approval TTL/Revocation Store"],
+    config: ["32+ char EVOLUTION_IDENTITY_HMAC_SECRET", "EVOLUTION_WORKSPACE_ID", "SUPABASE_SECRET_KEY/SERVICE_ROLE_KEY", "Provider/Release/Git server secrets"],
+    detector: "security",
   },
   {
     id: "evidence-ledger",
@@ -115,11 +138,11 @@ export const BACKEND_REQUIREMENTS: BackendRequirement[] = [
     title: "Immutable Evidence Ledger",
     category: "Evidence & Audit",
     why: "需要回答每一次升级为什么发生、用的哪个模型/测试/环境/Artifact，以及证据是否被修改过。",
-    current: "已有 Artifact Hash、Trace、AI Audit、Release History，但持久化主要是浏览器/本地文件。",
-    frontend: "项目内已有 Evidence、Trace、Gate、Audit、Lineage 视图。",
-    backend: ["Append-only Ledger", "Artifact/Object Store", "Signed Hash", "Prompt/Test Version", "Actor/Decision Record", "Retention Policy"],
-    config: ["EVIDENCE_LEDGER_URL", "Object Storage", "Signing Key/KMS"],
-    detector: "none",
+    current: "Supabase Immutable Evidence Ledger 已实现数据库级 UPDATE/DELETE 阻断、per-Mission 串行 SHA-256 Hash Chain、Server-only HMAC 签名、统一 Event 自动镜像与 Verify API。",
+    frontend: "项目内 Evidence/Trace/Gate/Audit/Lineage 保持不变；Readiness 按真实 migration + append function + immutable trigger + signing key health 判定。",
+    backend: ["部署 evidence_ledger migration", "配置 server-only signing key", "Key Rotation/KMS", "Retention/Export Policy", "组织级 RBAC"],
+    config: ["SUPABASE_URL", "EVOLUTION_WORKSPACE_ID", "EVOLUTION_EVIDENCE_SIGNING_KEY", "EVOLUTION_EVIDENCE_SIGNING_KEY_ID"],
+    detector: "evidence",
   },
   {
     id: "outcome-science",
@@ -127,11 +150,11 @@ export const BACKEND_REQUIREMENTS: BackendRequirement[] = [
     title: "Outcome Analytics / Drift / Statistics",
     category: "Outcome Intelligence",
     why: "达到 KPI 门槛不等于真正优于 Stable；长期进化需要统计显著性、分群、漂移和成本/延迟回归。",
-    current: "Release Controller 已支持 KPI、样本量、观察窗口与自动回滚。",
-    frontend: "发布页已有 KPI、健康状态和 Release Audit Trail。",
-    backend: ["Control Group", "Statistical Test", "Segment Analysis", "Drift Detection", "Cost/Latency/Safety Regression", "Outcome Warehouse"],
-    config: ["Analytics/Warehouse", "Metric Definitions", "Experiment Assignment"],
-    detector: "release",
+    current: "Release Controller 已有 KPI/样本量/观察窗口；Stable/Candidate Outcome sample contract 与 Warehouse migration 已准备，但统计分析与 ingest service 尚未完成，因此不能用 Release Ready 冒充 Outcome Science Ready。",
+    frontend: "发布页已有 KPI、健康状态和 Release Audit Trail；统计显著性、分群与漂移结论仍保持未就绪。",
+    backend: ["Outcome sample ingest service", "Stable/Control comparison", "Statistical Test", "Segment Analysis", "Drift Detection", "Cost/Latency/Safety Regression"],
+    config: ["Outcome telemetry source", "Metric Definitions", "Experiment Assignment"],
+    detector: "none",
   },
   {
     id: "connectors",
@@ -139,11 +162,11 @@ export const BACKEND_REQUIREMENTS: BackendRequirement[] = [
     title: "External System Connector SDK",
     category: "Target Adapter",
     why: "真实进化对象最终会扩展到 Agent、Workflow、Memory、Database、SaaS、API 和业务系统。",
-    current: "当前 Target Adapter 主要是 artifact / http / mock；tool、memory、model 仍可能只是 runtime mutation。",
-    frontend: "前端 Candidate、Mutation Scope、Evidence 和治理模型已能承接更多 Adapter。",
-    backend: ["Connector SDK", "Read/Snapshot/Mutate/Validate/Deploy/Observe/Rollback Contract", "Webhook/Event Source"],
-    config: ["各业务系统 OAuth/API Credentials", "Connector Registry"],
-    detector: "none",
+    current: "Server Connector Registry/SDK 已实现统一 Read/Snapshot/Mutate/Validate/Deploy/Observe/Rollback Contract、allowlisted server manifests、server-only credential references、动态权限校验和独立 HMAC Webhook/Event Source。",
+    frontend: "Target Adapter Coverage 可读取服务器 Connector capabilities；具体 Agent/Workflow/Memory/API/DB 连接器按 Manifest 生命周期显示 ready/partial。",
+    backend: ["配置具体 Connector Manifest", "实现目标系统标准 Lifecycle Endpoint", "配置 server credential env reference", "配置可选 Webhook secret", "按系统补 provider-specific translation"],
+    config: ["EVOLUTION_CONNECTORS_JSON", "Manifest 中声明的 credentialEnv / webhookSecretEnv"],
+    detector: "connectors",
   },
 ];
 
@@ -157,34 +180,41 @@ export type EngineReadiness = {
   gap: string;
 };
 
-export function deriveEngineReadiness(signals: {
-  runner?: RunnerCapabilitySnapshot;
-  visualJudgeLive: boolean;
-}): EngineReadiness[] {
+export function deriveEngineReadiness(signals: ReadinessSignals): EngineReadiness[] {
   const runner = signals.runner ?? {};
-  const browserReady = Boolean(runner.htmlBrowser && runner.screenshots);
-  const experimentReady = Boolean(runner.e2e && browserReady);
-  const buildReady = Boolean(runner.build);
-  const releaseReady = Boolean(runner.release);
+  const server = signals.server ?? {};
+  const browserReady = Boolean((runner.htmlBrowser && runner.screenshots) || server.browser);
+  const experimentReady = Boolean((runner.e2e && browserReady) || (server.sandbox && server.browser));
+  const buildReady = Boolean(runner.build || server.sandbox);
+  const releaseReady = Boolean(runner.release || server.release);
   const visualReady = Boolean(signals.visualJudgeLive && runner.screenshots);
+  const artifactReady = Boolean(server.dataPlane && server.artifactStore && server.sourceParse);
+  const missionReady = Boolean(server.controlPlane && server.dataPlane);
   return [
-    { id: "artifact", title: "Artifact Intelligence", purpose: "理解输入、结构、代码库与文件语义", state: "local", stateLabel: "本地闭环", current: "Parser Router / Office / PDF / ZIP / Repository Intelligence / AST / Deep Index 已具备", gap: "服务端 Parser Worker、Object Store 与跨设备持久化待补" },
-    { id: "mission", title: "Mission / Goal Engine", purpose: "把用户目标编译成可执行 Acceptance Contract", state: "local", stateLabel: "本地闭环", current: "Goal / Scope / Rubric / Eval Suite / Hidden Holdout / Human Gates 已具备", gap: "Server-side Mission DB / Scheduler / Worker 待补" },
-    { id: "candidate", title: "Hypothesis / Candidate Engine", purpose: "诊断根因、生成多种 Mutation 并搜索 Best-Ever", state: "local", stateLabel: "本地闭环", current: "Diagnosis / Candidate Population / Search Memory / Multi-round Search 已具备", gap: "Git / Agent / Workflow / Memory 等真实 Target Adapter 待补" },
+    { id: "artifact", title: "Artifact Intelligence", purpose: "理解输入、结构、代码库与文件语义", state: artifactReady ? "ready" : "local", stateLabel: artifactReady ? "服务端闭环" : "本地闭环", current: artifactReady ? "Server Parser Worker / Object Store / Durable Parse Job / Office / PDF / ZIP / Repository Deep Index 已接入" : "Parser Router / Office / PDF / ZIP / Repository Intelligence / AST / Deep Index 已具备", gap: artifactReady ? "继续扩展超大文件、OCR 与增量索引" : "服务端 Parser Worker、Object Store 与跨设备持久化待补" },
+    { id: "mission", title: "Mission / Goal Engine", purpose: "把用户目标编译成可执行 Acceptance Contract", state: missionReady ? "ready" : "local", stateLabel: missionReady ? "服务端闭环" : "本地闭环", current: missionReady ? "Mission DB / Durable Workflow / Job/Event Store / Server AI / Cancellation & Recovery 已接入" : "Goal / Scope / Rubric / Eval Suite / Hidden Holdout / Human Gates 已具备", gap: missionReady ? "继续补运维告警、容量与多租户隔离" : "Server-side Mission DB / Scheduler / Worker 待补" },
+    { id: "candidate", title: "Hypothesis / Candidate Engine", purpose: "诊断根因、生成多种 Mutation 并搜索 Best-Ever", state: server.git ? "partial" : "local", stateLabel: server.git ? "Git Target 已连接" : "本地闭环", current: server.git ? "Diagnosis / Candidate Population / Search Memory / Multi-round Search + Git Branch/Commit/PR Target 已具备" : "Diagnosis / Candidate Population / Search Memory / Multi-round Search 已具备", gap: server.git ? "Agent / Workflow / Memory / DB 等其他真实 Target Adapter 待补" : "Git / Agent / Workflow / Memory 等真实 Target Adapter 待补" },
     { id: "experiment", title: "Experiment Engine", purpose: "让 Candidate 在真实环境执行并与 Baseline 同卷比较", state: buildReady && experimentReady ? "ready" : experimentReady ? "partial" : "backend", stateLabel: buildReady && experimentReady ? "真实可用" : experimentReady ? "HTML/E2E 可用" : "需后端", current: `Browser ${browserReady ? "READY" : "MISSING"} · E2E ${runner.e2e ? "READY" : "MISSING"} · Build ${buildReady ? "READY" : "MISSING"}`, gap: buildReady ? "代码 Sandbox/Preview 仍可继续扩展多语言 Runtime" : "需 BUILD_IMAGE / Sandbox / Preview Runtime" },
-    { id: "evidence", title: "Evidence Engine", purpose: "绑定 Claim → Evidence → Artifact → Test → Decision", state: browserReady ? "partial" : "local", stateLabel: browserReady ? "真实证据可用" : "本地证据", current: `Static / Hash / Trace / Browser Evidence ${browserReady ? "已接入" : "待接入"} · Visual Judge ${visualReady ? "LIVE" : "未完全就绪"}`, gap: "Immutable Evidence Ledger 与服务端 Artifact/Evidence Store 待补" },
+    { id: "evidence", title: "Evidence Engine", purpose: "绑定 Claim → Evidence → Artifact → Test → Decision", state: server.evidenceLedger || browserReady || server.artifactStore ? "partial" : "local", stateLabel: server.evidenceLedger ? "不可变账本已连接" : browserReady || server.artifactStore ? "真实证据可用" : "本地证据", current: `Artifact Store ${server.artifactStore ? "SERVER" : "LOCAL"} · Immutable Ledger ${server.evidenceLedger ? "SIGNED+CHAINED" : "MISSING"} · Browser Evidence ${browserReady ? "已接入" : "待接入"} · Visual Judge ${visualReady ? "LIVE" : "未完全就绪"}`, gap: server.evidenceLedger ? "Key Rotation/KMS、Retention/Export 与组织级 RBAC 待补" : "部署 append-only / signed Immutable Evidence Ledger migration + server signing key" },
     { id: "artifact-engineering", title: "Artifact Engineering", purpose: "把通过验收的同一 Candidate 物化为真实可用成果", state: "partial", stateLabel: "多格式可用", current: "Text/HTML/JSON、DOCX、PPTX、Spreadsheet、ZIP Roundtrip 与结构校验已具备", gap: "Git 原生写回、复杂 Office Renderer、PDF/设计类 Renderer 待补" },
     { id: "release", title: "Release / Outcome Engine", purpose: "Shadow / Canary / Promote / Rollback 并观测真实 Outcome", state: releaseReady ? "ready" : "backend", stateLabel: releaseReady ? "生产能力已连接" : "需生产后端", current: releaseReady ? "真实 Release Controller capability 已就绪" : "前端与 Release Controller 状态机已具备，但生产 Deploy/Traffic/Telemetry 未连接", gap: releaseReady ? "继续补统计与漂移能力" : "需配置真实发布平台 3 个端点与服务端状态存储" },
-    { id: "learning", title: "Learning / Capability Engine", purpose: "把结果沉淀为 Lesson / Skill / Anti-pattern / Next Queue", state: "partial", stateLabel: "项目级闭环", current: "经验提炼、能力库、Next Queue、离线证据降级规则已具备", gap: "组织级 Capability Service、语义匹配、跨项目复验与反例库待补" },
-    { id: "governance", title: "Governance Engine", purpose: "控制风险、权限、审批、审计与秘密", state: "partial", stateLabel: "规则已具备", current: "Autonomy Policy / Human Gate / Audit / Rollback 规则已具备", gap: "Vault / RBAC / Policy Service / Immutable Audit 待补" },
+    { id: "learning", title: "Learning / Capability Engine", purpose: "把结果沉淀为 Lesson / Skill / Anti-pattern / Next Queue", state: "partial", stateLabel: server.capabilitySemantic ? "组织级语义 Registry 已连接" : server.capabilityService ? "组织级 Registry 已连接" : "项目级闭环", current: server.capabilityService ? `经验提炼、Skill Provenance、Production Governance、Lifecycle History、Supersession、跨 Mission Registry/Replication/Counter-example 已接入${server.capabilitySemantic ? "；真实 Server Embedding + cosine hybrid ranking 已启用" : ""}` : "经验提炼、Skill Provenance、Production Governance、Lifecycle History、Supersession 与 Next Queue 已具备", gap: server.capabilitySemantic ? "pgvector/ANN 规模化检索与 Organization RBAC/Sharing 待补" : server.capabilityService ? "配置真实 Embedding Provider；pgvector/ANN 与 Organization RBAC/Sharing 待补" : "组织级 Capability Registry、语义匹配、跨项目复验与反例库待补" },
+    { id: "governance", title: "Governance Engine", purpose: "控制风险、权限、审批、审计与秘密", state: "partial", stateLabel: server.security ? "Server RBAC 已强制" : "规则已具备", current: server.security ? "Trusted signed actor / Workspace binding / RBAC / Release Approval / Server Credential Reference + Immutable Ledger 已进入生产后端" : "Autonomy Policy / Human Gate / Audit / Rollback 规则已具备", gap: server.security ? "外部 Vault/KMS、Approval TTL/Revocation Store、细粒度组织成员目录待补" : "Server Identity / RBAC / Credential Reference / Approval Policy 待补" },
   ];
 }
 
-export function backendRequirementState(requirement: BackendRequirement, signals: { runner?: RunnerCapabilitySnapshot; visualJudgeLive: boolean }) {
+export function backendRequirementState(requirement: BackendRequirement, signals: ReadinessSignals) {
   const runner = signals.runner ?? {};
-  if (requirement.detector === "build") return runner.build ? "ready" as const : "missing" as const;
-  if (requirement.detector === "release") return runner.release ? "ready" as const : "missing" as const;
-  if (requirement.detector === "browser") return runner.htmlBrowser && runner.e2e ? "ready" as const : "missing" as const;
+  const server = signals.server ?? {};
+  if (requirement.detector === "control-plane") return server.controlPlane && server.dataPlane ? "ready" as const : "missing" as const;
+  if (requirement.detector === "git") return server.git ? "ready" as const : "missing" as const;
+  if (requirement.detector === "capability") return server.capabilityService ? "ready" as const : "missing" as const;
+  if (requirement.detector === "evidence") return server.evidenceLedger ? "ready" as const : "missing" as const;
+  if (requirement.detector === "security") return server.security ? "ready" as const : "missing" as const;
+  if (requirement.detector === "connectors") return server.connectors ? "ready" as const : "missing" as const;
+  if (requirement.detector === "build") return runner.build || server.sandbox ? "ready" as const : "missing" as const;
+  if (requirement.detector === "release") return runner.release || server.release ? "ready" as const : "missing" as const;
+  if (requirement.detector === "browser") return (runner.htmlBrowser && runner.e2e) || server.browser ? "ready" as const : "missing" as const;
   if (requirement.detector === "visual") return signals.visualJudgeLive ? "ready" as const : "missing" as const;
   return "missing" as const;
 }

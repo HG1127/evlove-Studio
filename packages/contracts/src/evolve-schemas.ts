@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { GitRepositoryBindingSchema } from "./git-target-contract";
 
 export const StageSchema = z.enum([
   "target",
@@ -842,10 +843,11 @@ export const NextQueueItemSchema = z.object({
 export type NextQueueItem = z.infer<typeof NextQueueItemSchema>;
 
 export const TargetConnectionSchema = z.object({
-  adapter: z.enum(["mock", "artifact", "http"]).default("mock"),
+  adapter: z.enum(["mock", "artifact", "http", "git"]).default("mock"),
   connectionId: z.string().default("demo-agent"),
   status: z.enum(["connected", "not-configured", "error"]).default("connected"),
   label: z.string().default("Demo Target Adapter"),
+  git:GitRepositoryBindingSchema.optional(),
 });
 
 export const ReleaseTargetSchema = z.object({

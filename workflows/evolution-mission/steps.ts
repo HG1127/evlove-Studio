@@ -6,7 +6,7 @@ import {
   type EvolutionWorkflowResult,
   type EvolutionWorkflowRunInput,
 } from "@evolution/contracts";
-import { applyDeterministicRoundtripEvidence, applyProductionLearningGovernance, attachLessonGovernance, baselineReadiness, completeAutonomousMission, mapTestsToRubric, materializeAcceptedChampionPackage, mergeGovernedNextQueue, normalizeAcceptanceRubric, normalizeEvalSuiteForProject, productionOutcomeFreshness, productionOutcomeTrend, projectHasStableHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, resetDownstream, rubricSuiteCoverage, rubricValidation } from "@evolution/core";
+import { applyDeterministicRoundtripEvidence, applyProductionLearningGovernance, baselineReadiness, completeAutonomousMission, integrateDistilledLesson, mapTestsToRubric, materializeAcceptedChampionPackage, mergeGovernedNextQueue, normalizeAcceptanceRubric, normalizeEvalSuiteForProject, productionOutcomeFreshness, productionOutcomeTrend, projectHasStableHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, resetDownstream, rubricSuiteCoverage, rubricValidation } from "@evolution/core";
 import {
   advanceServerCampaignPreparation,
   buildServerHarnessPlan,
@@ -22,6 +22,7 @@ import { runServerMissionHoldout } from "../../apps/backend/src/services/server-
 import { runServerMissionArtifactAcceptance } from "../../apps/backend/src/services/server-artifact-acceptance";
 import { runServerMissionRelease } from "../../apps/backend/src/services/server-release-orchestration";
 import { runServerMissionReleaseReconciliation } from "../../apps/backend/src/services/server-release-reconciliation";
+import { syncMissionCapabilities } from "../../apps/backend/src/services/organization-capability";
 import { serverAiConfigured } from "../../apps/backend/src/server-env";
 
 function controlJob(input:EvolutionWorkflowRunInput,args:{
@@ -702,17 +703,25 @@ export async function executeServerControlStep(
         ?`Production Outcome 尚未达到稳定线上证据门槛：${releaseTrend.reason}`
         :"离线成果验收（尚无线上生产证据）"]}
       : parsed;
-    const record=attachLessonGovernance(mission,{id:`lesson-${plan.checkpoint.id}`,...lesson},{at:now});
+    const integrated=integrateDistilledLesson(mission,{id:`lesson-${plan.checkpoint.id}`,...lesson},{at:now});
     const learned=applyProductionLearningGovernance(
-      {...mission,lessons:[record,...mission.lessons.filter((item)=>item.id!==record.id)],stage:"learning",updatedAt:now},
+      {...mission,lessons:integrated.lessons,stage:"learning",updatedAt:now},
       {at:now,now:Date.parse(now)},
     );
     await runtime.missions.save(learned);
+    const capabilitySync=await syncMissionCapabilities(learned).catch((error)=>({
+      configured:true,
+      workspaceId:undefined,
+      missionId:learned.id,
+      synced:0,
+      archived:0,
+      message:error instanceof Error?error.message:String(error),
+    }));
     await runtime.events.append(createEvolutionEvent({
       id:`evt-${input.controlJobId}-action-${iteration}-complete`,
       missionId:input.missionId,jobId:input.controlJobId,checkpointId:plan.checkpoint.id,
       type:"ActionCompleted",source:"vercel-workflow-ai",
-      payload:{action,serverNative:true,lessonId:record.id,status:record.status},
+      payload:{action,serverNative:true,lessonId:integrated.lesson.id,status:integrated.lesson.status,capabilitySync},
     }));
     return {control:"continue"};
   }

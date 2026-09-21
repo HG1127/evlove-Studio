@@ -1,16 +1,23 @@
 import { defineEventHandler } from "nitro/h3";
 import { EvolutionWorkflowCapabilitiesSchema } from "@evolution/contracts";
-import { serverAiConfigured, serverSupabaseConfigured, vercelReleaseWriteConfigured } from "../../../src/server-env";
+import { githubTargetConfigured, githubWebhookConfigured, serverAiConfigured, serverSupabaseConfigured, serverSupabaseSecureConfigured, targetProxyCapabilities, vercelReleaseWriteConfigured } from "../../../src/server-env";
+import {getSecurityCapabilities,requireEvolutionPermission} from "../../../src/services/security-policy";
 
 const CONTROL_ACTIONS=["adopt-defaults","approve-contract","wait-human","complete","package"] as const;
 const AI_ACTIONS=["understand","compile-contract","build-eval","distill","next-queue"] as const;
 const CONDITIONAL_ACTIONS:string[]=["revalidate","run-campaign","run-release","reconcile-release"];
 const MIGRATION_PENDING_ACTIONS:string[]=[];
 
-export default defineEventHandler(()=>{
+export default defineEventHandler((event)=>{
+  requireEvolutionPermission(event,"data.read");
   const ai=serverAiConfigured();
   const dataPlane=serverSupabaseConfigured();
+  const secureDataPlane=serverSupabaseSecureConfigured();
   const releaseWrite=vercelReleaseWriteConfigured();
+  const gitConfigured=githubTargetConfigured();
+  const gitWebhook=githubWebhookConfigured();
+  const targetProxy=targetProxyCapabilities();
+  const security=getSecurityCapabilities();
   const blockedActions=[
     ...(!ai?[
       ...AI_ACTIONS.map((action)=>({action,reason:"server-ai-not-configured"})),
@@ -29,6 +36,10 @@ export default defineEventHandler(()=>{
     ...(!ai?[{capability:"server-ai",reason:"server-ai-not-configured"}]:[]),
     ...(!releaseWrite?[{capability:"vercel-release-write",reason:"vercel-release-credential-required"}]:[]),
     ...(!dataPlane?[{capability:"server-data-plane",reason:"supabase-server-config-required"}]:[]),
+    ...(dataPlane&&!secureDataPlane?[{capability:"server-data-plane-security",reason:"server-only-supabase-secret-required-for-production"}]:[]),
+    ...(!security.productionSafe?[{capability:"rbac-identity",reason:"trusted-signed-actor-required-for-production"}]:[]),
+    ...(!gitConfigured?[{capability:"git-target",reason:"github-token-and-repo-allowlist-required"}]:[]),
+    ...(!gitWebhook?[{capability:"git-webhook",reason:"github-webhook-secret-required"}]:[]),
   ];
   const externalCapabilityBlocked=[
     {capability:"online-release-authorization",reason:"human-release-ready-approval-required"},
@@ -53,6 +64,7 @@ export default defineEventHandler(()=>{
     serverAi:ai,
     backend:{
       dataPlaneConfigured:dataPlane,
+      secureDataPlaneCredential:secureDataPlane,
       httpDataPlaneCodeReady:true,
       artifactStoreConfigured:dataPlane,
       sourceParseCodeReady:true,
@@ -61,6 +73,15 @@ export default defineEventHandler(()=>{
       sandboxCodeReady:true,
       browserCodeReady:true,
       releaseCodeReady:true,
+      gitTargetCodeReady:true,
+      gitTargetConfigured:gitConfigured,
+      gitWebhookConfigured:gitWebhook,
+      targetProxyCodeReady:true,
+      targetRunConfigured:targetProxy.runConfigured,
+      targetReleaseConfigured:targetProxy.releaseConfigured,
+      securityCodeReady:true,
+      securityConfigured:security.configured,
+      securityProductionSafe:security.productionSafe,
     },
     closure:{
       codeReady,

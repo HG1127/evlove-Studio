@@ -3,15 +3,25 @@ import {checkSupabaseBackendHealth} from "@evolution/adapters";
 import {EvolutionBackendHealthSchema} from "@evolution/contracts";
 import {
   getServerSupabaseConfig,
+  githubTargetConfigured,
+  githubWebhookConfigured,
   serverAiConfigured,
   serverSupabaseConfigured,
+  serverSupabaseCredentialMode,
+  serverSupabaseSecureConfigured,
+  targetProxyCapabilities,
   vercelReleaseWriteConfigured,
 } from "../../../src/server-env";
+import {getSecurityCapabilities} from "../../../src/services/security-policy";
+import {requireEvolutionPermission} from "../../../src/services/security-policy";
 
-export default defineEventHandler(async()=>{
+export default defineEventHandler(async(event)=>{
+  requireEvolutionPermission(event,"data.read");
   const configured=serverSupabaseConfigured();
   let dataPlane={
     configured,
+    secureCredential:serverSupabaseSecureConfigured(),
+    credentialMode:serverSupabaseCredentialMode(),
     database:false,
     storage:false,
     tables:{missions:false,jobs:false,events:false,artifacts:false},
@@ -22,6 +32,8 @@ export default defineEventHandler(async()=>{
       const health=await checkSupabaseBackendHealth(getServerSupabaseConfig());
       dataPlane={
         configured:true,
+        secureCredential:serverSupabaseSecureConfigured(),
+        credentialMode:serverSupabaseCredentialMode(),
         database:health.database,
         storage:health.storage,
         tables:health.tables,
@@ -30,6 +42,8 @@ export default defineEventHandler(async()=>{
     }catch(error){
       dataPlane={
         configured:true,
+        secureCredential:serverSupabaseSecureConfigured(),
+        credentialMode:serverSupabaseCredentialMode(),
         database:false,
         storage:false,
         tables:{missions:false,jobs:false,events:false,artifacts:false},
@@ -46,5 +60,8 @@ export default defineEventHandler(async()=>{
     sandbox:{codeReady:true},
     browser:{codeReady:true},
     release:{codeReady:true,writeConfigured:vercelReleaseWriteConfigured()},
+    git:{codeReady:true,configured:githubTargetConfigured(),webhookConfigured:githubWebhookConfigured()},
+    targetProxy:targetProxyCapabilities(),
+    security:getSecurityCapabilities(),
   });
 });

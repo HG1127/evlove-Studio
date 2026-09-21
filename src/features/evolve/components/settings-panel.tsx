@@ -878,19 +878,17 @@ export function SettingsPanel() {
         {!isBuiltinRunnerGateway(runnerGateway)&&<Button variant="ghost" disabled={runnerTesting} onClick={()=>{const next=resetRunnerGatewayConfig();setRunnerGateway(next);void checkRunner(next);}}>恢复内置执行器</Button>}
       </div>
       <details className="rounded-xl border p-3"><summary className="cursor-pointer text-xs font-semibold text-slate-600">高级设置：接入自定义工程 / E2E / 发布执行器</summary>
-      <p className="my-3 text-xs leading-5 text-slate-500">普通 HTML 验证无需填写。内置 Release URL 现在是服务端发布代理：只有服务器配置真实 Deploy / Traffic / Telemetry 地址后才会声明 release=true；生产平台 Token 留在服务器环境变量，不进入浏览器。</p>
+      <p className="my-3 text-xs leading-5 text-slate-500">浏览器固定连接同源 Server Target Proxy。真实 Run / Release URL 与 Bearer Token 只能配置在服务器 EVOLUTION_TARGET_* 环境变量中，不再保存到浏览器或 localStorage。</p>
       <div className="grid gap-2 lg:grid-cols-2">
-        <label className="text-xs text-slate-600">Run URL（接收测试题执行请求）<Input value={runnerGateway.runUrl} onChange={(event)=>setRunnerGateway({...runnerGateway, runUrl:event.target.value})} placeholder="https://your-runner.example.com/run" /></label>
-        <label className="text-xs text-slate-600">Release URL（接收发布动作，可留空）<Input value={runnerGateway.releaseUrl} onChange={(event)=>setRunnerGateway({...runnerGateway, releaseUrl:event.target.value})} placeholder="https://your-runner.example.com/release" /></label>
-        <label className="text-xs text-slate-600">Bearer Token（可选）<Input type="password" value={runnerGateway.bearerToken} onChange={(event)=>setRunnerGateway({...runnerGateway, bearerToken:event.target.value})} placeholder="留空则不带鉴权头" /></label>
-        <label className="text-xs text-slate-600">网关名称<Input value={runnerGateway.label} onChange={(event)=>setRunnerGateway({...runnerGateway, label:event.target.value})} placeholder="HTTP Target Gateway" /></label>
+        <label className="text-xs text-slate-600">连接名称<Input value={runnerGateway.label} onChange={(event)=>setRunnerGateway({...runnerGateway, label:event.target.value})} placeholder="Server Target Proxy" /></label>
+        <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">Run：/api/evolution/target-run<br/>Release：/api/evolution/target-release</div>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <Button onClick={()=>{ saveRunnerGatewayConfig(runnerGateway); setRunnerStatus(getRunnerStatus()); setMessage("Runner 网关配置已保存"); }}><Save className="size-4" />保存 Runner 配置</Button>
         <Button variant="secondary" disabled={runnerTesting} onClick={()=>void checkRunner()}><PlugZap className="size-4" />检测执行能力</Button>
         <label className="flex items-center gap-1.5 text-xs text-slate-600"><input type="checkbox" checked={runnerGateway.enabled} onChange={(event)=>setRunnerGateway({...runnerGateway, enabled:event.target.checked})} />启用该网关</label>
       </div>
-      <p className="text-xs leading-5 text-slate-400">网关协议：POST JSON {`{ projectId, connectionId, testCase, variant }`}，返回 TargetRunResult；发布动作 POST {`{ projectId, connectionId, candidate, action }`}。内置发布代理读取服务器端 RELEASE_DEPLOY_URL / RELEASE_TRAFFIC_URL / RELEASE_TELEMETRY_URL；浏览器不保存生产平台凭证。</p>
+      <p className="text-xs leading-5 text-slate-400">Server Proxy 负责真实外部出站与鉴权；浏览器只发送业务 payload，所有生产平台凭证均留在服务器。</p>
       </details>
     </CardContent></Card>
     </>)}

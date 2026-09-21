@@ -10,6 +10,7 @@ import {
   type ProductionRuntimePorts,
 } from "@evolution/contracts";
 import { getServerSupabaseConfig } from "../server-env";
+import { mirrorEvolutionEventToEvidenceLedger } from "./evidence-ledger";
 
 type JsonRecord=Record<string,unknown>;
 export type ServerControlRuntime=Pick<ProductionRuntimePorts,"missions"|"jobs"|"events">;
@@ -156,7 +157,9 @@ export function getServerProductionRuntime():ServerControlRuntime{
     },
     events:{
       append:async(event)=>{
-        await request("events?on_conflict=id",{method:"POST",headers:{Prefer:"resolution=ignore-duplicates,return=minimal"},body:JSON.stringify(eventRow(event))});
+        const parsed=EvolutionEventSchema.parse(event);
+        await request("events?on_conflict=id",{method:"POST",headers:{Prefer:"resolution=ignore-duplicates,return=minimal"},body:JSON.stringify(eventRow(parsed))});
+        await mirrorEvolutionEventToEvidenceLedger(parsed).catch(()=>undefined);
       },
       list:async(missionId,limit=200)=>{
         const filter=missionId?"&mission_id=eq."+encodeURIComponent(missionId):"";

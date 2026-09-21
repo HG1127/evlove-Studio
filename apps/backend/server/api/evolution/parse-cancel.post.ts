@@ -2,10 +2,12 @@ import {createError,defineEventHandler,readBody} from "nitro/h3";
 import {z} from "zod";
 import {getServerArtifactStore} from "../../../src/services/artifact-runtime";
 import {getServerProductionRuntime} from "../../../src/services/production-runtime";
+import {requireEvolutionPermission} from "../../../src/services/security-policy";
 
 const Input=z.object({jobId:z.string().min(1),deleteArtifact:z.boolean().default(true)});
 
 export default defineEventHandler(async(event)=>{
+  requireEvolutionPermission(event,"mission.execute");
   const input=Input.parse(await readBody(event));
   const runtime=getServerProductionRuntime();
   const job=await runtime.jobs.get(input.jobId);

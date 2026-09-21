@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SecurityCapabilitiesSchema } from "./security-contract";
 
 export const EvolutionWorkflowStatusSchema = z.enum([
   "queued",
@@ -49,6 +50,7 @@ export const EvolutionWorkflowCapabilitiesSchema=z.object({
   serverAi:z.boolean(),
   backend:z.object({
     dataPlaneConfigured:z.boolean().default(false),
+    secureDataPlaneCredential:z.boolean().default(false),
     httpDataPlaneCodeReady:z.boolean().default(false),
     artifactStoreConfigured:z.boolean().default(false),
     sourceParseCodeReady:z.boolean().default(false),
@@ -57,6 +59,15 @@ export const EvolutionWorkflowCapabilitiesSchema=z.object({
     sandboxCodeReady:z.boolean().default(false),
     browserCodeReady:z.boolean().default(false),
     releaseCodeReady:z.boolean().default(false),
+    gitTargetCodeReady:z.boolean().default(false),
+    gitTargetConfigured:z.boolean().default(false),
+    gitWebhookConfigured:z.boolean().default(false),
+    targetProxyCodeReady:z.boolean().default(false),
+    targetRunConfigured:z.boolean().default(false),
+    targetReleaseConfigured:z.boolean().default(false),
+    securityCodeReady:z.boolean().default(false),
+    securityConfigured:z.boolean().default(false),
+    securityProductionSafe:z.boolean().default(false),
   }).prefault({}),
   closure:z.object({
     codeReady:z.boolean().default(false),
@@ -80,6 +91,8 @@ export const EvolutionBackendHealthSchema=z.object({
   checkedAt:z.string(),
   dataPlane:z.object({
     configured:z.boolean(),
+    secureCredential:z.boolean().default(false),
+    credentialMode:z.enum(["secret","publishable","missing"]).default("missing"),
     database:z.boolean(),
     storage:z.boolean(),
     tables:z.object({
@@ -96,5 +109,8 @@ export const EvolutionBackendHealthSchema=z.object({
   sandbox:z.object({codeReady:z.boolean()}),
   browser:z.object({codeReady:z.boolean()}),
   release:z.object({codeReady:z.boolean(),writeConfigured:z.boolean()}),
+  git:z.object({codeReady:z.boolean(),configured:z.boolean(),webhookConfigured:z.boolean()}),
+  targetProxy:z.object({codeReady:z.boolean(),runConfigured:z.boolean(),releaseConfigured:z.boolean(),credentialConfigured:z.boolean()}),
+  security:SecurityCapabilitiesSchema,
 });
 export type EvolutionBackendHealth=z.infer<typeof EvolutionBackendHealthSchema>;

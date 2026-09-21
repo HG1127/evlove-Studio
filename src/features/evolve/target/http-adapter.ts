@@ -3,28 +3,15 @@ import {readFrozenArtifact,sha256} from "../runtime/frozen-artifact";
 import {artifactTargetAdapter} from "./artifact-adapter";
 import {runVisualCase} from "../runtime/visual-case";
 import {textDigest} from "../runtime/frozen-artifact";
-import { serverEnv } from "../runtime/env";
-import { getRunnerGatewayConfig } from "../runtime/target-runner-config";
 import { ReleaseAdapterResultSchema, TargetRunResultSchema } from "../schemas";
 import type { TargetAdapter } from "./types";
 
-// 出站地址优先读构建期环境变量；未配置时回落到设置页保存的运行时网关配置。
-function gateway() {
-  const config = getRunnerGatewayConfig();
-  return {
-    runUrl: serverEnv.EVOLVE_TARGET_RUN_URL || (config.enabled ? config.runUrl.trim() : ""),
-    releaseUrl: serverEnv.EVOLVE_TARGET_RELEASE_URL || (config.enabled ? config.releaseUrl.trim() : ""),
-    token: serverEnv.EVOLVE_TARGET_BEARER_TOKEN || config.bearerToken,
-    timeoutMs: Number(serverEnv.EVOLVE_TARGET_TIMEOUT_MS || config.timeoutMs || "60000"),
-  };
-}
+const SERVER_RUN_URL = "/api/evolution/target-run";
+const SERVER_RELEASE_URL = "/api/evolution/target-release";
+const SERVER_PROXY_TIMEOUT_MS = 180_000;
 
 function headers() {
-  const token = gateway().token;
-  return {
-    "Content-Type": "application/json",
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
+  return { "Content-Type": "application/json" };
 }
 
 async function executionError(res: Response, action: string): Promise<Error> {
@@ -38,8 +25,7 @@ export const httpTargetAdapter: TargetAdapter = {
   live: true,
   async run({ project, testCase, variant }) {
     if(!["external-runner","visual-review"].includes(testCase.executionMode))return artifactTargetAdapter.run({project,testCase,variant});
-    const url = gateway().runUrl;
-    if (!url) throw new Error("EVOLVE_TARGET_RUN_URL is not configured");
+    const url = SERVER_RUN_URL;
     const source=project.sourceArtifacts.find(a=>a.role==="target" && /^(html|htm)$/.test(a.extension));
     const snapshot=variant?.artifactSnapshots.find(a=>a.sourceArtifactId===source?.id);
     const artifact=source?{name:source.name,content:variant?snapshot?.content:source.textContent}:undefined;
@@ -51,7 +37,7 @@ export const httpTargetAdapter: TargetAdapter = {
     const res = await fetch(url, {
       method: "POST",
       headers: headers(),
-      signal: AbortSignal.timeout(archiveBase64?Math.max(135000,gateway().timeoutMs):gateway().timeoutMs),
+      signal: AbortSignal.timeout(archiveBase64?SERVER_PROXY_TIMEOUT_MS:90_000),
       body: JSON.stringify({
         projectId: project.id,
         connectionId: project.targetConnection.connectionId,
@@ -67,12 +53,11 @@ export const httpTargetAdapter: TargetAdapter = {
     return result;
   },
   async release({ project, candidate, action }) {
-    const url = gateway().releaseUrl;
-    if (!url) throw new Error("EVOLVE_TARGET_RELEASE_URL is not configured");
+    const url = SERVER_RELEASE_URL;
     const res = await fetch(url, {
       method: "POST",
       headers: headers(),
-      signal: AbortSignal.timeout(gateway().timeoutMs),
+      signal: AbortSignal.timeout(SERVER_PROXY_TIMEOUT_MS),
       body: JSON.stringify({ projectId: project.id, connectionId: project.targetConnection.connectionId, candidate, action }),
     });
     if (!res.ok) throw await executionError(res, "发布执行");

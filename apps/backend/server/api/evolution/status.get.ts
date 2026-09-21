@@ -1,8 +1,10 @@
 import { defineEventHandler, getQuery, setResponseStatus } from "nitro/h3";
 import { getRun } from "workflow/api";
 import { getServerProductionRuntime } from "../../../src/services/production-runtime";
+import {requireEvolutionPermission} from "../../../src/services/security-policy";
 
 export default defineEventHandler(async(event)=>{
+  requireEvolutionPermission(event,"data.read");
   const query=getQuery(event);
   const runId=typeof query.runId==="string"?query.runId:undefined;
   const jobId=typeof query.jobId==="string"?query.jobId:undefined;

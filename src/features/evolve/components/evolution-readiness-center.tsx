@@ -35,11 +35,15 @@ import {
 } from "../runtime/system-readiness";
 import { deriveWorkflowSteps } from "../runtime/workflow-engine";
 import { getRunnerGatewayConfig, testRunnerGateway } from "../runtime/target-runner-config";
-import { PRODUCTION_BOUNDARIES, PRODUCTION_SCHEMA_VERSIONS, PRODUCTION_PORTS, type EvolutionBackendHealth, type EvolutionWorkflowCapabilities, type SandboxBrowserHealth, type SandboxHealth, type VercelReleaseCapabilities, type VercelReleaseHealth } from "@evolution/contracts";
+import { PRODUCTION_BOUNDARIES, PRODUCTION_SCHEMA_VERSIONS, PRODUCTION_PORTS, type ConnectorRegistryCapabilities, type EvidenceLedgerHealth, type EvolutionBackendHealth, type EvolutionWorkflowCapabilities, type GitTargetCapabilities, type OrganizationCapabilityHealth, type SandboxBrowserHealth, type SandboxHealth, type VercelReleaseCapabilities, type VercelReleaseHealth } from "@evolution/contracts";
 import { productionRuntimeMode } from "../runtime/production-runtime";
 import { productionSyncStatus } from "../runtime/production-sync";
 import { checkServerBackendHealth, checkServerBrowserHealth, checkServerSandboxHealth, getServerWorkflowCapabilities } from "../runtime/server-workflow-client";
 import { checkServerVercelReleaseHealth, getServerVercelReleaseCapabilities } from "../runtime/server-release-client";
+import { getServerGitTargetCapabilities } from "../runtime/server-git-client";
+import { getServerOrganizationCapabilityHealth } from "../runtime/server-capability-client";
+import { getServerEvidenceLedgerHealth } from "../runtime/server-evidence-ledger-client";
+import { getServerConnectorCapabilities } from "../runtime/server-connector-client";
 import { HarnessInspector } from "./harness-inspector";
 
 function readRunnerCapabilities(): RunnerCapabilitySnapshot | undefined {
@@ -112,8 +116,41 @@ export function EvolutionReadinessCenter() {
   const [sandboxCheck, setSandboxCheck] = useState<{ busy: boolean; message: string; health?: SandboxHealth }>({ busy: false, message: "" });
   const [browserCheck, setBrowserCheck] = useState<{ busy: boolean; message: string; health?: SandboxBrowserHealth }>({ busy: false, message: "" });
   const [releaseCheck, setReleaseCheck] = useState<{ busy: boolean; message: string; capabilities?: VercelReleaseCapabilities; health?: VercelReleaseHealth }>({ busy: false, message: "" });
+  const [gitCheck,setGitCheck]=useState<{busy:boolean;message:string;capabilities?:GitTargetCapabilities}>({busy:false,message:""});
+  const [capabilityCheck,setCapabilityCheck]=useState<{busy:boolean;message:string;health?:OrganizationCapabilityHealth}>({busy:false,message:""});
+  const [evidenceLedgerCheck,setEvidenceLedgerCheck]=useState<{busy:boolean;message:string;health?:EvidenceLedgerHealth}>({busy:false,message:""});
+  const [connectorCheck,setConnectorCheck]=useState<{busy:boolean;message:string;capabilities?:ConnectorRegistryCapabilities}>({busy:false,message:""});
   const visualJudgeLive = getAiProviderStatus("visual-judge").live;
-  const signals = useMemo(() => ({ runner, visualJudgeLive }), [runner, visualJudgeLive]);
+  const signals = useMemo(() => ({
+    runner,
+    visualJudgeLive,
+    server: {
+      controlPlane: Boolean(workflowCheck.capabilities?.available && workflowCheck.capabilities?.durable),
+      dataPlane: Boolean(
+        backendHealthCheck.health?.dataPlane.database
+        && backendHealthCheck.health?.dataPlane.storage
+        && Object.values(backendHealthCheck.health.dataPlane.tables).every(Boolean)
+      ),
+      sourceParse: Boolean(backendHealthCheck.health?.sourceParse.codeReady && backendHealthCheck.health?.sourceParse.configured),
+      artifactStore: Boolean(backendHealthCheck.health?.dataPlane.storage),
+      serverAi: Boolean(backendHealthCheck.health?.serverAi.codeReady && backendHealthCheck.health?.serverAi.configured),
+      sandbox: Boolean(sandboxCheck.health?.ready),
+      browser: Boolean(browserCheck.health?.ready),
+      release: Boolean(releaseCheck.capabilities?.writeEnabled),
+      git: Boolean(gitCheck.capabilities?.configured&&gitCheck.capabilities?.allowlistConfigured&&gitCheck.capabilities?.webhookConfigured),
+      capabilityService: Boolean(capabilityCheck.health?.configured&&capabilityCheck.health?.databaseReady),
+      capabilitySemantic: Boolean(capabilityCheck.health?.vectorSearch),
+      evidenceLedger: Boolean(
+        evidenceLedgerCheck.health?.configured
+        && evidenceLedgerCheck.health.databaseReady
+        && evidenceLedgerCheck.health.signingConfigured
+        && evidenceLedgerCheck.health.appendFunctionReady
+        && evidenceLedgerCheck.health.immutableTriggerReady
+      ),
+      security: Boolean(backendHealthCheck.health?.security.productionSafe),
+      connectors: Boolean(connectorCheck.capabilities?.fullLifecycleCount),
+    },
+  }), [backendHealthCheck.health, browserCheck.health, capabilityCheck.health, connectorCheck.capabilities, evidenceLedgerCheck.health, gitCheck.capabilities, releaseCheck.capabilities, runner, sandboxCheck.health, visualJudgeLive, workflowCheck.capabilities]);
   const engines = useMemo(() => deriveEngineReadiness(signals), [signals]);
   const summaries = useMemo(() => projects.map((project) => ({ project, loop: projectLoopSummary(project) })), [projects]);
   const latestProject = useMemo(() => projects.slice().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0], [projects]);
@@ -137,6 +174,10 @@ export function EvolutionReadinessCenter() {
   const p04BrowserReady = Boolean(browserCheck.health?.ready);
   const releaseReadReady = Boolean(releaseCheck.capabilities?.readEnabled && releaseCheck.health?.ready);
   const releaseWriteReady = Boolean(releaseCheck.capabilities?.writeEnabled);
+  const gitConfigured=Boolean(gitCheck.capabilities?.configured&&gitCheck.capabilities?.allowlistConfigured);
+  const gitReady=Boolean(gitConfigured&&gitCheck.capabilities?.webhookConfigured);
+  const connectorCount=connectorCheck.capabilities?.connectorCount??0;
+  const connectorFullCount=connectorCheck.capabilities?.fullLifecycleCount??0;
   const hybridFunctionalReady = Boolean(p02Ready && p04Ready);
   const hybridInteractionReady = Boolean(hybridFunctionalReady && p04BrowserReady);
   const visibleEngines = engineFilter === "gaps"
@@ -150,8 +191,8 @@ export function EvolutionReadinessCenter() {
     { target: "HTML / Web 页面", state: p04BrowserReady || (runner?.htmlBrowser && runner?.e2e) ? "ready" : "partial", read: "✓", snapshot: "✓", mutate: "✓", validate: p04BrowserReady ? "Chromium Steps" : runner?.e2e ? "✓" : "部分", deploy: p04BrowserReady ? "Sandbox Preview" : "Preview", observe: p04BrowserReady ? "真实交互" : runner?.screenshots ? "✓" : "部分", rollback: "✓", gap: p04BrowserReady ? "Route Matrix / 视觉审查继续扩展" : "工程级 Preview / Browser Runtime" },
     { target: "ZIP / Codebase", state: p04BrowserReady ? "partial" : p04Ready ? "partial" : runner?.build ? "partial" : "backend", read: "✓", snapshot: "✓", mutate: "✓", validate: p04BrowserReady ? "Build/Test + Browser" : p04Ready ? "Sandbox Build/Test" : runner?.build ? "Build" : "静态", deploy: p04BrowserReady ? "Sandbox Preview" : "待 Preview", observe: p04BrowserReady ? "Browser Steps / E2E" : p04Ready ? "执行证据" : "待后端", rollback: "ZIP", gap: p04BrowserReady ? "Git Target / Production Deploy 后续补齐" : p04Ready ? "Browser Runtime / Preview" : "Git + Sandbox + Preview Runtime" },
     { target: "Production HTTP Target", state: releaseWriteReady || runner?.release ? "ready" : releaseReadReady ? "partial" : "backend", read: "连接", snapshot: "Hash", mutate: "Deploy", validate: releaseCheck.capabilities?.mode==="preview-promote" ? "Preview Gate" : "Canary", deploy: releaseWriteReady || runner?.release ? "✓" : "只读", observe: releaseReadReady || runner?.release ? "Health" : "待后端", rollback: releaseWriteReady || runner?.release ? "✓" : "待凭据", gap: releaseWriteReady || runner?.release ? "Production Release 已接通" : releaseReadReady ? "生产健康观测已接通；Promote/Rollback 仍需 VERCEL_RELEASE_TOKEN" : "Deploy / Traffic / Telemetry" },
-    { target: "Git Repository", state: "backend", read: "待后端", snapshot: "Commit SHA", mutate: "Branch/PR", validate: "CI", deploy: "Merge", observe: "Webhook", rollback: "Revert", gap: "Git-native Target Adapter" },
-    { target: "Agent / Workflow / Memory / API / DB", state: "backend", read: "待后端", snapshot: "待后端", mutate: "待后端", validate: "待后端", deploy: "待后端", observe: "待后端", rollback: "待后端", gap: "External Connector SDK" },
+    { target: "Git Repository", state: gitReady ? "ready" : gitConfigured ? "partial" : "backend", read: gitConfigured ? "GitHub API" : "待配置", snapshot: gitConfigured ? "Commit/Tree SHA" : "待配置", mutate: gitConfigured ? "Branch/Commit" : "待配置", validate: gitConfigured ? "Check Runs" : "待配置", deploy: gitConfigured ? "PR/Merge" : "待配置", observe: gitReady ? "Webhook" : gitConfigured ? "Polling" : "待配置", rollback: gitConfigured ? "Audit Commit" : "待配置", gap: gitReady ? "Git-native 生命周期已接通" : gitConfigured ? "补 EVOLUTION_GITHUB_WEBHOOK_SECRET 与仓库 Webhook" : "配置 GitHub Token + Repo allowlist" },
+    { target: "Agent / Workflow / Memory / API / DB", state: connectorFullCount>0 ? "ready" : connectorCount>0 ? "partial" : "backend", read: connectorCount>0 ? "Manifest" : "待配置", snapshot: connectorCount>0 ? "按 Connector" : "待配置", mutate: connectorCount>0 ? "按 Connector" : "待配置", validate: connectorCount>0 ? "按 Connector" : "待配置", deploy: connectorCount>0 ? "按 Connector" : "待配置", observe: connectorCount>0 ? "Webhook/Observe" : "待配置", rollback: connectorCount>0 ? "按 Connector" : "待配置", gap: connectorFullCount>0 ? `${connectorFullCount} 个 Full Lifecycle Connector 已接通` : connectorCount>0 ? `${connectorCount} 个 Connector 已注册，但尚无 7/7 Full Lifecycle` : "配置 EVOLUTION_CONNECTORS_JSON 与具体 Lifecycle endpoints" },
   ] as const;
   const readinessTabs = [
     { value: "overview", label: "闭环总览", icon: <Workflow className="size-3.5" />, badge: <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px]">{EVOLUTION_PHASES.length}</span> },
@@ -234,6 +275,64 @@ export function EvolutionReadinessCenter() {
     return () => { active = false; };
   }, []);
 
+  useEffect(()=>{
+    let active=true;
+    queueMicrotask(()=>{if(active)setGitCheck({busy:true,message:"正在检测 Git-native Target…"});});
+    void getServerGitTargetCapabilities().then((capabilities)=>{
+      if(!active)return;
+      setGitCheck({
+        busy:false,
+        capabilities,
+        message:capabilities.configured
+          ?capabilities.webhookConfigured?"GitHub Target Read/Write/Webhook 已就绪":"GitHub Target 已配置；Webhook Secret 尚未配置"
+          :"GitHub Target 代码已就绪，等待 Token + Repo allowlist",
+      });
+    }).catch((error)=>{
+      if(active)setGitCheck({busy:false,message:error instanceof Error?error.message:String(error)});
+    });
+    return ()=>{active=false;};
+  },[]);
+
+  useEffect(()=>{
+    let active=true;
+    queueMicrotask(()=>{if(active)setCapabilityCheck({busy:true,message:"正在检测 Organization Capability Registry…"});});
+    void getServerOrganizationCapabilityHealth().then((health)=>{
+      if(active)setCapabilityCheck({busy:false,health,message:health.message});
+    }).catch((error)=>{
+      if(active)setCapabilityCheck({busy:false,message:error instanceof Error?error.message:String(error)});
+    });
+    return ()=>{active=false;};
+  },[]);
+
+  useEffect(()=>{
+    let active=true;
+    queueMicrotask(()=>{if(active)setEvidenceLedgerCheck({busy:true,message:"正在检测 Immutable Evidence Ledger…"});});
+    void getServerEvidenceLedgerHealth().then((health)=>{
+      if(active)setEvidenceLedgerCheck({busy:false,health,message:health.message});
+    }).catch((error)=>{
+      if(active)setEvidenceLedgerCheck({busy:false,message:error instanceof Error?error.message:String(error)});
+    });
+    return ()=>{active=false;};
+  },[]);
+
+  useEffect(()=>{
+    let active=true;
+    queueMicrotask(()=>{if(active)setConnectorCheck({busy:true,message:"正在检测 External Connector Registry…"});});
+    void getServerConnectorCapabilities().then((capabilities)=>{
+      if(!active)return;
+      setConnectorCheck({
+        busy:false,
+        capabilities,
+        message:capabilities.connectorCount
+          ?`已注册 ${capabilities.connectorCount} 个 Connector；Full Lifecycle ${capabilities.fullLifecycleCount}`
+          :"Connector SDK 代码已就绪，等待服务器 Manifest 配置",
+      });
+    }).catch((error)=>{
+      if(active)setConnectorCheck({busy:false,message:error instanceof Error?error.message:String(error)});
+    });
+    return ()=>{active=false;};
+  },[]);
+
   const refreshWorkflow = () => {
     setWorkflowCheck((current) => ({ ...current, busy: true, message: "正在重新检测 Workflow…" }));
     void getServerWorkflowCapabilities(true).then((capabilities) => setWorkflowCheck({
@@ -276,6 +375,19 @@ export function EvolutionReadinessCenter() {
             : health.message,
       });
     }).catch((error) => setReleaseCheck({ busy: false, message: error instanceof Error ? error.message : String(error) }));
+  };
+
+  const refreshGit=()=>{
+    setGitCheck((current)=>({...current,busy:true,message:"正在重新检测 Git Target…"}));
+    void getServerGitTargetCapabilities()
+      .then((capabilities)=>setGitCheck({
+        busy:false,
+        capabilities,
+        message:capabilities.configured
+          ?capabilities.webhookConfigured?"GitHub Target Read/Write/Webhook 已就绪":"GitHub Target 已配置；Webhook Secret 尚未配置"
+          :"GitHub Target 代码已就绪，等待 Token + Repo allowlist",
+      }))
+      .catch((error)=>setGitCheck({busy:false,message:error instanceof Error?error.message:String(error)}));
   };
 
   const refreshRunner = () => {
@@ -351,7 +463,7 @@ export function EvolutionReadinessCenter() {
     {activeTab === "harness" && <HarnessInspector project={latestProject} />}
 
     {activeTab === "targets" && <section>
-      <div className="mb-3"><h2 className="font-semibold">Target Adapter Coverage</h2><p className="mt-1 text-xs text-slate-500">“支持一个对象”必须看完整生命周期，而不是只看能不能读。最终目标统一覆盖 Read → Snapshot → Mutate → Validate → Deploy → Observe → Rollback。</p></div>
+      <div className="mb-3 flex flex-wrap items-end justify-between gap-3"><div><h2 className="font-semibold">Target Adapter Coverage</h2><p className="mt-1 text-xs text-slate-500">“支持一个对象”必须看完整生命周期，而不是只看能不能读。最终目标统一覆盖 Read → Snapshot → Mutate → Validate → Deploy → Observe → Rollback。</p>{gitCheck.message&&<p className="mt-1 text-[10px] text-slate-400">{gitCheck.message}</p>}</div><Button size="sm" variant="secondary" onClick={refreshGit} disabled={gitCheck.busy}><RefreshCcw className={`size-3.5 ${gitCheck.busy ? "animate-spin" : ""}`} />检测 Git Target</Button></div>
       <Card className="overflow-hidden">
         <CardContent className="p-0">
           <div className="overflow-x-auto">

@@ -87,6 +87,21 @@ export const VercelReleaseActionRequestSchema=z.object({
 });
 export type VercelReleaseActionRequest=z.infer<typeof VercelReleaseActionRequestSchema>;
 
+export const ReleaseApprovalRequestSchema=z.object({
+  missionId:z.string().min(1),
+  note:z.string().max(1000).optional(),
+});
+export type ReleaseApprovalRequest=z.infer<typeof ReleaseApprovalRequestSchema>;
+
+export const ReleaseApprovalResponseSchema=z.object({
+  missionId:z.string(),
+  status:z.literal("approved"),
+  approvedAt:z.string(),
+  candidateId:z.string().optional(),
+  actorId:z.string(),
+});
+export type ReleaseApprovalResponse=z.infer<typeof ReleaseApprovalResponseSchema>;
+
 export const VercelReleaseActionResponseSchema=ReleaseAdapterResultSchema.extend({
   provider:z.literal("vercel").default("vercel"),
   releaseMode:z.enum(["preview-promote","progressive"]).default("preview-promote"),
