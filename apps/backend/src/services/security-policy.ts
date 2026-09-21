@@ -9,7 +9,8 @@ import {
 } from "@evolution/contracts";
 import {
   capabilityEmbeddingConfigured,
-  evidenceLedgerConfigured,
+  getEvidenceLedgerSigningConfig,
+  getEvidenceLedgerSigningVaultId,
   getServerSecurityConfig,
   getServerTargetProxyConfig,
   githubTargetConfigured,
@@ -97,7 +98,8 @@ export function getSecurityCapabilities(){
     {id:"target-proxy",provider:"env" as const,envVars:["EVOLUTION_TARGET_BEARER_TOKEN"],purpose:"External target gateway",configured:configured(target.token),scopes:["target"]},
     {id:"server-vault",provider:"external-vault" as const,envVars:["EVOLUTION_VAULT_MASTER_KEY","EVOLUTION_VAULT_KEY_ID"],purpose:"AES-256-GCM Server Vault key material",configured:vaultEncryptionConfigured(),scopes:["vault","connectors"]},
     {id:"capability-embedding",provider:"env" as const,envVars:["EVOLUTION_AI_GATEWAY_ENABLED","EVOLUTION_CAPABILITY_EMBEDDING_API_KEY"],purpose:"Organization semantic capability matching via Vercel OIDC or API-key fallback",configured:capabilityEmbeddingConfigured(),scopes:["embedding"]},
-    {id:"evidence-signing",provider:"env" as const,envVars:["EVOLUTION_EVIDENCE_SIGNING_KEY"],purpose:"Immutable Evidence Ledger HMAC",configured:evidenceLedgerConfigured(),scopes:["evidence"]},
+    {id:"evidence-signing-env",provider:"env" as const,envVars:["EVOLUTION_EVIDENCE_SIGNING_KEY"],purpose:"Immutable Evidence Ledger HMAC env fallback",configured:Boolean(getEvidenceLedgerSigningConfig()),scopes:["evidence"]},
+    {id:"evidence-signing-vault",provider:"external-vault" as const,envVars:["EVOLUTION_EVIDENCE_SIGNING_VAULT_ID"],purpose:"Immutable Evidence Ledger HMAC Vault primary",configured:Boolean(getEvidenceLedgerSigningVaultId())&&vaultEncryptionConfigured(),scopes:["evidence"]},
   ];
   const configuredIdentity=security.mode!=="blocked";
   const productionSafe=security.mode==="trusted-header"&&Boolean(security.workspaceId)&&serverSupabaseSecureConfigured();

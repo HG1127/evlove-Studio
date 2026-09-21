@@ -151,6 +151,7 @@ export function EvolutionReadinessCenter() {
         && evidenceLedgerCheck.health.appendFunctionReady
         && evidenceLedgerCheck.health.immutableTriggerReady
       ),
+      evidenceSigningProvider: evidenceLedgerCheck.health?.signingProvider,
       security: Boolean(backendHealthCheck.health?.security.productionSafe),
       vault: Boolean(backendHealthCheck.health?.securityGovernance.vaultConfigured&&backendHealthCheck.health?.securityGovernance.vaultDatabaseReady),
       approvalStore: Boolean(backendHealthCheck.health?.securityGovernance.approvalStoreReady),

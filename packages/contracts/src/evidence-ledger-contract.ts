@@ -54,6 +54,7 @@ export const EvidenceLedgerHealthSchema=z.object({
   hashChain:z.literal(true),
   workspaceId:z.string().optional(),
   signingKeyId:z.string().optional(),
+  signingProvider:z.enum(["env","vault"]).optional(),
   verificationKeyCount:z.number().int().nonnegative().default(0),
   rotationReady:z.boolean().default(false),
   checkedAt:z.string(),

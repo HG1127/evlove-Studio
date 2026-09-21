@@ -172,10 +172,33 @@ export function getEvidenceLedgerSigningConfig():EvidenceLedgerSigningConfig|und
   };
 }
 
+export function getEvidenceLedgerSigningVaultId(){
+  return value(process.env.EVOLUTION_EVIDENCE_SIGNING_VAULT_ID);
+}
+
+export function getEvidenceLedgerVerifyVaultIds(){
+  const raw=value(process.env.EVOLUTION_EVIDENCE_VERIFY_VAULT_IDS_JSON);
+  if(!raw)return {} as Record<string,string>;
+  try{
+    const parsed=JSON.parse(raw) as unknown;
+    if(!parsed||typeof parsed!=="object"||Array.isArray(parsed))return {};
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string,unknown>)
+        .filter(([keyId,vaultId])=>keyId.trim().length>0&&keyId.length<=120&&typeof vaultId==="string"&&vaultId.trim().length>0&&vaultId.length<=120)
+        .slice(0,32)
+        .map(([keyId,vaultId])=>[keyId,(vaultId as string).trim()]),
+    );
+  }catch{return {};}
+}
+
+export function getEvidenceLedgerSigningKeyId(){
+  return value(process.env.EVOLUTION_EVIDENCE_SIGNING_KEY_ID)??"hmac-sha256-v1";
+}
+
 export function evidenceLedgerConfigured(){
   return serverSupabaseConfigured()
     &&Boolean(getEvolutionWorkspaceId())
-    &&Boolean(getEvidenceLedgerSigningConfig());
+    &&Boolean(getEvidenceLedgerSigningConfig()||getEvidenceLedgerSigningVaultId());
 }
 
 export type CapabilityEmbeddingConfig=

@@ -11,11 +11,48 @@ import {
 import {
   evidenceLedgerConfigured,
   getEvidenceLedgerSigningConfig,
+  getEvidenceLedgerSigningKeyId,
+  getEvidenceLedgerSigningVaultId,
+  getEvidenceLedgerVerifyVaultIds,
   getEvolutionWorkspaceId,
   getServerSupabaseConfig,
 } from "../server-env";
+import {resolveVaultSecret} from "./server-vault";
 
 type JsonRecord=Record<string,unknown>;
+type ResolvedSigningConfig={
+  key:string;
+  keyId:string;
+  verificationKeys:Record<string,string>;
+  provider:"env"|"vault";
+};
+
+async function resolveEvidenceSigningConfig():Promise<ResolvedSigningConfig|undefined>{
+  const env=getEvidenceLedgerSigningConfig();
+  const verificationKeys:Record<string,string>={...(env?.verificationKeys??{})};
+  const vaultVerificationIds=getEvidenceLedgerVerifyVaultIds();
+  await Promise.all(Object.entries(vaultVerificationIds).map(async([keyId,vaultId])=>{
+    try{
+      const key=await resolveVaultSecret(vaultId,"evidence:signing");
+      if(key.length>=32)verificationKeys[keyId]=key;
+    }catch{
+      // A missing historical Vault key only affects verification of entries signed by that key.
+    }
+  }));
+  const activeVaultId=getEvidenceLedgerSigningVaultId();
+  if(activeVaultId){
+    try{
+      const key=await resolveVaultSecret(activeVaultId,"evidence:signing");
+      if(key.length>=32){
+        const keyId=getEvidenceLedgerSigningKeyId();
+        return {key,keyId,verificationKeys:{...verificationKeys,[keyId]:key},provider:"vault"};
+      }
+    }catch{
+      // Migration-safe fallback: keep the existing environment signing key usable while Vault is repaired.
+    }
+  }
+  return env?{...env,verificationKeys:{...verificationKeys,...env.verificationKeys},provider:"env"}:undefined;
+}
 
 function canonicalValue(value:unknown):unknown{
   if(Array.isArray(value))return value.map(canonicalValue);
@@ -137,7 +174,7 @@ function restClient(){
 export async function getEvidenceLedgerHealth(){
   const checkedAt=new Date().toISOString();
   const workspaceId=getEvolutionWorkspaceId();
-  const signing=getEvidenceLedgerSigningConfig();
+  const signing=await resolveEvidenceSigningConfig();
   if(!workspaceId||!signing||!evidenceLedgerConfigured()){
     return EvidenceLedgerHealthSchema.parse({
       codeReady:true,
@@ -149,10 +186,11 @@ export async function getEvidenceLedgerHealth(){
       hashChain:true,
       workspaceId,
       signingKeyId:signing?.keyId,
+      signingProvider:signing?.provider,
       verificationKeyCount:Object.keys(signing?.verificationKeys??{}).length,
       rotationReady:Object.keys(signing?.verificationKeys??{}).length>1,
       checkedAt,
-      message:"Evidence Ledger 代码已就绪；等待 Supabase + Workspace + 至少 32 字符的 server-only signing key。",
+      message:"Evidence Ledger 代码已就绪；等待 Supabase + Workspace + Env/Vault server-only signing key。",
     });
   }
   try{
@@ -174,17 +212,19 @@ export async function getEvidenceLedgerHealth(){
       hashChain:true,
       workspaceId,
       signingKeyId:signing.keyId,
+      signingProvider:signing.provider,
       verificationKeyCount:Object.keys(signing.verificationKeys).length,
       rotationReady:Object.keys(signing.verificationKeys).length>1,
       checkedAt,
       message:configured
-        ?"Immutable Evidence Ledger 已连接：append-only trigger + serialized hash chain + server HMAC signing 均就绪。"
+        ?"Immutable Evidence Ledger 已连接：append-only trigger + serialized hash chain + "+signing.provider+" HMAC signing 均就绪。"
         :"Evidence Ledger migration 尚未完整生效。",
     });
   }catch(error){
     return EvidenceLedgerHealthSchema.parse({
       codeReady:true,configured:false,databaseReady:false,signingConfigured:true,
       appendFunctionReady:false,immutableTriggerReady:false,hashChain:true,workspaceId,signingKeyId:signing.keyId,
+      signingProvider:signing.provider,
       verificationKeyCount:Object.keys(signing.verificationKeys).length,
       rotationReady:Object.keys(signing.verificationKeys).length>1,checkedAt,
       message:error instanceof Error?error.message:String(error),
@@ -195,9 +235,9 @@ export async function getEvidenceLedgerHealth(){
 export async function appendEvidenceLedger(raw:EvidenceLedgerAppendRequest){
   const input=EvidenceLedgerAppendRequestSchema.parse(raw);
   const workspaceId=getEvolutionWorkspaceId();
-  const signing=getEvidenceLedgerSigningConfig();
+  const signing=await resolveEvidenceSigningConfig();
   if(!workspaceId||!signing||!evidenceLedgerConfigured()){
-    throw new Error("Immutable Evidence Ledger 未配置：需要 Supabase、EVOLUTION_WORKSPACE_ID 与 server-only signing key。");
+    throw new Error("Immutable Evidence Ledger 未配置：需要 Supabase、EVOLUTION_WORKSPACE_ID 与 Env/Vault server-only signing key。");
   }
   const id=input.id??"evidence-"+randomUUID();
   const material={
@@ -256,7 +296,7 @@ function safeSignatureEqual(a:string,b:string){
 
 export async function verifyEvidenceLedger(missionId:string){
   const checkedAt=new Date().toISOString();
-  const signing=getEvidenceLedgerSigningConfig();
+  const signing=await resolveEvidenceSigningConfig();
   const rows=await listEvidenceLedger(missionId,2000);
   let previousHash: string|undefined;
   let contentHashesValid=true;
