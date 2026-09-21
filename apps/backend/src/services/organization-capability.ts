@@ -1,12 +1,16 @@
 import {createHash} from "node:crypto";
 import {
+  OrganizationCapabilityAccessUpdateRequestSchema,
+  OrganizationCapabilityAccessUpdateResponseSchema,
   OrganizationCapabilityHealthSchema,
   OrganizationCapabilityRecordSchema,
   OrganizationCapabilitySearchRequestSchema,
   OrganizationCapabilitySearchResponseSchema,
   OrganizationCapabilitySyncResponseSchema,
   type EvolveProject,
+  type EvolutionActor,
   type Lesson,
+  type OrganizationCapabilityAccessUpdateRequest,
   type OrganizationCapabilityRecord,
   type OrganizationCapabilitySearchRequest,
 } from "@evolution/contracts";
@@ -21,6 +25,7 @@ import {
 type JsonRecord=Record<string,unknown>;
 
 const PGVECTOR_DIMENSIONS=1536;
+const SERVICE_ACTOR:Pick<EvolutionActor,"id"|"role">={id:"service",role:"service"};
 
 function pgvectorLiteral(vector:number[]|undefined){
   if(!vector||vector.length!==PGVECTOR_DIMENSIONS||!vector.every(Number.isFinite))return undefined;
@@ -171,12 +176,34 @@ function rowRecord(row:JsonRecord):OrganizationCapabilityRecord{
     sourceMissionId:row.source_mission_id,
     lessonId:row.lesson_id,
     lesson:row.payload,
+    visibility:row.visibility??"workspace",
+    ownerActorId:typeof row.owner_actor_id==="string"&&row.owner_actor_id?row.owner_actor_id:undefined,
+    allowedRoles:Array.isArray(row.allowed_roles)?row.allowed_roles:[],
     replicationEvidence:row.replication_evidence??[],
     counterExamples:row.counter_examples??[],
     archived:Boolean(row.archived),
     createdAt:row.created_at,
     updatedAt:row.updated_at,
   });
+}
+
+export function capabilityRecordReadableByActor(
+  record:Pick<OrganizationCapabilityRecord,"visibility"|"ownerActorId"|"allowedRoles">,
+  actor:Pick<EvolutionActor,"id"|"role">,
+){
+  if(actor.role==="admin"||actor.role==="service")return true;
+  if(record.visibility==="workspace")return true;
+  if(record.ownerActorId===actor.id)return true;
+  return record.visibility==="restricted"&&record.allowedRoles.includes(actor.role);
+}
+
+function accessQueryFilter(actor:Pick<EvolutionActor,"id"|"role">){
+  if(actor.role==="admin"||actor.role==="service")return "";
+  return "&or=(visibility.eq.workspace,owner_actor_id.eq."
+    +encodeURIComponent(actor.id)
+    +",and(visibility.eq.restricted,allowed_roles.cs.{"
+    +actor.role
+    +"}))";
 }
 
 function restClient(){
@@ -217,6 +244,13 @@ export async function getOrganizationCapabilityHealth(){
   try{
     const {request}=restClient();
     await request("organization_capabilities?select=id&limit=1");
+    let sharingRbacReady=false;
+    try{
+      await request("organization_capabilities?select=id,visibility,owner_actor_id,allowed_roles&limit=1");
+      sharingRbacReady=true;
+    }catch{
+      sharingRbacReady=false;
+    }
     let vectorSearch=false;
     let vectorSearchReason="未配置真实 Embedding Provider；当前使用确定性 lexical/fuzzy matching。";
     if(capabilityEmbeddingConfigured()){
@@ -230,6 +264,8 @@ export async function getOrganizationCapabilityHealth(){
             p_match_count:1,
             p_reusable_only:false,
             p_statuses:null,
+            p_actor_id:SERVICE_ACTOR.id,
+            p_actor_role:SERVICE_ACTOR.role,
           }),
         });
         vectorSearch=true;
@@ -239,16 +275,18 @@ export async function getOrganizationCapabilityHealth(){
       }
     }
     return OrganizationCapabilityHealthSchema.parse({
-      codeReady:true,configured:true,databaseReady:true,workspaceId,
+      codeReady:true,configured:true,databaseReady:true,sharingRbacReady,workspaceId,
       matchingMode:vectorSearch?"hybrid-vector":"lexical-fuzzy",
       vectorSearch,
       vectorSearchReason,
       checkedAt,
-      message:"Organization Capability Registry 已连接；跨 Mission Registry/Replication/Counter-example 可用。",
+      message:sharingRbacReady
+        ?"Organization Capability Registry 已连接；跨 Mission Registry + Sharing/RBAC + Replication/Counter-example 可用。"
+        :"Organization Capability Registry 已连接；Sharing/RBAC migration 尚未就绪。",
     });
   }catch(error){
     return OrganizationCapabilityHealthSchema.parse({
-      codeReady:true,configured:true,databaseReady:false,workspaceId,
+      codeReady:true,configured:true,databaseReady:false,sharingRbacReady:false,workspaceId,
       matchingMode:"lexical-fuzzy",vectorSearch:false,
       vectorSearchReason:"Registry migration 未就绪时不启用 Vector Search。",
       checkedAt,
@@ -269,12 +307,27 @@ export async function syncMissionCapabilities(project:EvolveProject){
   const now=new Date().toISOString();
   const baseFilter="workspace_id=eq."+encodeURIComponent(workspaceId)
     +"&source_mission_id=eq."+encodeURIComponent(project.id);
+  const existingRows=await request(
+    "organization_capabilities?select=id,visibility,owner_actor_id,allowed_roles&"+baseFilter,
+  ) as JsonRecord[];
+  const accessById=new Map((existingRows??[]).map((row)=>[
+    String(row.id),
+    {
+      visibility:row.visibility??"workspace",
+      owner_actor_id:typeof row.owner_actor_id==="string"&&row.owner_actor_id?row.owner_actor_id:null,
+      allowed_roles:Array.isArray(row.allowed_roles)?row.allowed_roles:[],
+    },
+  ]));
   await request("organization_capabilities?"+baseFilter,{
     method:"PATCH",
     headers:{Prefer:"return=minimal"},
     body:JSON.stringify({archived:true,updated_at:now}),
   });
-  const rows=project.lessons.map((lesson)=>lessonRow(workspaceId,project.id,lesson,now));
+  const rows=project.lessons.map((lesson)=>{
+    const row=lessonRow(workspaceId,project.id,lesson,now);
+    const access=accessById.get(row.id);
+    return access?{...row,...access}:row;
+  });
   if(rows.length&&capabilityEmbeddingConfigured()){
     try{
       const vectors=await embedTexts(project.lessons.map(searchText));
@@ -304,6 +357,57 @@ export async function syncMissionCapabilities(project:EvolveProject){
   });
 }
 
+export async function updateOrganizationCapabilityAccess(
+  input:OrganizationCapabilityAccessUpdateRequest,
+  actor:Pick<EvolutionActor,"id"|"role">,
+){
+  const requestInput=OrganizationCapabilityAccessUpdateRequestSchema.parse(input);
+  const workspaceId=getEvolutionWorkspaceId();
+  if(!organizationCapabilityConfigured()||!workspaceId){
+    return OrganizationCapabilityAccessUpdateResponseSchema.parse({
+      configured:false,workspaceId,message:"Organization Capability Registry 未配置。",
+    });
+  }
+  const {request}=restClient();
+  const rows=await request(
+    "organization_capabilities?select=*&workspace_id=eq."+encodeURIComponent(workspaceId)
+    +"&id=eq."+encodeURIComponent(requestInput.id)+"&limit=1",
+  ) as JsonRecord[];
+  const row=rows?.[0];
+  if(!row)throw new Error("Capability record not found");
+  const existing=rowRecord(row);
+  if(existing.ownerActorId&&existing.ownerActorId!==actor.id&&actor.role!=="admin"&&actor.role!=="service"){
+    throw new Error("Capability access policy can only be changed by its owner, admin, or service");
+  }
+  const allowedRoles=requestInput.visibility==="restricted"
+    ?[...new Set(requestInput.allowedRoles)]
+    :[];
+  const ownerActorId=existing.ownerActorId??actor.id;
+  const updatedAt=new Date().toISOString();
+  const updated=await request(
+    "organization_capabilities?workspace_id=eq."+encodeURIComponent(workspaceId)
+    +"&id=eq."+encodeURIComponent(requestInput.id),
+    {
+      method:"PATCH",
+      headers:{Prefer:"return=representation"},
+      body:JSON.stringify({
+        visibility:requestInput.visibility,
+        owner_actor_id:ownerActorId,
+        allowed_roles:allowedRoles,
+        updated_at:updatedAt,
+      }),
+    },
+  ) as JsonRecord[];
+  return OrganizationCapabilityAccessUpdateResponseSchema.parse({
+    configured:true,
+    workspaceId,
+    record:updated?.[0]?rowRecord(updated[0]):OrganizationCapabilityRecordSchema.parse({
+      ...existing,visibility:requestInput.visibility,ownerActorId,allowedRoles,updatedAt,
+    }),
+    message:"Capability access policy updated.",
+  });
+}
+
 function uniqueBy<T>(items:T[],key:(item:T)=>string){
   const seen=new Set<string>();
   return items.filter((item)=>{const id=key(item);if(seen.has(id))return false;seen.add(id);return true;});
@@ -328,7 +432,10 @@ function scoreRecord(record:OrganizationCapabilityRecord,query:string){
   return {score,matchedTerms:uniqueBy(matched,(item)=>item)};
 }
 
-export async function searchOrganizationCapabilities(input:OrganizationCapabilitySearchRequest){
+export async function searchOrganizationCapabilities(
+  input:OrganizationCapabilitySearchRequest,
+  actor:Pick<EvolutionActor,"id"|"role">=SERVICE_ACTOR,
+){
   const query=OrganizationCapabilitySearchRequestSchema.parse(input);
   const workspaceId=getEvolutionWorkspaceId();
   if(!organizationCapabilityConfigured()||!workspaceId){
@@ -355,6 +462,8 @@ export async function searchOrganizationCapabilities(input:OrganizationCapabilit
             p_match_count:Math.max(query.limit*8,100),
             p_reusable_only:query.reusableOnly,
             p_statuses:query.statuses??null,
+            p_actor_id:actor.id,
+            p_actor_role:actor.role,
           }),
         }) as Array<{id?:unknown;semantic_score?:unknown}>;
         for(const match of matches??[]){
@@ -379,11 +488,12 @@ export async function searchOrganizationCapabilities(input:OrganizationCapabilit
   if(!vectorSearch){
     rows=await request(
       "organization_capabilities?select=*&workspace_id=eq."+encodeURIComponent(workspaceId)
-      +"&archived=eq.false&order=updated_at.desc&limit=500",
+      +"&archived=eq.false"+accessQueryFilter(actor)+"&order=updated_at.desc&limit=500",
     ) as JsonRecord[];
   }
   const rawById=new Map((rows??[]).map((row)=>[String(row.id),row]));
   const records=(rows??[]).map(rowRecord).filter((record)=>{
+    if(!capabilityRecordReadableByActor(record,actor))return false;
     if(query.reusableOnly&&!record.lesson.reusable)return false;
     if(query.statuses?.length&&!query.statuses.includes(record.lesson.status))return false;
     return true;

@@ -143,6 +143,7 @@ export function EvolutionReadinessCenter() {
       git: Boolean(gitCheck.capabilities?.configured&&gitCheck.capabilities?.allowlistConfigured&&gitCheck.capabilities?.webhookConfigured),
       capabilityService: Boolean(capabilityCheck.health?.configured&&capabilityCheck.health?.databaseReady),
       capabilitySemantic: Boolean(capabilityCheck.health?.vectorSearch),
+      capabilitySharing: Boolean(capabilityCheck.health?.sharingRbacReady),
       evidenceLedger: Boolean(
         evidenceLedgerCheck.health?.configured
         && evidenceLedgerCheck.health.databaseReady

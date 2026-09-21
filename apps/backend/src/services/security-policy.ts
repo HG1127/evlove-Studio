@@ -94,7 +94,7 @@ export function getSecurityCapabilities(){
     {id:"github-target",provider:"env" as const,envVars:["EVOLUTION_GITHUB_TOKEN"],purpose:"Git target lifecycle",configured:githubTargetConfigured(),scopes:["git"]},
     {id:"github-webhook",provider:"env" as const,envVars:["EVOLUTION_GITHUB_WEBHOOK_SECRET"],purpose:"GitHub webhook signature verification",configured:githubWebhookConfigured(),scopes:["webhook"]},
     {id:"target-proxy",provider:"env" as const,envVars:["EVOLUTION_TARGET_BEARER_TOKEN"],purpose:"External target gateway",configured:configured(target.token),scopes:["target"]},
-    {id:"capability-embedding",provider:"env" as const,envVars:["EVOLUTION_CAPABILITY_EMBEDDING_API_KEY"],purpose:"Organization semantic capability matching",configured:capabilityEmbeddingConfigured(),scopes:["embedding"]},
+    {id:"capability-embedding",provider:"env" as const,envVars:["EVOLUTION_AI_GATEWAY_ENABLED","EVOLUTION_CAPABILITY_EMBEDDING_API_KEY"],purpose:"Organization semantic capability matching via Vercel OIDC or API-key fallback",configured:capabilityEmbeddingConfigured(),scopes:["embedding"]},
     {id:"evidence-signing",provider:"env" as const,envVars:["EVOLUTION_EVIDENCE_SIGNING_KEY"],purpose:"Immutable Evidence Ledger HMAC",configured:evidenceLedgerConfigured(),scopes:["evidence"]},
   ];
   const configuredIdentity=security.mode!=="blocked";

@@ -1,5 +1,6 @@
 import {z} from "zod";
 import {LessonSchema} from "./evolve-schemas";
+import {EvolutionRoleSchema} from "./security-contract";
 
 export const CapabilityReplicationEvidenceSchema=z.object({
   missionId:z.string().min(1),
@@ -23,6 +24,9 @@ export const CapabilityCounterExampleSchema=z.object({
 });
 export type CapabilityCounterExample=z.infer<typeof CapabilityCounterExampleSchema>;
 
+export const OrganizationCapabilityVisibilitySchema=z.enum(["workspace","private","restricted"]);
+export type OrganizationCapabilityVisibility=z.infer<typeof OrganizationCapabilityVisibilitySchema>;
+
 export const OrganizationCapabilityRecordSchema=z.object({
   id:z.string().min(1),
   workspaceId:z.string().min(1),
@@ -30,6 +34,9 @@ export const OrganizationCapabilityRecordSchema=z.object({
   sourceMissionId:z.string().min(1),
   lessonId:z.string().min(1),
   lesson:LessonSchema,
+  visibility:OrganizationCapabilityVisibilitySchema.default("workspace"),
+  ownerActorId:z.string().min(1).optional(),
+  allowedRoles:z.array(EvolutionRoleSchema).default([]),
   replicationEvidence:z.array(CapabilityReplicationEvidenceSchema).default([]),
   counterExamples:z.array(CapabilityCounterExampleSchema).default([]),
   archived:z.boolean().default(false),
@@ -42,6 +49,7 @@ export const OrganizationCapabilityHealthSchema=z.object({
   codeReady:z.literal(true),
   configured:z.boolean(),
   databaseReady:z.boolean(),
+  sharingRbacReady:z.boolean().default(false),
   workspaceId:z.string().optional(),
   matchingMode:z.enum(["lexical-fuzzy","hybrid-vector"]),
   vectorSearch:z.boolean(),
@@ -65,6 +73,21 @@ export const OrganizationCapabilitySyncResponseSchema=z.object({
   message:z.string(),
 });
 export type OrganizationCapabilitySyncResponse=z.infer<typeof OrganizationCapabilitySyncResponseSchema>;
+
+export const OrganizationCapabilityAccessUpdateRequestSchema=z.object({
+  id:z.string().min(1),
+  visibility:OrganizationCapabilityVisibilitySchema,
+  allowedRoles:z.array(EvolutionRoleSchema).max(5).default([]),
+});
+export type OrganizationCapabilityAccessUpdateRequest=z.infer<typeof OrganizationCapabilityAccessUpdateRequestSchema>;
+
+export const OrganizationCapabilityAccessUpdateResponseSchema=z.object({
+  configured:z.boolean(),
+  workspaceId:z.string().optional(),
+  record:OrganizationCapabilityRecordSchema.optional(),
+  message:z.string(),
+});
+export type OrganizationCapabilityAccessUpdateResponse=z.infer<typeof OrganizationCapabilityAccessUpdateResponseSchema>;
 
 export const OrganizationCapabilitySearchRequestSchema=z.object({
   q:z.string().max(500).default(""),

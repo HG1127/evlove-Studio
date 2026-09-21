@@ -62,7 +62,11 @@ export async function getPublicReadinessSnapshot(){
     browser:Boolean(browser?.ready),
     release:{read:Boolean(release?.readEnabled),write:Boolean(release?.writeEnabled)},
     git:{configured:githubTargetConfigured(),webhook:githubWebhookConfigured()},
-    capability:{database:Boolean(capability?.databaseReady),semantic:Boolean(capability?.vectorSearch)},
+    capability:{
+      database:Boolean(capability?.databaseReady),
+      semantic:Boolean(capability?.vectorSearch),
+      sharing:Boolean(capability?.sharingRbacReady),
+    },
     evidence:{
       database:Boolean(evidence?.databaseReady),
       signing:Boolean(evidence?.signingConfigured),

@@ -4,7 +4,7 @@ import {searchOrganizationCapabilities} from "../../../src/services/organization
 import {requireEvolutionPermission} from "../../../src/services/security-policy";
 
 export default defineEventHandler(async(event)=>{
-  requireEvolutionPermission(event,"data.read");
+  const actor=requireEvolutionPermission(event,"data.read");
   const raw=getQuery(event);
   const statuses=typeof raw.statuses==="string"?raw.statuses.split(",").filter(Boolean):undefined;
   const input=OrganizationCapabilitySearchRequestSchema.parse({
@@ -13,5 +13,5 @@ export default defineEventHandler(async(event)=>{
     reusableOnly:raw.reusableOnly,
     statuses,
   });
-  return searchOrganizationCapabilities(input);
+  return searchOrganizationCapabilities(input,actor);
 });

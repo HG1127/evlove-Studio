@@ -1,11 +1,14 @@
 // @vitest-environment node
+import {createHash} from "node:crypto";
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
 import type {EvolveProject,Lesson} from "@evolution/contracts";
 import {
+  capabilityRecordReadableByActor,
   getOrganizationCapabilityHealth,
   organizationCapabilityKey,
   searchOrganizationCapabilities,
   syncMissionCapabilities,
+  updateOrganizationCapabilityAccess,
 } from "./organization-capability";
 
 const KEYS=[
@@ -30,7 +33,19 @@ function project(lessons:Lesson[]):EvolveProject{
   return {id:"mission-1",lessons} as unknown as EvolveProject;
 }
 
-function dbRow(input:{missionId:string;lesson:Lesson;createdAt?:string;updatedAt?:string}){
+function registryRecordId(workspaceId:string,missionId:string,lessonId:string){
+  return createHash("sha256").update(workspaceId+"\u0000"+missionId+"\u0000"+lessonId).digest("hex");
+}
+
+function dbRow(input:{
+  missionId:string;
+  lesson:Lesson;
+  createdAt?:string;
+  updatedAt?:string;
+  visibility?:"workspace"|"private"|"restricted";
+  ownerActorId?:string;
+  allowedRoles?:Array<"viewer"|"operator"|"approver"|"admin"|"service">;
+}){
   return {
     id:input.missionId+"-"+input.lesson.id,
     workspace_id:"workspace-test",
@@ -44,6 +59,9 @@ function dbRow(input:{missionId:string;lesson:Lesson;createdAt?:string;updatedAt
     summary:input.lesson.summary,
     search_text:[input.lesson.title,input.lesson.summary,...input.lesson.trigger,...input.lesson.method].join(" ").toLowerCase(),
     payload:{...input.lesson,provenance:input.lesson.provenance?{...input.lesson.provenance,missionId:input.missionId}:undefined},
+    visibility:input.visibility??"workspace",
+    owner_actor_id:input.ownerActorId??null,
+    allowed_roles:input.allowedRoles??[],
     replication_evidence:[{
       missionId:input.missionId,lessonId:input.lesson.id,candidateId:input.lesson.provenance?.candidateId,
       governanceStatus:input.lesson.governance?.status,observedAt:input.lesson.governance?.observedAt??"2026-09-21T00:00:00.000Z",
@@ -91,11 +109,46 @@ describe("organization capability service",()=>{
     });
     const result=await syncMissionCapabilities(project([lesson(),anti]));
     expect(result).toMatchObject({configured:true,synced:2,workspaceId:"workspace-test"});
-    expect(calls[0]?.method).toBe("PATCH");
+    expect(calls.some((call)=>call.method==="GET")).toBe(true);
+    expect(calls.some((call)=>call.method==="PATCH")).toBe(true);
     const upsert=calls.find((call)=>call.method==="POST")?.body as Array<Record<string,unknown>>;
     expect(upsert).toHaveLength(2);
     expect((upsert[0]?.payload as Lesson).provenance?.artifactHashes).toEqual(["hash-1"]);
     expect(upsert[1]?.counter_examples).toEqual(expect.arrayContaining([expect.objectContaining({reason:"production regression"})]));
+  });
+
+  it("preserves an existing access policy when Mission learning is re-synced",async()=>{
+    process.env.SUPABASE_URL="https://supabase.test";
+    process.env.SUPABASE_PUBLISHABLE_KEY="anon-test-key-1234567890";
+    process.env.EVOLUTION_WORKSPACE_ID="workspace-test";
+    const item=lesson();
+    const expectedId=registryRecordId("workspace-test","mission-1",item.id);
+    let upsert:Array<Record<string,unknown>>=[];
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
+      const method=init?.method??"GET";
+      const url=String(input);
+      if(method==="GET"&&url.includes("select=id,visibility,owner_actor_id,allowed_roles")){
+        return new Response(JSON.stringify([{
+          id:expectedId,
+          visibility:"restricted",
+          owner_actor_id:"operator-owner",
+          allowed_roles:["viewer"],
+        }]),{status:200,headers:{"Content-Type":"application/json"}});
+      }
+      if(method==="POST"){
+        upsert=JSON.parse(String(init?.body)) as Array<Record<string,unknown>>;
+        return new Response(null,{status:204});
+      }
+      return new Response(null,{status:204});
+    }));
+    await syncMissionCapabilities(project([item]));
+    expect(upsert).toHaveLength(1);
+    expect(upsert[0]).toMatchObject({
+      id:expectedId,
+      visibility:"restricted",
+      owner_actor_id:"operator-owner",
+      allowed_roles:["viewer"],
+    });
   });
 
   it("groups cross-mission replications by deterministic capability fingerprint",async()=>{
@@ -114,6 +167,120 @@ describe("organization capability service",()=>{
     expect(result.hits).toHaveLength(1);
     expect(result.hits[0]?.replicationEvidence.map((item)=>item.missionId).sort()).toEqual(["mission-1","mission-2"]);
     expect(result.hits[0]?.score).toBeGreaterThan(0);
+  });
+
+  it("enforces workspace/private/restricted access semantics deterministically",()=>{
+    expect(capabilityRecordReadableByActor(
+      {visibility:"workspace",allowedRoles:[]},
+      {id:"viewer-1",role:"viewer"},
+    )).toBe(true);
+    expect(capabilityRecordReadableByActor(
+      {visibility:"private",ownerActorId:"operator-1",allowedRoles:[]},
+      {id:"operator-1",role:"operator"},
+    )).toBe(true);
+    expect(capabilityRecordReadableByActor(
+      {visibility:"private",ownerActorId:"operator-1",allowedRoles:[]},
+      {id:"viewer-1",role:"viewer"},
+    )).toBe(false);
+    expect(capabilityRecordReadableByActor(
+      {visibility:"restricted",ownerActorId:"operator-1",allowedRoles:["viewer"]},
+      {id:"viewer-1",role:"viewer"},
+    )).toBe(true);
+    expect(capabilityRecordReadableByActor(
+      {visibility:"restricted",ownerActorId:"operator-1",allowedRoles:["viewer"]},
+      {id:"approver-1",role:"approver"},
+    )).toBe(false);
+    expect(capabilityRecordReadableByActor(
+      {visibility:"private",ownerActorId:"operator-1",allowedRoles:[]},
+      {id:"admin-1",role:"admin"},
+    )).toBe(true);
+  });
+
+  it("applies actor visibility again after lexical retrieval so hidden records cannot leak",async()=>{
+    process.env.SUPABASE_URL="https://supabase.test";
+    process.env.SUPABASE_PUBLISHABLE_KEY="anon-test-key-1234567890";
+    process.env.EVOLUTION_WORKSPACE_ID="workspace-test";
+    const shared=lesson({id:"lesson-shared",title:"Shared rollout guard"});
+    const privateLesson=lesson({id:"lesson-private",title:"Private rollout guard"});
+    const restricted=lesson({id:"lesson-restricted",title:"Restricted rollout guard"});
+    const rows=[
+      dbRow({missionId:"mission-1",lesson:shared,visibility:"workspace"}),
+      dbRow({missionId:"mission-2",lesson:privateLesson,visibility:"private",ownerActorId:"operator-owner"}),
+      dbRow({missionId:"mission-3",lesson:restricted,visibility:"restricted",ownerActorId:"operator-owner",allowedRoles:["operator"]}),
+    ];
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
+      const url=String(input);
+      expect(url).toContain("organization_capabilities?select=*");
+      return new Response(JSON.stringify(rows),{status:200,headers:{"Content-Type":"application/json"}});
+    }));
+    const viewer=await searchOrganizationCapabilities(
+      {q:"rollout guard",limit:10,reusableOnly:false},
+      {id:"viewer-1",role:"viewer"},
+    );
+    expect(viewer.hits.map((hit)=>hit.representative.lesson.id)).toEqual(["lesson-shared"]);
+    const operator=await searchOrganizationCapabilities(
+      {q:"rollout guard",limit:10,reusableOnly:false},
+      {id:"operator-2",role:"operator"},
+    );
+    expect(operator.hits.map((hit)=>hit.representative.lesson.id).sort()).toEqual(["lesson-restricted","lesson-shared"]);
+  });
+
+  it("prevents non-owners from changing an existing capability access policy",async()=>{
+    process.env.SUPABASE_URL="https://supabase.test";
+    process.env.SUPABASE_PUBLISHABLE_KEY="anon-test-key-1234567890";
+    process.env.EVOLUTION_WORKSPACE_ID="workspace-test";
+    const row=dbRow({
+      missionId:"mission-1",
+      lesson:lesson(),
+      visibility:"private",
+      ownerActorId:"operator-owner",
+    });
+    const fetchMock=vi.fn(async(_input:RequestInfo|URL,init?:RequestInit)=>{
+      expect(init?.method??"GET").toBe("GET");
+      return new Response(JSON.stringify([row]),{status:200,headers:{"Content-Type":"application/json"}});
+    });
+    vi.stubGlobal("fetch",fetchMock);
+    await expect(updateOrganizationCapabilityAccess(
+      {id:row.id,visibility:"workspace",allowedRoles:[]},
+      {id:"operator-other",role:"operator"},
+    )).rejects.toThrow(/only be changed/i);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets the first writer claim ownership and share a capability with selected roles",async()=>{
+    process.env.SUPABASE_URL="https://supabase.test";
+    process.env.SUPABASE_PUBLISHABLE_KEY="anon-test-key-1234567890";
+    process.env.EVOLUTION_WORKSPACE_ID="workspace-test";
+    const initial=dbRow({missionId:"mission-1",lesson:lesson(),visibility:"workspace"});
+    const fetchMock=vi.fn(async(_input:RequestInfo|URL,init?:RequestInit)=>{
+      if((init?.method??"GET")==="GET"){
+        return new Response(JSON.stringify([initial]),{status:200,headers:{"Content-Type":"application/json"}});
+      }
+      expect(init?.method).toBe("PATCH");
+      const body=JSON.parse(String(init?.body)) as Record<string,unknown>;
+      expect(body).toMatchObject({
+        visibility:"restricted",
+        owner_actor_id:"operator-owner",
+        allowed_roles:["viewer","operator"],
+      });
+      return new Response(JSON.stringify([{
+        ...initial,
+        visibility:body.visibility,
+        owner_actor_id:body.owner_actor_id,
+        allowed_roles:body.allowed_roles,
+        updated_at:body.updated_at,
+      }]),{status:200,headers:{"Content-Type":"application/json"}});
+    });
+    vi.stubGlobal("fetch",fetchMock);
+    const result=await updateOrganizationCapabilityAccess(
+      {id:initial.id,visibility:"restricted",allowedRoles:["viewer","operator","viewer"]},
+      {id:"operator-owner",role:"operator"},
+    );
+    expect(result.record).toMatchObject({
+      visibility:"restricted",
+      ownerActorId:"operator-owner",
+      allowedRoles:["viewer","operator"],
+    });
   });
 
   it("uses real server embeddings for hybrid ranking when configured",async()=>{

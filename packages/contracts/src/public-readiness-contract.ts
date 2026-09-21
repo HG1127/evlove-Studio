@@ -24,7 +24,7 @@ export const PublicReadinessSnapshotSchema=z.object({
   browser:z.boolean(),
   release:z.object({read:z.boolean(),write:z.boolean()}),
   git:z.object({configured:z.boolean(),webhook:z.boolean()}),
-  capability:z.object({database:z.boolean(),semantic:z.boolean()}),
+  capability:z.object({database:z.boolean(),semantic:z.boolean(),sharing:z.boolean()}),
   evidence:z.object({database:z.boolean(),signing:z.boolean(),immutable:z.boolean()}),
   outcome:z.object({database:z.boolean(),ingestion:z.boolean(),analysis:z.boolean()}),
   security:z.object({configured:z.boolean(),enforced:z.boolean(),productionSafe:z.boolean()}),

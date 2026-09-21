@@ -60,7 +60,10 @@ describe("system readiness catalog", () => {
     expect(base.find((item)=>item.id==="learning")?.gap).toContain("Embedding");
     const semantic=deriveEngineReadiness({visualJudgeLive:false,server:{capabilityService:true,capabilitySemantic:true}});
     expect(semantic.find((item)=>item.id==="learning")?.stateLabel).toBe("组织级语义 Registry 已连接");
-    expect(semantic.find((item)=>item.id==="learning")?.gap).toContain("Organization Sharing");
+    expect(semantic.find((item)=>item.id==="learning")?.gap).toContain("Sharing/RBAC");
+    const shared=deriveEngineReadiness({visualJudgeLive:false,server:{capabilityService:true,capabilitySemantic:true,capabilitySharing:true}});
+    expect(shared.find((item)=>item.id==="learning")?.stateLabel).toBe("组织级语义 Registry + Sharing/RBAC");
+    expect(shared.find((item)=>item.id==="learning")?.gap).toContain("跨 workspace federation");
   });
 
   it("reports Immutable Evidence Ledger ready only when its database and signing health are live",()=>{
