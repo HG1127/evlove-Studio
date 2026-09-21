@@ -2,14 +2,14 @@ import path from 'node:path'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { nitro } from 'nitro/vite'
-import { workflow } from 'workflow/vite'
 import { builtinRunnerPlugin } from './runner-gateway/vite-plugin'
 
 export default defineConfig({
-  plugins: [nitro(), workflow(), react(), builtinRunnerPlugin()],
+  plugins: [nitro(), react(), builtinRunnerPlugin()],
   nitro: {
     preset: process.env.VERCEL ? 'vercel' : 'node-server',
     serverDir: './apps/backend/server',
+    modules: ['workflow/nitro'],
   },
   build: {
     // 首屏与页面代码已经按路由拆分；保留更高的报告阈值给完全按需加载的 Office
