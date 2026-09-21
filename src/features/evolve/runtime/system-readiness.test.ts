@@ -21,6 +21,21 @@ describe("system readiness catalog", () => {
     expect(engines.find((item) => item.id === "release")?.state).toBe("backend");
   });
 
+  it("requires live Sandbox plus machine-readable policy before marking the P0 build runtime ready",()=>{
+    const requirement=BACKEND_REQUIREMENTS.find((item)=>item.id==="sandbox")!;
+    expect(backendRequirementState(requirement,{visualJudgeLive:false,server:{sandbox:true,sandboxPolicy:false}})).toBe("missing");
+    expect(backendRequirementState(requirement,{visualJudgeLive:false,server:{sandbox:true,sandboxPolicy:true}})).toBe("ready");
+    const engines=deriveEngineReadiness({
+      visualJudgeLive:false,
+      server:{sandbox:true,sandboxPolicy:true,browser:true},
+    });
+    expect(engines.find((item)=>item.id==="experiment")).toMatchObject({
+      state:"ready",
+      stateLabel:"真实可用",
+    });
+    expect(engines.find((item)=>item.id==="experiment")?.current).toContain("READY+POLICY");
+  });
+
   it("reports the durable control plane and parser as server-ready only with real server signals", () => {
     const signals = {
       visualJudgeLive:false,

@@ -20,6 +20,7 @@ export type ServerCapabilitySnapshot = {
   artifactRenderer?: boolean;
   serverAi?: boolean;
   sandbox?: boolean;
+  sandboxPolicy?: boolean;
   browser?: boolean;
   release?: boolean;
   git?: boolean;
@@ -97,10 +98,10 @@ export const BACKEND_REQUIREMENTS: BackendRequirement[] = [
     title: "Build / Sandbox / Preview Runtime",
     category: "Experiment Runtime",
     why: "完整代码进化必须经过真实 Build、Test、启动服务、Preview URL 和 E2E，而不仅是静态源码检查。",
-    current: "Runner 已支持安全 Docker Build 入口；HTML Browser/E2E 已可运行。",
-    frontend: "前端已显示 Build/E2E/Evidence Job 状态，并能区分 VERIFIED/PARTIAL/UNVERIFIED。",
-    backend: ["Runtime Image Registry", "Ephemeral Sandbox", "Build/Test", "Start Service", "Preview URL", "Resource Quota", "Network Policy", "Artifact Export"],
-    config: ["BUILD_IMAGE", "BUILD_COMMAND", "可选 Node/Python/Java/Go Runtime Images"],
+    current: "Vercel Sandbox 已实现 universal runtime image + Browser Snapshot、ephemeral/non-persistent execution、Build/Test/E2E、Preview Health、Chromium Browser Steps、默认 deny-all 网络与 install/runtime 分阶段 allowlist、1–4 vCPU、Sandbox/Command timeout、ZIP CRC32 + 2500 文件 + 单文件 20MB + 解包 100MB 配额、20k 日志截断，以及 Candidate Artifact SHA-256 执行前重验。",
+    frontend: "前端已显示 Runtime/Browser Health；Sandbox Health 现在同时返回机器可读 Policy，Readiness 只有真实 Runtime 探针与 Policy 同时就绪才判定 P0-4 READY。",
+    backend: ["Vercel universal runtime + Browser Snapshot", "Ephemeral Sandbox", "Build/Test/E2E + Preview", "Deny-all segmented Network Policy", "Resource/Archive/Log Quotas", "SHA-256 Artifact Binding"],
+    config: ["Vercel OIDC / Sandbox 授权", "后续可选多 Runtime Image Profile"],
     detector: "build",
   },
   {
@@ -192,7 +193,7 @@ export function deriveEngineReadiness(signals: ReadinessSignals): EngineReadines
   const server = signals.server ?? {};
   const browserReady = Boolean((runner.htmlBrowser && runner.screenshots) || server.browser);
   const experimentReady = Boolean((runner.e2e && browserReady) || (server.sandbox && server.browser));
-  const buildReady = Boolean(runner.build || server.sandbox);
+  const buildReady = Boolean(runner.build || server.sandbox&&server.sandboxPolicy);
   const releaseReady = Boolean(runner.release || server.release);
   const visualReady = Boolean(signals.visualJudgeLive && runner.screenshots);
   const artifactReady = Boolean(server.dataPlane && server.artifactStore && server.sourceParse);
@@ -201,7 +202,7 @@ export function deriveEngineReadiness(signals: ReadinessSignals): EngineReadines
     { id: "artifact", title: "Artifact Intelligence", purpose: "理解输入、结构、代码库与文件语义", state: artifactReady ? "ready" : "local", stateLabel: artifactReady ? "服务端闭环" : "本地闭环", current: artifactReady ? "Server Parser Worker / Object Store / Durable Parse Job / Office / PDF / ZIP / Repository Deep Index 已接入" : "Parser Router / Office / PDF / ZIP / Repository Intelligence / AST / Deep Index 已具备", gap: artifactReady ? "继续扩展超大文件、OCR 与增量索引" : "服务端 Parser Worker、Object Store 与跨设备持久化待补" },
     { id: "mission", title: "Mission / Goal Engine", purpose: "把用户目标编译成可执行 Acceptance Contract", state: missionReady ? "ready" : "local", stateLabel: missionReady ? "服务端闭环" : "本地闭环", current: missionReady ? "Mission DB / Durable Workflow / Job/Event Store / Server AI / Cancellation & Recovery 已接入" : "Goal / Scope / Rubric / Eval Suite / Hidden Holdout / Human Gates 已具备", gap: missionReady ? "继续补运维告警、容量与多租户隔离" : "Server-side Mission DB / Scheduler / Worker 待补" },
     { id: "candidate", title: "Hypothesis / Candidate Engine", purpose: "诊断根因、生成多种 Mutation 并搜索 Best-Ever", state: server.git || server.connectors ? "partial" : "local", stateLabel: server.git || server.connectors ? "真实 Target Adapter 已连接" : "本地闭环", current: server.git || server.connectors ? `Diagnosis / Candidate Population / Search Memory / Multi-round Search + ${server.git ? "Git Branch/Commit/PR" : ""}${server.git&&server.connectors ? " + " : ""}${server.connectors ? "External Connector Lifecycle" : ""} 已具备` : "Diagnosis / Candidate Population / Search Memory / Multi-round Search 已具备", gap: server.git || server.connectors ? "继续增加具体业务系统 Connector Manifest / provider translation，不再缺统一 Target Contract" : "配置 Git 或 External Connector Target 后启用真实对象 Mutation" },
-    { id: "experiment", title: "Experiment Engine", purpose: "让 Candidate 在真实环境执行并与 Baseline 同卷比较", state: buildReady && experimentReady ? "ready" : experimentReady ? "partial" : "backend", stateLabel: buildReady && experimentReady ? "真实可用" : experimentReady ? "HTML/E2E 可用" : "需后端", current: `Browser ${browserReady ? "READY" : "MISSING"} · E2E ${(runner.e2e||server.browser&&server.sandbox) ? "READY" : "MISSING"} · Build/Sandbox ${buildReady ? "READY" : "MISSING"}`, gap: buildReady ? "核心 Sandbox/Preview 已闭环；后续按目标工程扩展更多 Runtime Image/资源策略" : "需 Build / Sandbox / Preview Runtime" },
+    { id: "experiment", title: "Experiment Engine", purpose: "让 Candidate 在真实环境执行并与 Baseline 同卷比较", state: buildReady && experimentReady ? "ready" : experimentReady ? "partial" : "backend", stateLabel: buildReady && experimentReady ? "真实可用" : experimentReady ? "HTML/E2E 可用" : "需后端", current: `Browser ${browserReady ? "READY" : "MISSING"} · E2E ${(runner.e2e||server.browser&&server.sandbox) ? "READY" : "MISSING"} · Build/Sandbox ${buildReady ? "READY+POLICY" : "MISSING"}`, gap: buildReady ? "核心 Sandbox/Preview/Browser/Network/Quota/SHA Binding 已闭环；后续主要是按目标工程扩展多 Runtime Image Profile" : "需 Build / Sandbox / Preview Runtime" },
     { id: "evidence", title: "Evidence Engine", purpose: "绑定 Claim → Evidence → Artifact → Test → Decision", state: server.evidenceLedger || browserReady || server.artifactStore ? "partial" : "local", stateLabel: server.evidenceLedger ? "不可变账本已连接" : browserReady || server.artifactStore ? "真实证据可用" : "本地证据", current: `Artifact Store ${server.artifactStore ? "SERVER" : "LOCAL"} · Immutable Ledger ${server.evidenceLedger ? `SIGNED(${(server.evidenceSigningProvider??"server").toUpperCase()})+CHAINED+ROTATABLE+EXPORTABLE` : "MISSING"} · Browser Evidence ${browserReady ? "已接入" : "待接入"} · Visual Judge ${visualReady ? "LIVE" : "未完全就绪"}`, gap: server.evidenceLedger ? "核心 Append-only/Hash Chain/HMAC/Vault-or-Env key rotation + signed export/archive 已闭环；后续主要是外部 KMS 与可选 WORM/Compliance Archive" : "部署 append-only / signed Immutable Evidence Ledger migration + Vault/Env server signing key" },
     { id: "artifact-engineering", title: "Artifact Engineering", purpose: "把通过验收的同一 Candidate 物化为真实可用成果", state: server.artifactRenderer ? "ready" : server.git ? "partial" : "partial", stateLabel: server.artifactRenderer ? server.git ? "Server Renderer + Git 写回" : "Server Renderer 已连接" : server.git ? "Git 写回已连接" : "浏览器多格式可用", current: server.artifactRenderer ? `Gate F Frozen Candidate → Server Artifact Store 已支持 Text/HTML/JSON、DOCX/PPTX OOXML、Spreadsheet、ZIP/Code package 同格式物化、重开结构校验与 SHA-256 回执${server.git ? "；文本/代码成果还可原生写回 Git Branch/Commit/PR" : ""}` : server.git ? "Gate F 文本/代码成果可写回 Git；Office 二进制 Server Renderer 尚未连接" : "浏览器 Text/HTML/JSON、DOCX、PPTX、Spreadsheet、ZIP Roundtrip 与结构校验已具备", gap: server.artifactRenderer ? "PDF/图片/设计类等不可逆格式继续保持 external-required；Office 最终视觉/公式重算由专用验证器补强" : "Server Artifact Store + Renderer 未连接；当前正式二进制交付仍依赖浏览器本地物化" },
     { id: "release", title: "Release / Outcome Engine", purpose: "Shadow / Canary / Promote / Rollback 并观测真实 Outcome", state: releaseReady ? "ready" : "backend", stateLabel: releaseReady ? "生产能力已连接" : "需生产后端", current: releaseReady ? "真实 Release Controller + Reconcile + 自动 Stable/Candidate Outcome 采样 + Drift/Statistics 已就绪" : "Release 状态机、Reconcile、Outcome Warehouse/Statistics 代码已具备；等待生产发布写凭据", gap: releaseReady ? "核心 Production Outcome Loop 已闭环；后续继续丰富业务 KPI/cost/safety telemetry" : "配置真实发布平台写凭据后即可启用 Deploy/Promote/Rollback" },
@@ -220,7 +221,7 @@ export function backendRequirementState(requirement: BackendRequirement, signals
   if (requirement.detector === "security") return server.security ? "ready" as const : "missing" as const;
   if (requirement.detector === "connectors") return server.connectors ? "ready" as const : "missing" as const;
   if (requirement.detector === "outcome") return server.outcome ? "ready" as const : "missing" as const;
-  if (requirement.detector === "build") return runner.build || server.sandbox ? "ready" as const : "missing" as const;
+  if (requirement.detector === "build") return runner.build || server.sandbox&&server.sandboxPolicy ? "ready" as const : "missing" as const;
   if (requirement.detector === "release") return runner.release || server.release ? "ready" as const : "missing" as const;
   if (requirement.detector === "browser") return (runner.htmlBrowser && runner.e2e) || server.browser ? "ready" as const : "missing" as const;
   if (requirement.detector === "visual") return signals.visualJudgeLive ? "ready" as const : "missing" as const;

@@ -1,5 +1,5 @@
 import {checkSupabaseBackendHealth} from "@evolution/adapters";
-import {checkVercelSandboxBrowserHealth,checkVercelSandboxHealth} from "@evolution/adapters/sandbox";
+import {checkVercelSandboxBrowserHealth,checkVercelSandboxHealth,getVercelSandboxPolicyCapabilities} from "@evolution/adapters/sandbox";
 import {PublicReadinessSnapshotSchema} from "@evolution/contracts";
 import {
   getServerSupabaseConfig,
@@ -76,6 +76,7 @@ export async function getPublicReadinessSnapshot(){
     artifactRenderer:Boolean(configured&&dataPlane?.storage),
     serverAi:serverAiConfigured(),
     sandbox:Boolean(sandbox?.ready),
+    sandboxPolicy:getVercelSandboxPolicyCapabilities().codeReady,
     browser:Boolean(browser?.ready),
     release:{read:Boolean(release?.readEnabled),write:Boolean(release?.writeEnabled)},
     git:{configured:githubTargetConfigured(),webhook:githubWebhookConfigured()},

@@ -138,6 +138,7 @@ export function EvolutionReadinessCenter() {
       artifactRenderer: Boolean(backendHealthCheck.health?.artifactRenderer.codeReady&&backendHealthCheck.health?.artifactRenderer.configured),
       serverAi: Boolean(backendHealthCheck.health?.serverAi.codeReady && backendHealthCheck.health?.serverAi.configured),
       sandbox: Boolean(sandboxCheck.health?.ready),
+      sandboxPolicy: Boolean(sandboxCheck.health?.policy.codeReady),
       browser: Boolean(browserCheck.health?.ready),
       release: Boolean(releaseCheck.capabilities?.writeEnabled),
       git: Boolean(gitCheck.capabilities?.configured&&gitCheck.capabilities?.allowlistConfigured&&gitCheck.capabilities?.webhookConfigured),
@@ -183,7 +184,7 @@ export function EvolutionReadinessCenter() {
   const p03Connected = Boolean(workflowCheck.capabilities?.available && workflowCheck.capabilities?.durable);
   const p03FullAuto = Boolean(workflowCheck.capabilities?.fullAuto);
   const p03OfflineAuto = Boolean(workflowCheck.capabilities?.closure.offlineFullAuto);
-  const p04Ready = Boolean(sandboxCheck.health?.ready);
+  const p04Ready = Boolean(sandboxCheck.health?.ready&&sandboxCheck.health.policy.codeReady);
   const p04BrowserReady = Boolean(browserCheck.health?.ready);
   const releaseReadReady = Boolean(releaseCheck.capabilities?.readEnabled && releaseCheck.health?.ready);
   const releaseWriteReady = Boolean(releaseCheck.capabilities?.writeEnabled);

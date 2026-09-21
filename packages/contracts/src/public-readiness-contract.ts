@@ -21,6 +21,7 @@ export const PublicReadinessSnapshotSchema=z.object({
   artifactRenderer:z.boolean(),
   serverAi:z.boolean(),
   sandbox:z.boolean(),
+  sandboxPolicy:z.boolean(),
   browser:z.boolean(),
   release:z.object({read:z.boolean(),write:z.boolean()}),
   git:z.object({configured:z.boolean(),webhook:z.boolean()}),

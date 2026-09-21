@@ -3,12 +3,14 @@ import { Sandbox, type NetworkPolicy, type SandboxRegion } from "@vercel/sandbox
 import {
   SandboxBrowserHealthSchema,
   SandboxHealthSchema,
+  SandboxPolicyCapabilitiesSchema,
   SandboxValidationRequestSchema,
   SandboxValidationResultSchema,
   SandboxTargetBatchResponseSchema,
   type SandboxCommand,
   type SandboxBrowserHealth,
   type SandboxHealth,
+  type SandboxPolicyCapabilities,
   type SandboxTargetBatchResponse,
   type SandboxValidationRequest,
   type SandboxValidationResult,
@@ -19,12 +21,66 @@ import {
 
 const ROOT="/vercel/sandbox";
 const MAX_LOG_CHARS=20_000;
+const UNIVERSAL_RUNTIME_IMAGE="vercel/sandbox/universal:latest";
+const SANDBOX_MIN_VCPUS=1;
+const SANDBOX_MAX_VCPUS=4;
+const SANDBOX_DEFAULT_VCPUS=2;
+const SANDBOX_MAX_TIMEOUT_MS=30*60_000;
+const SANDBOX_MAX_COMMAND_TIMEOUT_MS=15*60_000;
+const SANDBOX_MAX_ARCHIVE_FILES=2500;
+const SANDBOX_MAX_FILE_BYTES=20*1024*1024;
+const SANDBOX_MAX_EXTRACTED_BYTES=100*1024*1024;
 const BROWSER_RUNTIME_NAME="evolution-browser-pw163-v1";
 const BROWSER_RUNTIME_VERSION="pw-1.63.0-v1";
 const BROWSER_SNAPSHOT_TTL_MS=7*24*60*60*1000;
 const BROWSER_PORT=4173;
 
 let browserSnapshotPromise:Promise<string>|undefined;
+
+export function getVercelSandboxPolicyCapabilities():SandboxPolicyCapabilities{
+  return SandboxPolicyCapabilitiesSchema.parse({
+    codeReady:true,
+    runtimeImage:UNIVERSAL_RUNTIME_IMAGE,
+    browserRuntimeVersion:BROWSER_RUNTIME_VERSION,
+    playwrightVersion:"1.63.0",
+    ephemeral:true,
+    persistent:false,
+    network:{
+      defaultPolicy:"deny-all",
+      installAllowlist:true,
+      runtimeAllowlist:true,
+      browserExternalRequests:"blocked",
+    },
+    resources:{
+      minVcpus:SANDBOX_MIN_VCPUS,
+      maxVcpus:SANDBOX_MAX_VCPUS,
+      defaultVcpus:SANDBOX_DEFAULT_VCPUS,
+      maxSandboxTimeoutMs:SANDBOX_MAX_TIMEOUT_MS,
+      maxCommandTimeoutMs:SANDBOX_MAX_COMMAND_TIMEOUT_MS,
+    },
+    archive:{
+      maxFiles:SANDBOX_MAX_ARCHIVE_FILES,
+      maxFileBytes:SANDBOX_MAX_FILE_BYTES,
+      maxExtractedBytes:SANDBOX_MAX_EXTRACTED_BYTES,
+      crc32Validation:true,
+      reservedPath:".evolution/",
+    },
+    logs:{
+      maxCharsPerStream:MAX_LOG_CHARS,
+      truncationEnabled:true,
+    },
+    artifactBinding:{
+      sha256RequiredForCandidates:true,
+      hashReverifiedBeforeExecution:true,
+    },
+    preview:{
+      defaultPort:BROWSER_PORT,
+      healthCheck:true,
+      browserSteps:true,
+      browserSnapshot:true,
+    },
+  });
+}
 
 const STATIC_SERVER_SCRIPT=String.raw`
 import http from "node:http";
@@ -194,9 +250,9 @@ async function ensureBrowserRuntimeSnapshot(){
   browserSnapshotPromise=(async()=>{
     const base=await Sandbox.getOrCreate({
       name:BROWSER_RUNTIME_NAME,
-      image:"vercel/sandbox/universal:latest",
+      image:UNIVERSAL_RUNTIME_IMAGE,
       timeout:10*60_000,
-      resources:{vcpus:2},
+      resources:{vcpus:SANDBOX_DEFAULT_VCPUS},
       networkPolicy:"deny-all",
       persistent:true,
       tags:{product:"evolution-os",purpose:"browser-runtime",version:BROWSER_RUNTIME_VERSION},
@@ -353,7 +409,7 @@ export async function runVercelSandboxValidation(
   try{
     sandbox=await Sandbox.create({
       name:request.id?("evo-"+request.id.replace(/[^a-zA-Z0-9-_]/g,"-").slice(0,48)):undefined,
-      image:"vercel/sandbox/universal:latest",
+      image:UNIVERSAL_RUNTIME_IMAGE,
       timeout:request.timeoutMs,
       resources:{vcpus:request.vcpus},
       ports:request.preview?[request.preview.port]:undefined,
@@ -658,7 +714,7 @@ export async function runVercelSandboxCodebaseValidation(args:{
   const zip=await JSZip.loadAsync(args.archive,{checkCRC32:true});
   const entries=Object.values(zip.files).filter((entry)=>!entry.dir&&!/(^|\/)(?:node_modules|\.git)(?:\/|$)/.test(entry.name));
   if(!entries.length)throw new Error("ZIP 中没有可执行文件");
-  if(entries.length>2500)throw new Error("ZIP 文件数超过 Sandbox 上限 2500");
+  if(entries.length>SANDBOX_MAX_ARCHIVE_FILES)throw new Error("ZIP 文件数超过 Sandbox 上限 "+SANDBOX_MAX_ARCHIVE_FILES);
   const extracted:Array<{path:string;content:Uint8Array}>=[];
   let total=0;
   for(const entry of entries){
@@ -666,8 +722,8 @@ export async function runVercelSandboxCodebaseValidation(args:{
     if(path===".evolution"||path.startsWith(".evolution/"))throw new Error("ZIP 使用了系统保留目录 .evolution/，已阻止执行");
     const content=await entry.async("uint8array");
     total+=content.byteLength;
-    if(content.byteLength>20*1024*1024)throw new Error("单文件超过 Sandbox 20MB 上限："+path);
-    if(total>100*1024*1024)throw new Error("ZIP 解包后超过 Sandbox 100MB 上限");
+    if(content.byteLength>SANDBOX_MAX_FILE_BYTES)throw new Error("单文件超过 Sandbox 20MB 上限："+path);
+    if(total>SANDBOX_MAX_EXTRACTED_BYTES)throw new Error("ZIP 解包后超过 Sandbox 100MB 上限");
     extracted.push({path,content});
   }
 
@@ -721,7 +777,7 @@ export async function runVercelSandboxCodebaseValidation(args:{
         name,
         source:{type:"snapshot",snapshotId:browserSnapshotId},
         timeout:10*60_000,
-        resources:{vcpus:2},
+        resources:{vcpus:SANDBOX_DEFAULT_VCPUS},
         ports:[BROWSER_PORT],
         networkPolicy:"deny-all",
         tags:{product:"evolution-os",purpose:"hybrid-browser-target"},
@@ -729,9 +785,9 @@ export async function runVercelSandboxCodebaseValidation(args:{
       })
       : await Sandbox.create({
         name,
-        image:"vercel/sandbox/universal:latest",
+        image:UNIVERSAL_RUNTIME_IMAGE,
         timeout:10*60_000,
-        resources:{vcpus:2},
+        resources:{vcpus:SANDBOX_DEFAULT_VCPUS},
         ports:needsBehavior?[BROWSER_PORT]:undefined,
         networkPolicy:"deny-all",
         tags:{product:"evolution-os",purpose:"hybrid-target"},
@@ -862,9 +918,9 @@ export async function checkVercelSandboxHealth():Promise<SandboxHealth>{
   let sandbox:(Sandbox&AsyncDisposable)|undefined;
   try{
     sandbox=await Sandbox.create({
-      image:"vercel/sandbox/universal:latest",
+      image:UNIVERSAL_RUNTIME_IMAGE,
       timeout:30_000,
-      resources:{vcpus:1},
+      resources:{vcpus:SANDBOX_MIN_VCPUS},
       networkPolicy:"deny-all",
       tags:{product:"evolution-os",purpose:"health-check"},
       persistent:false,
@@ -881,6 +937,7 @@ export async function checkVercelSandboxHealth():Promise<SandboxHealth>{
       nodeVersion:(await node.stdout()).trim(),
       npmVersion:(await npm.stdout()).trim(),
       region:sandbox.region,
+      policy:getVercelSandboxPolicyCapabilities(),
     });
   }catch(error){
     const message=error instanceof Error?error.message:String(error);
@@ -890,6 +947,7 @@ export async function checkVercelSandboxHealth():Promise<SandboxHealth>{
         ?"Vercel Sandbox 尚未授权。本地请先执行 vercel link + vercel env pull；Vercel 部署环境使用 OIDC。"
         :"Vercel Sandbox 检测失败："+message,
       latencyMs:Date.now()-started,
+      policy:getVercelSandboxPolicyCapabilities(),
     });
   }finally{
     if(sandbox){
@@ -906,7 +964,7 @@ export async function checkVercelSandboxBrowserHealth():Promise<SandboxBrowserHe
     sandbox=await Sandbox.create({
       source:{type:"snapshot",snapshotId},
       timeout:90_000,
-      resources:{vcpus:1},
+      resources:{vcpus:SANDBOX_MIN_VCPUS},
       ports:[BROWSER_PORT],
       networkPolicy:"deny-all",
       tags:{product:"evolution-os",purpose:"browser-health-check"},

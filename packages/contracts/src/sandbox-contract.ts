@@ -78,6 +78,50 @@ export const SandboxValidationResultSchema=z.object({
 });
 export type SandboxValidationResult=z.infer<typeof SandboxValidationResultSchema>;
 
+export const SandboxPolicyCapabilitiesSchema=z.object({
+  codeReady:z.literal(true),
+  runtimeImage:z.string().min(1),
+  browserRuntimeVersion:z.string().min(1),
+  playwrightVersion:z.string().min(1),
+  ephemeral:z.literal(true),
+  persistent:z.literal(false),
+  network:z.object({
+    defaultPolicy:z.literal("deny-all"),
+    installAllowlist:z.literal(true),
+    runtimeAllowlist:z.literal(true),
+    browserExternalRequests:z.literal("blocked"),
+  }),
+  resources:z.object({
+    minVcpus:z.number().int().positive(),
+    maxVcpus:z.number().int().positive(),
+    defaultVcpus:z.number().int().positive(),
+    maxSandboxTimeoutMs:z.number().int().positive(),
+    maxCommandTimeoutMs:z.number().int().positive(),
+  }),
+  archive:z.object({
+    maxFiles:z.number().int().positive(),
+    maxFileBytes:z.number().int().positive(),
+    maxExtractedBytes:z.number().int().positive(),
+    crc32Validation:z.literal(true),
+    reservedPath:z.literal(".evolution/"),
+  }),
+  logs:z.object({
+    maxCharsPerStream:z.number().int().positive(),
+    truncationEnabled:z.literal(true),
+  }),
+  artifactBinding:z.object({
+    sha256RequiredForCandidates:z.literal(true),
+    hashReverifiedBeforeExecution:z.literal(true),
+  }),
+  preview:z.object({
+    defaultPort:z.number().int().positive(),
+    healthCheck:z.literal(true),
+    browserSteps:z.literal(true),
+    browserSnapshot:z.literal(true),
+  }),
+});
+export type SandboxPolicyCapabilities=z.infer<typeof SandboxPolicyCapabilitiesSchema>;
+
 export const SandboxHealthSchema=z.object({
   ready:z.boolean(),
   message:z.string(),
@@ -85,6 +129,7 @@ export const SandboxHealthSchema=z.object({
   nodeVersion:z.string().optional(),
   npmVersion:z.string().optional(),
   region:z.string().optional(),
+  policy:SandboxPolicyCapabilitiesSchema,
 });
 export type SandboxHealth=z.infer<typeof SandboxHealthSchema>;
 
