@@ -1,9 +1,9 @@
 import {createError,defineEventHandler,readBody} from "nitro/h3";
 import {releaseHttpTarget} from "../../../src/services/http-target-gateway";
-import {requireEvolutionPermission} from "../../../src/services/security-policy";
+import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 
 export default defineEventHandler(async(event)=>{
-  requireEvolutionPermission(event,"release.execute");
+  await requireGovernedEvolutionPermission(event,"release.execute");
   try{return await releaseHttpTarget(await readBody(event));}
   catch(error){
     if((error as {code?:string}).code==="TARGET_PROXY_NOT_CONFIGURED"){

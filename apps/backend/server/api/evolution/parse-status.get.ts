@@ -2,10 +2,10 @@ import {createError,defineEventHandler,getQuery} from "nitro/h3";
 import {SourceArtifactSchema,SourceParseStatusResponseSchema} from "@evolution/contracts";
 import {getServerArtifactStore} from "../../../src/services/artifact-runtime";
 import {getServerProductionRuntime} from "../../../src/services/production-runtime";
-import {requireEvolutionPermission} from "../../../src/services/security-policy";
+import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 
 export default defineEventHandler(async(event)=>{
-  requireEvolutionPermission(event,"data.read");
+  await requireGovernedEvolutionPermission(event,"data.read");
   const id=String(getQuery(event).id??"").trim();
   if(!id)throw createError({statusCode:400,statusMessage:"缺少 parse job id"});
   const runtime=getServerProductionRuntime();

@@ -10,10 +10,10 @@ import {
 } from "@evolution/contracts";
 import { getServerProductionRuntime } from "../../../src/services/production-runtime";
 import { evolutionMissionWorkflow } from "../../../../../workflows/evolution-mission";
-import {requireEvolutionPermission} from "../../../src/services/security-policy";
+import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 
 export default defineEventHandler(async(event)=>{
-  requireEvolutionPermission(event,"mission.execute");
+  await requireGovernedEvolutionPermission(event,"mission.execute");
   const parsed=EvolutionWorkflowStartRequestSchema.safeParse(await readBody(event));
   if(!parsed.success){
     setResponseStatus(event,400);

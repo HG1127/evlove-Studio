@@ -12,12 +12,12 @@ import {getServerArtifactStore} from "../../../src/services/artifact-runtime";
 import {getServerProductionRuntime} from "../../../src/services/production-runtime";
 import {serverSupabaseConfigured} from "../../../src/server-env";
 import {sourceParseWorkflow} from "../../../../../workflows/source-parse";
-import {requireEvolutionPermission} from "../../../src/services/security-policy";
+import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 
 const MAX_FILE_BYTES=25*1024*1024;
 
 export default defineEventHandler(async(event)=>{
-  requireEvolutionPermission(event,"mission.execute");
+  await requireGovernedEvolutionPermission(event,"mission.execute");
   if(!serverSupabaseConfigured()){
     throw createError({statusCode:503,statusMessage:"Server Parse 数据面未配置",data:{code:"SERVER_PARSE_UNAVAILABLE"}});
   }

@@ -3,10 +3,10 @@ import { SandboxTargetBatchRequestSchema, SandboxTargetBatchResponseSchema } fro
 import { runVercelSandboxCodebaseValidation } from "@evolution/adapters/sandbox";
 import { getServerArtifactStore } from "../../../src/services/artifact-runtime";
 import { getServerProductionRuntime } from "../../../src/services/production-runtime";
-import {requireEvolutionPermission} from "../../../src/services/security-policy";
+import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 
 export default defineEventHandler(async(event)=>{
-  requireEvolutionPermission(event,"target.execute");
+  await requireGovernedEvolutionPermission(event,"target.execute");
   const input=SandboxTargetBatchRequestSchema.parse(await readBody(event));
   const mission=await getServerProductionRuntime().missions.get(input.projectId);
   if(!mission)throw createError({statusCode:404,statusMessage:"Mission not found"});

@@ -7,10 +7,10 @@ import {
 import {beginReleaseCycle,deliveryReadiness,projectHasOnlineReleaseTarget} from "@evolution/core";
 import {getServerProductionRuntime} from "../../../src/services/production-runtime";
 import {createReleaseApprovalGrant} from "../../../src/services/release-approval-store";
-import {requireEvolutionPermission} from "../../../src/services/security-policy";
+import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 
 export default defineEventHandler(async(event)=>{
-  const actor=requireEvolutionPermission(event,"release.approve");
+  const actor=await requireGovernedEvolutionPermission(event,"release.approve");
   const input=ReleaseApprovalRequestSchema.parse(await readBody(event));
   const runtime=getServerProductionRuntime();
   const mission=await runtime.missions.get(input.missionId);

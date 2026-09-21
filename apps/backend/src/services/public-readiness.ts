@@ -15,6 +15,7 @@ import {getConnectorRegistryCapabilities} from "./connector-registry";
 import {getEvidenceLedgerHealth} from "./evidence-ledger";
 import {getOrganizationCapabilityHealth} from "./organization-capability";
 import {getOutcomeAnalyticsHealth} from "./outcome-analytics";
+import {organizationMemberDirectoryHealth} from "./organization-member-directory";
 import {releaseApprovalStoreHealth} from "./release-approval-store";
 import {getSecurityCapabilities} from "./security-policy";
 import {serverVaultHealth} from "./server-vault";
@@ -38,6 +39,7 @@ export async function getPublicReadinessSnapshot(){
     getConnectorRegistryCapabilities(),
     serverVaultHealth(),
     releaseApprovalStoreHealth(),
+    organizationMemberDirectoryHealth(),
   ] as const);
   const dataPlane=fulfilled(checks[0]);
   const sandbox=fulfilled(checks[1]);
@@ -49,7 +51,15 @@ export async function getPublicReadinessSnapshot(){
   const connectors=fulfilled(checks[7]);
   const vault=fulfilled(checks[8]);
   const approval=fulfilled(checks[9]);
+  const members=fulfilled(checks[10]);
   const security=getSecurityCapabilities();
+  const governanceProductionSafe=Boolean(
+    security.productionSafe
+    &&approval?.databaseReady
+    &&members?.databaseReady
+    &&members.activeAdmins>0
+    &&(!vault?.configured||vault.databaseReady)
+  );
   const targetProxy=targetProxyCapabilities();
   return PublicReadinessSnapshotSchema.parse({
     checkedAt:new Date().toISOString(),
@@ -87,9 +97,10 @@ export async function getPublicReadinessSnapshot(){
     security:{
       configured:security.configured,
       enforced:security.enforced,
-      productionSafe:security.productionSafe,
+      productionSafe:governanceProductionSafe,
       vault:Boolean(vault?.configured&&vault.databaseReady),
       approvalStore:Boolean(approval?.configured&&approval.databaseReady),
+      memberDirectory:Boolean(members?.databaseReady&&members.activeAdmins>0),
     },
     connectors:{
       configured:Boolean(connectors?.configured),

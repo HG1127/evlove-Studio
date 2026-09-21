@@ -3,7 +3,7 @@ import {createEvolutionEvent,GitTargetActionRequestSchema} from "@evolution/cont
 import {serverSupabaseConfigured} from "../../../src/server-env";
 import {executeGitTargetAction} from "../../../src/services/github-target";
 import {getServerProductionRuntime} from "../../../src/services/production-runtime";
-import {requireEvolutionPermission} from "../../../src/services/security-policy";
+import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 
 export default defineEventHandler(async(event)=>{
   const input=GitTargetActionRequestSchema.parse(await readBody(event));
@@ -12,7 +12,7 @@ export default defineEventHandler(async(event)=>{
     :input.action==="merge"||input.action==="rollback"
       ?"release.execute"
       :"target.write";
-  requireEvolutionPermission(event,permission);
+  await requireGovernedEvolutionPermission(event,permission);
   const writeAction=["mutate","open-pr","merge","rollback"].includes(input.action);
   if(writeAction&&!serverSupabaseConfigured()){
     throw createError({statusCode:503,statusMessage:"Git write requires configured Server Data Plane for durable audit"});

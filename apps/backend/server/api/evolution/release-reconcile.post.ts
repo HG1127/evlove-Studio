@@ -6,10 +6,10 @@ import {
 } from "@evolution/contracts";
 import { getServerProductionRuntime } from "../../../src/services/production-runtime";
 import { runServerMissionReleaseReconciliation } from "../../../src/services/server-release-reconciliation";
-import {requireEvolutionPermission} from "../../../src/services/security-policy";
+import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 
 export default defineEventHandler(async(event)=>{
-  requireEvolutionPermission(event,"release.execute");
+  await requireGovernedEvolutionPermission(event,"release.execute");
   const input=VercelReleaseReconcileRequestSchema.parse(await readBody(event));
   const runtime=getServerProductionRuntime();
   const mission=await runtime.missions.get(input.missionId);

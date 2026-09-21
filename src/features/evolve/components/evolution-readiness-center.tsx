@@ -155,6 +155,7 @@ export function EvolutionReadinessCenter() {
       security: Boolean(backendHealthCheck.health?.security.productionSafe),
       vault: Boolean(backendHealthCheck.health?.securityGovernance.vaultConfigured&&backendHealthCheck.health?.securityGovernance.vaultDatabaseReady),
       approvalStore: Boolean(backendHealthCheck.health?.securityGovernance.approvalStoreReady),
+      memberDirectory: Boolean(backendHealthCheck.health?.securityGovernance.memberDirectoryReady),
       connectors: Boolean(connectorCheck.capabilities?.fullLifecycleCount),
       outcome: Boolean(
         outcomeCheck.health?.databaseReady

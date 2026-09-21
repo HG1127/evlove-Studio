@@ -20,6 +20,7 @@ import {
   vaultEncryptionConfigured,
   vercelReleaseWriteConfigured,
 } from "../server-env";
+import {requireActiveOrganizationMember} from "./organization-member-directory";
 
 const ROLE_PERMISSIONS:Record<EvolutionRole,ReadonlySet<EvolutionPermission>>={
   viewer:new Set(["data.read","release.observe"]),
@@ -81,6 +82,23 @@ export function requireEvolutionPermission(event:H3Event,permission:EvolutionPer
     throw createError({statusCode:403,statusMessage:`Role ${actor.role} lacks ${permission}`});
   }
   event.context.evolutionActor=actor;
+  return actor;
+}
+
+export async function requireGovernedEvolutionPermission(event:H3Event,permission:EvolutionPermission){
+  const actor=requireEvolutionPermission(event,permission);
+  if(permission!=="data.read"&&actor.source!=="internal-dev"){
+    try{
+      await requireActiveOrganizationMember(actor);
+    }catch(error){
+      const code=(error as {code?:string}).code;
+      throw createError({
+        statusCode:code==="MEMBER_DIRECTORY_NOT_CONFIGURED"?503:403,
+        statusMessage:error instanceof Error?error.message:String(error),
+        data:{code},
+      });
+    }
+  }
   return actor;
 }
 

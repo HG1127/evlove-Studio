@@ -80,8 +80,10 @@ describe("system readiness catalog", () => {
     expect(backendRequirementState(requirement,{visualJudgeLive:false,server:{security:true}})).toBe("ready");
     const engines=deriveEngineReadiness({visualJudgeLive:false,server:{security:true}});
     expect(engines.find((item)=>item.id==="governance")?.stateLabel).toBe("Server RBAC 已强制");
-    const full=deriveEngineReadiness({visualJudgeLive:false,server:{security:true,vault:true,approvalStore:true}});
-    expect(full.find((item)=>item.id==="governance")?.stateLabel).toBe("RBAC + Encrypted Vault + Durable Approval");
+    const directory=deriveEngineReadiness({visualJudgeLive:false,server:{security:true,memberDirectory:true}});
+    expect(directory.find((item)=>item.id==="governance")?.stateLabel).toBe("RBAC + Active Member Directory");
+    const full=deriveEngineReadiness({visualJudgeLive:false,server:{security:true,memberDirectory:true,vault:true,approvalStore:true}});
+    expect(full.find((item)=>item.id==="governance")?.stateLabel).toBe("RBAC + Member Revocation + Vault + Durable Approval");
     expect(full.find((item)=>item.id==="governance")?.gap).toContain("外部 KMS");
   });
 

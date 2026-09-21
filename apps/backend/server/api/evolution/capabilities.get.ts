@@ -1,15 +1,15 @@
 import { defineEventHandler } from "nitro/h3";
 import { EvolutionWorkflowCapabilitiesSchema } from "@evolution/contracts";
 import { githubTargetConfigured, githubWebhookConfigured, serverAiConfigured, serverSupabaseConfigured, serverSupabaseSecureConfigured, targetProxyCapabilities, vercelReleaseWriteConfigured } from "../../../src/server-env";
-import {getSecurityCapabilities,requireEvolutionPermission} from "../../../src/services/security-policy";
+import {getSecurityCapabilities,requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 
 const CONTROL_ACTIONS=["adopt-defaults","approve-contract","wait-human","complete","package"] as const;
 const AI_ACTIONS=["understand","compile-contract","build-eval","distill","next-queue"] as const;
 const CONDITIONAL_ACTIONS:string[]=["revalidate","run-campaign","run-release","reconcile-release"];
 const MIGRATION_PENDING_ACTIONS:string[]=[];
 
-export default defineEventHandler((event)=>{
-  requireEvolutionPermission(event,"data.read");
+export default defineEventHandler(async(event)=>{
+  await requireGovernedEvolutionPermission(event,"data.read");
   const ai=serverAiConfigured();
   const dataPlane=serverSupabaseConfigured();
   const secureDataPlane=serverSupabaseSecureConfigured();

@@ -1,10 +1,10 @@
 import {defineEventHandler,getQuery} from "nitro/h3";
 import {OrganizationCapabilitySearchRequestSchema} from "@evolution/contracts";
 import {searchOrganizationCapabilities} from "../../../src/services/organization-capability";
-import {requireEvolutionPermission} from "../../../src/services/security-policy";
+import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 
 export default defineEventHandler(async(event)=>{
-  const actor=requireEvolutionPermission(event,"data.read");
+  const actor=await requireGovernedEvolutionPermission(event,"data.read");
   const raw=getQuery(event);
   const statuses=typeof raw.statuses==="string"?raw.statuses.split(",").filter(Boolean):undefined;
   const input=OrganizationCapabilitySearchRequestSchema.parse({

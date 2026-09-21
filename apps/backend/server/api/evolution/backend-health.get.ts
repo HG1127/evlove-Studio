@@ -13,12 +13,13 @@ import {
   vercelReleaseWriteConfigured,
 } from "../../../src/server-env";
 import {getSecurityCapabilities} from "../../../src/services/security-policy";
-import {requireEvolutionPermission} from "../../../src/services/security-policy";
+import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 import {releaseApprovalStoreHealth} from "../../../src/services/release-approval-store";
+import {organizationMemberDirectoryHealth} from "../../../src/services/organization-member-directory";
 import {serverVaultHealth} from "../../../src/services/server-vault";
 
 export default defineEventHandler(async(event)=>{
-  requireEvolutionPermission(event,"data.read");
+  await requireGovernedEvolutionPermission(event,"data.read");
   const configured=serverSupabaseConfigured();
   let dataPlane={
     configured,
@@ -53,10 +54,16 @@ export default defineEventHandler(async(event)=>{
       };
     }
   }
-  const [vault,approval]=await Promise.all([serverVaultHealth(),releaseApprovalStoreHealth()]);
+  const [vault,approval,members]=await Promise.all([
+    serverVaultHealth(),
+    releaseApprovalStoreHealth(),
+    organizationMemberDirectoryHealth(),
+  ]);
   const security=getSecurityCapabilities();
   const governanceProductionSafe=security.productionSafe
     &&approval.databaseReady
+    &&members.databaseReady
+    &&members.activeAdmins>0
     &&(!vault.configured||vault.databaseReady);
   return EvolutionBackendHealthSchema.parse({
     checkedAt:new Date().toISOString(),
@@ -79,10 +86,11 @@ export default defineEventHandler(async(event)=>{
       vaultConfigured:vault.configured,
       vaultDatabaseReady:vault.databaseReady,
       approvalStoreReady:approval.databaseReady,
+      memberDirectoryReady:Boolean(members.databaseReady&&members.activeAdmins>0),
       productionSafe:governanceProductionSafe,
       workspaceId:security.workspaceId,
       checkedAt:new Date().toISOString(),
-      message:governanceProductionSafe?"Governance healthy.":"Governance requires Vault/data-plane/approval configuration.",
+      message:governanceProductionSafe?"Governance healthy.":"Governance requires active member directory + Vault/data-plane/approval configuration.",
     },
   });
 });

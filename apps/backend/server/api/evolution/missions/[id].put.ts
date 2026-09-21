@@ -2,10 +2,10 @@ import {createError,defineEventHandler,getRouterParam,readBody} from "nitro/h3";
 import {MissionEnvelopeSchema} from "@evolution/contracts";
 import {getServerProductionRuntime} from "../../../../src/services/production-runtime";
 import {assertClientMissionMutationSafe} from "../../../../src/services/mission-mutation-policy";
-import {requireEvolutionPermission} from "../../../../src/services/security-policy";
+import {requireGovernedEvolutionPermission} from "../../../../src/services/security-policy";
 
 export default defineEventHandler(async(event)=>{
-  requireEvolutionPermission(event,"mission.write");
+  await requireGovernedEvolutionPermission(event,"mission.write");
   const id=getRouterParam(event,"id");
   if(!id)throw createError({statusCode:400,statusMessage:"缺少 Mission id"});
   const envelope=MissionEnvelopeSchema.parse(await readBody(event));

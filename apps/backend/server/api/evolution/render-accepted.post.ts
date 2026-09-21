@@ -7,10 +7,10 @@ import {
 import {materializeAcceptedChampionPackage} from "@evolution/core";
 import {renderAcceptedProjectArtifacts} from "../../../src/services/server-artifact-renderer";
 import {getServerProductionRuntime} from "../../../src/services/production-runtime";
-import {requireEvolutionPermission} from "../../../src/services/security-policy";
+import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 
 export default defineEventHandler(async(event)=>{
-  requireEvolutionPermission(event,"target.write");
+  await requireGovernedEvolutionPermission(event,"target.write");
   const input=AcceptedArtifactRenderRequestSchema.parse(await readBody(event));
   const runtime=getServerProductionRuntime();
   const mission=await runtime.missions.get(input.missionId);

@@ -33,6 +33,7 @@ export const PublicReadinessSnapshotSchema=z.object({
     productionSafe:z.boolean(),
     vault:z.boolean(),
     approvalStore:z.boolean(),
+    memberDirectory:z.boolean(),
   }),
   connectors:z.object({configured:z.boolean(),fullLifecycle:z.boolean()}),
   targetProxy:z.object({run:z.boolean(),release:z.boolean()}),

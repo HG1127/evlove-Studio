@@ -3,10 +3,10 @@ import {createEvolutionEvent,GitAcceptedPublishRequestSchema} from "@evolution/c
 import {serverSupabaseConfigured} from "../../../src/server-env";
 import {publishAcceptedChampionToGit} from "../../../src/services/git-accepted-publisher";
 import {getServerProductionRuntime} from "../../../src/services/production-runtime";
-import {requireEvolutionPermission} from "../../../src/services/security-policy";
+import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 
 export default defineEventHandler(async(event)=>{
-  requireEvolutionPermission(event,"target.write");
+  await requireGovernedEvolutionPermission(event,"target.write");
   if(!serverSupabaseConfigured()){
     throw createError({statusCode:503,statusMessage:"Accepted Git publish requires configured Server Data Plane for Mission binding and durable audit"});
   }

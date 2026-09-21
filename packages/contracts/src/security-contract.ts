@@ -30,6 +30,47 @@ export const EvolutionActorSchema=z.object({
 });
 export type EvolutionActor=z.infer<typeof EvolutionActorSchema>;
 
+export const OrganizationMemberStatusSchema=z.enum(["active","suspended"]);
+export type OrganizationMemberStatus=z.infer<typeof OrganizationMemberStatusSchema>;
+
+export const OrganizationMemberRecordSchema=z.object({
+  workspaceId:z.string().min(1),
+  actorId:z.string().min(1).max(200),
+  role:EvolutionRoleSchema,
+  status:OrganizationMemberStatusSchema,
+  displayName:z.string().min(1).max(200).optional(),
+  note:z.string().max(1000).optional(),
+  createdBy:z.string().min(1),
+  createdAt:z.string(),
+  updatedAt:z.string(),
+  suspendedAt:z.string().optional(),
+});
+export type OrganizationMemberRecord=z.infer<typeof OrganizationMemberRecordSchema>;
+
+export const OrganizationMemberPutRequestSchema=z.object({
+  actorId:z.string().min(1).max(200),
+  role:EvolutionRoleSchema,
+  status:OrganizationMemberStatusSchema.default("active"),
+  displayName:z.string().min(1).max(200).optional(),
+  note:z.string().max(1000).optional(),
+});
+export type OrganizationMemberPutRequest=z.infer<typeof OrganizationMemberPutRequestSchema>;
+
+export const OrganizationMemberPutResponseSchema=z.object({
+  bootstrap:z.boolean().default(false),
+  member:OrganizationMemberRecordSchema,
+  message:z.string(),
+});
+export type OrganizationMemberPutResponse=z.infer<typeof OrganizationMemberPutResponseSchema>;
+
+export const OrganizationMemberListResponseSchema=z.object({
+  configured:z.boolean(),
+  workspaceId:z.string().optional(),
+  members:z.array(OrganizationMemberRecordSchema),
+  message:z.string(),
+});
+export type OrganizationMemberListResponse=z.infer<typeof OrganizationMemberListResponseSchema>;
+
 export const CredentialReferenceSchema=z.object({
   id:z.string(),
   provider:z.enum(["env","external-vault"]),
@@ -93,6 +134,7 @@ export const SecurityGovernanceHealthSchema=z.object({
   vaultConfigured:z.boolean(),
   vaultDatabaseReady:z.boolean(),
   approvalStoreReady:z.boolean(),
+  memberDirectoryReady:z.boolean().default(false),
   productionSafe:z.boolean(),
   workspaceId:z.string().optional(),
   checkedAt:z.string(),

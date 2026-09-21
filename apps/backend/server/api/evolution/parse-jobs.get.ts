@@ -2,12 +2,12 @@ import {defineEventHandler,getQuery} from "nitro/h3";
 import {SourceArtifactSchema,SourceParseListResponseSchema} from "@evolution/contracts";
 import {getServerArtifactStore} from "../../../src/services/artifact-runtime";
 import {getServerProductionRuntime} from "../../../src/services/production-runtime";
-import {requireEvolutionPermission} from "../../../src/services/security-policy";
+import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 
 const TTL_MS=7*24*60*60*1000;
 
 export default defineEventHandler(async(event)=>{
-  requireEvolutionPermission(event,"data.read");
+  await requireGovernedEvolutionPermission(event,"data.read");
   const sessionId=String(getQuery(event).sessionId??"").trim();
   const runtime=getServerProductionRuntime();
   const artifacts=getServerArtifactStore();
