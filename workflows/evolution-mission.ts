@@ -1,3 +1,4 @@
+import {sleep} from "workflow";
 import { EvolutionWorkflowRunInputSchema, type EvolutionWorkflowResult } from "@evolution/contracts";
 import {
   executeServerControlStep,
@@ -16,6 +17,7 @@ export async function evolutionMissionWorkflow(rawInput:unknown):Promise<Evoluti
     const plan=await planMissionStep(input,iteration);
     const execution=await executeServerControlStep(input,plan,iteration);
     if(execution.control==="stop"&&execution.result)return execution.result;
+    if(execution.control==="continue"&&execution.sleepMs)await sleep(execution.sleepMs);
   }
   return failLoopGuardStep(input,MAX_CONTROL_STEPS);
 }

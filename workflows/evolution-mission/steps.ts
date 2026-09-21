@@ -22,6 +22,7 @@ import { runServerMissionHoldout } from "../../apps/backend/src/services/server-
 import { runServerMissionArtifactAcceptance } from "../../apps/backend/src/services/server-artifact-acceptance";
 import { runServerMissionRelease } from "../../apps/backend/src/services/server-release-orchestration";
 import { runServerMissionReleaseReconciliation } from "../../apps/backend/src/services/server-release-reconciliation";
+import { nextProductionMonitorDelay } from "../../apps/backend/src/services/production-monitor";
 import { syncMissionCapabilities } from "../../apps/backend/src/services/organization-capability";
 import { publishAcceptedChampionToConfiguredGit } from "../../apps/backend/src/services/git-accepted-publisher";
 import { renderAcceptedProjectArtifacts } from "../../apps/backend/src/services/server-artifact-renderer";
@@ -131,7 +132,7 @@ export async function executeServerControlStep(
   input:EvolutionWorkflowRunInput,
   plan:ServerHarnessPlan,
   iteration:number,
-):Promise<{control:"continue"|"stop";result?:EvolutionWorkflowResult}>{
+):Promise<{control:"continue"|"stop";result?:EvolutionWorkflowResult;sleepMs?:number}>{
   "use step";
   const runtime=getServerProductionRuntime();
   const mission=await runtime.missions.get(input.missionId);
@@ -856,6 +857,7 @@ export async function executeServerControlStep(
 
   if(action==="reconcile-release"){
     const reconcileOutcome=await runServerMissionReleaseReconciliation(mission);
+    const monitor=nextProductionMonitorDelay(reconcileOutcome.project,reconcileOutcome.observation.checkedAt);
     await runtime.missions.save(reconcileOutcome.project);
     await runtime.events.append(createEvolutionEvent({
       id:`evt-${input.controlJobId}-release-reconcile-${iteration}`,
@@ -881,6 +883,9 @@ export async function executeServerControlStep(
         checkedAt:reconcileOutcome.observation.checkedAt,
         observationErrors:reconcileOutcome.observation.errors,
         reason:reconcileOutcome.reason,
+        nextObservationDelayMs:monitor?.delayMs,
+        productionTrend:monitor?.trend.status,
+        productionMonitorReason:monitor?.reason,
       },
     }));
     if(reconcileOutcome.control==="stop"){
@@ -897,9 +902,12 @@ export async function executeServerControlStep(
     await runtime.jobs.put(controlJob(input,{
       status:"running",
       startedAt:input.requestedAt,
-      progress:{percent:reconcileOutcome.disposition==="terminal-live-decision"?94:90,detail:reconcileOutcome.reason.slice(0,240)},
+      progress:{
+        percent:reconcileOutcome.disposition==="terminal-live-decision"?94:90,
+        detail:(monitor?.reason??reconcileOutcome.reason).slice(0,240),
+      },
     }));
-    return {control:"continue"};
+    return {control:"continue",sleepMs:monitor?.delayMs};
   }
 
   if(action==="wait-human"){
