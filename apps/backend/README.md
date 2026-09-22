@@ -20,6 +20,12 @@ Current release responsibilities are implemented through backend services rather
 
 On the current Vercel Hobby plan, the truthful production path is `Preview Gate → Promote → Production Health → Rollback`. The 5/20/50 Canary stages remain available only to providers that can actually supply progressive traffic evidence. Vercel write actions require an explicit server-side `VERCEL_RELEASE_TOKEN`; OIDC alone is intentionally insufficient.
 
+## Git Webhook Mission Binding
+
+GitHub webhooks are not trusted by HMAC + repository allowlist alone. Only the canonical accepted branch `evolve/<mission>/<candidate>` can be correlated to a Mission Event, and the server then reloads the Mission and requires the same connected repository, Gate F accepted Search Champion, and the already persisted Accepted Git writeback repository / branch / exact commit. `pull_request` events additionally bind to the persisted PR number when one exists. A same-name branch created outside the accepted writeback path is therefore not sufficient to create Mission audit events.
+
+Mission-bound GitHub webhook persistence is fail-closed: missing Mission state, binding drift, commit/PR drift, or Event Store failure returns an error rather than `accepted=true`. The Event id is deterministic from the GitHub event name plus the signed raw payload, so duplicate deliveries of the same body are de-duplicated by the Event Store. Non-Evolution branches may still be acknowledged at the webhook endpoint, but they are never attached to a Mission. Custom manual branch names remain publishable through the explicit Git API, but automatic Mission webhook correlation is intentionally limited to canonical Evolution branches.
+
 ## Connector Candidate Isolation
 
 `EVOLUTION_CONNECTORS_JSON` connectors must declare how `mutate` behaves. The safe default is `"mutationMode": "direct"`, which is read/snapshot capable but is **not** eligible for Candidate experiments even if `mutate` and `validate` endpoints exist. This prevents an experimental Candidate from silently mutating the live Agent / Workflow / SaaS object.

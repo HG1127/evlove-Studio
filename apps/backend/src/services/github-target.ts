@@ -56,6 +56,10 @@ function safeBranchPart(value:string){
   return value.replace(/[^A-Za-z0-9._-]+/g,"-").replace(/^-+|-+$/g,"").slice(0,80)||"item";
 }
 
+export function evolutionGitBranch(missionId:string,candidateId:string){
+  return "evolve/"+safeBranchPart(missionId)+"/"+safeBranchPart(candidateId);
+}
+
 function branchRef(branch:string){return "heads/"+branch;}
 function enc(value:string){return encodeURIComponent(value);}
 
@@ -204,7 +208,7 @@ async function mutate(input:Extract<GitTargetActionRequest,{action:"mutate"}>):P
   if(baseSha!==input.expectedBaseSha){
     throw new Error(`Base branch moved: ${baseSha??"unknown"} != expected ${input.expectedBaseSha}`);
   }
-  const branch=input.branch??`evolve/${safeBranchPart(input.missionId)}/${safeBranchPart(input.candidateId)}`;
+  const branch=input.branch??evolutionGitBranch(input.missionId,input.candidateId);
   const existingBranchHead=await branchHead(repo,branch);
   const parent=await getCommit(repo,input.expectedBaseSha);
   const baseTree=nestedString(parent,"tree","sha");
