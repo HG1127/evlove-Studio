@@ -103,6 +103,13 @@ describe("server Connector Target execution",()=>{
     expect(execute).not.toHaveBeenCalled();
   });
 
+  it("rejects staged-version mutation that reuses the base versionRef",async()=>{
+    const execute=vi.fn(async(input:ConnectorActionRequest)=>response(input,{versionRef:"v42"}));
+    await expect(stageServerConnectorCandidate(project(),candidate(),execute,()=>undefined))
+      .rejects.toThrow(/must return a new versionRef/);
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
   it("does not invent verified evidence when Connector omits a requested test result",async()=>{
     const execute=vi.fn(async(input:ConnectorActionRequest)=>response(input,{output:{runs:[]}}));
     const runs=await runServerConnectorTargetBatch(project(),cases,undefined,execute);

@@ -118,6 +118,11 @@ export async function stageServerConnectorCandidate(
   });
   if(!mutation.ok)throw new Error("Connector Candidate mutate did not succeed");
   if(!mutation.versionRef)throw new Error("Connector Candidate mutate must return exact versionRef");
+  if(mutation.versionRef===baseVersionRef){
+    throw new Error(
+      `Connector staged-version mutate must return a new versionRef; received base version ${baseVersionRef}`,
+    );
+  }
   return{
     ...candidate,
     connectorBinding:{

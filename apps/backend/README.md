@@ -24,7 +24,7 @@ On the current Vercel Hobby plan, the truthful production path is `Preview Gate 
 
 `EVOLUTION_CONNECTORS_JSON` connectors must declare how `mutate` behaves. The safe default is `"mutationMode": "direct"`, which is read/snapshot capable but is **not** eligible for Candidate experiments even if `mutate` and `validate` endpoints exist. This prevents an experimental Candidate from silently mutating the live Agent / Workflow / SaaS object.
 
-A Connector may participate in Candidate generation and validation only when it explicitly declares `"mutationMode": "staged-version"`. In that mode, `mutate` must create or update an isolated candidate version, return a new exact `versionRef`, and must not change the live production target. Production changes remain separate `deploy` / `observe` / `rollback` lifecycle operations.
+A Connector may participate in Candidate generation and validation only when it explicitly declares `"mutationMode": "staged-version"`. In that mode, `mutate` must create or update an isolated candidate version, return a new exact `versionRef` that differs from `expectedVersionRef`, and must not change the live production target. The server rejects a staged mutation that reuses the base version id. Production changes remain separate `deploy` / `observe` / `rollback` lifecycle operations.
 
 Example:
 
