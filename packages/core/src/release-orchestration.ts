@@ -10,6 +10,41 @@ export type DurableReleaseAction =
   |"promote"
   |"rollback";
 
+export function expectedReleaseTrafficPercent(action:DurableReleaseAction){
+  if(action==="canary-5")return 5;
+  if(action==="canary-20")return 20;
+  if(action==="canary-50")return 50;
+  if(action==="promote")return 100;
+  return 0;
+}
+
+function assertReleaseReceiptSemantics(args:{
+  project:EvolveProject;
+  action:DurableReleaseAction;
+  result:ReleaseAdapterResult;
+}){
+  const expectedTraffic=expectedReleaseTrafficPercent(args.action);
+  if(args.result.trafficPercent!==expectedTraffic){
+    throw new Error(`Release receipt trafficPercent ${args.result.trafficPercent} 与 ${args.action} 期望 ${expectedTraffic} 不一致`);
+  }
+  if(projectReleaseMode(args.project)==="preview-promote"
+    &&["canary-5","canary-20","canary-50"].includes(args.action)){
+    throw new Error(`preview-promote Release Target 不允许 ${args.action} Canary 回执`);
+  }
+  if(args.result.ok){
+    if(args.result.observationStatus==="healthy"&&args.result.healthy!==true){
+      throw new Error("Release receipt 健康状态矛盾：observationStatus=healthy 但 healthy!=true");
+    }
+    if(args.result.observationStatus==="unhealthy"&&args.result.healthy===true){
+      throw new Error("Release receipt 健康状态矛盾：observationStatus=unhealthy 但 healthy=true");
+    }
+  }
+  const stableDeploymentId=args.project.release.stableDeploymentId;
+  if(stableDeploymentId&&args.result.stableDeploymentId&&args.result.stableDeploymentId!==stableDeploymentId){
+    throw new Error("Release receipt stableDeploymentId 与绑定 stable Deployment 不一致");
+  }
+}
+
 export function currentReleaseCandidate(project:EvolveProject):Candidate|undefined{
   const id=project.experimentRun.winnerId??project.searchChampion?.candidate?.id;
   const champion=project.searchChampion?.candidate;
@@ -83,6 +118,7 @@ export function applyReleaseResultToProject(args:{
   const effective=args.result.effectiveAction??args.requestedAction;
   if(!["shadow","canary-5","canary-20","canary-50","promote","rollback"].includes(effective))throw new Error(`Unsupported durable release action: ${effective}`);
   if(effective!==args.requestedAction)throw new Error(`Release Provider effectiveAction ${effective} 与请求 ${args.requestedAction} 不一致`);
+  assertReleaseReceiptSemantics({project:args.project,action:effective as DurableReleaseAction,result:args.result});
   if(args.result.evidenceMode!=="live")throw new Error("Release Provider 未返回 live evidence");
   if(!args.result.deploymentId||!args.result.observedAt)throw new Error("Release receipt 缺少 deploymentId / observedAt");
   if(effective!=="rollback"&&!hasExactArtifactHashes(args.candidate,args.result)){

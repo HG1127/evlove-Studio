@@ -82,6 +82,42 @@ describe("durable release orchestration",()=>{
     })).toThrow(/deploymentId.*不一致/);
   });
 
+  it("rejects release receipts whose traffic contradicts the effective action",()=>{
+    const {project,candidate}=httpFixture();
+    const bad={...httpReceipt("shadow"),trafficPercent:100};
+    expect(()=>applyReleaseResultToProject({project,candidate,requestedAction:"shadow",result:bad}))
+      .toThrow(/trafficPercent 100.*期望 0/);
+  });
+
+  it("rejects fake Canary receipts from preview-promote targets",()=>{
+    const {project,candidate}=httpFixture();
+    const bad={
+      ...httpReceipt("shadow"),
+      effectiveAction:"canary-20" as const,
+      trafficPercent:20,
+      environment:"production-canary",
+    };
+    expect(()=>applyReleaseResultToProject({project,candidate,requestedAction:"canary-20",result:bad}))
+      .toThrow(/preview-promote.*不允许 canary-20/);
+  });
+
+  it("rejects stable deployment drift in external provider receipts",()=>{
+    const {project,candidate}=httpFixture();
+    const bad={...httpReceipt("shadow"),stableDeploymentId:"other-stable"};
+    expect(()=>applyReleaseResultToProject({project,candidate,requestedAction:"shadow",result:bad}))
+      .toThrow(/stableDeploymentId.*不一致/);
+  });
+
+  it("rejects contradictory successful health receipts but preserves ok=false uncertainty semantics",()=>{
+    const {project,candidate}=httpFixture();
+    const contradictory={...httpReceipt("shadow"),healthy:true,observationStatus:"unhealthy" as const};
+    expect(()=>applyReleaseResultToProject({project,candidate,requestedAction:"shadow",result:contradictory}))
+      .toThrow(/健康状态矛盾/);
+    const uncertain={...httpReceipt("shadow"),ok:false,healthy:true,observationStatus:"healthy" as const};
+    const settled=applyReleaseResultToProject({project,candidate,requestedAction:"shadow",result:uncertain});
+    expect(settled.release).toMatchObject({healthy:false,observationStatus:"unhealthy"});
+  });
+
   it("advances only the explicitly bound Candidate deployment",()=>{
     const {project,candidate}=fixture();
     expect(nextDurableReleaseAction(project)).toBe("shadow");

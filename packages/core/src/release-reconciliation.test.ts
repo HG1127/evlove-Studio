@@ -90,6 +90,19 @@ describe("release reconciliation",()=>{
     expect(result.reason).toContain("Artifact Hash");
   });
 
+  it("fails closed when HTTP Observe reports impossible traffic or stable deployment drift",()=>{
+    const x=httpFixture();
+    const wrongTraffic={...httpObserved("promote"),trafficPercent:20};
+    const traffic=reconcileHttpReleaseObservation({project:x.project,candidate:x.candidate,observation:wrongTraffic});
+    expect(traffic.disposition).toBe("manual-check");
+    expect(traffic.reason).toContain("trafficPercent");
+
+    const wrongStable={...httpObserved("promote"),stableDeploymentId:"http-other-stable"};
+    const stable=reconcileHttpReleaseObservation({project:x.project,candidate:x.candidate,observation:wrongStable});
+    expect(stable.disposition).toBe("manual-check");
+    expect(stable.reason).toContain("stableDeploymentId");
+  });
+
   it("keeps an explicit rollback recovery intent when Observe proves the rollback did not take effect",()=>{
     const x=httpFixture();
     x.project.release={
