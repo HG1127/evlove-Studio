@@ -87,8 +87,8 @@ describe("server workflow routing",()=>{
     await getServerWorkflowCapabilities(true);
     const online={
       ...demoProject,
-      targetConnection:{adapter:"http",connectionId:"http-prod",status:"connected",label:"HTTP Target"},
-      releaseTarget:{provider:"http",mode:"preview-promote",status:"connected",label:"HTTP Release",healthPath:"/"},
+      targetConnection:{adapter:"artifact",connectionId:"artifact",status:"connected",label:"Artifact Target"},
+      releaseTarget:{provider:"http",mode:"preview-promote",status:"connected",label:"HTTP Release",connectionId:"http-prod",healthPath:"/"},
       gates:demoProject.gates.map((gate)=>gate.id==="release-ready"?{...gate,status:"approved" as const}:gate),
     } as EvolveProject;
     expect(await shouldUseServerAutoPilot(online)).toBe(true);
@@ -111,11 +111,22 @@ describe("server workflow routing",()=>{
     await getServerWorkflowCapabilities(true);
     const httpMission={
       ...demoProject,
-      targetConnection:{adapter:"http",connectionId:"http-prod",status:"connected",label:"HTTP Target"},
-      releaseTarget:{provider:"http",mode:"preview-promote",status:"connected",label:"HTTP Release",healthPath:"/"},
+      targetConnection:{adapter:"artifact",connectionId:"artifact",status:"connected",label:"Artifact Target"},
+      releaseTarget:{provider:"http",mode:"preview-promote",status:"connected",label:"HTTP Release",connectionId:"http-prod",healthPath:"/"},
       gates:demoProject.gates.map((gate)=>gate.id==="release-ready"?{...gate,status:"approved" as const}:gate),
     } as EvolveProject;
     expect(await shouldUseServerAutoPilot(httpMission)).toBe(false);
+  });
+
+  it("keeps an HTTP validation Runner offline unless an explicit HTTP Release target is connected",async()=>{
+    const offlineRunner={
+      ...demoProject,
+      targetConnection:{adapter:"http",connectionId:"runner-gateway",status:"connected",label:"HTTP Runner"},
+      releaseTarget:undefined,
+    } as EvolveProject;
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(capabilities),{status:200,headers:{"Content-Type":"application/json"}})));
+    await getServerWorkflowCapabilities(true);
+    expect(await shouldUseServerAutoPilot(offlineRunner)).toBe(capabilities.closure.offlineFullAuto);
   });
 
   it("hands a Git repository Mission to Durable AutoPilot only when the server Git Target is configured",async()=>{

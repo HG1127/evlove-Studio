@@ -22,9 +22,11 @@ export async function executeServerReleaseProvider(
   if(projectUsesHttpRelease(project)){
     const candidate=currentReleaseCandidate(project);
     if(!candidate)throw new Error("HTTP Release 找不到 exact Candidate");
+    const connectionId=project.releaseTarget?.connectionId;
+    if(!connectionId)throw new Error("HTTP Release 缺少独立 releaseTarget.connectionId");
     return releaseHttpTarget({
       projectId:project.id,
-      connectionId:project.targetConnection.connectionId,
+      connectionId,
       candidate,
       action:args.action,
     });

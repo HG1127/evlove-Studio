@@ -25,8 +25,8 @@ describe("server HTTP release composition",()=>{
     } as unknown as Candidate;
     const project={
       id:"http-release-mission",
-      targetConnection:{adapter:"http",connectionId:"release-http",status:"connected",label:"HTTP Target"},
-      releaseTarget:{provider:"http",mode:"preview-promote",status:"connected",label:"HTTP Release",healthPath:"/"},
+      targetConnection:{adapter:"artifact",connectionId:"artifact-runtime",status:"connected",label:"Artifact Target"},
+      releaseTarget:{provider:"http",mode:"preview-promote",status:"connected",label:"HTTP Release",connectionId:"release-http",healthPath:"/"},
       experimentRun:{winnerId:"C1"},
       candidates:[candidate],
       searchChampion:{candidate},

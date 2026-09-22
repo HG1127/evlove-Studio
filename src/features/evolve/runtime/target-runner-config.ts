@@ -1,7 +1,7 @@
 // 真实 Target Runner（HTTP Target Gateway）运行时配置。
 // 原 Next 版靠服务端环境变量；浏览器端改为设置页可配置并持久化到 localStorage。
 // 内置 Runner 随应用 HTTP 服务加载，无需单独启动进程或配置端口。
-import type { EvolveProject } from "../schemas";
+import { TargetProxyCapabilitiesSchema, type EvolveProject, type TargetProxyCapabilities } from "../schemas";
 
 export type RunnerGatewayConfig = {
   enabled: boolean;
@@ -69,6 +69,14 @@ export function isRunnerGatewayReady(config: RunnerGatewayConfig = getRunnerGate
   return config.enabled && Boolean(config.runUrl.trim());
 }
 
+export async function getTargetProxyCapabilities(timeoutMs=40000):Promise<TargetProxyCapabilities>{
+  const res=await fetch("/api/evolution/target-capabilities",{
+    signal:AbortSignal.timeout(Math.max(3000,Math.min(timeoutMs,40000))),
+  });
+  if(!res.ok)throw new Error(`Server Target Proxy 不可用（HTTP ${res.status}）`);
+  return TargetProxyCapabilitiesSchema.parse(await res.json());
+}
+
 /** 项目级「断开 Runner」opt-out 标记：避免启动迁移把主动断开的项目又连回去。 */
 export function markRunnerDetached(projectId: string, detached: boolean) {
   try {
@@ -84,11 +92,7 @@ export function isRunnerDetachedByUser(projectId: string): boolean {
 export async function testRunnerGateway(config: RunnerGatewayConfig): Promise<{ ok: boolean; message: string }> {
   if(!config.enabled)return {ok:false,message:"Server Target Proxy 当前未启用"};
   try {
-    const res = await fetch("/api/evolution/target-capabilities", { signal: AbortSignal.timeout(Math.max(3000, Math.min(config.timeoutMs, 40000))) });
-    if(!res.ok) {
-      return {ok:false,message:`Server Target Proxy 不可用（HTTP ${res.status}）`};
-    }
-    const data=await res.json();
+    const data=await getTargetProxyCapabilities(config.timeoutMs);
     const ready=data.runConfigured===true;
     window.localStorage.setItem("evolve-runner-capabilities",JSON.stringify({url:"/api/evolution/target-capabilities",capabilities:data,checkedAt:Date.now()}));
     return {

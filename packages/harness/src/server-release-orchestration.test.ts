@@ -20,8 +20,8 @@ function fixture(){
 
 function httpFixture(){
   const x=fixture();
-  x.project.targetConnection={adapter:"http",connectionId:"release-http",status:"connected",label:"HTTP Target"};
-  x.project.releaseTarget={provider:"http",mode:"preview-promote",status:"connected",label:"HTTP Release",healthPath:"/"};
+  x.project.targetConnection={adapter:"artifact",connectionId:"artifact",status:"connected",label:"Artifact Target"};
+  x.project.releaseTarget={provider:"http",mode:"preview-promote",status:"connected",label:"HTTP Release",connectionId:"release-http",healthPath:"/"};
   x.project.release={...x.project.release,deploymentId:undefined,stableDeploymentId:"http-stable"};
   return x;
 }

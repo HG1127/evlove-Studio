@@ -137,11 +137,12 @@ describe("五步流程的证据与前置关系", () => {
     expect(deriveWorkflowGates(p).find((gate)=>gate.id==="E")?.state).toBe("passed");
   });
 
-  it("http target keeps the explicit production release branch after Artifact Ready", () => {
+  it("explicit HTTP release target keeps the production release branch after Artifact Ready", () => {
     const p = project();
     markTailPrerequisites(p);
     const candidate = CandidateSchema.parse({ id:"online-winner",name:"线上候选",change:"ready",status:"passed",artifactBuildStatus:"ready",artifactSnapshots:[CandidateArtifactSnapshotSchema.parse({id:"snap-online",sourceArtifactId:"demo-prompt",name:"app.txt",mimeType:"text/plain",content:"ready",contentHash:"hash-online",createdAt:"now"})] });
     p.targetConnection = { adapter:"http", connectionId:"live", status:"connected", label:"Production Runner" };
+    p.releaseTarget={provider:"http",mode:"preview-promote",status:"connected",label:"HTTP Release",connectionId:"release-http",healthPath:"/"};
     p.candidates=[candidate];
     p.experimentRun={id:"exp-online",status:"completed",winnerId:candidate.id,candidateResults:[]};
     p.validationRun={id:"val-online",status:"completed",candidateId:candidate.id,recommendation:"release",checks:[],runs:[],baselineRuns:[]};

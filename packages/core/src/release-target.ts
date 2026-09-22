@@ -5,10 +5,7 @@ export function projectUsesVercelRelease(project:EvolveProject){
 }
 
 export function projectUsesHttpRelease(project:EvolveProject){
-  if(project.targetConnection?.adapter!=="http")return false;
-  return project.releaseTarget?.provider==="http"
-    ||!project.releaseTarget
-    ||project.releaseTarget.provider==="none";
+  return project.releaseTarget?.provider==="http"&&project.releaseTarget.status==="connected";
 }
 
 export function projectUsesConnectorRelease(project:EvolveProject){

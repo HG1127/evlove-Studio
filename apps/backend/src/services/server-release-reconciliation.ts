@@ -30,10 +30,12 @@ export async function runServerMissionReleaseReconciliation(project:EvolveProjec
     };
   }
   if(projectUsesHttpRelease(project)){
+    const connectionId=project.releaseTarget?.connectionId;
+    if(!connectionId)throw new Error("HTTP Release Observe 缺少独立 releaseTarget.connectionId");
     const outcome=await runServerHttpReleaseReconciliation(project,{
       observe:({candidate,deploymentId,stableDeploymentId,expectedArtifactHashes,recoveryAction,healthPath})=>observeHttpTarget({
         projectId:project.id,
-        connectionId:project.targetConnection.connectionId,
+        connectionId,
         candidate,
         deploymentId,
         stableDeploymentId,

@@ -866,6 +866,7 @@ export const ReleaseTargetSchema = z.object({
   mode: z.enum(["progressive", "preview-promote"]).default("progressive"),
   status: z.enum(["connected", "not-configured", "error"]).default("not-configured"),
   label: z.string().default("未连接发布平台"),
+  connectionId: z.string().min(1).optional(),
   projectId: z.string().optional(),
   projectName: z.string().optional(),
   productionUrl: z.string().url().optional(),

@@ -1,6 +1,6 @@
 import { describe,expect,it } from "vitest";
 import type { EvolveProject, ReleaseState } from "@evolution/contracts";
-import { beginReleaseCycle, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, projectReleaseMode, projectUsesConnectorRelease } from "./release-target";
+import { beginReleaseCycle, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, projectReleaseMode, projectUsesConnectorRelease, projectUsesHttpRelease } from "./release-target";
 
 const baseRelease:ReleaseState={
   status:"idle",
@@ -20,12 +20,26 @@ describe("release target domain",()=>{
     expect(projectReleaseMode(project)).toBe("preview-promote");
   });
 
-  it("keeps legacy HTTP target release compatible when no dedicated release target exists",()=>{
+  it("does not mistake an HTTP validation Runner for a Production Release target",()=>{
     const project={
-      targetConnection:{adapter:"http"},
+      targetConnection:{adapter:"http",connectionId:"runner-gateway",status:"connected"},
     } as EvolveProject;
-    expect(projectHasOnlineReleaseTarget(project)).toBe(true);
+    expect(projectUsesHttpRelease(project)).toBe(false);
+    expect(projectHasOnlineReleaseTarget(project)).toBe(false);
     expect(projectReleaseMode(project)).toBe("progressive");
+  });
+
+  it("keeps explicit HTTP Release independent from the validation target",()=>{
+    const project={
+      targetConnection:{adapter:"artifact",connectionId:"artifact",status:"connected"},
+      releaseTarget:{
+        provider:"http",mode:"preview-promote",status:"connected",
+        label:"HTTP Release",connectionId:"http-release-proxy",healthPath:"/",
+      },
+    } as EvolveProject;
+    expect(projectUsesHttpRelease(project)).toBe(true);
+    expect(projectHasOnlineReleaseTarget(project)).toBe(true);
+    expect(projectReleaseMode(project)).toBe("preview-promote");
   });
 
   it("treats an explicitly configured Connector as an online release target",()=>{
@@ -71,6 +85,7 @@ describe("release target domain",()=>{
   it("requires a real live terminal release decision for online closure",()=>{
     const project={
       targetConnection:{adapter:"http"},
+      releaseTarget:{provider:"http",mode:"preview-promote",status:"connected",label:"HTTP Release",connectionId:"http-release-proxy",healthPath:"/"},
       experimentRun:{winnerId:"candidate-live"},
       release:{...baseRelease,status:"promoted",candidateId:"candidate-live",evidenceMode:"live",healthy:true,observationStatus:"healthy"},
     } as unknown as EvolveProject;

@@ -106,8 +106,8 @@ it("skips fake canary stages for a Vercel preview-promote release target", () =>
   expect(steps.find((step) => step.id === "21")?.state).toBe("ready");
 
   const progressive = project();
-  progressive.releaseTarget = undefined;
-  progressive.targetConnection = { ...progressive.targetConnection, adapter: "http" };
+  progressive.releaseTarget = { provider:"http",mode:"progressive",status:"connected",label:"HTTP Progressive Release",connectionId:"http-release-proxy",healthPath:"/" };
+  progressive.targetConnection = { ...progressive.targetConnection, adapter: "artifact", connectionId:"artifact" };
   progressive.release = { ...progressive.release, status: "shadow", trafficPercent: 0, healthy: true, observationStatus: "healthy" };
   expect(deriveWorkflowSteps(progressive).find((step) => step.id === "20")?.state).toBe("ready");
 });
