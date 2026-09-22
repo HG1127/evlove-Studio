@@ -6,7 +6,6 @@ import {
   type EvolveProject,
   type OutcomeArm,
   type OutcomeMetricSampleInput,
-  type VercelDeploymentSummary,
   type VercelReleaseObservation,
 } from "@evolution/contracts";
 
@@ -54,6 +53,14 @@ export type OutcomeTelemetryCollection={
   requestCount:number;
   samples:OutcomeMetricSampleInput[];
   warnings:string[];
+};
+
+export type OutcomeTelemetryObservationContext={
+  observedAt:string;
+  deploymentUrls?:Record<string,string|undefined>;
+  trafficPercent?:number;
+  rollingReleaseActive?:boolean;
+  rollingStageIndex?:number;
 };
 
 const ALLOWED_TOKENS=new Set([
@@ -152,25 +159,35 @@ type Target={
   deploymentUrl?:string;
 };
 
-function deploymentUrl(id:string,observation:VercelReleaseObservation){
-  const summaries:Array<VercelDeploymentSummary|undefined>=[
-    observation.productionDeployment,
-    observation.boundDeployment,
-  ];
-  return summaries.find((item)=>item?.id===id)?.url;
+function observationContext(
+  observation:VercelReleaseObservation|OutcomeTelemetryObservationContext,
+):OutcomeTelemetryObservationContext{
+  if("checkedAt" in observation){
+    const deploymentUrls:Record<string,string|undefined>={};
+    if(observation.productionDeployment)deploymentUrls[observation.productionDeployment.id]=observation.productionDeployment.url;
+    if(observation.boundDeployment)deploymentUrls[observation.boundDeployment.id]=observation.boundDeployment.url;
+    return {
+      observedAt:observation.checkedAt,
+      deploymentUrls,
+      trafficPercent:observation.rollingRelease?.currentPercentage,
+      rollingReleaseActive:observation.rollingRelease?.active,
+      rollingStageIndex:observation.rollingRelease?.currentStageIndex,
+    };
+  }
+  return observation;
 }
 
-function telemetryTargets(project:EvolveProject,observation:VercelReleaseObservation):Target[]{
+function telemetryTargets(project:EvolveProject,observation:OutcomeTelemetryObservationContext):Target[]{
   const stableId=project.release.stableDeploymentId;
   const candidateId=project.release.deploymentId;
   if(!stableId&&!candidateId)return[];
   if(stableId&&candidateId&&stableId===candidateId){
     const arm:OutcomeArm=project.release.status==="rolled-back"?"stable":"candidate";
-    return [{arm,deploymentId:stableId,deploymentUrl:deploymentUrl(stableId,observation)}];
+    return [{arm,deploymentId:stableId,deploymentUrl:observation.deploymentUrls?.[stableId]}];
   }
   return [
-    ...(stableId?[{arm:"stable" as const,deploymentId:stableId,deploymentUrl:deploymentUrl(stableId,observation)}]:[]),
-    ...(candidateId?[{arm:"candidate" as const,deploymentId:candidateId,deploymentUrl:deploymentUrl(candidateId,observation)}]:[]),
+    ...(stableId?[{arm:"stable" as const,deploymentId:stableId,deploymentUrl:observation.deploymentUrls?.[stableId]}]:[]),
+    ...(candidateId?[{arm:"candidate" as const,deploymentId:candidateId,deploymentUrl:observation.deploymentUrls?.[candidateId]}]:[]),
   ];
 }
 
@@ -212,7 +229,7 @@ function liveOutcomeStage(project:EvolveProject){
 
 async function pullSourceTarget(args:{
   project:EvolveProject;
-  observation:VercelReleaseObservation;
+  observation:OutcomeTelemetryObservationContext;
   source:OutcomeTelemetrySource;
   target:Target;
 }){
@@ -264,7 +281,7 @@ async function pullSourceTarget(args:{
       }
       samples.push({
         id:telemetryId([
-          project.id,observation.checkedAt,source.id,target.arm,target.deploymentId,metric.metricKey,metric.segment,
+          project.id,observation.observedAt,source.id,target.arm,target.deploymentId,metric.metricKey,metric.segment,
         ]),
         candidateId:project.release.candidateId,
         deploymentId:target.deploymentId,
@@ -276,12 +293,13 @@ async function pullSourceTarget(args:{
         unit:metric.unit,
         segment:metric.segment,
         source:"outcome-telemetry:"+source.id,
-        observedAt:observation.checkedAt,
+        observedAt:observation.observedAt,
         metadata:{
           telemetrySourceId:source.id,
           releaseStatus:project.release.status,
-          trafficPercent:observation.rollingRelease?.currentPercentage??project.release.trafficPercent,
-          rollingReleaseActive:observation.rollingRelease?.active??false,
+          trafficPercent:observation.trafficPercent??project.release.trafficPercent,
+          rollingReleaseActive:observation.rollingReleaseActive??false,
+          rollingStageIndex:observation.rollingStageIndex,
           deploymentId:target.deploymentId,
           arm:target.arm,
         },
@@ -299,8 +317,9 @@ async function pullSourceTarget(args:{
 
 export async function collectConfiguredOutcomeTelemetry(
   project:EvolveProject,
-  observation:VercelReleaseObservation,
+  rawObservation:VercelReleaseObservation|OutcomeTelemetryObservationContext,
 ):Promise<OutcomeTelemetryCollection>{
+  const observation=observationContext(rawObservation);
   const state=getOutcomeTelemetryConfigState();
   const metricCount=state.sources.reduce((sum,source)=>sum+source.metrics.length,0);
   if(!state.ready){

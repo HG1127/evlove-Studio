@@ -1,7 +1,7 @@
 // @vitest-environment node
 import {describe,expect,it} from "vitest";
-import type {Candidate,EvolveProject,VercelReleaseObservation} from "@evolution/contracts";
-import {buildReleaseOutcomeBatch} from "./release-outcome-telemetry";
+import type {Candidate,EvolveProject,ReleaseAdapterResult,VercelReleaseObservation} from "@evolution/contracts";
+import {buildHttpReleaseOutcomeBatch,buildReleaseOutcomeBatch} from "./release-outcome-telemetry";
 
 function fixture(){
   const candidate={id:"C1",name:"candidate",change:"x",patches:[],artifactSnapshots:[]} as unknown as Candidate;
@@ -82,5 +82,32 @@ describe("release outcome telemetry",()=>{
     const batch=buildReleaseOutcomeBatch(fixture(),observed);
     expect(batch?.samples.some((sample)=>sample.deploymentId==="dpl-unknown")).toBe(false);
     expect(batch?.samples.every((sample)=>sample.arm==="candidate")).toBe(true);
+  });
+
+  it("maps an HTTP live receipt into provider-neutral health and latency samples",()=>{
+    const project=fixture();
+    project.release.status="promoted";
+    project.release.trafficPercent=100;
+    const receipt={
+      ok:true,trafficPercent:100,note:"healthy",healthy:true,kpis:[],evidenceMode:"live",
+      effectiveAction:"promote",observationStatus:"healthy",deploymentId:"dpl-candidate",stableDeploymentId:"dpl-stable",
+      artifactHashes:[],environment:"production",observedAt:"2026-09-21T03:10:00.000Z",latencyMs:75,sampleSize:10,windowMinutes:2,
+    } as ReleaseAdapterResult;
+    const batch=buildHttpReleaseOutcomeBatch(project,receipt);
+    expect(batch?.samples).toEqual(expect.arrayContaining([
+      expect.objectContaining({arm:"candidate",deploymentId:"dpl-candidate",metricKey:"health_ready",value:1,source:"http-release-observation"}),
+      expect.objectContaining({arm:"candidate",deploymentId:"dpl-candidate",metricKey:"latency_ms",value:75,source:"http-release-observation"}),
+    ]));
+    expect(batch?.samples.every((sample)=>sample.metadata?.provider==="http")).toBe(true);
+    expect(batch?.samples.every((sample)=>sample.metadata?.sampleSize===10)).toBe(true);
+  });
+
+  it("does not invent an HTTP outcome arm for an unknown deployment receipt",()=>{
+    const project=fixture();
+    const receipt={
+      ok:true,trafficPercent:100,note:"healthy",healthy:true,kpis:[],evidenceMode:"live",
+      effectiveAction:"promote",deploymentId:"other-deployment",observedAt:"2026-09-21T03:10:00.000Z",
+    } as ReleaseAdapterResult;
+    expect(buildHttpReleaseOutcomeBatch(project,receipt)).toBeUndefined();
   });
 });

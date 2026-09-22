@@ -3,7 +3,7 @@ import {projectUsesHttpRelease,projectUsesVercelRelease} from "@evolution/core";
 import {runServerHttpReleaseReconciliation,runServerReleaseReconciliation} from "@evolution/harness";
 import {observeHttpTarget} from "./http-target-gateway";
 import {observeVercelReleaseReality} from "./vercel-release";
-import {recordReleaseOutcomeObservation} from "./release-outcome-telemetry";
+import {recordHttpReleaseOutcomeObservation,recordReleaseOutcomeObservation} from "./release-outcome-telemetry";
 
 export async function runServerMissionReleaseReconciliation(project:EvolveProject){
   if(projectUsesHttpRelease(project)){
@@ -19,6 +19,12 @@ export async function runServerMissionReleaseReconciliation(project:EvolveProjec
         healthPath,
       }),
     });
+    if(outcome.observation){
+      const recorded=await recordHttpReleaseOutcomeObservation(outcome.project,outcome.observation).catch(()=>undefined);
+      if(recorded?.telemetry?.warnings.length){
+        console.warn("[outcome-telemetry] HTTP release observation completed with warnings",recorded.telemetry.warnings);
+      }
+    }
     return{
       ...outcome,
       provider:"http" as const,

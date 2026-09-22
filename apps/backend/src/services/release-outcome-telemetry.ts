@@ -3,6 +3,7 @@ import type {
   EvolveProject,
   OutcomeMetricBatchRequest,
   OutcomeMetricSampleInput,
+  ReleaseAdapterResult,
   VercelReleaseHealth,
   VercelReleaseObservation,
 } from "@evolution/contracts";
@@ -123,6 +124,94 @@ export function buildReleaseOutcomeBatch(
   };
 }
 
+export function buildHttpReleaseOutcomeBatch(
+  project:EvolveProject,
+  observation:ReleaseAdapterResult,
+):OutcomeMetricBatchRequest|undefined{
+  const deploymentId=observation.deploymentId;
+  const observedAt=observation.observedAt;
+  const arm=armForDeployment(project,deploymentId);
+  if(!deploymentId||!observedAt||!arm)return undefined;
+  const metadata={
+    provider:"http",
+    releaseStatus:project.release.status,
+    trafficPercent:observation.trafficPercent,
+    effectiveAction:observation.effectiveAction,
+    observationStatus:observation.observationStatus,
+    sampleSize:observation.sampleSize,
+    windowMinutes:observation.windowMinutes,
+    deploymentId,
+  };
+  const common={
+    candidateId:project.release.candidateId,
+    deploymentId,
+    arm,
+    source:"http-release-observation",
+    observedAt,
+    metadata,
+  };
+  const samples:OutcomeMetricSampleInput[]=[{
+    ...common,
+    id:sampleId([project.id,observedAt,deploymentId,"health_ready","all","http"]),
+    metricKey:"health_ready",
+    metricKind:"safety",
+    direction:"higher",
+    value:observation.ok&&observation.healthy===true?1:0,
+    unit:"ratio",
+    segment:"all",
+  }];
+  if(observation.latencyMs!==undefined){
+    samples.push({
+      ...common,
+      id:sampleId([project.id,observedAt,deploymentId,"latency_ms","all","http"]),
+      metricKey:"latency_ms",
+      metricKind:"latency",
+      direction:"lower",
+      value:observation.latencyMs,
+      unit:"ms",
+      segment:"all",
+    });
+  }
+  return{missionId:project.id,candidateId:project.release.candidateId,samples};
+}
+
+async function persistOutcomeSamples(args:{
+  project:EvolveProject;
+  healthBatch?:OutcomeMetricBatchRequest;
+  telemetry:Awaited<ReturnType<typeof collectConfiguredOutcomeTelemetry>>;
+}){
+  const samples=[...new Map([
+    ...(args.healthBatch?.samples??[]),
+    ...args.telemetry.samples,
+  ].map((sample)=>[sample.id!,sample])).values()];
+  if(!samples.length)return {
+    recorded:false,inserted:0,
+    reason:args.telemetry.warnings.length
+      ?"no-outcome-samples; telemetry warnings: "+args.telemetry.warnings.join("; ")
+      :"no-bound-stable-or-candidate-deployment",
+    telemetry:{...args.telemetry,sampleCount:0},
+  };
+  let inserted=0;
+  const messages:string[]=[];
+  for(let offset=0;offset<samples.length;offset+=1000){
+    const result=await insertOutcomeSamples({
+      missionId:args.project.id,
+      candidateId:args.project.release.candidateId,
+      samples:samples.slice(offset,offset+1000),
+    });
+    inserted+=result.inserted;
+    messages.push(result.message);
+  }
+  return {
+    recorded:true,
+    inserted,
+    reason:args.telemetry.warnings.length
+      ?messages.join(" ")+" Telemetry warnings: "+args.telemetry.warnings.join("; ")
+      :messages.join(" "),
+    telemetry:{...args.telemetry,sampleCount:args.telemetry.samples.length},
+  };
+}
+
 export async function recordReleaseOutcomeObservation(
   project:EvolveProject,
   observation:VercelReleaseObservation,
@@ -134,32 +223,28 @@ export async function recordReleaseOutcomeObservation(
   };
   const healthBatch=buildReleaseOutcomeBatch(project,observation);
   const telemetry=await collectConfiguredOutcomeTelemetry(project,observation);
-  const samples=[...new Map([
-    ...(healthBatch?.samples??[]),
-    ...telemetry.samples,
-  ].map((sample)=>[sample.id!,sample])).values()];
-  if(!samples.length)return {
-    recorded:false,inserted:0,
-    reason:telemetry.warnings.length?"no-outcome-samples; telemetry warnings: "+telemetry.warnings.join("; "):"no-bound-stable-or-candidate-deployment",
-    telemetry:{...telemetry,sampleCount:0},
+  return persistOutcomeSamples({project,healthBatch,telemetry});
+}
+
+export async function recordHttpReleaseOutcomeObservation(
+  project:EvolveProject,
+  observation:ReleaseAdapterResult,
+){
+  const telemetryCapabilities=getOutcomeTelemetryCapabilities();
+  if(!serverSupabaseSecureConfigured())return {
+    recorded:false,inserted:0,reason:"secure-data-plane-not-configured",
+    telemetry:{...telemetryCapabilities,requestCount:0,sampleCount:0,warnings:[] as string[]},
   };
-  let inserted=0;
-  const messages:string[]=[];
-  for(let offset=0;offset<samples.length;offset+=1000){
-    const result=await insertOutcomeSamples({
-      missionId:project.id,
-      candidateId:project.release.candidateId,
-      samples:samples.slice(offset,offset+1000),
-    });
-    inserted+=result.inserted;
-    messages.push(result.message);
-  }
-  return {
-    recorded:true,
-    inserted,
-    reason:telemetry.warnings.length
-      ?messages.join(" ")+" Telemetry warnings: "+telemetry.warnings.join("; ")
-      :messages.join(" "),
-    telemetry:{...telemetry,sampleCount:telemetry.samples.length},
+  const observedAt=observation.observedAt;
+  if(!observedAt)return {
+    recorded:false,inserted:0,reason:"http-release-observation-missing-observedAt",
+    telemetry:{...telemetryCapabilities,requestCount:0,sampleCount:0,warnings:[] as string[]},
   };
+  const healthBatch=buildHttpReleaseOutcomeBatch(project,observation);
+  const telemetry=await collectConfiguredOutcomeTelemetry(project,{
+    observedAt,
+    trafficPercent:observation.trafficPercent,
+    rollingReleaseActive:["canary-5","canary-20","canary-50"].includes(observation.effectiveAction??""),
+  });
+  return persistOutcomeSamples({project,healthBatch,telemetry});
 }

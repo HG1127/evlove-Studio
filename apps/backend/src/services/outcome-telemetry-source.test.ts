@@ -121,4 +121,42 @@ describe("outcome telemetry source",()=>{
     expect(result.samples).toEqual([]);
     expect(result.warnings.join(" ")).toContain("missing or non-numeric");
   });
+
+  it("collects HTTP provider telemetry by deployment id without requiring a deployment URL",async()=>{
+    process.env.EVOLUTION_OUTCOME_TELEMETRY_JSON=JSON.stringify([{
+      id:"http-product",
+      urlTemplate:"https://metrics.example.com/{deploymentId}?arm={arm}",
+      arms:["candidate"],
+      metrics:[{metricKey:"conversion_rate",metricKind:"business",direction:"higher",path:"conversion"}],
+    }]);
+    vi.stubGlobal("fetch",vi.fn(async(input:string|URL|Request)=>{
+      expect(String(input)).toContain("dpl-candidate");
+      return new Response(JSON.stringify({conversion:0.31}),{status:200,headers:{"Content-Type":"application/json"}});
+    }));
+    const result=await collectConfiguredOutcomeTelemetry(fixture(),{
+      observedAt:"2026-09-21T03:15:00.000Z",
+      trafficPercent:20,
+      rollingReleaseActive:true,
+    });
+    expect(result.requestCount).toBe(1);
+    expect(result.samples).toEqual([
+      expect.objectContaining({arm:"candidate",deploymentId:"dpl-candidate",metricKey:"conversion_rate",value:0.31,observedAt:"2026-09-21T03:15:00.000Z"}),
+    ]);
+  });
+
+  it("warns instead of inventing a deployment URL for HTTP telemetry",async()=>{
+    process.env.EVOLUTION_OUTCOME_TELEMETRY_JSON=JSON.stringify([{
+      id:"url-required",
+      urlTemplate:"https://metrics.example.com/?target={deploymentUrl}",
+      arms:["candidate"],
+      metrics:[{metricKey:"conversion_rate",metricKind:"business",direction:"higher",path:"conversion"}],
+    }]);
+    const fetchMock=vi.fn();
+    vi.stubGlobal("fetch",fetchMock);
+    const result=await collectConfiguredOutcomeTelemetry(fixture(),{observedAt:"2026-09-21T03:15:00.000Z"});
+    expect(result.requestCount).toBe(0);
+    expect(result.samples).toEqual([]);
+    expect(result.warnings.join(" ")).toContain("deploymentUrl");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });
