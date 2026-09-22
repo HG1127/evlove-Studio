@@ -69,6 +69,13 @@ export async function shouldUseServerAutoPilot(project:EvolveProject){
   try{
     const capability=await getServerWorkflowCapabilities();
     if(!capability.available||!capability.durable)return false;
+    const gitSourceReady=project.targetConnection.adapter!=="git"
+      ||Boolean(
+        project.targetConnection.status==="connected"
+        &&project.targetConnection.git
+        &&capability.backend.gitTargetConfigured
+      );
+    if(!gitSourceReady)return false;
     if(!projectHasOnlineReleaseTarget(project))return capability.closure.offlineFullAuto;
     const authorized=project.gates.find((gate)=>gate.id==="release-ready")?.status==="approved";
     if(!authorized||!capability.closure.offlineFullAuto)return false;

@@ -10,6 +10,14 @@ export const GitRepositoryBindingSchema=z.object({
 });
 export type GitRepositoryBinding=z.infer<typeof GitRepositoryBindingSchema>;
 
+export const GitTargetSnapshotBindingSchema=z.object({
+  commitSha:z.string().min(7),
+  treeSha:z.string().min(7),
+  artifactId:z.string().min(1),
+  observedAt:z.string(),
+});
+export type GitTargetSnapshotBinding=z.infer<typeof GitTargetSnapshotBindingSchema>;
+
 export const GitTargetCapabilitiesSchema=z.object({
   provider:z.literal("github"),
   codeReady:z.boolean(),

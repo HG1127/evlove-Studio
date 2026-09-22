@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { GitRepositoryBindingSchema } from "./git-target-contract";
+import { GitRepositoryBindingSchema, GitTargetSnapshotBindingSchema } from "./git-target-contract";
 
 export const StageSchema = z.enum([
   "target",
@@ -852,6 +852,7 @@ export const TargetConnectionSchema = z.object({
   status: z.enum(["connected", "not-configured", "error"]).default("connected"),
   label: z.string().default("Demo Target Adapter"),
   git:GitRepositoryBindingSchema.optional(),
+  gitSnapshot:GitTargetSnapshotBindingSchema.optional(),
 });
 
 export const ReleaseTargetSchema = z.object({

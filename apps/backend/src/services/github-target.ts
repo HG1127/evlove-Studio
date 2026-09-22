@@ -11,6 +11,7 @@ import {
 import {getServerGitHubConfig,githubTargetConfigured,githubWebhookConfigured} from "../server-env";
 
 type Json=Record<string,unknown>;
+const MAX_GITHUB_ARCHIVE_BYTES=25*1024*1024;
 
 function configOrThrow(){
   const config=getServerGitHubConfig();
@@ -78,6 +79,35 @@ async function githubRequest(repo:GitRepositoryBinding,path:string,init:RequestI
   }
   if(response.status===204)return undefined;
   return await response.json() as Json;
+}
+
+export async function downloadExactGitRepositoryArchive(repo:GitRepositoryBinding,commitSha:string){
+  if(!/^[A-Fa-f0-9]{7,64}$/.test(commitSha))throw new Error("Git archive requires an exact commit SHA");
+  const config=assertAllowed(repo);
+  const response=await fetch(
+    `${config.apiUrl}/repos/${enc(repo.owner)}/${enc(repo.repo)}/zipball/${enc(commitSha)}`,
+    {
+      method:"GET",
+      headers:{
+        Accept:"application/vnd.github+json",
+        Authorization:`Bearer ${config.token}`,
+        "X-GitHub-Api-Version":"2022-11-28",
+      },
+    },
+  );
+  if(!response.ok){
+    const detail=await response.text().catch(()=>"");
+    throw new Error(`GitHub archive HTTP ${response.status}: ${detail.slice(0,600)}`);
+  }
+  const declared=Number(response.headers.get("content-length")??0);
+  if(Number.isFinite(declared)&&declared>MAX_GITHUB_ARCHIVE_BYTES){
+    throw new Error("GitHub repository archive exceeds the 25MB server materialization limit");
+  }
+  const bytes=new Uint8Array(await response.arrayBuffer());
+  if(bytes.byteLength>MAX_GITHUB_ARCHIVE_BYTES){
+    throw new Error("GitHub repository archive exceeds the 25MB server materialization limit");
+  }
+  return bytes;
 }
 
 async function getRef(repo:GitRepositoryBinding,branch:string){

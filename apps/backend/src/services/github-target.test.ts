@@ -1,6 +1,6 @@
 // @vitest-environment node
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
-import {executeGitTargetAction,githubTargetCapabilities} from "./github-target";
+import {downloadExactGitRepositoryArchive,executeGitTargetAction,githubTargetCapabilities} from "./github-target";
 
 const KEYS=["EVOLUTION_GITHUB_TOKEN","GITHUB_TOKEN","EVOLUTION_GITHUB_API_URL","EVOLUTION_GITHUB_REPO_ALLOWLIST","EVOLUTION_GITHUB_WEBHOOK_SECRET"] as const;
 const previous=new Map<string,string|undefined>();
@@ -39,6 +39,18 @@ describe("GitHub target provider",()=>{
     vi.stubGlobal("fetch",fetchMock);
     const result=await executeGitTargetAction({action:"snapshot",repository:repo});
     expect(result).toMatchObject({action:"snapshot",commitSha:"abc1234",treeSha:"tree123",branch:"main"});
+  });
+
+  it("downloads repository bytes only by exact commit SHA through the allowlisted server credential",async()=>{
+    const bytes=Uint8Array.from([0x50,0x4b,0x03,0x04]);
+    const fetchMock=vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
+      expect(String(input)).toBe("https://api.github.test/repos/acme/app/zipball/abc1234");
+      expect((init?.headers as Record<string,string>).Authorization).toBe("Bearer gh_test_token");
+      return new Response(bytes,{status:200,headers:{"Content-Type":"application/zip","Content-Length":String(bytes.byteLength)}});
+    });
+    vi.stubGlobal("fetch",fetchMock);
+    expect(await downloadExactGitRepositoryArchive(repo,"abc1234")).toEqual(bytes);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("fails closed when base branch moved before mutation",async()=>{

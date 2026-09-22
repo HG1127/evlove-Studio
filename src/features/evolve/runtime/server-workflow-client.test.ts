@@ -12,6 +12,7 @@ const capabilities={
     vercelReleaseConfigured:true,
     targetReleaseConfigured:true,
     targetObserveConfigured:true,
+    gitTargetConfigured:true,
   },
   closure:{
     codeReady:true,
@@ -113,5 +114,28 @@ describe("server workflow routing",()=>{
       gates:demoProject.gates.map((gate)=>gate.id==="release-ready"?{...gate,status:"approved" as const}:gate),
     } as EvolveProject;
     expect(await shouldUseServerAutoPilot(httpMission)).toBe(false);
+  });
+
+  it("hands a Git repository Mission to Durable AutoPilot only when the server Git Target is configured",async()=>{
+    const gitMission={
+      ...demoProject,
+      sourceArtifacts:[],
+      targetConnection:{
+        adapter:"git",connectionId:"git-acme-app",status:"connected",label:"GitHub",
+        git:{provider:"github",owner:"acme",repo:"app",baseBranch:"main"},
+      },
+      releaseTarget:undefined,
+    } as EvolveProject;
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(capabilities),{status:200,headers:{"Content-Type":"application/json"}})));
+    await getServerWorkflowCapabilities(true);
+    expect(await shouldUseServerAutoPilot(gitMission)).toBe(true);
+
+    const missingGit={
+      ...capabilities,
+      backend:{...capabilities.backend,gitTargetConfigured:false},
+    };
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(missingGit),{status:200,headers:{"Content-Type":"application/json"}})));
+    await getServerWorkflowCapabilities(true);
+    expect(await shouldUseServerAutoPilot(gitMission)).toBe(false);
   });
 });

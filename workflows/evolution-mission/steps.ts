@@ -26,6 +26,7 @@ import { nextProductionMonitorDelay } from "../../apps/backend/src/services/prod
 import { syncMissionCapabilities } from "../../apps/backend/src/services/organization-capability";
 import { publishAcceptedChampionToConfiguredGit } from "../../apps/backend/src/services/git-accepted-publisher";
 import { renderAcceptedProjectArtifacts } from "../../apps/backend/src/services/server-artifact-renderer";
+import { lockGitTargetSnapshot,materializeLockedGitTargetSource } from "../../apps/backend/src/services/git-target-source";
 import { serverAiConfigured } from "../../apps/backend/src/server-env";
 
 function controlJob(input:EvolutionWorkflowRunInput,args:{
@@ -325,8 +326,48 @@ export async function settleScheduledManualRoundStep(
 export async function planMissionStep(input:EvolutionWorkflowRunInput,iteration:number):Promise<ServerHarnessPlan>{
   "use step";
   const runtime=getServerProductionRuntime();
-  const mission=await runtime.missions.get(input.missionId);
+  let mission=await runtime.missions.get(input.missionId);
   if(!mission)throw new FatalError(`Mission 不存在：${input.missionId}`);
+  if(mission.targetConnection.adapter==="git"
+    &&mission.targetConnection.status==="connected"
+    &&!mission.sourceArtifacts.some((artifact)=>artifact.role==="target")){
+    const locked=await lockGitTargetSnapshot(mission);
+    if(locked!==mission){
+      await runtime.missions.save(locked);
+      await runtime.events.append(createEvolutionEvent({
+        id:`evt-${input.controlJobId}-git-snapshot-lock`,
+        missionId:input.missionId,jobId:input.controlJobId,
+        type:"ActionCompleted",source:"github-target",
+        payload:{
+          action:"snapshot-lock",
+          repository:locked.targetConnection.git?locked.targetConnection.git.owner+"/"+locked.targetConnection.git.repo:undefined,
+          commitSha:locked.targetConnection.gitSnapshot?.commitSha,
+          treeSha:locked.targetConnection.gitSnapshot?.treeSha,
+          artifactId:locked.targetConnection.gitSnapshot?.artifactId,
+        },
+      }));
+      mission=locked;
+    }
+    const materialized=await materializeLockedGitTargetSource(mission);
+    if(materialized!==mission){
+      const artifact=materialized.sourceArtifacts.find((item)=>item.id===materialized.targetConnection.gitSnapshot?.artifactId);
+      await runtime.missions.save(materialized);
+      if(artifact){
+        await runtime.events.append(createEvolutionEvent({
+          id:`evt-${input.controlJobId}-git-artifact-${artifact.id}`,
+          missionId:input.missionId,jobId:input.controlJobId,
+          type:"ArtifactParsed",source:"github-target",
+          payload:{
+            artifactId:artifact.id,name:artifact.name,role:artifact.role,
+            commitSha:materialized.targetConnection.gitSnapshot?.commitSha,
+            treeSha:materialized.targetConnection.gitSnapshot?.treeSha,
+            storageRef:artifact.storageRef,
+          },
+        }));
+      }
+      mission=materialized;
+    }
+  }
   const plan=buildServerHarnessPlan(mission);
   await runtime.events.append(createEvolutionEvent({
     id:`evt-${input.controlJobId}-plan-${iteration}`,
