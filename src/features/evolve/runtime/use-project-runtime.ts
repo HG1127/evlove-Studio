@@ -62,6 +62,7 @@ import { LOCAL_REVIEW_CONTRACT_VERSION, reconcileAttentionRequest } from "./auto
 import { evolutionHarness, type HarnessPlan } from "./evolution-harness";
 import { createHarnessActionExecutor } from "@evolution/harness";
 import { getProductionRuntime, productionRuntimeMode } from "./production-runtime";
+import { localProductionPorts } from "./local-production-adapters";
 import { shouldUseServerAutoPilot, startServerEvolutionWorkflow } from "./server-workflow-client";
 import { flushProductionMissionSync } from "./production-sync";
 import { classifyRuntimeFailure, retryDelayMs } from "./failure-router";
@@ -2249,7 +2250,9 @@ export function useProjectRuntime(initialProject: EvolveProject) {
         pushActivity("Orchestrator 进入进化循环：诊断 → 生成 → 对比 → 独立验收 → 自动修复", undefined, projectId);
         await runCampaign();
       },
-    }, getProductionRuntime());
+    // Browser Harness records Job/Event evidence locally first. Production Sync projects it remotely when available.
+    // Release and other production mutations still use their dedicated fail-closed server paths.
+    }, localProductionPorts);
     try {
       for (let guard = 0; guard < 32; guard += 1) {
         const harnessPlan = evolutionHarness.plan(cur());

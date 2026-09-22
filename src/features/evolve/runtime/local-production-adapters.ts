@@ -14,6 +14,14 @@ function readGeneric():EvolutionJob[]{
   try{return EvolutionJobSchema.array().parse(JSON.parse(window.localStorage.getItem(GENERIC_JOB_KEY)??"[]"));}catch{return[];}
 }
 function writeGeneric(items:EvolutionJob[]){if(typeof window!=="undefined")window.localStorage.setItem(GENERIC_JOB_KEY,JSON.stringify(items));}
+function latestById(groups:EvolutionJob[][]){
+  const byId=new Map<string,EvolutionJob>();
+  for(const job of groups.flat()){
+    const current=byId.get(job.id);
+    if(!current||job.updatedAt>current.updatedAt)byId.set(job.id,job);
+  }
+  return [...byId.values()].sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt));
+}
 
 export function cacheRemoteEvolutionJob(jobInput:EvolutionJob){
   const job=EvolutionJobSchema.parse(jobInput);
@@ -50,8 +58,7 @@ export const localProductionPorts:ProductionRuntimePorts={
         ? (await listEvidenceJobs(missionId)).map(evidenceJobAsEvolutionJob)
         : (await Promise.all(listLocalProjects().map((project)=>listEvidenceJobs(project.id)))).flat().map(evidenceJobAsEvolutionJob);
       const run=listRunTasks().filter((job)=>!missionId||job.projectId===missionId).map(runTaskAsEvolutionJob);
-      const byId=new Map([...generic,...parse,...evidence,...run].map((job)=>[job.id,job]));
-      return [...byId.values()].sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt));
+      return latestById([generic,parse,evidence,run]);
     },
     async get(id){return (await this.list()).find((job)=>job.id===id);},
     async put(job){cacheRemoteEvolutionJob(job);},
