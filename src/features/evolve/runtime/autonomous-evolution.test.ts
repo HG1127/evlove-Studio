@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { demoProject } from "../data/mock-project";
 import type { EvolveProject } from "../schemas";
 import { evidenceFingerprint } from "./evidence-binding";
-import { autonomousClarificationPlan, autonomousEvolutionState, clarificationNeedsHuman } from "./autonomous-evolution";
+import { autonomousClarificationPlan, autonomousEvolutionState, clarificationNeedsHuman, hasEvolutionTargetInput } from "./autonomous-evolution";
 
 function project(patch: Partial<EvolveProject> = {}): EvolveProject {
   return { ...demoProject, ...patch } as EvolveProject;
@@ -25,6 +25,35 @@ describe("autonomous evolution policy", () => {
   it("requires a human for high-impact or irreversible decisions", () => {
     expect(clarificationNeedsHuman({ question: "是否直接上线生产？", whyItMatters: "会影响真实用户", defaultAnswer: "直接上线" }, 0.9)).toBe(true);
     expect(clarificationNeedsHuman({ question: "是否保留标题？", whyItMatters: "版式", defaultAnswer: "保留" }, 0.9)).toBe(false);
+  });
+
+  it("treats connected Git/Connector targets as valid input before Server materialization",()=>{
+    const git=project({
+      sourceArtifacts:[],
+      targetConnection:{
+        adapter:"git",connectionId:"git",status:"connected",label:"GitHub",
+        git:{provider:"github",owner:"acme",repo:"app",baseBranch:"main"},
+      },
+    });
+    expect(hasEvolutionTargetInput(git)).toBe(true);
+    expect(autonomousEvolutionState(git,false)).not.toBe("waiting-input");
+
+    const connector=project({
+      sourceArtifacts:[],
+      targetConnection:{
+        adapter:"connector",connectionId:"connector",status:"connected",label:"Connector",
+        connector:{connectorId:"workflow-main",targetId:"workflow-42"},
+      },
+    });
+    expect(hasEvolutionTargetInput(connector)).toBe(true);
+    expect(autonomousEvolutionState(connector,false)).not.toBe("waiting-input");
+
+    const invalid=project({
+      sourceArtifacts:[],
+      targetConnection:{adapter:"git",connectionId:"git",status:"connected",label:"GitHub"},
+    });
+    expect(hasEvolutionTargetInput(invalid)).toBe(false);
+    expect(autonomousEvolutionState(invalid,false)).toBe("waiting-input");
   });
 
   it("reports completion only when a real accepted primary output is ready", () => {

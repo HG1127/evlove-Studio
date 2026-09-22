@@ -15,6 +15,16 @@ export type AutonomousAttention = {
   request?: AttentionRequest;
 };
 
+export function hasEvolutionTargetInput(project:EvolveProject){
+  if(project.sourceArtifacts.some((artifact)=>artifact.role==="target"))return true;
+  if(project.targetConnection.status!=="connected")return false;
+  return project.targetConnection.adapter==="git"
+    ?Boolean(project.targetConnection.git)
+    :project.targetConnection.adapter==="connector"
+      ?Boolean(project.targetConnection.connector)
+      :false;
+}
+
 function legacyKind(type: AttentionRequest["type"]): AutonomousAttention["kind"] {
   if (type === "clarification") return "clarification";
   if (type === "input") return "source";
@@ -37,8 +47,7 @@ export function autonomousAttention(project: EvolveProject): AutonomousAttention
 }
 
 export function autonomousEvolutionState(project: EvolveProject, busy = false): AutonomousEvolutionState {
-  const targets = project.sourceArtifacts.filter((artifact) => artifact.role === "target");
-  if (!targets.length) return "waiting-input";
+  if (!hasEvolutionTargetInput(project)) return "waiting-input";
   const hasAcceptedOutput = project.outputArtifacts.some((artifact) => artifact.accepted && artifact.kind === "primary");
   const online = projectHasOnlineReleaseTarget(project);
   const releaseClosureReady = !online || projectHasLiveReleaseDecision(project);
@@ -60,7 +69,7 @@ export function autonomousProgress(project: EvolveProject) {
     && project.lessons.length > 0
     && project.nextQueue.length > 0;
   return [
-    { id: "input", label: "任务已输入", done: project.sourceArtifacts.some((artifact) => artifact.role === "target") },
+    { id: "input", label: "任务已输入", done: hasEvolutionTargetInput(project) },
     { id: "contract", label: "目标与验收已建立", done: Boolean(targetReady && project.evalSuite.length && project.hiddenEvalSuite.length) },
     { id: "evolve", label: "自动进化已达标", done: evolved },
     { id: "output", label: online ? "上线决策、成果与经验已准备" : "成果与经验已准备", done: closureReady },

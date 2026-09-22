@@ -2104,6 +2104,12 @@ export function useProjectRuntime(initialProject: EvolveProject) {
   // 每一步结束后重新读取最新 Project，再决定继续、修复、补证、打包或请求人工。
   const runAutoPilot = useCallback(async () => {
     const cur = () => projectRef.current;
+    const requiresRemoteMaterialization=()=>{
+      const current=cur();
+      return (current.targetConnection.adapter==="git"||current.targetConnection.adapter==="connector")
+        &&current.targetConnection.status==="connected"
+        &&!current.sourceArtifacts.some((artifact)=>artifact.role==="target");
+    };
     if (productionRuntimeMode() !== "local" && await shouldUseServerAutoPilot(cur())) {
       try {
         const started = await startServerEvolutionWorkflow(projectId);
@@ -2111,8 +2117,22 @@ export function useProjectRuntime(initialProject: EvolveProject) {
         pushActivity(`Server Workflow 已启动 · runId=${started.runId}`, undefined, projectId);
         return;
       } catch (error) {
+        if(requiresRemoteMaterialization()){
+          const message=`Remote Target 必须先由 Server Durable Workflow 锁定并物化 exact snapshot：${error instanceof Error ? error.message : String(error)}`;
+          setStatus({busy:false,error:message});
+          pushActivity(`Server Workflow 启动失败 · 禁止把 Remote Target 回退到本地 Harness：${message}`,undefined,projectId);
+          return;
+        }
         pushActivity(`Server Workflow 启动失败，安全回退本地 Harness：${error instanceof Error ? error.message : String(error)}`, undefined, projectId);
       }
+    }
+    if(requiresRemoteMaterialization()){
+      const message=productionRuntimeMode()==="local"
+        ?"Git / Connector Remote Target 需要 Server Runtime 才能锁定 exact snapshot；本地模式不会猜测或复制远端状态。"
+        :"当前 Server 能力尚不足以物化这个 Remote Target；请检查 Git/Connector 配置与 Durable Workflow capability。";
+      setStatus({busy:false,error:message});
+      pushActivity(`Remote Target 未进入 Server Workflow：${message}`,undefined,projectId);
+      return;
     }
     pushActivity("自主进化开始 · Orchestrator 接管后续理解、进化、验证与收敛", undefined, projectId);
     const executor = createHarnessActionExecutor<HarnessPlan>(projectId, {
