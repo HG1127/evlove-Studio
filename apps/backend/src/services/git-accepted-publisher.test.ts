@@ -26,6 +26,11 @@ function project(){
     campaign:{currentRound:1,parentStrategy:"champion",status:"paused",schedule:{enabled:false}},
     candidates:[candidate],experimentRun:{winnerId:"C1"},validationRun:{status:"completed",candidateId:"C1"},
     artifactAcceptance:acceptance,
+    targetConnection:{
+      adapter:"git",connectionId:"acme/app",status:"connected",label:"GitHub",
+      git:repository,
+      gitSnapshot:{commitSha:"base123",treeSha:"tree-base",artifactId:"git-source",observedAt:"now"},
+    },
     searchChampion:{
       id:"champion-1",round:1,versionLabel:"V1",candidate,artifactAcceptance:acceptance,
       validation:{status:"completed",candidateId:"C1"},score:99,reason:"best",patches:[],evaluation:null,
@@ -127,23 +132,12 @@ describe("accepted Git publisher",()=>{
     expect(calls[1]).toMatchObject({action:"open-pr",branch:"evolve/mission-1/C1",candidateId:"C1"});
   });
 
-  it("publishes a connected Git target through snapshot → mutation → PR",async()=>{
+  it("publishes from the already locked Mission source commit without resnapshotting moving main",async()=>{
     const mission=project();
-    mission.targetConnection={
-      adapter:"git",connectionId:"acme/app",status:"connected",label:"GitHub",
-      git:repository,
-    };
     const calls:unknown[]=[];
     const executor=vi.fn(async(input:unknown)=>{
       calls.push(input);
       const action=(input as {action:string}).action;
-      if(action==="snapshot"){
-        return {
-          provider:"github",action:"snapshot",ok:true,repository:"acme/app",branch:"main",
-          baseCommitSha:"base123",commitSha:"base123",treeSha:"tree-base",changedPaths:[],
-          observedAt:"now",note:"snapshot",
-        } as GitTargetActionResponse;
-      }
       if(action==="mutate"){
         return {
           provider:"github",action:"mutate",ok:true,repository:"acme/app",branch:"evolve/mission-1/C1",
@@ -159,8 +153,32 @@ describe("accepted Git publisher",()=>{
     });
     const result=await publishAcceptedChampionToConfiguredGit(mission,executor);
     expect(result).toMatchObject({candidateId:"C1",mutation:{baseCommitSha:"base123"},pullRequest:{pullNumber:7}});
-    expect(calls.map((item)=>(item as {action:string}).action)).toEqual(["snapshot","mutate","open-pr"]);
-    expect(calls[1]).toMatchObject({expectedBaseSha:"base123"});
+    expect(calls.map((item)=>(item as {action:string}).action)).toEqual(["mutate","open-pr"]);
+    expect(calls[0]).toMatchObject({expectedBaseSha:"base123"});
+  });
+
+  it("refuses configured writeback when the Mission has no locked source commit",async()=>{
+    const mission=project();
+    mission.targetConnection={...mission.targetConnection,gitSnapshot:undefined};
+    const executor=vi.fn();
+    await expect(publishAcceptedChampionToConfiguredGit(mission,executor)).rejects.toThrow(/exact locked source commit/i);
+    expect(executor).not.toHaveBeenCalled();
+  });
+
+  it("rejects an allowlisted but different repository before any Git write",async()=>{
+    const executor=vi.fn();
+    await expect(publishAcceptedChampionToGit(project(),{
+      repository:{...repository,repo:"other-app"},missionId:"mission-1",expectedBaseSha:"base123",openPullRequest:true,includeMetadata:false,
+    },executor)).rejects.toThrow(/repository does not match/i);
+    expect(executor).not.toHaveBeenCalled();
+  });
+
+  it("rejects a caller-supplied base SHA that differs from the exact Mission source snapshot",async()=>{
+    const executor=vi.fn();
+    await expect(publishAcceptedChampionToGit(project(),{
+      repository,missionId:"mission-1",expectedBaseSha:"new-main999",openPullRequest:true,includeMetadata:false,
+    },executor)).rejects.toThrow(/does not match locked Mission source/i);
+    expect(executor).not.toHaveBeenCalled();
   });
 
   it("leaves non-Git targets untouched",async()=>{

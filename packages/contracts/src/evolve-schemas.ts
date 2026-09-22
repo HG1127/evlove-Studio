@@ -756,6 +756,8 @@ export const ReleaseStateSchema = z.object({
   sourceGitCommitSha: z.string().optional(),
   sourceGitBranch: z.string().optional(),
   sourceGitRepository: z.string().optional(),
+  sourceGitPullNumber: z.number().int().positive().optional(),
+  sourceGitPullUrl: z.string().url().optional(),
   artifactHash: z.string().optional(),
   artifactHashes: z.array(z.object({ sourceArtifactId: z.string(), contentHash: z.string() })).optional(),
   environment: z.string().optional(),

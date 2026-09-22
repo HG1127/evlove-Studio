@@ -26,6 +26,8 @@ export default defineEventHandler(async(event)=>{
           sourceGitCommitSha:result.mutation.commitSha,
           sourceGitBranch:result.mutation.branch,
           sourceGitRepository:result.mutation.repository,
+          sourceGitPullNumber:result.pullRequest?.pullNumber,
+          sourceGitPullUrl:result.pullRequest?.pullUrl,
         },
         updatedAt:new Date().toISOString(),
       });

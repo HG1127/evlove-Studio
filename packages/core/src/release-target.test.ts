@@ -50,6 +50,8 @@ describe("release target domain",()=>{
       sourceGitCommitSha:"old-sha",
       sourceGitBranch:"evolve/old",
       sourceGitRepository:"acme/app",
+      sourceGitPullNumber:17,
+      sourceGitPullUrl:"https://github.com/acme/app/pull/17",
       healthy:true,
     };
     const next=beginReleaseCycle(current,"candidate-new");
@@ -60,6 +62,8 @@ describe("release target domain",()=>{
     expect(next.sourceGitCommitSha).toBeUndefined();
     expect(next.sourceGitBranch).toBeUndefined();
     expect(next.sourceGitRepository).toBeUndefined();
+    expect(next.sourceGitPullNumber).toBeUndefined();
+    expect(next.sourceGitPullUrl).toBeUndefined();
     expect(next.trafficPercent).toBe(0);
     expect(next.evidenceMode).toBe("none");
   });

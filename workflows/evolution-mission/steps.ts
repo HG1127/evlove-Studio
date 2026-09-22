@@ -1101,6 +1101,8 @@ export async function executeServerControlStep(
         sourceGitCommitSha:gitPublish.mutation.commitSha,
         sourceGitBranch:gitPublish.mutation.branch,
         sourceGitRepository:gitPublish.mutation.repository,
+        sourceGitPullNumber:gitPublish.pullRequest?.pullNumber,
+        sourceGitPullUrl:gitPublish.pullRequest?.pullUrl,
       },
       updatedAt:new Date().toISOString(),
     }:updated;

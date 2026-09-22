@@ -1,4 +1,4 @@
-import { ArchiveRestore, Boxes, Download, Eye, FileArchive, FileText, GitBranch, GitCompareArrows, History, PackageCheck, Rocket, RotateCcw, Trophy, X } from "lucide-react";
+import { ArchiveRestore, Boxes, Download, ExternalLink, Eye, FileArchive, FileText, GitBranch, GitCompareArrows, History, PackageCheck, Rocket, RotateCcw, Trophy, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -219,6 +219,20 @@ export function ProjectOutputsPanel({ runtime }: { runtime: ProjectRuntime }) {
 
       {champion ? <>
         <div className="flex flex-wrap gap-2"><Button onClick={() => void runtime.materializeOutputs()} disabled={artifactGate?.status !== "passed"}><PackageCheck className="size-4" />{artifacts.length ? "重新冻结已验收成果" : "冻结 Gate F 已验收成果"}</Button><Button variant="secondary" disabled={!artifacts.length} onClick={() => void downloadZip()}><Download className="size-4" />下载完整 ZIP</Button></div>
+        {project.targetConnection.adapter==="git"&&artifactGate?.status==="passed"&&<div className="mt-4 rounded-2xl border border-sky-200 bg-sky-50/70 p-4 text-xs leading-5 text-sky-900">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2 font-semibold"><GitBranch className="size-4"/><span>Git Accepted Writeback</span>{project.release.sourceGitCommitSha?<Badge className="border-emerald-200 bg-emerald-50 text-emerald-700">已写回 exact accepted Champion</Badge>:<Badge className="border-sky-200 bg-white text-sky-700">等待 Durable Package</Badge>}</div>
+              {project.release.sourceGitCommitSha?<div className="mt-2 space-y-1 text-[11px] text-sky-800">
+                <div className="break-all"><b>Repository：</b>{project.release.sourceGitRepository??[project.targetConnection.git?.owner,project.targetConnection.git?.repo].filter(Boolean).join("/")}</div>
+                <div className="break-all"><b>Branch：</b>{project.release.sourceGitBranch??"—"}</div>
+                <div className="break-all font-mono"><b className="font-sans">Commit：</b>{project.release.sourceGitCommitSha}</div>
+                <div>该 Commit 只允许从 Mission 锁定、实际参与实验的 source commit 构建；base branch 漂移时会拒绝发布，不会静默换基线。</div>
+              </div>:<p className="mt-2 text-[11px] text-sky-700">Gate F 已通过。Durable Workflow 的 Package 阶段会把同一份 frozen Candidate 自动写入审计 Branch，并复用同 head/base 的既有 PR；下载动作不会重新生成或再次提交成果。</p>}
+            </div>
+            {project.release.sourceGitPullUrl&&<a href={project.release.sourceGitPullUrl} target="_blank" rel="noreferrer" className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-sky-200 bg-white px-3 text-xs font-semibold text-sky-800 transition hover:bg-sky-100"><ExternalLink className="size-3.5"/>{"打开 PR"+(project.release.sourceGitPullNumber?" #"+project.release.sourceGitPullNumber:"")}</a>}
+          </div>
+        </div>}
         <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {artifacts.map((artifact)=><div key={artifact.id} className="group rounded-2xl border bg-white p-4 transition hover:-translate-y-0.5 hover:border-indigo-200 hover:shadow-sm">
             <div className="flex items-start gap-3"><div className="grid size-9 shrink-0 place-items-center rounded-xl bg-slate-50 text-indigo-600">{iconByKind[artifact.kind]}</div><div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold text-slate-900">{artifact.name}</div><div className="mt-1 flex gap-1"><Badge>{artifact.kind}</Badge>{artifact.accepted&&<Badge className="border-emerald-200 bg-emerald-50 text-emerald-700">Accepted</Badge>}{artifact.isChampion&&<Badge className="border-amber-200 bg-amber-50 text-amber-700">Champion</Badge>}</div></div></div>

@@ -53,6 +53,8 @@ export function beginReleaseCycle(release:ReleaseState,candidateId:string):Relea
     sourceGitCommitSha:undefined,
     sourceGitBranch:undefined,
     sourceGitRepository:undefined,
+    sourceGitPullNumber:undefined,
+    sourceGitPullUrl:undefined,
     artifactHash:undefined,
     artifactHashes:undefined,
     environment:undefined,

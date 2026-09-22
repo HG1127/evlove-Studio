@@ -5,12 +5,38 @@ import {
   type EvolveProject,
   type GitAcceptedPublishRequest,
   type GitFileChange,
+  type GitRepositoryBinding,
   type GitTargetActionResponse,
 } from "@evolution/contracts";
 import {materializeAcceptedChampionPackage} from "@evolution/core";
 import {executeGitTargetAction} from "./github-target";
 
 type Executor=(input:unknown)=>Promise<GitTargetActionResponse>;
+
+function sameRepository(left:GitRepositoryBinding,right:GitRepositoryBinding){
+  return left.provider===right.provider
+    &&left.owner===right.owner
+    &&left.repo===right.repo
+    &&left.baseBranch===right.baseBranch
+    &&(left.pathPrefix??"")===(right.pathPrefix??"");
+}
+
+function assertGitPublishBinding(project:EvolveProject,input:GitAcceptedPublishRequest){
+  if(project.targetConnection.adapter!=="git"||project.targetConnection.status!=="connected"){
+    throw new Error("Git publish requires the connected Mission Git target");
+  }
+  const repository=project.targetConnection.git;
+  const locked=project.targetConnection.gitSnapshot;
+  if(!repository)throw new Error("Git publish Mission is missing repository binding");
+  if(!locked?.commitSha)throw new Error("Git publish requires the exact locked source commit from Mission materialization");
+  if(!sameRepository(repository,input.repository)){
+    throw new Error("Git publish repository does not match the Mission Git target binding");
+  }
+  if(input.expectedBaseSha!==locked.commitSha){
+    throw new Error(`Git publish base SHA ${input.expectedBaseSha} does not match locked Mission source ${locked.commitSha}`);
+  }
+  return {repository,locked};
+}
 
 function acceptedChampion(project:EvolveProject){
   const champion=project.searchChampion;
@@ -87,13 +113,12 @@ export async function publishAcceptedChampionToConfiguredGit(
   if(project.targetConnection.status!=="connected")throw new Error("Git target is not connected");
   const repository=project.targetConnection.git;
   if(!repository)throw new Error("Git target connection is missing repository binding");
-  const snapshot=await executor({action:"snapshot",repository,missionId:project.id});
-  const expectedBaseSha=snapshot.commitSha??snapshot.baseCommitSha;
-  if(!expectedBaseSha)throw new Error("Git snapshot did not return a base commit SHA");
+  const locked=project.targetConnection.gitSnapshot;
+  if(!locked?.commitSha)throw new Error("Git target has no exact locked source commit for accepted writeback");
   return publishAcceptedChampionToGit(project,{
     repository,
     missionId:project.id,
-    expectedBaseSha,
+    expectedBaseSha:locked.commitSha,
     openPullRequest:true,
     includeMetadata:true,
   },executor);
@@ -106,6 +131,7 @@ export async function publishAcceptedChampionToGit(
 ){
   const input=GitAcceptedPublishRequestSchema.parse(raw);
   if(project.id!==input.missionId)throw new Error("Mission ID does not match loaded project");
+  assertGitPublishBinding(project,input);
   const prepared=acceptedChampionGitChanges(project,input.includeMetadata);
   const mutation=await executor({
     action:"mutate",
