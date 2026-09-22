@@ -21,6 +21,15 @@ describe("system readiness catalog", () => {
     expect(engines.find((item) => item.id === "release")?.state).toBe("backend");
   });
 
+  it("describes the production release engine as provider-neutral once a server release provider is connected",()=>{
+    const engines=deriveEngineReadiness({visualJudgeLive:false,server:{release:true}});
+    const release=engines.find((item)=>item.id==="release");
+    expect(release).toMatchObject({state:"ready",stateLabel:"生产能力已连接"});
+    expect(release?.current).toContain("HTTP Target");
+    expect(release?.current).toContain("Vercel");
+    expect(release?.gap).toContain("不自动重放");
+  });
+
   it("requires live Sandbox plus machine-readable policy before marking the P0 build runtime ready",()=>{
     const requirement=BACKEND_REQUIREMENTS.find((item)=>item.id==="sandbox")!;
     expect(backendRequirementState(requirement,{visualJudgeLive:false,server:{sandbox:true,sandboxPolicy:false}})).toBe("missing");

@@ -1220,7 +1220,18 @@ export async function executeServerControlStep(
     })};
   }
 
-  const actionJobId=`action:${input.missionId}:${plan.checkpoint.id}:${action}`;
+  // Every other AutonomousAction has returned above. Reaching this point is therefore a
+  // capability wait, never a "migration pending" state: five AI actions can wait for Server AI,
+  // while revalidate can wait for non-deterministic Runner/visual/human evidence.
+  const capabilityPendingAction:
+    |"understand"
+    |"compile-contract"
+    |"build-eval"
+    |"revalidate"
+    |"distill"
+    |"next-queue"=action;
+  const aiCapabilityPending=capabilityPendingAction!=="revalidate"&&!serverAiConfigured();
+  const actionJobId=`action:${input.missionId}:${plan.checkpoint.id}:${capabilityPendingAction}`;
   const existing=await runtime.jobs.get(actionJobId).catch(()=>undefined);
   await runtime.jobs.put(EvolutionJobSchema.parse({
     schemaVersion:PRODUCTION_SCHEMA_VERSIONS.job,
@@ -1228,31 +1239,35 @@ export async function executeServerControlStep(
     missionId:input.missionId,
     type:"mission-action",
     status:"waiting",
-    label:`Harness · ${action}`,
-    idempotencyKey:`${input.missionId}:${plan.checkpoint.id}:${action}`,
+    label:`Harness · ${capabilityPendingAction}`,
+    idempotencyKey:`${input.missionId}:${plan.checkpoint.id}:${capabilityPendingAction}`,
     generation:existing?.generation??1,
     attempts:existing?.attempts??0,
     priority:60,
     checkpointId:plan.checkpoint.id,
-    inputRef:action,
-    progress:{percent:0,detail:(["understand","compile-contract","build-eval","distill","next-queue"].includes(action)&&!serverAiConfigured())?"Server AI Step 已实现，等待服务器 AI 配置":action==="revalidate"?"确定性 Roundtrip 可由 Server 自动复验；当前 Mission 仍需要其他验证能力":"等待后续 server step handler 接管"},
+    inputRef:capabilityPendingAction,
+    progress:{percent:0,detail:aiCapabilityPending
+      ?"Server AI Step 已实现，等待服务器 AI 配置"
+      :"确定性 Roundtrip 可由 Server 自动复验；当前 Mission 仍需要 Runner / 视觉 / AI 或人工证据能力"},
     createdAt:existing?.createdAt??now,
     updatedAt:now,
   }));
   await runtime.jobs.put(controlJob(input,{
     status:"waiting",
     startedAt:input.requestedAt,
-    progress:{percent:25,detail:`下一动作 ${action} 已持久化，等待 server step handler`},
+    progress:{percent:25,detail:`下一动作 ${capabilityPendingAction} 已持久化，等待所需 Server capability`},
   }));
   await runtime.events.append(createEvolutionEvent({
     id:`evt-${input.controlJobId}-pending-${iteration}`,
     missionId:input.missionId,jobId:input.controlJobId,checkpointId:plan.checkpoint.id,
     type:"JobProgress",source:"vercel-workflow-control",
-    payload:{action,reason:plan.decision.reason,serverStepStatus:"pending-migration"},
+    payload:{action:capabilityPendingAction,reason:plan.decision.reason,serverStepStatus:"capability-pending"},
   }));
   return {control:"stop",result:result(input,{
-    status:"waiting-action",iterations:iteration+1,nextAction:action,
-    checkpointId:plan.checkpoint.id,reason:(["understand","compile-contract","build-eval","distill","next-queue"].includes(action)&&!serverAiConfigured())?"该动作的 Server Step 已完成，但服务器 AI 尚未配置。":action==="revalidate"?"Server 已支持确定性 Roundtrip 复验；该 Mission 的剩余证据仍需 AI / Runner / 视觉或人工能力。":"Durable control 已接管；该动作仍待迁入 server step。",
+    status:"waiting-action",iterations:iteration+1,nextAction:capabilityPendingAction,
+    checkpointId:plan.checkpoint.id,reason:aiCapabilityPending
+      ?"该动作的 Server Step 已完成，但服务器 AI 尚未配置。"
+      :"Server 已支持确定性 Roundtrip 复验；该 Mission 的剩余证据仍需 AI / Runner / 视觉或人工能力。",
   })};
 }
 
