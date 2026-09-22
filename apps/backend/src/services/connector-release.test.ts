@@ -135,6 +135,47 @@ describe("Connector release adapter",()=>{
     expect(result).toMatchObject({deploymentId:"preview-v43",stableDeploymentId:"prod-v42"});
   });
 
+  it("rejects traffic and health receipts that contradict their effective release action",async()=>{
+    const {project}=fixture();
+    const wrongTraffic=vi.fn(async(input:ConnectorActionRequest)=>response(input,{
+      output:{
+        effectiveAction:"shadow",trafficPercent:100,healthy:true,observationStatus:"healthy",
+        environment:"preview",stableDeploymentRef:"prod-v42",
+      },
+    }));
+    await expect(executeConnectorReleaseAction(project,{
+      action:"shadow",artifactHashes:[{sourceArtifactId:"source",contentHash:"hash-c1"}],
+    },wrongTraffic,()=>undefined)).rejects.toThrow(/trafficPercent 100 != expected 0/);
+
+    const contradictoryHealth=vi.fn(async(input:ConnectorActionRequest)=>response(input,{
+      output:{
+        effectiveAction:"shadow",trafficPercent:0,healthy:true,observationStatus:"unhealthy",
+        environment:"preview",stableDeploymentRef:"prod-v42",
+      },
+    }));
+    await expect(executeConnectorReleaseAction(project,{
+      action:"shadow",artifactHashes:[{sourceArtifactId:"source",contentHash:"hash-c1"}],
+    },contradictoryHealth,()=>undefined)).rejects.toThrow(/contradictory/);
+  });
+
+  it("rejects fake Canary state from a preview-promote Connector",async()=>{
+    const {project}=fixture();
+    project.release={...project.release,status:"shadow",deploymentId:"preview-v43",stableDeploymentId:"prod-v42"};
+    const execute=vi.fn(async(input:ConnectorActionRequest)=>response(
+      {...input,payload:{...input.payload,recoveryAction:"canary-20"}},
+      {output:{
+        effectiveAction:"canary-20",trafficPercent:20,healthy:true,observationStatus:"healthy",
+        environment:"production",stableDeploymentRef:"prod-v42",
+      }},
+    ));
+    await expect(observeConnectorReleaseReality(
+      project,
+      {deploymentId:"preview-v43",stableDeploymentId:"prod-v42"},
+      execute,
+      ()=>undefined,
+    )).rejects.toThrow(/preview-promote target cannot report canary-20/);
+  });
+
   it("requires rollback to resolve to the stable base version",async()=>{
     const {project}=fixture();
     project.release={...project.release,status:"promoted",deploymentId:"prod-v43",stableDeploymentId:"prod-v42"};

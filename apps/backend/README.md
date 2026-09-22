@@ -56,6 +56,8 @@ Connector webhooks use `x-evolution-connector-signature: sha256=<HMAC>` and are 
 
 Connector release reconciliation is also exact-bound. An `observe` response may not silently switch to another deployment or stable deployment: if the provider returns a `deploymentRef` / `stableDeploymentRef`, it must match the Mission deployment being reconciled. When the provider omits the deployment ref, the server preserves the explicit Mission ref rather than replacing it with a version id.
 
+Release receipts must also be semantically self-consistent. `trafficPercent` must exactly match `effectiveAction` (Shadow/Rollback 0, Canary 5/20/50, Promote 100), `healthy` must agree with a terminal healthy/unhealthy observation status, and a `preview-promote` Connector may not report Canary traffic that the configured release mode cannot actually provide.
+
 ## Outcome Telemetry
 
 Release reconciliation always records provider health/latency evidence when the secure Outcome Warehouse is available. External business KPI, cost, latency, and safety metrics can additionally be pulled server-side with `EVOLUTION_OUTCOME_TELEMETRY_JSON`. Credentials stay in server environment variables referenced by name; secrets are never embedded in the JSON.

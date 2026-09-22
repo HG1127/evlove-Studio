@@ -4,6 +4,7 @@ import {
   type Candidate,
   type ConnectorActionRequest,
   type ConnectorActionResponse,
+  type ConnectorReleaseReceipt,
   type EvolveProject,
   type ReleaseAdapterResult,
 } from "@evolution/contracts";
@@ -24,6 +25,27 @@ function trafficPercent(action:DurableReleaseAction){
   if(action==="canary-50")return 50;
   if(action==="promote")return 100;
   return 0;
+}
+
+function assertReceiptSemantics(project:EvolveProject,receipt:ConnectorReleaseReceipt){
+  const expectedTraffic=trafficPercent(receipt.effectiveAction);
+  if(receipt.trafficPercent!==expectedTraffic){
+    throw new Error(
+      `Connector ${receipt.effectiveAction} receipt trafficPercent ${receipt.trafficPercent} != expected ${expectedTraffic}`,
+    );
+  }
+  if(project.releaseTarget?.mode==="preview-promote"
+    &&["canary-5","canary-20","canary-50"].includes(receipt.effectiveAction)){
+    throw new Error(
+      `Connector preview-promote target cannot report ${receipt.effectiveAction} progressive traffic`,
+    );
+  }
+  if(receipt.observationStatus==="healthy"&&!receipt.healthy){
+    throw new Error("Connector receipt is contradictory: observationStatus=healthy but healthy=false");
+  }
+  if(receipt.observationStatus==="unhealthy"&&receipt.healthy){
+    throw new Error("Connector receipt is contradictory: observationStatus=unhealthy but healthy=true");
+  }
 }
 
 function releaseBinding(project:EvolveProject){
@@ -60,6 +82,7 @@ function toReleaseResult(args:{
 }):ReleaseAdapterResult{
   const {candidate,binding}=releaseBinding(args.project);
   const receipt=ConnectorReleaseReceiptSchema.parse(args.response.output);
+  assertReceiptSemantics(args.project,receipt);
   if(receipt.effectiveAction!==args.action){
     throw new Error(`Connector effectiveAction ${receipt.effectiveAction} 与请求 ${args.action} 不一致`);
   }
