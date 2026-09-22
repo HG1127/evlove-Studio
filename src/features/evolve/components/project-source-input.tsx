@@ -69,10 +69,14 @@ export function ProjectSourceInput({ runtime }: { runtime: ProjectRuntime }) {
       setConnectorCaps(capabilities);
       const eligible=capabilities.connectors.filter(connectorSupportsExperiment);
       const currentId=initialConnectorIdRef.current;
-      const selected=eligible.find((item)=>item.id===currentId)??eligible[0];
-      if(selected&&!currentId){
+      const currentEligible=eligible.find((item)=>item.id===currentId);
+      const selected=currentEligible??eligible[0];
+      if(selected&&(!currentId||!currentEligible)){
         setConnectorId(selected.id);
         setConnectorRelease(connectorSupportsFullLifecycle(selected));
+      }else if(!selected&&currentId){
+        setConnectorId("");
+        setConnectorRelease(false);
       }
     }).catch((cause)=>{
       if(active)setConnectorMessage(cause instanceof Error?cause.message:String(cause));
@@ -92,6 +96,7 @@ export function ProjectSourceInput({ runtime }: { runtime: ProjectRuntime }) {
 
   const selectedConnector=connectorCaps?.connectors.find((item)=>item.id===connectorId);
   const experimentConnectors=connectorCaps?.connectors.filter(connectorSupportsExperiment)??[];
+  const directConnectorCount=connectorCaps?.connectors.filter((item)=>item.mutationMode==="direct").length??0;
   const selectedFullLifecycle=Boolean(selectedConnector&&connectorSupportsFullLifecycle(selectedConnector));
   const remotePrimaryTarget=p.targetConnection.adapter==="connector"||p.targetConnection.adapter==="git";
 
@@ -330,7 +335,7 @@ export function ProjectSourceInput({ runtime }: { runtime: ProjectRuntime }) {
             const manifest=connectorCaps.connectors.find((item)=>item.id===nextId);
             setConnectorRelease(Boolean(manifest&&connectorSupportsFullLifecycle(manifest)));
           }}>
-            {experimentConnectors.map((item)=><option key={item.id} value={item.id}>{item.label} · {item.targetType}</option>)}
+            {experimentConnectors.map((item)=><option key={item.id} value={item.id}>{item.label} · {item.targetType} · staged-version</option>)}
           </select>
           <Input value={connectorTargetId} onChange={(event)=>setConnectorTargetId(event.target.value)} placeholder="Target ID，例如 workflow-42 / agent-prod / memory-main"/>
           <div className="flex gap-2">
@@ -339,10 +344,11 @@ export function ProjectSourceInput({ runtime }: { runtime: ProjectRuntime }) {
           </div>
           <label className="lg:col-span-3 flex items-start gap-2 rounded-xl border bg-white/80 px-3 py-2 text-[11px] leading-5 text-slate-600">
             <input type="checkbox" className="mt-1" checked={connectorRelease} disabled={!selectedFullLifecycle} onChange={(event)=>setConnectorRelease(event.target.checked)}/>
-            <span><b>同时作为生产 Release Target</b> · {selectedFullLifecycle?"该 Connector 已具备 7/7 Lifecycle；默认使用保守的 Preview → Promote，不假设它支持真实百分比 Canary。":"当前 Connector 仅支持实验闭环；缺少 Deploy / Observe / Rollback 时不会宣称可上线。"}</span>
+            <span><b>同时作为生产 Release Target</b> · {selectedFullLifecycle?"该 Connector 已声明 staged-version 隔离并具备 7/7 Lifecycle；默认使用保守的 Preview → Promote，不假设它支持真实百分比 Canary。":"当前 Connector 仅支持隔离实验闭环；缺少 Deploy / Observe / Rollback 时不会宣称可上线。"}</span>
           </label>
-        </div>:<div className="mt-3 rounded-xl border border-dashed bg-white/70 p-3 text-[11px] leading-5 text-slate-500">{connectorCaps?.configured?"已注册 Connector，但暂无具备 Read / Snapshot / Mutate / Validate + credential 的实验 Connector。":"服务器尚未配置 EVOLUTION_CONNECTORS_JSON；当前仍可继续使用文件/ZIP Artifact Target。"}</div>}
+        </div>:<div className="mt-3 rounded-xl border border-dashed bg-white/70 p-3 text-[11px] leading-5 text-slate-500">{connectorCaps?.configured?`已注册 Connector，但暂无同时满足 staged-version 隔离 + Read / Snapshot / Mutate / Validate + credential 的实验 Connector。${directConnectorCount?` 当前有 ${directConnectorCount} 个 direct Connector 被安全阻止进入 Candidate 实验。`:""}`:"服务器尚未配置 EVOLUTION_CONNECTORS_JSON；当前仍可继续使用文件/ZIP Artifact Target。"}</div>}
         {connectorMessage&&<div className="mt-2 text-[11px] leading-5 text-violet-700">{connectorMessage}</div>}
+        {connectorCaps?.configured&&experimentConnectors.length>0&&<div className="mt-2 text-[10px] leading-4 text-violet-600">Candidate 安全边界：只有服务端 Manifest 显式声明 <code>mutationMode=staged-version</code> 才允许实验；缺省或 <code>direct</code> 一律视为可能直写线上对象并 fail-closed。</div>}
       </div>
       <div className="mb-4 rounded-2xl border border-sky-100 bg-sky-50/50 p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">

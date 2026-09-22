@@ -13,6 +13,7 @@ function manifest(full=true):ConnectorPublicManifest{
     id:"workflow-main",
     label:"Workflow Main",
     targetType:"workflow",
+    mutationMode:"staged-version",
     credentialConfigured:true,
     webhookConfigured:false,
     credentialProvider:"env",
@@ -47,6 +48,7 @@ describe("connector target binding",()=>{
     expect(connectorSupportsExperiment(manifest(false))).toBe(true);
     expect(connectorSupportsFullLifecycle(manifest(false))).toBe(false);
     expect(connectorSupportsFullLifecycle(manifest(true))).toBe(true);
+    expect(connectorSupportsExperiment({...manifest(true),mutationMode:"direct"})).toBe(false);
   });
 
   it("binds a Connector as the only primary target, invalidates stale downstream state and enables Release only for 7/7",()=>{

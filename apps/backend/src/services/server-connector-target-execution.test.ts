@@ -63,13 +63,13 @@ describe("server Connector Target execution",()=>{
       expect((input.payload.artifacts as unknown[])).toHaveLength(1);
       return response(input);
     });
-    const staged=await stageServerConnectorCandidate(p,c,execute);
+    const staged=await stageServerConnectorCandidate(p,c,execute,()=>undefined);
     expect(staged.connectorBinding).toMatchObject({
       connectorId:"workflow-main",targetId:"workflow-42",baseVersionRef:"v42",versionRef:"v43",snapshotRef:"snap43",
       artifactFingerprint:connectorCandidateArtifactFingerprint(p,c),
     });
     expect(execute).toHaveBeenCalledTimes(1);
-    const replay=await stageServerConnectorCandidate(p,staged,execute);
+    const replay=await stageServerConnectorCandidate(p,staged,execute,()=>undefined);
     expect(replay).toBe(staged);
     expect(execute).toHaveBeenCalledTimes(1);
   });
@@ -92,6 +92,15 @@ describe("server Connector Target execution",()=>{
       expect.objectContaining({testCaseId:"T1",output:"workflow ok",verificationStatus:"verified",latencyMs:12,cost:0.01}),
     ]);
     expect(runs[0]?.trace[0]?.detail).toContain("evidence-1");
+  });
+
+  it("refuses Candidate mutation before network access when Connector isolation is not staged-version",async()=>{
+    const execute=vi.fn();
+    const assertIsolation=vi.fn(()=>{throw new Error("direct mutation is not isolated");});
+    await expect(stageServerConnectorCandidate(project(),candidate(),execute,assertIsolation))
+      .rejects.toThrow(/not isolated/);
+    expect(assertIsolation).toHaveBeenCalledWith("workflow-main");
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it("does not invent verified evidence when Connector omits a requested test result",async()=>{

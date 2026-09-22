@@ -21,13 +21,16 @@ export default defineEventHandler(async(event)=>{
   const connectorRegistry=await getConnectorRegistryCapabilities().catch(()=>undefined);
   const connectorExperimentIds=(connectorRegistry?.connectors??[])
     .filter((connector)=>connector.credentialConfigured
+      &&connector.mutationMode==="staged-version"
       &&connector.lifecycle.read
       &&connector.lifecycle.snapshot
       &&connector.lifecycle.mutate
       &&connector.lifecycle.validate)
     .map((connector)=>connector.id);
   const connectorFullLifecycleIds=(connectorRegistry?.connectors??[])
-    .filter((connector)=>connector.credentialConfigured&&Object.values(connector.lifecycle).every(Boolean))
+    .filter((connector)=>connector.credentialConfigured
+      &&connector.mutationMode==="staged-version"
+      &&Object.values(connector.lifecycle).every(Boolean))
     .map((connector)=>connector.id);
   const connectorRelease=connectorFullLifecycleIds.length>0;
   const releaseWrite=vercelRelease||targetProxy.releaseConfigured||connectorRelease;

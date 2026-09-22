@@ -15,6 +15,7 @@ afterEach(()=>{
 function manifest(){
   return JSON.stringify([{
     id:"workflow-main",label:"Workflow",targetType:"workflow",baseUrl:"https://connector.test",
+    mutationMode:"staged-version",
     paths:{deploy:"/deploy",observe:"/observe",rollback:"/rollback",read:"/read",snapshot:"/snapshot",mutate:"/mutate",validate:"/validate"},
   }]);
 }

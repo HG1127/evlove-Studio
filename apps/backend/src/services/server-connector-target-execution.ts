@@ -8,10 +8,11 @@ import {
   type TestCase,
 } from "@evolution/contracts";
 import {trustedServerBaselineChampion} from "@evolution/harness";
-import {executeConnectorAction} from "./connector-registry";
+import {assertConnectorCandidateIsolation,executeConnectorAction} from "./connector-registry";
 import {serverConnectorTargetEnabled} from "./connector-target-source";
 
 type ConnectorExecutor=(input:ConnectorActionRequest)=>Promise<ConnectorActionResponse>;
+type IsolationAssert=(connectorId:string)=>unknown;
 
 function unavailable(testCase:TestCase,detail:string):TargetRunResult{
   return{
@@ -77,9 +78,11 @@ export async function stageServerConnectorCandidate(
   project:EvolveProject,
   candidate:Candidate,
   execute:ConnectorExecutor=executeConnectorAction,
+  assertIsolation:IsolationAssert=assertConnectorCandidateIsolation,
 ){
   const target=connectorBinding(project);
   if(!target)return candidate;
+  assertIsolation(target.binding.connectorId);
   const fingerprint=connectorCandidateArtifactFingerprint(project,candidate);
   if(candidate.connectorBinding
     &&candidate.connectorBinding.connectorId===target.binding.connectorId

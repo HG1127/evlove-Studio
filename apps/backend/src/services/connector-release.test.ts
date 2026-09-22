@@ -61,7 +61,7 @@ describe("Connector release adapter",()=>{
     const result=await executeConnectorReleaseAction(project,{
       action:"shadow",deploymentId:undefined,stableDeploymentId:undefined,
       artifactHashes:[{sourceArtifactId:"source",contentHash:"hash-c1"}],
-    },execute);
+    },execute,()=>undefined);
     expect(result).toMatchObject({
       evidenceMode:"live",effectiveAction:"shadow",deploymentId:"preview-v43",stableDeploymentId:"prod-v42",
       healthy:true,observationStatus:"healthy",environment:"preview",
@@ -74,7 +74,7 @@ describe("Connector release adapter",()=>{
     const execute=vi.fn(async(input:ConnectorActionRequest)=>response(input,{versionRef:"v999"}));
     await expect(executeConnectorReleaseAction(project,{
       action:"shadow",artifactHashes:[{sourceArtifactId:"source",contentHash:"hash-c1"}],
-    },execute)).rejects.toThrow(/Candidate v43/);
+    },execute,()=>undefined)).rejects.toThrow(/Candidate v43/);
   });
 
   it("observes live release state read-only and preserves exact Candidate provenance",async()=>{
@@ -86,7 +86,7 @@ describe("Connector release adapter",()=>{
       expect(input.payload).toMatchObject({candidateVersionRef:"v43",stableVersionRef:"v42",deploymentRef:"preview-v43"});
       return response({...input,payload:{...input.payload,releaseAction:"promote"}});
     });
-    const result=await observeConnectorReleaseReality(project,{deploymentId:"preview-v43",stableDeploymentId:"prod-v42"},execute);
+    const result=await observeConnectorReleaseReality(project,{deploymentId:"preview-v43",stableDeploymentId:"prod-v42"},execute,()=>undefined);
     expect(result).toMatchObject({effectiveAction:"promote",deploymentId:"preview-v43",stableDeploymentId:"prod-v42",evidenceMode:"live"});
   });
 
@@ -96,6 +96,17 @@ describe("Connector release adapter",()=>{
     const execute=vi.fn(async(input:ConnectorActionRequest)=>response(input,{versionRef:"v43"}));
     await expect(executeConnectorReleaseAction(project,{
       action:"rollback",deploymentId:"prod-v42",stableDeploymentId:"prod-v42",artifactHashes:[],
-    },execute)).rejects.toThrow(/stable v42/);
+    },execute,()=>undefined)).rejects.toThrow(/stable v42/);
+  });
+
+  it("refuses legacy direct Connector release before any provider network action",async()=>{
+    const {project}=fixture();
+    const execute=vi.fn();
+    const assertIsolation=vi.fn(()=>{throw new Error("Connector direct mutation is not staged-version");});
+    await expect(executeConnectorReleaseAction(project,{
+      action:"shadow",artifactHashes:[{sourceArtifactId:"source",contentHash:"hash-c1"}],
+    },execute,assertIsolation)).rejects.toThrow(/staged-version/);
+    expect(assertIsolation).toHaveBeenCalledWith("workflow-main");
+    expect(execute).not.toHaveBeenCalled();
   });
 });

@@ -20,6 +20,38 @@ Current release responsibilities are implemented through backend services rather
 
 On the current Vercel Hobby plan, the truthful production path is `Preview Gate → Promote → Production Health → Rollback`. The 5/20/50 Canary stages remain available only to providers that can actually supply progressive traffic evidence. Vercel write actions require an explicit server-side `VERCEL_RELEASE_TOKEN`; OIDC alone is intentionally insufficient.
 
+## Connector Candidate Isolation
+
+`EVOLUTION_CONNECTORS_JSON` connectors must declare how `mutate` behaves. The safe default is `"mutationMode": "direct"`, which is read/snapshot capable but is **not** eligible for Candidate experiments even if `mutate` and `validate` endpoints exist. This prevents an experimental Candidate from silently mutating the live Agent / Workflow / SaaS object.
+
+A Connector may participate in Candidate generation and validation only when it explicitly declares `"mutationMode": "staged-version"`. In that mode, `mutate` must create or update an isolated candidate version, return a new exact `versionRef`, and must not change the live production target. Production changes remain separate `deploy` / `observe` / `rollback` lifecycle operations.
+
+Example:
+
+```json
+[
+  {
+    "id": "workflow-main",
+    "label": "Workflow Main",
+    "targetType": "workflow",
+    "baseUrl": "https://connector.example.com",
+    "mutationMode": "staged-version",
+    "credentialEnv": "WORKFLOW_CONNECTOR_TOKEN",
+    "paths": {
+      "read": "/read",
+      "snapshot": "/snapshot",
+      "mutate": "/mutate",
+      "validate": "/validate",
+      "deploy": "/deploy",
+      "observe": "/observe",
+      "rollback": "/rollback"
+    }
+  }
+]
+```
+
+The server re-checks this isolation declaration before Candidate mutation, so bypassing the browser capability filter does not enable direct mutation.
+
 ## Outcome Telemetry
 
 Release reconciliation always records provider health/latency evidence when the secure Outcome Warehouse is available. External business KPI, cost, latency, and safety metrics can additionally be pulled server-side with `EVOLUTION_OUTCOME_TELEMETRY_JSON`. Credentials stay in server environment variables referenced by name; secrets are never embedded in the JSON.

@@ -1,6 +1,7 @@
 // @vitest-environment node
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
 import {
+  assertConnectorCandidateIsolation,
   executeConnectorAction,
   getConnectorRegistryCapabilities,
   getServerConnectorManifests,
@@ -9,9 +10,12 @@ import {
 const KEYS=["NODE_ENV","EVOLUTION_CONNECTORS_JSON","TEST_CONNECTOR_TOKEN","TEST_CONNECTOR_WEBHOOK"] as const;
 const previous=new Map<string,string|undefined>();
 
-function manifest(paths:Record<string,string>={snapshot:"/snapshot"}){
+function manifest(
+  paths:Record<string,string>={snapshot:"/snapshot"},
+  mutationMode:"direct"|"staged-version"="staged-version",
+){
   return JSON.stringify([{
-    id:"test-connector",label:"Test Connector",targetType:"workflow",
+    id:"test-connector",label:"Test Connector",targetType:"workflow",mutationMode,
     baseUrl:"https://connector.test",credentialEnv:"TEST_CONNECTOR_TOKEN",
     webhookSecretEnv:"TEST_CONNECTOR_WEBHOOK",paths,
   }]);
@@ -41,11 +45,40 @@ describe("connector registry",()=>{
     expect(caps).toMatchObject({configured:true,connectorCount:1,fullLifecycleCount:1});
     expect(caps.connectors[0]).toMatchObject({
       id:"test-connector",targetType:"workflow",credentialConfigured:true,webhookConfigured:true,
+      mutationMode:"staged-version",
       credentialProvider:"env",webhookProvider:"env",
       lifecycle:{read:true,snapshot:true,mutate:true,validate:true,deploy:true,observe:true,rollback:true},
     });
     expect(JSON.stringify(caps)).not.toContain("super-secret-token");
     expect(JSON.stringify(caps)).not.toContain("webhook-secret");
+  });
+
+  it("defaults missing mutation isolation to direct and refuses Candidate experiment eligibility",async()=>{
+    process.env.EVOLUTION_CONNECTORS_JSON=JSON.stringify([{
+      id:"direct-connector",label:"Direct Connector",targetType:"workflow",
+      baseUrl:"https://connector.test",
+      paths:{
+        read:"/read",snapshot:"/snapshot",mutate:"/mutate",validate:"/validate",
+        deploy:"/deploy",observe:"/observe",rollback:"/rollback",
+      },
+    }]);
+    const caps=await getConnectorRegistryCapabilities();
+    expect(caps).toMatchObject({configured:true,connectorCount:1,fullLifecycleCount:0});
+    expect(caps.connectors[0]).toMatchObject({
+      mutationMode:"direct",
+      lifecycle:{read:true,snapshot:true,mutate:true,validate:true,deploy:true,observe:true,rollback:true},
+    });
+    expect(()=>assertConnectorCandidateIsolation("direct-connector"))
+      .toThrow(/staged-version|direct mutation/i);
+  });
+
+  it("accepts Candidate isolation only when the server manifest explicitly declares staged-version",()=>{
+    process.env.EVOLUTION_CONNECTORS_JSON=manifest({
+      read:"/read",snapshot:"/snapshot",mutate:"/mutate",validate:"/validate",
+    },"staged-version");
+    expect(assertConnectorCandidateIsolation("test-connector")).toMatchObject({
+      id:"test-connector",mutationMode:"staged-version",
+    });
   });
 
   it("blocks unknown connectors before any network request",async()=>{

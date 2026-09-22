@@ -13,9 +13,10 @@ import {
   projectUsesConnectorRelease,
   type DurableReleaseAction,
 } from "@evolution/core";
-import {executeConnectorAction} from "./connector-registry";
+import {assertConnectorCandidateIsolation,executeConnectorAction} from "./connector-registry";
 
 type ConnectorExecutor=(input:ConnectorActionRequest)=>Promise<ConnectorActionResponse>;
+type IsolationAssert=(connectorId:string)=>unknown;
 
 function trafficPercent(action:DurableReleaseAction){
   if(action==="canary-5")return 5;
@@ -104,8 +105,10 @@ export async function executeConnectorReleaseAction(
     artifactHashes:Array<{sourceArtifactId:string;contentHash:string}>;
   },
   execute:ConnectorExecutor=executeConnectorAction,
+  assertIsolation:IsolationAssert=assertConnectorCandidateIsolation,
 ){
   const {target,candidate,binding}=releaseBinding(project);
+  assertIsolation(target.connectorId);
   const operation=args.action==="rollback"?"rollback" as const:"deploy" as const;
   const versionRef=args.action==="rollback"?binding.baseVersionRef:binding.versionRef;
   const response=await execute({
@@ -138,8 +141,10 @@ export async function observeConnectorReleaseReality(
     stableDeploymentId?:string;
   },
   execute:ConnectorExecutor=executeConnectorAction,
+  assertIsolation:IsolationAssert=assertConnectorCandidateIsolation,
 ){
   const {target,candidate,binding}=releaseBinding(project);
+  assertIsolation(target.connectorId);
   const response=await execute({
     connectorId:target.connectorId,
     operation:"observe",

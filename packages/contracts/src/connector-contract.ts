@@ -6,12 +6,15 @@ export type ConnectorTargetType=z.infer<typeof ConnectorTargetTypeSchema>;
 
 export const ConnectorLifecycleOperationSchema=z.enum(["read","snapshot","mutate","validate","deploy","observe","rollback"]);
 export type ConnectorLifecycleOperation=z.infer<typeof ConnectorLifecycleOperationSchema>;
+export const ConnectorMutationModeSchema=z.enum(["direct","staged-version"]);
+export type ConnectorMutationMode=z.infer<typeof ConnectorMutationModeSchema>;
 
 export const ConnectorServerManifestSchema=z.object({
   id:z.string().min(1).max(80).regex(/^[A-Za-z0-9._-]+$/),
   label:z.string().min(1).max(120),
   targetType:ConnectorTargetTypeSchema,
   baseUrl:z.string().url(),
+  mutationMode:ConnectorMutationModeSchema.default("direct"),
   credentialEnv:z.string().min(1).max(120).regex(/^[A-Z][A-Z0-9_]*$/).optional(),
   credentialVaultId:z.string().min(1).max(120).optional(),
   webhookSecretEnv:z.string().min(1).max(120).regex(/^[A-Z][A-Z0-9_]*$/).optional(),
@@ -27,6 +30,7 @@ export const ConnectorPublicManifestSchema=z.object({
   id:z.string(),
   label:z.string(),
   targetType:ConnectorTargetTypeSchema,
+  mutationMode:ConnectorMutationModeSchema.default("direct"),
   lifecycle:TargetLifecycleCapabilitiesSchema,
   credentialConfigured:z.boolean(),
   webhookConfigured:z.boolean(),

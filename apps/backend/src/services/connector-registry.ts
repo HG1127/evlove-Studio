@@ -78,6 +78,7 @@ export async function getConnectorRegistryCapabilities(){
     id:manifest.id,
     label:manifest.label,
     targetType:manifest.targetType,
+    mutationMode:manifest.mutationMode,
     lifecycle:lifecycle(manifest),
     credentialConfigured:await credentialConfigured(manifest),
     webhookConfigured:await webhookConfigured(manifest),
@@ -85,7 +86,9 @@ export async function getConnectorRegistryCapabilities(){
     webhookProvider:manifest.webhookSecretVaultId?"vault":manifest.webhookSecretEnv?"env":"none",
   })));
   const fullLifecycleCount=connectors.filter((connector)=>
-    connector.credentialConfigured&&OPERATIONS.every((operation)=>connector.lifecycle[operation]),
+    connector.credentialConfigured
+      &&connector.mutationMode==="staged-version"
+      &&OPERATIONS.every((operation)=>connector.lifecycle[operation]),
   ).length;
   return ConnectorRegistryCapabilitiesSchema.parse({
     codeReady:true,
@@ -101,6 +104,18 @@ function resolveManifest(id:string){
   if(!manifest){
     const error=new Error(`Connector ${id} is not registered on server`);
     (error as Error&{code?:string}).code="CONNECTOR_NOT_REGISTERED";
+    throw error;
+  }
+  return manifest;
+}
+
+export function assertConnectorCandidateIsolation(connectorId:string){
+  const manifest=resolveManifest(connectorId);
+  if(manifest.mutationMode!=="staged-version"){
+    const error=new Error(
+      `Connector ${connectorId} mutate is not declared as staged-version; Candidate experiments refuse direct mutation`,
+    );
+    (error as Error&{code?:string}).code="CONNECTOR_MUTATION_ISOLATION_REQUIRED";
     throw error;
   }
   return manifest;

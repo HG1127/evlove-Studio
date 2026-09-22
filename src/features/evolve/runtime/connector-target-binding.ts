@@ -18,11 +18,13 @@ function hasConnectorSnapshot(artifact:SourceArtifact){
 
 export function connectorSupportsExperiment(manifest:ConnectorPublicManifest){
   return manifest.credentialConfigured
+    &&manifest.mutationMode==="staged-version"
     &&CONNECTOR_EXPERIMENT_OPERATIONS.every((operation)=>manifest.lifecycle[operation]);
 }
 
 export function connectorSupportsFullLifecycle(manifest:ConnectorPublicManifest){
   return manifest.credentialConfigured
+    &&manifest.mutationMode==="staged-version"
     &&CONNECTOR_FULL_LIFECYCLE_OPERATIONS.every((operation)=>manifest.lifecycle[operation]);
 }
 
@@ -56,7 +58,7 @@ export function bindConnectorTarget(args:{
   const targetId=args.targetId.trim();
   if(!targetId)throw new Error("Connector Target ID 不能为空");
   if(!connectorSupportsExperiment(args.manifest)){
-    throw new Error("该 Connector 尚未具备 Read / Snapshot / Mutate / Validate 实验闭环");
+    throw new Error("该 Connector 尚未具备 staged-version Candidate isolation + Read / Snapshot / Mutate / Validate 实验闭环");
   }
   if(args.useForRelease&&!connectorSupportsFullLifecycle(args.manifest)){
     throw new Error("该 Connector 尚未具备 Deploy / Observe / Rollback，不能作为生产 Release Target");
