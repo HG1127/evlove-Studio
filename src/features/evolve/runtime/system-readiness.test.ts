@@ -45,6 +45,15 @@ describe("system readiness catalog", () => {
     expect(engines.find((item)=>item.id==="experiment")?.current).toContain("READY+POLICY");
   });
 
+  it("recognizes the server visual-evidence pipeline without requiring browser-local screenshot state",()=>{
+    const signals={
+      visualJudgeLive:false,
+      server:{serverAi:true,sandbox:true,browser:true},
+    };
+    const evidence=deriveEngineReadiness(signals).find((item)=>item.id==="evidence");
+    expect(evidence?.current).toContain("Visual Judge LIVE");
+  });
+
   it("reports the durable control plane and parser as server-ready only with real server signals", () => {
     const signals = {
       visualJudgeLive:false,

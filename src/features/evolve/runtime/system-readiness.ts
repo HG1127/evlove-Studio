@@ -195,7 +195,8 @@ export function deriveEngineReadiness(signals: ReadinessSignals): EngineReadines
   const experimentReady = Boolean((runner.e2e && browserReady) || (server.sandbox && server.browser));
   const buildReady = Boolean(runner.build || server.sandbox&&server.sandboxPolicy);
   const releaseReady = Boolean(runner.release || server.release);
-  const visualReady = Boolean(signals.visualJudgeLive && runner.screenshots);
+  const serverVisualReady=Boolean(server.serverAi&&server.sandbox&&server.browser);
+  const visualReady = Boolean((signals.visualJudgeLive && runner.screenshots)||serverVisualReady);
   const artifactReady = Boolean(server.dataPlane && server.artifactStore && server.sourceParse);
   const missionReady = Boolean(server.controlPlane && server.dataPlane);
   return [
@@ -214,6 +215,7 @@ export function deriveEngineReadiness(signals: ReadinessSignals): EngineReadines
 export function backendRequirementState(requirement: BackendRequirement, signals: ReadinessSignals) {
   const runner = signals.runner ?? {};
   const server = signals.server ?? {};
+  const serverVisualReady=Boolean(server.serverAi&&server.sandbox&&server.browser);
   if (requirement.detector === "control-plane") return server.controlPlane && server.dataPlane ? "ready" as const : "missing" as const;
   if (requirement.detector === "git") return server.git ? "ready" as const : "missing" as const;
   if (requirement.detector === "capability") return server.capabilityService ? "ready" as const : "missing" as const;
@@ -224,7 +226,7 @@ export function backendRequirementState(requirement: BackendRequirement, signals
   if (requirement.detector === "build") return runner.build || server.sandbox&&server.sandboxPolicy ? "ready" as const : "missing" as const;
   if (requirement.detector === "release") return runner.release || server.release ? "ready" as const : "missing" as const;
   if (requirement.detector === "browser") return (runner.htmlBrowser && runner.e2e) || server.browser ? "ready" as const : "missing" as const;
-  if (requirement.detector === "visual") return signals.visualJudgeLive ? "ready" as const : "missing" as const;
+  if (requirement.detector === "visual") return signals.visualJudgeLive||serverVisualReady ? "ready" as const : "missing" as const;
   return "missing" as const;
 }
 

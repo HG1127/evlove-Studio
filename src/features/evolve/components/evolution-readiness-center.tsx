@@ -140,7 +140,10 @@ export function EvolutionReadinessCenter() {
       sandbox: Boolean(sandboxCheck.health?.ready),
       sandboxPolicy: Boolean(sandboxCheck.health?.policy.codeReady),
       browser: Boolean(browserCheck.health?.ready),
-      release: Boolean(releaseCheck.capabilities?.writeEnabled),
+      release: Boolean(
+        (releaseCheck.capabilities?.writeEnabled&&releaseCheck.capabilities.readEnabled)
+        ||(backendHealthCheck.health?.targetProxy.releaseConfigured&&backendHealthCheck.health?.targetProxy.observeConfigured)
+      ),
       git: Boolean(gitCheck.capabilities?.configured&&gitCheck.capabilities?.allowlistConfigured&&gitCheck.capabilities?.webhookConfigured),
       capabilityService: Boolean(capabilityCheck.health?.configured&&capabilityCheck.health?.databaseReady),
       capabilitySemantic: Boolean(capabilityCheck.health?.vectorSearch),
