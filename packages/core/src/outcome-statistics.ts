@@ -5,6 +5,7 @@ import {
   type OutcomeMetricSample,
   type OutcomeSummary,
 } from "@evolution/contracts";
+import {PRODUCTION_OUTCOME_MAX_FUTURE_SKEW_MS} from "./release-outcome";
 
 function mean(values:number[]){
   return values.length?values.reduce((sum,value)=>sum+value,0)/values.length:undefined;
@@ -113,7 +114,21 @@ export function analyzeOutcomeSamples(input:{
   minimumSamplesPerArm:number;
   checkedAt?:string;
 }):OutcomeAnalyticsResponse{
-  const grouped=groups(input.samples);
+  const checkedAt=input.checkedAt??new Date().toISOString();
+  const checkedAtMs=Date.parse(checkedAt);
+  if(!Number.isFinite(checkedAtMs))throw new Error("Outcome analysis checkedAt is invalid");
+  const candidateIds=[...new Set(input.samples.map((sample)=>sample.candidateId).filter((value):value is string=>Boolean(value)))];
+  if(!input.candidateId&&candidateIds.length>1){
+    throw new Error("Outcome analysis candidateId is required when multiple Candidates are present");
+  }
+  const candidateId=input.candidateId??candidateIds[0];
+  const samples=input.samples.filter((sample)=>{
+    if(candidateId&&sample.candidateId!==candidateId)return false;
+    const observedAt=Date.parse(sample.observedAt);
+    return Number.isFinite(observedAt)&&observedAt<=checkedAtMs+PRODUCTION_OUTCOME_MAX_FUTURE_SKEW_MS;
+  });
+  const dropped=input.samples.length-samples.length;
+  const grouped=groups(samples);
   const metrics=grouped.map((group)=>analyzeGroup(group.rows,group.segment,input.minimumSamplesPerArm));
   const driftRows=grouped.map((group)=>drift(group.rows,group.segment,input.minimumSamplesPerArm));
   const regressions=metrics.filter((metric)=>metric.significance==="significant-regression").map((metric)=>({
@@ -127,20 +142,21 @@ export function analyzeOutcomeSamples(input:{
   const verdict=!estimated?"insufficient":regressions.length?"regression":drifting?"watch":"healthy";
   return OutcomeAnalyticsResponseSchema.parse({
     missionId:input.missionId,
-    candidateId:input.candidateId,
-    checkedAt:input.checkedAt??new Date().toISOString(),
-    sampleCount:input.samples.length,
+    candidateId,
+    checkedAt,
+    sampleCount:samples.length,
     minimumSamplesPerArm:input.minimumSamplesPerArm,
     metrics,
     drift:driftRows,
     regressions,
     verdict,
-    message:verdict==="insufficient"
+    message:(verdict==="insufficient"
       ?`每个 Stable/Candidate arm 至少需要 ${input.minimumSamplesPerArm} 个样本。`
       :verdict==="regression"
         ?`检测到 ${regressions.length} 个统计回归。`
         :verdict==="watch"
           ?"未检测到显著回归，但 Candidate 时间漂移需要继续观察。"
-          :"当前样本未检测到显著回归。",
+          :"当前样本未检测到显著回归。")
+      +(dropped?` 已忽略 ${dropped} 个跨 Candidate、无效时间或超前时间样本。`:""),
   });
 }

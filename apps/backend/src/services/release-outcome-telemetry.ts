@@ -9,6 +9,7 @@ import type {
 } from "@evolution/contracts";
 import {serverSupabaseSecureConfigured} from "../server-env";
 import {insertOutcomeSamples} from "./outcome-sample-store";
+import {bindOutcomeMetricBatchToMission} from "./outcome-ingestion";
 import {collectConfiguredOutcomeTelemetry,getOutcomeTelemetryCapabilities} from "./outcome-telemetry-source";
 
 function sampleId(parts:string[]){
@@ -203,11 +204,12 @@ async function persistOutcomeSamples(args:{
   let inserted=0;
   const messages:string[]=[];
   for(let offset=0;offset<samples.length;offset+=1000){
-    const result=await insertOutcomeSamples({
+    const batch=bindOutcomeMetricBatchToMission(args.project,{
       missionId:args.project.id,
       candidateId:args.project.release.candidateId,
       samples:samples.slice(offset,offset+1000),
     });
+    const result=await insertOutcomeSamples(batch);
     inserted+=result.inserted;
     messages.push(result.message);
   }

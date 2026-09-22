@@ -72,6 +72,18 @@ describe("outcome telemetry source",()=>{
     expect(state.errors.join(" ")).toContain("PRODUCT_METRICS_TOKEN");
   });
 
+  it("rejects multi-arm telemetry that cannot distinguish Stable from Candidate",()=>{
+    process.env.EVOLUTION_OUTCOME_TELEMETRY_JSON=JSON.stringify([{
+      id:"global-metrics",
+      urlTemplate:"https://metrics.example.com/global?mission={missionId}",
+      metrics:[{metricKey:"conversion_rate",metricKind:"business",direction:"higher",path:"conversion"}],
+    }]);
+    const state=getOutcomeTelemetryConfigState();
+    expect(state.configured).toBe(true);
+    expect(state.ready).toBe(false);
+    expect(state.errors.join(" ")).toContain("multi-arm telemetry requires");
+  });
+
   it("pulls stable and candidate business/cost metrics with explicit metric semantics",async()=>{
     process.env.PRODUCT_METRICS_TOKEN="secret-token";
     process.env.EVOLUTION_OUTCOME_TELEMETRY_JSON=JSON.stringify([{

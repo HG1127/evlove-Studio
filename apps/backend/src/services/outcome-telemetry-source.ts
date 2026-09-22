@@ -81,6 +81,10 @@ function templateTokens(template:string){
 function validateSource(source:OutcomeTelemetrySource){
   const unknown=templateTokens(source.urlTemplate).filter((token)=>!ALLOWED_TOKENS.has(token));
   if(unknown.length)throw new Error("source "+source.id+": unknown URL template token(s): "+unknown.join(", "));
+  const tokens=new Set(templateTokens(source.urlTemplate));
+  if(source.arms.length>1&&!(["deploymentId","deploymentUrl","arm"] as const).some((token)=>tokens.has(token))){
+    throw new Error("source "+source.id+": multi-arm telemetry requires {deploymentId}, {deploymentUrl}, or {arm} to isolate Stable/Candidate");
+  }
   const probe=source.urlTemplate.replace(/\{([A-Za-z][A-Za-z0-9]*)\}/g,"probe");
   const probeUrl=new URL(probe);
   if(probeUrl.protocol!=="https:"&&probeUrl.protocol!=="http:"){

@@ -85,3 +85,7 @@ Example:
 ```
 
 Supported URL tokens are `missionId`, `candidateId`, `deploymentId`, `deploymentUrl`, `arm`, `trafficPercent`, and `releaseStatus`. Telemetry failures are fail-soft for Release Health: they are surfaced as warnings and never turn missing business metrics into a fabricated PASS.
+
+A telemetry source that requests both Stable and Candidate arms must include at least one real arm discriminator in its URL template: `{deploymentId}`, `{deploymentUrl}`, or `{arm}`. A global endpoint that cannot distinguish the two arms is rejected at configuration time instead of being requested twice and mislabeled as an A/B comparison.
+
+Outcome Warehouse ingestion is Mission-bound. New samples are normalized to the current Release Candidate and must use the exact deployment bound to their declared Stable/Candidate arm; explicit Candidate drift, deployment drift, missing deployment identity, invalid timestamps, and timestamps more than two minutes in the future are rejected. The same binding is applied to automatic Release Telemetry before persistence. Outcome analysis defaults to the current Release Candidate when no Candidate is supplied, and the Core statistics layer filters cross-Candidate, invalid-time, and materially future samples so pre-existing bad rows cannot influence the verdict.

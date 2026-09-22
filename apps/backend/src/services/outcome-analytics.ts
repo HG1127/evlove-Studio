@@ -56,7 +56,7 @@ export async function getOutcomeAnalyticsHealth(){
   }
 }
 
-export async function analyzeMissionOutcome(input:{missionId:string;candidateId?:string}){
+export async function analyzeMissionOutcome(input:{missionId:string;candidateId:string}){
   const samples=await readOutcomeSamples(input);
   return analyzeOutcomeSamples({
     ...input,

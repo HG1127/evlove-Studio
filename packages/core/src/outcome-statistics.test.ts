@@ -62,4 +62,49 @@ describe("outcome statistics",()=>{
     expect(result.drift[0]?.status).toBe("drifting");
     expect(result.verdict).toBe("regression");
   });
+
+  it("filters future/invalid timestamps and cross-Candidate samples before statistics",()=>{
+    const rows=samples({
+      metricKey:"conversion",kind:"business",direction:"higher",
+      stable:[0.2,0.2,0.2,0.2,0.2],
+      candidate:[0.25,0.25,0.25,0.25,0.25],
+    });
+    rows.push({
+      ...rows[0]!,
+      id:"future-regression",
+      candidateId:"c1",
+      arm:"candidate",
+      value:0,
+      observedAt:"2026-09-21T02:10:01.000Z",
+    });
+    rows.push({
+      ...rows[0]!,
+      id:"other-candidate",
+      candidateId:"c2",
+      arm:"candidate",
+      value:0,
+      observedAt:"2026-09-21T01:10:00.000Z",
+    });
+    rows.push({...rows[0]!,id:"bad-time",observedAt:"not-a-date"});
+    const result=analyzeOutcomeSamples({
+      missionId:"m1",candidateId:"c1",minimumSamplesPerArm:5,
+      checkedAt:"2026-09-21T02:08:00.000Z",
+      samples:rows,
+    });
+    expect(result.sampleCount).toBe(10);
+    expect(result.verdict).toBe("healthy");
+    expect(result.message).toContain("已忽略 3 个");
+  });
+
+  it("refuses implicit cross-Candidate aggregation when candidateId is omitted",()=>{
+    const rows=samples({
+      metricKey:"latency",kind:"latency",direction:"lower",
+      stable:[100],candidate:[90],
+    });
+    rows.push({...rows[0]!,id:"other",candidateId:"c2"});
+    expect(()=>analyzeOutcomeSamples({
+      missionId:"m1",minimumSamplesPerArm:1,samples:rows,
+      checkedAt:"2026-09-22T00:00:00.000Z",
+    })).toThrow(/candidateId is required/);
+  });
 });
