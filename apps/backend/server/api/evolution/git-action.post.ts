@@ -2,17 +2,13 @@ import {createError,defineEventHandler,readBody} from "nitro/h3";
 import {createEvolutionEvent,GitTargetActionRequestSchema} from "@evolution/contracts";
 import {serverSupabaseConfigured} from "../../../src/server-env";
 import {executeGitTargetAction} from "../../../src/services/github-target";
+import {gitActionPermission} from "../../../src/services/git-permission";
 import {getServerProductionRuntime} from "../../../src/services/production-runtime";
 import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 
 export default defineEventHandler(async(event)=>{
   const input=GitTargetActionRequestSchema.parse(await readBody(event));
-  const permission=input.action==="snapshot"||input.action==="validate"||input.action==="observe"
-    ?"data.read"
-    :input.action==="merge"||input.action==="rollback"
-      ?"release.execute"
-      :"target.write";
-  await requireGovernedEvolutionPermission(event,permission);
+  await requireGovernedEvolutionPermission(event,gitActionPermission(input.action));
   const writeAction=["mutate","open-pr","merge","rollback"].includes(input.action);
   if(writeAction&&!serverSupabaseConfigured()){
     throw createError({statusCode:503,statusMessage:"Git write requires configured Server Data Plane for durable audit"});

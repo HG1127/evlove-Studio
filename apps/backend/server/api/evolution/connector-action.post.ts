@@ -1,17 +1,12 @@
 import {createError,defineEventHandler,readBody} from "nitro/h3";
-import {ConnectorActionRequestSchema,type EvolutionPermission} from "@evolution/contracts";
+import {ConnectorActionRequestSchema} from "@evolution/contracts";
 import {executeConnectorAction} from "../../../src/services/connector-registry";
+import {connectorOperationPermission} from "../../../src/services/connector-permission";
 import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
-
-function permission(operation:string):EvolutionPermission{
-  if(operation==="mutate")return "target.write";
-  if(operation==="deploy"||operation==="rollback")return "release.execute";
-  return "data.read";
-}
 
 export default defineEventHandler(async(event)=>{
   const input=ConnectorActionRequestSchema.parse(await readBody(event));
-  await requireGovernedEvolutionPermission(event,permission(input.operation));
+  await requireGovernedEvolutionPermission(event,connectorOperationPermission(input.operation));
   try{return await executeConnectorAction(input);}
   catch(error){
     const code=(error as {code?:string}).code;
