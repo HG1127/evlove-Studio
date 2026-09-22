@@ -29,8 +29,8 @@ import {productionRuntimeMode} from "./production-runtime";
 /**
  * Client compatibility surface.
  * Production/server-capable environments use the backend AI gateway first.
- * Browser BYOK/demo remains an explicit offline fallback only when the backend
- * reports SERVER_AI_UNAVAILABLE; arbitrary server errors are not hidden.
+ * Browser BYOK/demo remains an explicit offline fallback when the backend AI
+ * is unavailable or the browser has no trusted server identity; arbitrary semantic/server errors are not hidden.
  */
 export async function runAi<T>(
   operation:AiOperation,
@@ -45,7 +45,7 @@ export async function runAi<T>(
     onAttemptNotice?.({
       kind:"retry",
       model:"local-fallback",
-      message:"Server AI 未配置，降级到浏览器本地/BYOK 路由。",
+      message:"Server AI 当前不可用或浏览器尚未接入可信身份，降级到本地/BYOK 路由。",
     });
     return runLocalAi<T>(operation,payload,onAttemptNotice);
   }
