@@ -129,47 +129,45 @@ export function EvolutionReadinessCenter() {
     runner,
     visualJudgeLive,
     server: {
-      controlPlane: Boolean((workflowCheck.capabilities?.available&&workflowCheck.capabilities?.durable)||publicReadiness?.workflow.durable),
+      controlPlane: Boolean(workflowCheck.capabilities?.available&&workflowCheck.capabilities?.durable),
       dataPlane: Boolean(
-        (backendHealthCheck.health?.dataPlane.database
-          &&backendHealthCheck.health?.dataPlane.storage
-          &&Object.values(backendHealthCheck.health.dataPlane.tables).every(Boolean))
-        ||(publicReadiness?.dataPlane.database&&publicReadiness.dataPlane.storage&&publicReadiness.dataPlane.coreTables)
+        backendHealthCheck.health?.dataPlane.database
+        &&backendHealthCheck.health?.dataPlane.storage
+        &&Object.values(backendHealthCheck.health.dataPlane.tables).every(Boolean)
       ),
-      sourceParse: Boolean((backendHealthCheck.health?.sourceParse.codeReady&&backendHealthCheck.health?.sourceParse.configured)||publicReadiness?.sourceParse),
-      artifactStore: Boolean(backendHealthCheck.health?.dataPlane.storage||publicReadiness?.dataPlane.storage),
-      artifactRenderer: Boolean((backendHealthCheck.health?.artifactRenderer.codeReady&&backendHealthCheck.health?.artifactRenderer.configured)||publicReadiness?.artifactRenderer),
+      sourceParse: Boolean(backendHealthCheck.health?.sourceParse.codeReady&&backendHealthCheck.health?.sourceParse.configured),
+      artifactStore: Boolean(backendHealthCheck.health?.dataPlane.storage),
+      artifactRenderer: Boolean(backendHealthCheck.health?.artifactRenderer.codeReady&&backendHealthCheck.health?.artifactRenderer.configured),
       serverAi: Boolean((backendHealthCheck.health?.serverAi.codeReady&&backendHealthCheck.health?.serverAi.configured)||publicReadiness?.serverAi),
-      sandbox: Boolean(sandboxCheck.health?.ready||publicReadiness?.sandbox),
+      sandbox: Boolean(sandboxCheck.health?.ready),
       sandboxPolicy: Boolean(sandboxCheck.health?.policy.codeReady||publicReadiness?.sandboxPolicy),
-      browser: Boolean(browserCheck.health?.ready||publicReadiness?.browser),
+      browser: Boolean(browserCheck.health?.ready),
       release: Boolean(
         (releaseCheck.capabilities?.writeEnabled&&releaseCheck.capabilities.readEnabled)
         ||(backendHealthCheck.health?.targetProxy.releaseConfigured&&backendHealthCheck.health?.targetProxy.observeConfigured)
         ||Boolean(connectorCheck.capabilities?.fullLifecycleCount)
-        ||Boolean(publicReadiness?.release.read&&publicReadiness.release.write)
       ),
-      git: Boolean((gitCheck.capabilities?.configured&&gitCheck.capabilities?.allowlistConfigured&&gitCheck.capabilities?.webhookConfigured)||(publicReadiness?.git.configured&&publicReadiness.git.webhook)),
-      capabilityService: Boolean((capabilityCheck.health?.configured&&capabilityCheck.health?.databaseReady)||publicReadiness?.capability.database),
-      capabilitySemantic: Boolean(capabilityCheck.health?.vectorSearch||publicReadiness?.capability.semantic),
-      capabilitySharing: Boolean(capabilityCheck.health?.sharingRbacReady||publicReadiness?.capability.sharing),
+      git: Boolean(gitCheck.capabilities?.configured&&gitCheck.capabilities?.allowlistConfigured&&gitCheck.capabilities?.webhookConfigured),
+      capabilityService: Boolean(capabilityCheck.health?.configured&&capabilityCheck.health?.databaseReady),
+      capabilitySemantic: Boolean(capabilityCheck.health?.vectorSearch),
+      capabilitySharing: Boolean(capabilityCheck.health?.sharingRbacReady),
       evidenceLedger: Boolean(
-        (evidenceLedgerCheck.health?.configured
-          &&evidenceLedgerCheck.health.databaseReady
-          &&evidenceLedgerCheck.health.signingConfigured
-          &&evidenceLedgerCheck.health.appendFunctionReady
-          &&evidenceLedgerCheck.health.immutableTriggerReady)
-        ||(publicReadiness?.evidence.database&&publicReadiness.evidence.signing&&publicReadiness.evidence.immutable)
+        evidenceLedgerCheck.health?.configured
+        &&evidenceLedgerCheck.health.databaseReady
+        &&evidenceLedgerCheck.health.signingConfigured
+        &&evidenceLedgerCheck.health.appendFunctionReady
+        &&evidenceLedgerCheck.health.immutableTriggerReady
       ),
       evidenceSigningProvider: evidenceLedgerCheck.health?.signingProvider,
-      security: Boolean(backendHealthCheck.health?.security.productionSafe||publicReadiness?.security.productionSafe),
-      vault: Boolean((backendHealthCheck.health?.securityGovernance.vaultConfigured&&backendHealthCheck.health?.securityGovernance.vaultDatabaseReady)||publicReadiness?.security.vault),
-      approvalStore: Boolean(backendHealthCheck.health?.securityGovernance.approvalStoreReady||publicReadiness?.security.approvalStore),
-      memberDirectory: Boolean(backendHealthCheck.health?.securityGovernance.memberDirectoryReady||publicReadiness?.security.memberDirectory),
-      connectors: Boolean(connectorCheck.capabilities?.fullLifecycleCount||publicReadiness?.connectors.fullLifecycle),
+      security: Boolean(backendHealthCheck.health?.security.productionSafe),
+      vault: Boolean(backendHealthCheck.health?.securityGovernance.vaultConfigured&&backendHealthCheck.health?.securityGovernance.vaultDatabaseReady),
+      approvalStore: Boolean(backendHealthCheck.health?.securityGovernance.approvalStoreReady),
+      memberDirectory: Boolean(backendHealthCheck.health?.securityGovernance.memberDirectoryReady),
+      connectors: Boolean(connectorCheck.capabilities?.fullLifecycleCount),
       outcome: Boolean(
-        (outcomeCheck.health?.databaseReady&&outcomeCheck.health.ingestionReady&&outcomeCheck.health.analysisReady)
-        ||(publicReadiness?.outcome.database&&publicReadiness.outcome.ingestion&&publicReadiness.outcome.analysis)
+        outcomeCheck.health?.databaseReady
+        &&outcomeCheck.health.ingestionReady
+        &&outcomeCheck.health.analysisReady
       ),
     },
   }), [backendHealthCheck.health, browserCheck.health, capabilityCheck.health, connectorCheck.capabilities, evidenceLedgerCheck.health, gitCheck.capabilities, outcomeCheck.health, publicReadiness, releaseCheck.capabilities, runner, sandboxCheck.health, visualJudgeLive, workflowCheck.capabilities]);
@@ -185,26 +183,23 @@ export function EvolutionReadinessCenter() {
   const productionMode = productionRuntimeMode();
   const productionContractsReady = PRODUCTION_BOUNDARIES.filter((item) => item.ready).length;
   const productionModeLabel = productionMode === "http" ? "SERVER API" : "LOCAL ADAPTER";
-  const serverDataPlaneReady=Boolean(
-    (backendHealthCheck.health?.dataPlane.database&&backendHealthCheck.health?.dataPlane.storage)
-    ||(publicReadiness?.dataPlane.database&&publicReadiness.dataPlane.storage&&publicReadiness.dataPlane.coreTables)
-  );
+  const serverDataPlaneReady=Boolean(backendHealthCheck.health?.dataPlane.database&&backendHealthCheck.health?.dataPlane.storage);
   const dataPlaneReady=productionMode==="http"?serverDataPlaneReady:false;
   const remoteSyncReady=productionMode==="http"&&syncCheck.liveStatus==="http-polling";
   const p02Ready = Boolean(dataPlaneReady && remoteSyncReady);
-  const p03Connected = Boolean((workflowCheck.capabilities?.available&&workflowCheck.capabilities?.durable)||publicReadiness?.workflow.durable);
+  const p03Connected = Boolean(workflowCheck.capabilities?.available&&workflowCheck.capabilities?.durable);
   const p03FullAuto = Boolean(workflowCheck.capabilities?.fullAuto);
   const p03OfflineAuto = Boolean(workflowCheck.capabilities?.closure.offlineFullAuto);
-  const p04Ready = Boolean((sandboxCheck.health?.ready&&sandboxCheck.health.policy.codeReady)||(publicReadiness?.sandbox&&publicReadiness.sandboxPolicy));
-  const p04BrowserReady = Boolean(browserCheck.health?.ready||publicReadiness?.browser);
+  const p04Ready = Boolean(sandboxCheck.health?.ready&&sandboxCheck.health.policy.codeReady);
+  const p04BrowserReady = Boolean(browserCheck.health?.ready);
   const connectorCount=connectorCheck.capabilities?.connectorCount??0;
   const connectorFullCount=connectorCheck.capabilities?.fullLifecycleCount??0;
   const connectorConfigured=Boolean(connectorCount>0||publicReadiness?.connectors.configured);
-  const connectorFullLifecycleReady=Boolean(connectorFullCount>0||publicReadiness?.connectors.fullLifecycle);
-  const releaseReadReady = Boolean((releaseCheck.capabilities?.readEnabled&&releaseCheck.health?.ready)||connectorFullLifecycleReady||publicReadiness?.release.read);
-  const releaseWriteReady = Boolean(releaseCheck.capabilities?.writeEnabled||connectorFullLifecycleReady||publicReadiness?.release.write);
+  const connectorFullLifecycleReady=Boolean(connectorFullCount>0);
+  const releaseReadReady = Boolean((releaseCheck.capabilities?.readEnabled&&releaseCheck.health?.ready)||connectorFullLifecycleReady);
+  const releaseWriteReady = Boolean(releaseCheck.capabilities?.writeEnabled||connectorFullLifecycleReady);
   const gitConfigured=Boolean((gitCheck.capabilities?.configured&&gitCheck.capabilities?.allowlistConfigured)||publicReadiness?.git.configured);
-  const gitReady=Boolean((gitConfigured&&gitCheck.capabilities?.webhookConfigured)||(publicReadiness?.git.configured&&publicReadiness.git.webhook));
+  const gitReady=Boolean(gitCheck.capabilities?.configured&&gitCheck.capabilities?.allowlistConfigured&&gitCheck.capabilities?.webhookConfigured);
   const hybridFunctionalReady = Boolean(p02Ready && p04Ready);
   const hybridInteractionReady = Boolean(hybridFunctionalReady && p04BrowserReady);
   const visibleEngines = engineFilter === "gaps"
@@ -258,7 +253,7 @@ export function EvolutionReadinessCenter() {
     let active=true;
     queueMicrotask(()=>{if(active)setPublicReadinessCheck({busy:true,message:"正在读取 Public Readiness…"});});
     void checkPublicReadiness().then((snapshot)=>{
-      if(active)setPublicReadinessCheck({busy:false,snapshot,message:"Public Readiness 已读取；受保护 API 未认证时继续使用只读状态。"});
+      if(active)setPublicReadinessCheck({busy:false,snapshot,message:"Passive Readiness 已读取：仅检查代码/环境配置，不执行数据库、Vercel、Sandbox 或 Browser 主动探针；真实 READY 需认证 Health Probe。"});
     }).catch((error)=>{
       if(active)setPublicReadinessCheck({busy:false,message:error instanceof Error?error.message:String(error)});
     });
@@ -609,7 +604,7 @@ export function EvolutionReadinessCenter() {
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <div className="text-xs font-semibold text-slate-800">P0-3 · Durable Evolution Workflow</div>
-                <div className="mt-1 text-[11px] text-slate-500">{workflowCheck.capabilities?workflowCheck.message:publicReadiness?.workflow.durable?"Public Readiness：Durable Workflow 已部署；受保护 capability API 等待身份接入。":workflowCheck.message||"等待 Workflow capability 检测"}</div>
+                <div className="mt-1 text-[11px] text-slate-500">{workflowCheck.capabilities?workflowCheck.message:workflowCheck.message||publicReadinessCheck.message||"等待 Workflow capability 检测"}</div>
               </div>
               <div className="flex items-center gap-2">
                 <Badge className={p03FullAuto || p03OfflineAuto ? "border-emerald-200 bg-emerald-50 text-emerald-700" : p03Connected ? "border-amber-200 bg-amber-50 text-amber-700" : "border-slate-200 bg-slate-50 text-slate-600"}>{p03FullAuto ? "FULL AUTO" : p03OfflineAuto ? "OFFLINE AUTO" : p03Connected ? "PARTIAL" : "CHECK"}</Badge>
@@ -617,9 +612,9 @@ export function EvolutionReadinessCenter() {
               </div>
             </div>
             <div className="mt-3 grid grid-cols-2 gap-2 text-[10px] sm:grid-cols-4 xl:grid-cols-12">
-              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>durable</b><div className={workflowCheck.capabilities?.durable||publicReadiness?.workflow.durable ? "text-emerald-600" : "text-slate-400"}>{workflowCheck.capabilities?.durable||publicReadiness?.workflow.durable ? "READY" : "—"}</div></div>
-              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>server AI</b><div className={workflowCheck.capabilities?.serverAi||publicReadiness?.serverAi ? "text-emerald-600" : "text-amber-600"}>{workflowCheck.capabilities?.serverAi||publicReadiness?.serverAi ? "READY" : "NOT CONFIGURED"}</div></div>
-              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>server data</b><div className={workflowCheck.capabilities?.backend.dataPlaneConfigured||publicReadiness?.dataPlane.coreTables ? "text-emerald-600" : "text-amber-600"}>{workflowCheck.capabilities?.backend.dataPlaneConfigured||publicReadiness?.dataPlane.coreTables ? "READY" : "NOT CONFIGURED"}</div></div>
+              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>durable</b><div className={workflowCheck.capabilities?.durable ? "text-emerald-600" : "text-slate-400"}>{workflowCheck.capabilities?.durable ? "READY" : "—"}</div></div>
+              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>server AI</b><div className={workflowCheck.capabilities?.serverAi||publicReadiness?.serverAi ? "text-emerald-600" : "text-amber-600"}>{workflowCheck.capabilities?.serverAi||publicReadiness?.serverAi ? (workflowCheck.capabilities?.serverAi?"READY":"CONFIGURED") : "NOT CONFIGURED"}</div></div>
+              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>server data</b><div className={workflowCheck.capabilities?.backend.dataPlaneConfigured ? "text-emerald-600" : publicReadiness?.dataPlane.configured ? "text-amber-600" : "text-slate-400"}>{workflowCheck.capabilities?.backend.dataPlaneConfigured ? "READY" : publicReadiness?.dataPlane.configured ? "CONFIGURED" : "NOT CONFIGURED"}</div></div>
               <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>HTTP API</b><div className={workflowCheck.capabilities?.backend.httpDataPlaneCodeReady ? "text-emerald-600" : "text-slate-400"}>{workflowCheck.capabilities?.backend.httpDataPlaneCodeReady ? "CODE READY" : "—"}</div></div>
               <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>source parse</b><div className={workflowCheck.capabilities?.backend.sourceParseConfigured ? "text-emerald-600" : workflowCheck.capabilities?.backend.sourceParseCodeReady ? "text-amber-600" : "text-slate-400"}>{workflowCheck.capabilities?.backend.sourceParseConfigured ? "READY" : workflowCheck.capabilities?.backend.sourceParseCodeReady ? "CODE READY" : "—"}</div></div>
               <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>server actions</b><div className="text-sky-600">{workflowCheck.capabilities?.serverNativeActions.length ?? 0}</div></div>

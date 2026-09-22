@@ -1,6 +1,7 @@
 import {z} from "zod";
 
 export const PublicReadinessSnapshotSchema=z.object({
+  probeMode:z.literal("passive-config"),
   checkedAt:z.string(),
   workflow:z.object({durable:z.boolean()}),
   dataPlane:z.object({

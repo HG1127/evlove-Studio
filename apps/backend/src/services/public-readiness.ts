@@ -1,8 +1,8 @@
-import {checkSupabaseBackendHealth} from "@evolution/adapters";
-import {checkVercelSandboxBrowserHealth,checkVercelSandboxHealth,getVercelSandboxPolicyCapabilities} from "@evolution/adapters/sandbox";
+import {getVercelSandboxPolicyCapabilities} from "@evolution/adapters/sandbox";
 import {PublicReadinessSnapshotSchema} from "@evolution/contracts";
 import {
-  getServerSupabaseConfig,
+  getEvidenceLedgerSigningConfig,
+  getEvidenceLedgerSigningVaultId,
   githubTargetConfigured,
   githubWebhookConfigured,
   serverAiConfigured,
@@ -10,108 +10,62 @@ import {
   serverSupabaseConfigDiagnostics,
   serverSupabaseSecureConfigured,
   targetProxyCapabilities,
+  vaultEncryptionConfigured,
 } from "../server-env";
-import {getConnectorRegistryCapabilities} from "./connector-registry";
-import {getEvidenceLedgerHealth} from "./evidence-ledger";
-import {getOrganizationCapabilityHealth} from "./organization-capability";
-import {getOutcomeAnalyticsHealth} from "./outcome-analytics";
-import {organizationMemberDirectoryHealth} from "./organization-member-directory";
-import {releaseApprovalStoreHealth} from "./release-approval-store";
+import {getServerConnectorManifests} from "./connector-registry";
 import {getSecurityCapabilities} from "./security-policy";
-import {serverVaultHealth} from "./server-vault";
-import {getVercelReleaseCapabilities} from "./vercel-release";
 
-function fulfilled<T>(result:PromiseSettledResult<T>):T|undefined{
-  return result.status==="fulfilled"?result.value:undefined;
-}
-
+/**
+ * Public readiness is intentionally passive.
+ * It must never create a Sandbox, start a Browser, call Vercel provider APIs,
+ * query Supabase, resolve Vault secrets, or trigger any other metered/external I/O.
+ * Authenticated health endpoints own active verification.
+ */
 export async function getPublicReadinessSnapshot(){
   const configured=serverSupabaseConfigured();
   const dataPlaneConfig=serverSupabaseConfigDiagnostics();
-  const checks=await Promise.allSettled([
-    configured?checkSupabaseBackendHealth(getServerSupabaseConfig()):Promise.resolve(undefined),
-    checkVercelSandboxHealth(),
-    checkVercelSandboxBrowserHealth(),
-    getVercelReleaseCapabilities(),
-    getOrganizationCapabilityHealth(),
-    getEvidenceLedgerHealth(),
-    getOutcomeAnalyticsHealth(),
-    getConnectorRegistryCapabilities(),
-    serverVaultHealth(),
-    releaseApprovalStoreHealth(),
-    organizationMemberDirectoryHealth(),
-  ] as const);
-  const dataPlane=fulfilled(checks[0]);
-  const sandbox=fulfilled(checks[1]);
-  const browser=fulfilled(checks[2]);
-  const release=fulfilled(checks[3]);
-  const capability=fulfilled(checks[4]);
-  const evidence=fulfilled(checks[5]);
-  const outcome=fulfilled(checks[6]);
-  const connectors=fulfilled(checks[7]);
-  const vault=fulfilled(checks[8]);
-  const approval=fulfilled(checks[9]);
-  const members=fulfilled(checks[10]);
   const security=getSecurityCapabilities();
-  const governanceProductionSafe=Boolean(
-    security.productionSafe
-    &&approval?.databaseReady
-    &&members?.databaseReady
-    &&members.activeAdmins>0
-    &&(!vault?.configured||vault.databaseReady)
-  );
   const targetProxy=targetProxyCapabilities();
+  let connectorConfigured=false;
+  try{connectorConfigured=getServerConnectorManifests().length>0;}catch{/* invalid manifests are surfaced by authenticated capability checks */}
+
   return PublicReadinessSnapshotSchema.parse({
+    probeMode:"passive-config",
     checkedAt:new Date().toISOString(),
-    workflow:{durable:true},
+    workflow:{durable:false},
     dataPlane:{
       configured,
       secureCredential:serverSupabaseSecureConfigured(),
-      database:Boolean(dataPlane?.database),
-      storage:Boolean(dataPlane?.storage),
-      coreTables:Boolean(dataPlane&&Object.values(dataPlane.tables).every(Boolean)),
+      database:false,
+      storage:false,
+      coreTables:false,
       ...dataPlaneConfig,
     },
-    sourceParse:Boolean(configured&&dataPlane?.database&&dataPlane?.storage),
-    artifactRenderer:Boolean(configured&&dataPlane?.storage),
+    sourceParse:false,
+    artifactRenderer:false,
     serverAi:serverAiConfigured(),
-    sandbox:Boolean(sandbox?.ready),
+    sandbox:false,
     sandboxPolicy:getVercelSandboxPolicyCapabilities().codeReady,
-    browser:Boolean(browser?.ready),
-    release:{
-      read:Boolean(release?.readEnabled||targetProxy.observeConfigured||connectors?.fullLifecycleCount),
-      write:Boolean(release?.writeEnabled||targetProxy.releaseConfigured||connectors?.fullLifecycleCount),
-    },
+    browser:false,
+    release:{read:false,write:false},
     git:{configured:githubTargetConfigured(),webhook:githubWebhookConfigured()},
-    capability:{
-      database:Boolean(capability?.databaseReady),
-      semantic:Boolean(capability?.vectorSearch),
-      sharing:Boolean(capability?.sharingRbacReady),
-    },
+    capability:{database:false,semantic:false,sharing:false},
     evidence:{
-      database:Boolean(evidence?.databaseReady),
-      signing:Boolean(evidence?.signingConfigured),
-      immutable:Boolean(evidence?.appendFunctionReady&&evidence?.immutableTriggerReady),
-      export:Boolean(evidence?.exportReady),
+      database:false,
+      signing:Boolean(getEvidenceLedgerSigningConfig()||(getEvidenceLedgerSigningVaultId()&&vaultEncryptionConfigured())),
+      immutable:false,
+      export:false,
     },
-    outcome:{
-      database:Boolean(outcome?.databaseReady),
-      ingestion:Boolean(outcome?.ingestionReady),
-      analysis:Boolean(outcome?.analysisReady),
-      telemetry:Boolean(outcome?.telemetryConfigured&&outcome?.telemetryReady),
-    },
+    outcome:{database:false,ingestion:false,analysis:false,telemetry:false},
     security:{
       configured:security.configured,
       enforced:security.enforced,
-      productionSafe:governanceProductionSafe,
-      vault:Boolean(vault?.configured&&vault.databaseReady),
-      approvalStore:Boolean(approval?.configured&&approval.databaseReady),
-      memberDirectory:Boolean(members?.databaseReady&&members.activeAdmins>0),
+      productionSafe:false,
+      vault:false,
+      approvalStore:false,
+      memberDirectory:false,
     },
-    connectors:{
-      configured:Boolean(connectors?.configured),
-      fullLifecycle:Boolean(connectors?.fullLifecycleCount),
-    },
+    connectors:{configured:connectorConfigured,fullLifecycle:false},
     targetProxy:{run:targetProxy.runConfigured,release:targetProxy.releaseConfigured,observe:targetProxy.observeConfigured},
   });
 }
