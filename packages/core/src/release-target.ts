@@ -1,7 +1,56 @@
 import type { EvolveProject, ReleaseState } from "@evolution/contracts";
 
+function releaseTargetIdentity(target:EvolveProject["releaseTarget"]){
+  if(!target)return "none";
+  return JSON.stringify({
+    provider:target.provider,
+    mode:target.mode,
+    connectionId:target.connectionId??null,
+    projectId:target.projectId??null,
+    productionUrl:target.productionUrl??null,
+    healthPath:target.healthPath??"/",
+  });
+}
+
+function emptyReleaseState():ReleaseState{
+  return {
+    status:"idle",
+    trafficPercent:0,
+    kpis:[],
+    evidenceMode:"none",
+    history:[],
+  };
+}
+
+export function transitionReleaseTarget(
+  project:EvolveProject,
+  releaseTarget:NonNullable<EvolveProject["releaseTarget"]>,
+  at=new Date().toISOString(),
+):EvolveProject{
+  if(releaseTargetIdentity(project.releaseTarget)===releaseTargetIdentity(releaseTarget)){
+    return {...project,releaseTarget,updatedAt:at};
+  }
+  if(projectHasOnlineReleaseTarget(project)&&["shadow","canary-5","canary-20","canary-50","promoted"].includes(project.release.status)){
+    throw new Error(`当前 Release 仍处于 ${project.release.status}，不能静默切换或断开发布平台；请先完成 Rollback / 收口。`);
+  }
+  return {
+    ...project,
+    releaseTarget,
+    release:emptyReleaseState(),
+    gates:project.gates.map((gate)=>gate.id==="release-ready"
+      ?{
+        ...gate,
+        status:"pending" as const,
+        approvedAt:undefined,
+        note:"Release Target 已变更，旧发布证据与审批不再适用于当前平台；需要重新确认 Release Ready。",
+      }
+      :gate),
+    updatedAt:at,
+  };
+}
+
 export function projectUsesVercelRelease(project:EvolveProject){
-  return project.releaseTarget?.provider==="vercel";
+  return project.releaseTarget?.provider==="vercel"&&project.releaseTarget.status==="connected";
 }
 
 export function projectUsesHttpRelease(project:EvolveProject){
@@ -9,8 +58,8 @@ export function projectUsesHttpRelease(project:EvolveProject){
 }
 
 export function projectUsesConnectorRelease(project:EvolveProject){
-  if(project.targetConnection?.adapter!=="connector")return false;
-  return project.releaseTarget?.provider==="connector";
+  if(project.targetConnection?.adapter!=="connector"||project.targetConnection.status!=="connected")return false;
+  return project.releaseTarget?.provider==="connector"&&project.releaseTarget.status==="connected";
 }
 
 export function projectHasOnlineReleaseTarget(project:EvolveProject){

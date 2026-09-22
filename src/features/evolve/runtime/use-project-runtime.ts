@@ -1,4 +1,4 @@
-import { applyProductionLearningGovernance, applyReleaseResultToProject, beginReleaseCycle, completeAutonomousMission, experimentNeedsEvidenceRepair, buildExperimentGapAdvicePayload, buildGapAdvicePayload, fallbackExperimentAdvice, integrateDistilledLesson, mergeGovernedNextQueue, nextDurableReleaseAction, productionOutcomeFreshness, productionOutcomeTrend, projectHasStableHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, projectUsesConnectorRelease, projectUsesHttpRelease, projectUsesVercelRelease } from "@evolution/core";
+import { applyProductionLearningGovernance, applyReleaseResultToProject, beginReleaseCycle, completeAutonomousMission, experimentNeedsEvidenceRepair, buildExperimentGapAdvicePayload, buildGapAdvicePayload, fallbackExperimentAdvice, integrateDistilledLesson, mergeGovernedNextQueue, nextDurableReleaseAction, productionOutcomeFreshness, productionOutcomeTrend, projectHasStableHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, projectUsesConnectorRelease, projectUsesHttpRelease, projectUsesVercelRelease, transitionReleaseTarget } from "@evolution/core";
 import { deliveryReadiness } from "./delivery-readiness";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -1331,7 +1331,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
   }, [commit]);
 
   const setReleaseTarget = useCallback((releaseTarget: NonNullable<EvolveProject["releaseTarget"]>) => {
-    commit((current) => ({ ...current, releaseTarget }));
+    commit((current) => transitionReleaseTarget(current,releaseTarget));
   }, [commit]);
 
   const bindReleaseDeployment = useCallback((deploymentId: string) => {
