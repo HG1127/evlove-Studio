@@ -6,6 +6,7 @@ import {
   expectedReleaseArtifactHashes,
   nextDurableReleaseAction,
   projectHasLiveReleaseDecision,
+  projectUsesHttpRelease,
   type DurableReleaseAction,
 } from "@evolution/core";
 
@@ -16,7 +17,7 @@ export type ServerReleasePorts={
   }):Promise<{ok:boolean;reason?:string}>;
   execute(args:{
     action:DurableReleaseAction;
-    deploymentId:string;
+    deploymentId?:string;
     stableDeploymentId?:string;
     healthPath?:string;
     artifactHashes:Array<{sourceArtifactId:string;contentHash:string}>;
@@ -106,7 +107,8 @@ export async function runServerReleaseOrchestration(
     }
   }
   const deploymentId=action==="rollback"?project.release.stableDeploymentId:project.release.deploymentId;
-  if(!deploymentId)return pause(project,`[server-release-binding-pending] ${action} 缺少显式 deploymentId。`);
+  const mayBindHttpShadow=projectUsesHttpRelease(project)&&action==="shadow"&&project.release.status==="idle";
+  if(!deploymentId&&!mayBindHttpShadow)return pause(project,`[server-release-binding-pending] ${action} 缺少显式 deploymentId。`);
 
   let receipt:ReleaseAdapterResult;
   try{

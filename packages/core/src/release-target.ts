@@ -1,8 +1,18 @@
 import type { EvolveProject, ReleaseState } from "@evolution/contracts";
 
+export function projectUsesVercelRelease(project:EvolveProject){
+  return project.releaseTarget?.provider==="vercel";
+}
+
+export function projectUsesHttpRelease(project:EvolveProject){
+  if(project.targetConnection?.adapter!=="http")return false;
+  return project.releaseTarget?.provider==="http"
+    ||!project.releaseTarget
+    ||project.releaseTarget.provider==="none";
+}
+
 export function projectHasOnlineReleaseTarget(project:EvolveProject){
-  if(project.releaseTarget?.provider==="vercel"||project.releaseTarget?.provider==="http")return true;
-  return (!project.releaseTarget||project.releaseTarget.provider==="none")&&project.targetConnection?.adapter==="http";
+  return projectUsesVercelRelease(project)||projectUsesHttpRelease(project);
 }
 
 export function projectHasLiveReleaseDecision(project:EvolveProject){

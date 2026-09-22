@@ -436,6 +436,33 @@ describe("autonomous orchestrator", () => {
     expect(deriveAutonomousDecision(base).action).toBe("complete");
   });
 
+  it("does not auto-replay or Vercel-reconcile an uncertain HTTP production write", () => {
+    const candidate = CandidateSchema.parse({
+      id:"http-release",name:"HTTP Release Candidate",change:"完成",status:"passed",artifactBuildStatus:"ready",
+      artifactSnapshots:[CandidateArtifactSnapshotSchema.parse({id:"snap-http-release",sourceArtifactId:demoProject.sourceArtifacts[0]!.id,name:"result.txt",mimeType:"text/plain",content:"final",contentHash:"hash-http-release",createdAt:"now"})],
+    });
+    const base=project({
+      targetConnection:{adapter:"http",connectionId:"http-prod",status:"connected",label:"HTTP Target"},
+      releaseTarget:{provider:"http",mode:"preview-promote",status:"connected",label:"HTTP Release",healthPath:"/"},
+      candidates:[candidate],
+      experimentRun:{...demoProject.experimentRun,status:"completed",winnerId:candidate.id},
+      validationRun:{...demoProject.validationRun,status:"completed",candidateId:candidate.id,recommendation:"release",evaluation:{...demoProject.baselineRun.result!,demoJudged:false},checks:[],runs:[],baselineRuns:[]},
+      artifactAcceptance:{...demoProject.artifactAcceptance,status:"passed",candidateId:candidate.id,hardGatePass:true,overallScore:96,coverageScore:96,integrityScore:96,pairwiseScore:96},
+      outputArtifacts:[{id:"out-http-release",projectId:demoProject.id,round:1,versionLabel:"S1",candidateId:candidate.id,name:"result.txt",mimeType:"text/plain",kind:"primary",content:"final",description:"accepted",sourceArtifactIds:[demoProject.sourceArtifacts[0]!.id],isChampion:true,accepted:true,createdAt:"now"} as EvolveProject["outputArtifacts"][number]],
+      gates:demoProject.gates.map((gate)=>gate.id==="release-ready"?{...gate,status:"approved" as const}:gate),
+      release:{...demoProject.release,status:"idle",candidateId:candidate.id,evidenceMode:"none",recovery:{status:"pending",action:"shadow",reason:"network lost after HTTP release request",at:"2026-09-22T01:00:00Z"}},
+      campaign:{...demoProject.campaign,status:"paused",stopReason:"[server-release-provider-pending] HTTP shadow result unknown"},
+      attentionRequests:[],lessons:[],nextQueue:[],
+    });
+    const binding=evidenceFingerprint(base,candidate);
+    base.validationRun.evidenceFingerprint=binding;
+    base.artifactAcceptance.evidenceFingerprint=binding;
+    const decision=deriveAutonomousDecision(base);
+    expect(decision.action).toBe("wait-human");
+    expect(decision.attention?.title).toContain("HTTP Release");
+    expect(decision.attention?.suggestedAction).toContain("不会自动重放");
+  });
+
   it("resolves a stale attention request automatically after the blocker disappears", () => {
     const base = project({ attentionRequests: [] });
     const blocked = reconcileAttentionRequest(base, {

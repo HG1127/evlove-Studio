@@ -1,4 +1,4 @@
-import { applyProductionLearningGovernance, applyReleaseResultToProject, beginReleaseCycle, completeAutonomousMission, experimentNeedsEvidenceRepair, buildExperimentGapAdvicePayload, buildGapAdvicePayload, fallbackExperimentAdvice, integrateDistilledLesson, mergeGovernedNextQueue, nextDurableReleaseAction, productionOutcomeFreshness, productionOutcomeTrend, projectHasStableHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget } from "@evolution/core";
+import { applyProductionLearningGovernance, applyReleaseResultToProject, beginReleaseCycle, completeAutonomousMission, experimentNeedsEvidenceRepair, buildExperimentGapAdvicePayload, buildGapAdvicePayload, fallbackExperimentAdvice, integrateDistilledLesson, mergeGovernedNextQueue, nextDurableReleaseAction, productionOutcomeFreshness, productionOutcomeTrend, projectHasStableHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, projectUsesHttpRelease, projectUsesVercelRelease } from "@evolution/core";
 import { deliveryReadiness } from "./delivery-readiness";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -1101,9 +1101,9 @@ export function useProjectRuntime(initialProject: EvolveProject) {
     if (!winner) throw new Error("没有 Release Candidate");
     const result = await run(`发布动作：${action}`, () => runRelease(project, winner, action));
     const effectiveAction = result.action;
-    const durableVercelRelease=project.releaseTarget?.provider==="vercel";
+    const durableOnlineRelease=projectUsesVercelRelease(project)||projectUsesHttpRelease(project);
     commit((current) => {
-      const base:EvolveProject=durableVercelRelease
+      const base:EvolveProject=durableOnlineRelease
         ?applyReleaseResultToProject({
           project:current,
           candidate:winner,
@@ -1136,7 +1136,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
       const governedAt=result.observedAt??now();
       return applyProductionLearningGovernance(settled,{at:governedAt,now:Date.parse(governedAt)});
     });
-    const terminal=durableVercelRelease
+    const terminal=durableOnlineRelease
       ?result.ok&&result.healthy===true&&result.observationStatus==="healthy"&&(effectiveAction==="promote"||effectiveAction==="rollback")
       :effectiveAction==="promote"||effectiveAction==="rollback";
     setStage(terminal?"learning":"release");

@@ -12,6 +12,8 @@ import {
   projectNeedsProductionLearningRedistill,
   projectHasLiveReleaseDecision,
   projectHasOnlineReleaseTarget,
+  projectUsesHttpRelease,
+  projectUsesVercelRelease,
   rubricSuiteCoverage,
   rubricValidation,
 } from "@evolution/core";
@@ -309,13 +311,23 @@ export function deriveAutonomousDecision(project: EvolveProject): AutonomousDeci
       }
     }
     if (onlineRelease && !liveReleaseDecision) {
-      if(project.release.recovery?.status==="pending"
-        &&project.releaseTarget?.provider==="vercel"){
+      const vercelRelease=projectUsesVercelRelease(project);
+      const httpRelease=projectUsesHttpRelease(project);
+      if(project.release.recovery?.status==="pending"&&vercelRelease){
         return {
           action:"reconcile-release",
           reason:"Release 上一步结果需要恢复；先只读核对 Vercel 当前 Production / Preview 真相，再决定是否继续生产动作。",
           stage:"release",
         };
+      }
+      if(project.release.recovery?.status==="pending"&&httpRelease){
+        const request=attention({
+          type:"capability",title:"HTTP Release 结果需要人工核对",
+          reason:project.release.recovery.reason,
+          stage:"release",riskLevel:"high",blocking:true,questions:[],criterionIds:[],
+          suggestedAction:"HTTP Release 写操作结果不确定且当前协议没有只读 observe endpoint；请先到外部发布平台核对实际 Production/Canary 状态。系统不会自动重放生产副作用。",
+        });
+        return {action:"wait-human",reason:request.reason,stage:request.stage,attention:request};
       }
       if(project.release.recovery?.status==="manual-check"){
         const request=attention({
@@ -337,24 +349,24 @@ export function deriveAutonomousDecision(project: EvolveProject): AutonomousDeci
         });
         return {action:"wait-human",reason:request.reason,stage:request.stage,attention:request};
       }
-      if(project.releaseTarget?.provider!=="vercel"){
+      if(!vercelRelease&&!httpRelease){
         const request=attention({
           type:"capability",title:"当前线上 Release Target 尚未接入 Durable 编排",
-          reason:"本轮自动 Release 支持 Vercel Preview → Promote 与 Vercel Progressive；其他 HTTP Target 继续保留现有人工发布路径。",
+          reason:"当前 Release Target 不是已支持的 Vercel 或 HTTP Target。",
           stage:"release",riskLevel:"high",blocking:true,questions:[],criterionIds:[],
-          suggestedAction:"连接 Vercel Release Target，或使用现有发布控制完成真实上线决策。",
+          suggestedAction:"连接 Vercel Release Target 或真实 HTTP Target Runner 后继续。",
         });
         return {action:"wait-human",reason:request.reason,stage:request.stage,attention:request};
       }
       const candidate=currentReleaseCandidate(project);
-      if(candidate&&project.release.candidateId===candidate.id&&!project.release.deploymentId&&project.release.sourceGitCommitSha){
+      if(vercelRelease&&candidate&&project.release.candidateId===candidate.id&&!project.release.deploymentId&&project.release.sourceGitCommitSha){
         return {
           action:"reconcile-release",
           reason:`当前 exact Candidate 已发布到 Git commit ${project.release.sourceGitCommitSha}；自动按 exact SHA 发现并绑定唯一 Vercel Preview，不按时间或分支名猜测。`,
           stage:"release",
         };
       }
-      if(!candidate||project.release.candidateId!==candidate.id||!project.release.deploymentId){
+      if(vercelRelease&&(!candidate||project.release.candidateId!==candidate.id||!project.release.deploymentId)){
         const request=attention({
           type:"capability",title:"需要显式绑定 Preview Deployment",
           reason:"Release Ready 已授权，但当前 exact Candidate 尚未绑定 READY Preview Deployment；系统禁止自动猜测 Deployment。",
@@ -363,8 +375,19 @@ export function deriveAutonomousDecision(project: EvolveProject): AutonomousDeci
         });
         return {action:"wait-human",reason:request.reason,stage:request.stage,attention:request};
       }
+      if(httpRelease&&(!candidate||project.release.candidateId!==candidate.id)){
+        const request=attention({
+          type:"capability",title:"HTTP Release Candidate 未绑定",
+          reason:"Release Ready 已授权，但当前 HTTP Target 没有绑定 exact Candidate；禁止对未知版本执行生产写操作。",
+          stage:"release",riskLevel:"high",blocking:true,questions:[],criterionIds:[],
+          suggestedAction:"确认当前 Winner / Search Champion 与 Release Candidate 一致后再继续。",
+        });
+        return {action:"wait-human",reason:request.reason,stage:request.stage,attention:request};
+      }
       if(nextDurableReleaseAction(project)){
-        return {action:"run-release",reason:"Release Ready 已授权且 exact Candidate/Deployment 已绑定；Durable Workflow 自动推进 Preview/Health/Promote/Rollback。",stage:"release"};
+        return {action:"run-release",reason:httpRelease
+          ?"Release Ready 已授权且 exact Candidate 已绑定；Durable Workflow 通过 HTTP Target live receipt 推进 Shadow/Canary/Promote/Rollback。"
+          :"Release Ready 已授权且 exact Candidate/Deployment 已绑定；Durable Workflow 自动推进 Preview/Health/Promote/Rollback。",stage:"release"};
       }
       const request = attention({
         type: "capability",
@@ -374,7 +397,9 @@ export function deriveAutonomousDecision(project: EvolveProject): AutonomousDeci
         riskLevel: "high",
         blocking: true,
         questions: [],
-        suggestedAction: "查看 Preview/Production Health 与 rollback baseline；异常状态不会自动猜测或伪造成功，处理后可从同一 Release Candidate 继续。",
+        suggestedAction: httpRelease
+          ?"查看 HTTP Target 的 live release receipt / Production 状态；未知写操作结果不会自动重放。"
+          :"查看 Preview/Production Health 与 rollback baseline；异常状态不会自动猜测或伪造成功，处理后可从同一 Release Candidate 继续。",
         criterionIds: [],
       });
       return { action: "wait-human", reason: request.reason, stage: request.stage, attention: request };

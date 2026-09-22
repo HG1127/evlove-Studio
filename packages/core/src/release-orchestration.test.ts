@@ -20,6 +20,14 @@ function fixture(){
   return {project,candidate};
 }
 
+function httpFixture(){
+  const {project,candidate}=fixture();
+  project.targetConnection={adapter:"http",connectionId:"release-http",status:"connected",label:"HTTP Target"};
+  project.releaseTarget={provider:"http",mode:"preview-promote",status:"connected",label:"HTTP Release",healthPath:"/"};
+  project.release={...project.release,deploymentId:undefined,stableDeploymentId:"http-stable"};
+  return{project,candidate};
+}
+
 function receipt(action:ReleaseAction,healthy=true):ReleaseAdapterResult{
   const traffic=action==="canary-5"?5:action==="canary-20"?20:action==="canary-50"?50:action==="promote"?100:0;
   return {
@@ -42,7 +50,38 @@ function receipt(action:ReleaseAction,healthy=true):ReleaseAdapterResult{
   };
 }
 
+function httpReceipt(action:ReleaseAction,healthy=true,deploymentId="http-candidate"):ReleaseAdapterResult{
+  const traffic=action==="promote"?100:0;
+  return{
+    ok:healthy,trafficPercent:traffic,note:`http ${action}`,healthy,kpis:[],evidenceMode:"live",
+    effectiveAction:action,observationStatus:healthy?"healthy":"unhealthy",
+    stableDeploymentId:"http-stable",deploymentId:action==="rollback"?"http-stable":deploymentId,
+    artifactHashes:action==="rollback"?undefined:[{sourceArtifactId:"source",contentHash:"hash-c1"}],
+    environment:action==="shadow"?"preview":"production",observedAt:"2026-09-22T01:00:00Z",sampleSize:1,windowMinutes:1,
+  };
+}
+
 describe("durable release orchestration",()=>{
+  it("lets a live HTTP shadow receipt establish the first deployment binding, then promotes that exact binding",()=>{
+    const {project,candidate}=httpFixture();
+    expect(nextDurableReleaseAction(project)).toBe("shadow");
+    const shadow=applyReleaseResultToProject({project,candidate,requestedAction:"shadow",result:httpReceipt("shadow")});
+    expect(shadow.release.deploymentId).toBe("http-candidate");
+    expect(shadow.release.status).toBe("shadow");
+    expect(nextDurableReleaseAction(shadow)).toBe("promote");
+    const promoted=applyReleaseResultToProject({project:shadow,candidate,requestedAction:"promote",result:httpReceipt("promote")});
+    expect(promoted.release.status).toBe("promoted");
+    expect(projectHasLiveReleaseDecision(promoted)).toBe(true);
+  });
+
+  it("rejects an HTTP promote receipt that silently switches the deployment binding",()=>{
+    const {project,candidate}=httpFixture();
+    const shadow=applyReleaseResultToProject({project,candidate,requestedAction:"shadow",result:httpReceipt("shadow")});
+    expect(()=>applyReleaseResultToProject({
+      project:shadow,candidate,requestedAction:"promote",result:httpReceipt("promote",true,"another-deployment"),
+    })).toThrow(/deploymentId.*不一致/);
+  });
+
   it("advances only the explicitly bound Candidate deployment",()=>{
     const {project,candidate}=fixture();
     expect(nextDurableReleaseAction(project)).toBe("shadow");

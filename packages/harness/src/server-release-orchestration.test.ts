@@ -1,6 +1,6 @@
 import {describe,expect,it,vi} from "vitest";
 import type {Candidate,EvolveProject,ReleaseAdapterResult} from "@evolution/contracts";
-import {runServerReleaseOrchestration} from "./server-release-orchestration";
+import {runServerReleaseOrchestration,type ServerReleasePorts} from "./server-release-orchestration";
 
 type ReleaseAction=NonNullable<ReleaseAdapterResult["effectiveAction"]>;
 
@@ -18,6 +18,14 @@ function fixture(){
   return {project,candidate};
 }
 
+function httpFixture(){
+  const x=fixture();
+  x.project.targetConnection={adapter:"http",connectionId:"release-http",status:"connected",label:"HTTP Target"};
+  x.project.releaseTarget={provider:"http",mode:"preview-promote",status:"connected",label:"HTTP Release",healthPath:"/"};
+  x.project.release={...x.project.release,deploymentId:undefined,stableDeploymentId:"http-stable"};
+  return x;
+}
+
 function receipt(action:ReleaseAction,healthy=true):ReleaseAdapterResult{
   const traffic=action==="canary-5"?5:action==="canary-20"?20:action==="canary-50"?50:action==="promote"?100:0;
   return {
@@ -29,7 +37,31 @@ function receipt(action:ReleaseAction,healthy=true):ReleaseAdapterResult{
   };
 }
 
+function httpReceipt(action:ReleaseAction):ReleaseAdapterResult{
+  return{
+    ok:true,trafficPercent:action==="promote"?100:0,note:action,healthy:true,kpis:[],evidenceMode:"live",
+    effectiveAction:action,observationStatus:"healthy",stableDeploymentId:"http-stable",
+    deploymentId:action==="rollback"?"http-stable":"http-candidate",
+    artifactHashes:action==="rollback"?undefined:[{sourceArtifactId:"source",contentHash:"hash-c1"}],
+    environment:action==="shadow"?"preview":"production",observedAt:"2026-09-22T01:00:00Z",sampleSize:1,windowMinutes:1,
+  };
+}
+
 describe("server release orchestration",()=>{
+  it("starts HTTP Release shadow without a fake deploymentId, then binds later steps to the live receipt",async()=>{
+    const x=httpFixture();
+    const execute=vi.fn(async(args:Parameters<ServerReleasePorts["execute"]>[0])=>httpReceipt(args.action));
+    const authorize=vi.fn(async()=>({ok:true}));
+    const shadow=await runServerReleaseOrchestration(x.project,{authorize,execute});
+    expect(shadow.action).toBe("shadow");
+    expect(execute.mock.calls[0]?.[0].deploymentId).toBeUndefined();
+    expect(shadow.project.release.deploymentId).toBe("http-candidate");
+    const promoted=await runServerReleaseOrchestration(shadow.project,{authorize,execute});
+    expect(promoted.action).toBe("promote");
+    expect(execute.mock.calls[1]?.[0].deploymentId).toBe("http-candidate");
+    expect(promoted.terminal).toBe(true);
+  });
+
   it("runs preview then promote on the same bound deployment",async()=>{
     const x=fixture();
     const execute=vi.fn(async({action}:{action:ReleaseAction})=>receipt(action));
