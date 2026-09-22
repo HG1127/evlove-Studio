@@ -1,8 +1,9 @@
-import type {EvolveProject} from "@evolution/contracts";
+import type {EvolveProject,ReleaseAdapterResult} from "@evolution/contracts";
 import {currentReleaseCandidate,projectUsesHttpRelease} from "@evolution/core";
 import {runServerReleaseOrchestration,type ServerReleasePorts} from "@evolution/harness";
 import {releaseHttpTarget} from "./http-target-gateway";
 import {getActiveReleaseApprovalGrant} from "./release-approval-store";
+import {recordHttpReleaseOutcomeObservation} from "./release-outcome-telemetry";
 import {executeVercelReleaseAction} from "./vercel-release";
 
 export async function executeServerReleaseProvider(
@@ -28,13 +29,25 @@ export async function executeServerReleaseProvider(
 }
 
 export async function runServerMissionRelease(project:EvolveProject){
-  return runServerReleaseOrchestration(project,{
+  let httpReceipt:ReleaseAdapterResult|undefined;
+  const outcome=await runServerReleaseOrchestration(project,{
     authorize:async({candidateId})=>{
       const grant=await getActiveReleaseApprovalGrant({missionId:project.id,candidateId});
       return grant
         ?{ok:true}
         :{ok:false,reason:"当前 Candidate 没有未过期且未撤销的 durable Release Approval grant。"};
     },
-    execute:(args)=>executeServerReleaseProvider(project,args),
+    execute:async(args)=>{
+      const receipt=await executeServerReleaseProvider(project,args);
+      if(projectUsesHttpRelease(project))httpReceipt=receipt;
+      return receipt;
+    },
   });
+  if(httpReceipt?.observedAt&&outcome.project.release.observedAt===httpReceipt.observedAt){
+    const recorded=await recordHttpReleaseOutcomeObservation(outcome.project,httpReceipt).catch(()=>undefined);
+    if(recorded?.telemetry?.warnings.length){
+      console.warn("[outcome-telemetry] HTTP release receipt completed with warnings",recorded.telemetry.warnings);
+    }
+  }
+  return outcome;
 }
