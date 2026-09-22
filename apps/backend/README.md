@@ -52,6 +52,8 @@ Example:
 
 The server re-checks this isolation declaration before Candidate mutation, so bypassing the browser capability filter does not enable direct mutation.
 
+Connector webhooks use `x-evolution-connector-signature: sha256=<HMAC>` and are not trusted by signature alone. A webhook that names a `missionId` must also match that Mission's connected `connectorId`, `targetId`, and an exact currently bound `versionRef` (locked target snapshot, current Candidate, or Search Champion). Unknown/stale versions are rejected before Event persistence. Event persistence is fail-closed: storage failure returns an error instead of acknowledging success. Identical signed webhook retries derive the same deterministic Event id from the connector id plus raw request body, so the Event Store de-duplicates delivery retries.
+
 ## Outcome Telemetry
 
 Release reconciliation always records provider health/latency evidence when the secure Outcome Warehouse is available. External business KPI, cost, latency, and safety metrics can additionally be pulled server-side with `EVOLUTION_OUTCOME_TELEMETRY_JSON`. Credentials stay in server environment variables referenced by name; secrets are never embedded in the JSON.

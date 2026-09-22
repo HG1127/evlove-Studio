@@ -1,7 +1,8 @@
-import {createHmac,timingSafeEqual} from "node:crypto";
+import {createHash,createHmac,timingSafeEqual} from "node:crypto";
 import {createError,defineEventHandler,getHeader,getRouterParam,readRawBody} from "nitro/h3";
-import {ConnectorWebhookEnvelopeSchema,ConnectorWebhookReceiptSchema,createEvolutionEvent} from "@evolution/contracts";
+import {ConnectorWebhookEnvelopeSchema,ConnectorWebhookReceiptSchema} from "@evolution/contracts";
 import {connectorWebhookSecret} from "../../../../src/services/connector-registry";
+import {buildConnectorWebhookEvent} from "../../../../src/services/connector-webhook";
 import {getServerProductionRuntime} from "../../../../src/services/production-runtime";
 
 function safeEqual(left:string,right:string){
@@ -23,15 +24,25 @@ export default defineEventHandler(async(event)=>{
   try{parsed=JSON.parse(raw||"{}");}catch{throw createError({statusCode:400,statusMessage:"Invalid connector webhook JSON"});}
   const payload=ConnectorWebhookEnvelopeSchema.parse(parsed);
   if(payload.missionId){
-    await getServerProductionRuntime().events.append(createEvolutionEvent({
-      missionId:payload.missionId,
-      type:"ActionCompleted",
-      source:`connector-webhook:${connectorId}`,
-      payload:{
-        connectorId,targetId:payload.targetId,event:payload.event,versionRef:payload.versionRef,
-        status:payload.status,...payload.payload,
-      },
-    })).catch(()=>undefined);
+    const runtime=getServerProductionRuntime();
+    const mission=await runtime.missions.get(payload.missionId);
+    if(!mission)throw createError({statusCode:404,statusMessage:"Connector webhook Mission not found"});
+    let evolutionEvent;
+    try{
+      const deliveryFingerprint=createHash("sha256")
+        .update(connectorId)
+        .update("\0")
+        .update(raw)
+        .digest("hex");
+      evolutionEvent=buildConnectorWebhookEvent({mission,connectorId,payload,deliveryFingerprint});
+    }catch(error){
+      throw createError({statusCode:409,statusMessage:error instanceof Error?error.message:String(error)});
+    }
+    try{
+      await runtime.events.append(evolutionEvent);
+    }catch(error){
+      throw createError({statusCode:503,statusMessage:`Connector webhook event persistence failed: ${error instanceof Error?error.message:String(error)}`});
+    }
   }
   return ConnectorWebhookReceiptSchema.parse({
     accepted:true,connectorId,missionId:payload.missionId,event:payload.event,observedAt:new Date().toISOString(),
