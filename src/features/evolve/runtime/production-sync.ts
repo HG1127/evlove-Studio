@@ -3,12 +3,17 @@ import { getLocalProject, listLocalProjects, saveLocalProject, deleteLocalProjec
 import { cacheRemoteEvolutionJob, localProductionPorts } from "./local-production-adapters";
 import { getProductionRuntime, productionRuntimeMode } from "./production-runtime";
 
+const HTTP_POLL_BASE_DELAY_MS=3_000;
+const HTTP_POLL_MAX_DELAY_MS=30_000;
+const HTTP_AUTH_RETRY_DELAY_MS=60_000;
+
 let initialized=false;
 let applyingRemote=false;
 let missionTimer:number|undefined;
 let jobTimer:number|undefined;
 let httpPollTimer:number|undefined;
 let httpPollRunning=false;
+let httpPollFailureCount=0;
 let knownRemoteIds=new Set<string>();
 let realtimeStatus="disabled";
 let lastError:string|undefined;
@@ -44,15 +49,43 @@ async function pushLocalJobs(){
   await Promise.all(jobs.map((job)=>remote.jobs.put(job)));
 }
 
+function errorMessage(error:unknown){return error instanceof Error?error.message:String(error);}
+function authFailure(error:unknown){return /\bHTTP\s+(401|403)\b/.test(errorMessage(error));}
+function retryDelay(error:unknown){
+  if(authFailure(error))return HTTP_AUTH_RETRY_DELAY_MS;
+  return Math.min(HTTP_POLL_MAX_DELAY_MS,HTTP_POLL_BASE_DELAY_MS*(2**Math.max(0,httpPollFailureCount-1)));
+}
+function scheduleHttpPoll(delayMs=HTTP_POLL_BASE_DELAY_MS){
+  if(productionRuntimeMode()!=="http"||!initialized)return;
+  if(httpPollTimer)window.clearTimeout(httpPollTimer);
+  httpPollTimer=window.setTimeout(()=>{
+    httpPollTimer=undefined;
+    void pollHttpProjection();
+  },delayMs);
+}
+function enterHttpError(error:unknown,label:string){
+  console.error(label,error);
+  httpPollFailureCount+=1;
+  setRealtimeStatus("http-error",error);
+  scheduleHttpPoll(retryDelay(error));
+}
 function scheduleMissionPush(){
-  if(applyingRemote)return;
+  if(applyingRemote||realtimeStatus!=="http-polling")return;
   if(missionTimer)window.clearTimeout(missionTimer);
-  missionTimer=window.setTimeout(()=>{void pushLocalProjection().catch((error)=>console.error("Production mission sync failed",error));},350);
+  missionTimer=window.setTimeout(()=>{
+    missionTimer=undefined;
+    if(realtimeStatus!=="http-polling")return;
+    void pushLocalProjection().catch((error)=>enterHttpError(error,"Production mission sync failed"));
+  },350);
 }
 function scheduleJobPush(){
-  if(applyingRemote)return;
+  if(applyingRemote||realtimeStatus!=="http-polling")return;
   if(jobTimer)window.clearTimeout(jobTimer);
-  jobTimer=window.setTimeout(()=>{void pushLocalJobs().catch((error)=>console.error("Production job sync failed",error));},300);
+  jobTimer=window.setTimeout(()=>{
+    jobTimer=undefined;
+    if(realtimeStatus!=="http-polling")return;
+    void pushLocalJobs().catch((error)=>enterHttpError(error,"Production job sync failed"));
+  },300);
 }
 
 function setRealtimeStatus(status:string,error?:unknown){
@@ -74,8 +107,10 @@ async function hydrateRemoteProjection(){
 }
 
 async function pollHttpProjection(){
-  if(productionRuntimeMode()!=="http"||httpPollRunning)return;
+  if(productionRuntimeMode()!=="http"||httpPollRunning||!initialized)return;
   httpPollRunning=true;
+  const recovering=httpPollFailureCount>0||realtimeStatus==="http-error";
+  let nextDelay=HTTP_POLL_BASE_DELAY_MS;
   try{
     const ports=getProductionRuntime();
     const [missions,jobs,events]=await Promise.all([
@@ -101,19 +136,18 @@ async function pollHttpProjection(){
       knownRemoteIds=remoteIds;
     });
     if(shouldPushLocal)await pushLocalProjection();
+    if(recovering)await pushLocalJobs();
+    httpPollFailureCount=0;
     setRealtimeStatus("http-polling");
   }catch(error){
     console.error("HTTP production projection polling failed",error);
+    httpPollFailureCount+=1;
+    nextDelay=retryDelay(error);
     setRealtimeStatus("http-error",error);
   }finally{
     httpPollRunning=false;
+    scheduleHttpPoll(nextDelay);
   }
-}
-
-function startHttpPolling(){
-  if(productionRuntimeMode()!=="http")return;
-  if(httpPollTimer)window.clearInterval(httpPollTimer);
-  httpPollTimer=window.setInterval(()=>{void pollHttpProjection();},3_000);
 }
 
 export async function initializeProductionSync(){
@@ -142,15 +176,17 @@ export async function initializeProductionSync(){
     await pushLocalProjection();
     await pushLocalJobs();
     await hydrateRemoteProjection();
+    httpPollFailureCount=0;
     setRealtimeStatus("http-polling");
+    scheduleHttpPoll();
   }catch(error){
     // Remote production state must never make the local control plane unusable.
-    // Keep a recovery poll alive so a transient API/auth outage can heal without a page reload.
+    // Authentication failures use a long retry delay; transient failures back off exponentially.
+    httpPollFailureCount=1;
     setRealtimeStatus("http-error",error);
-    startHttpPolling();
+    scheduleHttpPoll(retryDelay(error));
     throw error;
   }
-  startHttpPolling();
 }
 
 export async function stopProductionSync(){
@@ -158,14 +194,19 @@ export async function stopProductionSync(){
   window.removeEventListener("evolve-parse-job-changed",scheduleJobPush);
   window.removeEventListener("evolve-evidence-job-changed",scheduleJobPush);
   window.removeEventListener("evolve-run-tasks-changed",scheduleJobPush);
-  if(httpPollTimer)window.clearInterval(httpPollTimer);
+  if(missionTimer)window.clearTimeout(missionTimer);
+  if(jobTimer)window.clearTimeout(jobTimer);
+  if(httpPollTimer)window.clearTimeout(httpPollTimer);
+  missionTimer=undefined;
+  jobTimer=undefined;
   httpPollTimer=undefined;
   httpPollRunning=false;
+  httpPollFailureCount=0;
   initialized=false;
   knownRemoteIds=new Set();
   setRealtimeStatus("disabled");
 }
 
 export function productionSyncStatus(){
-  return {mode:productionRuntimeMode(),initialized,remoteMissionCount:knownRemoteIds.size,realtimeStatus,lastError};
+  return {mode:productionRuntimeMode(),initialized,remoteMissionCount:knownRemoteIds.size,realtimeStatus,lastError,failureCount:httpPollFailureCount};
 }

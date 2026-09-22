@@ -111,7 +111,7 @@ export function EvolutionReadinessCenter() {
   const [backendPriority, setBackendPriority] = useState<"all" | "P0" | "P1" | "P2">("P0");
   const [runner, setRunner] = useState<RunnerCapabilitySnapshot | undefined>(() => readRunnerCapabilities());
   const [runnerCheck, setRunnerCheck] = useState<{ busy: boolean; message: string }>({ busy: false, message: "" });
-  const [syncCheck, setSyncCheck] = useState<{ liveStatus: string }>(() => ({ liveStatus: productionSyncStatus().realtimeStatus }));
+  const [syncCheck, setSyncCheck] = useState<{ liveStatus: string; lastError?: string }>(() => {const status=productionSyncStatus();return {liveStatus:status.realtimeStatus,lastError:status.lastError};});
   const [workflowCheck, setWorkflowCheck] = useState<{ busy: boolean; message: string; capabilities?: EvolutionWorkflowCapabilities }>({ busy: false, message: "" });
   const [backendHealthCheck,setBackendHealthCheck]=useState<{busy:boolean;message:string;health?:EvolutionBackendHealth}>({busy:false,message:""});
   const [publicReadinessCheck,setPublicReadinessCheck]=useState<{busy:boolean;message:string;snapshot?:PublicReadinessSnapshot}>({busy:false,message:""});
@@ -247,8 +247,8 @@ export function EvolutionReadinessCenter() {
 
   useEffect(() => {
     const onRealtimeStatus = (event: Event) => {
-      const status = (event as CustomEvent<{ status?: string }>).detail?.status;
-      if (status) setSyncCheck({ liveStatus: status });
+      const detail = (event as CustomEvent<{ status?: string; lastError?: string }>).detail;
+      if (detail?.status) setSyncCheck({ liveStatus: detail.status,lastError:detail.lastError });
     };
     window.addEventListener("evolve-production-realtime-status", onRealtimeStatus);
     return () => window.removeEventListener("evolve-production-realtime-status", onRealtimeStatus);
@@ -591,7 +591,7 @@ export function EvolutionReadinessCenter() {
               <div>
                 <div className="text-xs font-semibold text-slate-800">P0-2 · HTTP Projection + Artifact Remote</div>
                 <div className="mt-1 text-[11px] text-slate-500">{productionMode==="http"
-                  ?`HTTP projection: ${syncCheck.liveStatus} · Artifact: ${serverDataPlaneReady ? "REMOTE READY" : "WAITING"}`
+                  ?`HTTP projection: ${syncCheck.liveStatus}${syncCheck.lastError?` · ${syncCheck.lastError}`:""} · Artifact: ${serverDataPlaneReady ? "REMOTE READY" : "WAITING"}`
                   :"Local Adapter 不做远端同步；生产环境通过 Server API 统一读写。"}</div>
               </div>
               <div className="flex items-center gap-2">
