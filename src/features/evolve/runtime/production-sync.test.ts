@@ -15,6 +15,32 @@ describe("production sync bootstrap",()=>{
     vi.useRealTimers();
   });
 
+  it("moves to auth backoff when an Artifact write is deferred and resumes normal polling after recovery",async()=>{
+    vi.useFakeTimers();
+    const list=vi.fn(async()=>[]);
+    configureProductionRuntime({
+      ...localProductionPorts,
+      missions:{...localProductionPorts.missions,list,save:async()=>undefined,delete:async()=>undefined},
+      jobs:{...localProductionPorts.jobs,list:async()=>[],put:async()=>undefined},
+      events:{...localProductionPorts.events,list:async()=>[]},
+      artifacts:{put:async()=>undefined,get:async()=>undefined,delete:async()=>undefined},
+    },"http");
+
+    await initializeProductionSync();
+    expect(productionSyncStatus()).toMatchObject({realtimeStatus:"http-polling",failureCount:0});
+
+    window.dispatchEvent(new CustomEvent("evolve-artifact-sync-status",{detail:{
+      status:"pending",error:"Artifact upload failed HTTP 401: Trusted Evolution actor headers are required",
+    }}));
+    expect(productionSyncStatus()).toMatchObject({realtimeStatus:"http-error",failureCount:1});
+
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(list).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(57_000);
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(productionSyncStatus()).toMatchObject({realtimeStatus:"http-polling",failureCount:0,lastError:undefined});
+  });
+
   it("degrades on an unavailable Production API and recovers through polling without remounting Studio",async()=>{
     vi.useFakeTimers();
     const at="2026-09-22T10:00:00.000Z";

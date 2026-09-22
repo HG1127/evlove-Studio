@@ -1,0 +1,66 @@
+import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
+
+const localBlobs=vi.hoisted(()=>new Map<string,Blob>());
+vi.mock("./local-artifact-blob-store",()=>({
+  putLocalArtifactBlob:async(id:string,blob:Blob)=>{localBlobs.set(id,blob);},
+  putLocalArtifactBlobs:async(entries:Array<{id:string;blob:Blob}>)=>{for(const {id,blob} of entries)localBlobs.set(id,blob);},
+  getLocalArtifactBlob:async(id:string)=>localBlobs.get(id),
+  deleteLocalArtifactBlob:async(id:string)=>{localBlobs.delete(id);},
+}));
+
+import type {ProductionRuntimePorts} from "@evolution/contracts";
+import {localProductionPorts} from "./local-production-adapters";
+import {configureProductionRuntime,resetProductionRuntime} from "./production-runtime";
+import {
+  artifactSyncStatus,
+  deleteArtifactBlob,
+  flushPendingArtifactSync,
+  getArtifactBlob,
+  putArtifactBlob,
+} from "./artifact-blob-store";
+
+function runtime(artifacts:ProductionRuntimePorts["artifacts"]):ProductionRuntimePorts{
+  return {...localProductionPorts,artifacts};
+}
+
+describe("artifact degraded sync",()=>{
+  beforeEach(()=>{localBlobs.clear();window.localStorage.clear();});
+  afterEach(()=>{resetProductionRuntime();localBlobs.clear();window.localStorage.clear();vi.restoreAllMocks();});
+
+  it("retains local bytes and queues upload when Production Artifact API is unauthorized, then replays on recovery",async()=>{
+    const failedPut=vi.fn(async()=>{throw new Error("Artifact upload failed HTTP 401: Trusted Evolution actor headers are required");});
+    configureProductionRuntime(runtime({put:failedPut,get:async()=>undefined,delete:async()=>undefined}),"http");
+
+    const blob=new Blob(["kept-locally"],{type:"text/plain"});
+    await expect(putArtifactBlob("artifact-1",blob)).resolves.toBeUndefined();
+    expect(await (await getArtifactBlob("artifact-1"))!.text()).toBe("kept-locally");
+    expect(artifactSyncStatus()).toEqual({pendingUploads:1,pendingDeletes:0});
+
+    const recoveredPut=vi.fn(async()=>undefined);
+    configureProductionRuntime(runtime({put:recoveredPut,get:async()=>undefined,delete:async()=>undefined}),"http");
+    await flushPendingArtifactSync();
+
+    expect(recoveredPut).toHaveBeenCalledWith("artifact-1",expect.any(Blob));
+    expect(artifactSyncStatus()).toEqual({pendingUploads:0,pendingDeletes:0});
+  });
+
+  it("keeps a local delete tombstone when remote delete fails and completes it after recovery",async()=>{
+    localBlobs.set("artifact-delete",new Blob(["old"]));
+    const failedDelete=vi.fn(async()=>{throw new Error("Artifact delete failed HTTP 401");});
+    const remoteGet=vi.fn(async()=>new Blob(["remote-old"]));
+    configureProductionRuntime(runtime({put:async()=>undefined,get:remoteGet,delete:failedDelete}),"http");
+
+    await expect(deleteArtifactBlob("artifact-delete")).resolves.toBeUndefined();
+    expect(localBlobs.has("artifact-delete")).toBe(false);
+    expect(await getArtifactBlob("artifact-delete",{preferRemote:true})).toBeUndefined();
+    expect(remoteGet).not.toHaveBeenCalled();
+    expect(artifactSyncStatus()).toEqual({pendingUploads:0,pendingDeletes:1});
+
+    const recoveredDelete=vi.fn(async()=>undefined);
+    configureProductionRuntime(runtime({put:async()=>undefined,get:remoteGet,delete:recoveredDelete}),"http");
+    await flushPendingArtifactSync();
+
+    expect(recoveredDelete).toHaveBeenCalledWith("artifact-delete");
+    expect(artifactSyncStatus()).toEqual({pendingUploads:0,pendingDeletes:0});
+  });
+});

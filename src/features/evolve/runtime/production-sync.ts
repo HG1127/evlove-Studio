@@ -2,6 +2,7 @@ import { cacheLocalEvolutionEvent } from "./event-contract";
 import { getLocalProject, listLocalProjects, saveLocalProject, deleteLocalProject } from "./local-store";
 import { cacheRemoteEvolutionJob, localProductionPorts } from "./local-production-adapters";
 import { getProductionRuntime, productionRuntimeMode } from "./production-runtime";
+import { flushPendingArtifactSync } from "./artifact-blob-store";
 
 const HTTP_POLL_BASE_DELAY_MS=3_000;
 const HTTP_POLL_MAX_DELAY_MS=30_000;
@@ -68,6 +69,11 @@ function enterHttpError(error:unknown,label:string){
   httpPollFailureCount+=1;
   setRealtimeStatus("http-error",error);
   scheduleHttpPoll(retryDelay(error));
+}
+function onArtifactSyncStatus(event:Event){
+  const detail=(event as CustomEvent<{status?:string;error?:string}>).detail;
+  if(detail?.status!=="pending"||productionRuntimeMode()!=="http"||!initialized)return;
+  enterHttpError(new Error(detail.error||"Production artifact sync pending"),"Production artifact sync deferred");
 }
 function scheduleMissionPush(){
   if(applyingRemote||realtimeStatus!=="http-polling")return;
@@ -137,6 +143,7 @@ async function pollHttpProjection(){
     });
     if(shouldPushLocal)await pushLocalProjection();
     if(recovering)await pushLocalJobs();
+    await flushPendingArtifactSync();
     httpPollFailureCount=0;
     setRealtimeStatus("http-polling");
   }catch(error){
@@ -158,6 +165,7 @@ export async function initializeProductionSync(){
   window.addEventListener("evolve-parse-job-changed",scheduleJobPush);
   window.addEventListener("evolve-evidence-job-changed",scheduleJobPush);
   window.addEventListener("evolve-run-tasks-changed",scheduleJobPush);
+  window.addEventListener("evolve-artifact-sync-status",onArtifactSyncStatus);
   const ports=getProductionRuntime();
   try{
     await ports.missions.initialize();
@@ -176,6 +184,7 @@ export async function initializeProductionSync(){
     await pushLocalProjection();
     await pushLocalJobs();
     await hydrateRemoteProjection();
+    await flushPendingArtifactSync();
     httpPollFailureCount=0;
     setRealtimeStatus("http-polling");
     scheduleHttpPoll();
@@ -194,6 +203,7 @@ export async function stopProductionSync(){
   window.removeEventListener("evolve-parse-job-changed",scheduleJobPush);
   window.removeEventListener("evolve-evidence-job-changed",scheduleJobPush);
   window.removeEventListener("evolve-run-tasks-changed",scheduleJobPush);
+  window.removeEventListener("evolve-artifact-sync-status",onArtifactSyncStatus);
   if(missionTimer)window.clearTimeout(missionTimer);
   if(jobTimer)window.clearTimeout(jobTimer);
   if(httpPollTimer)window.clearTimeout(httpPollTimer);
