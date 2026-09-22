@@ -5,6 +5,8 @@ import { runServerAi } from "./ai-gateway";
 import { getServerArtifactStore } from "./artifact-runtime";
 import { attachServerVisualEvidence } from "./server-visual-evidence";
 import { runServerHttpTargetBatch, serverHttpTargetEnabled } from "./server-http-target-execution";
+import {runServerConnectorTargetBatch} from "./server-connector-target-execution";
+import {serverConnectorTargetEnabled} from "./connector-target-source";
 
 function codebaseTarget(project: EvolveProject) {
   return project.sourceArtifacts.find((artifact) =>
@@ -57,6 +59,7 @@ function unavailableExternal(testCase: TestCase, detail: string): TargetRunResul
 }
 
 export async function executeServerBaselineExternal(current:EvolveProject,testCases:TestCase[]){
+  if(serverConnectorTargetEnabled(current))return runServerConnectorTargetBatch(current,testCases);
   if (serverHttpTargetEnabled(current)) return runServerHttpTargetBatch(current, testCases);
   const binding = resolveServerBaselineCodebaseBinding(current);
   if (!binding.source || !binding.blobId) {

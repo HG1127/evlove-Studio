@@ -27,6 +27,7 @@ import { syncMissionCapabilities } from "../../apps/backend/src/services/organiz
 import { publishAcceptedChampionToConfiguredGit } from "../../apps/backend/src/services/git-accepted-publisher";
 import { renderAcceptedProjectArtifacts } from "../../apps/backend/src/services/server-artifact-renderer";
 import { lockGitTargetSnapshot,materializeLockedGitTargetSource } from "../../apps/backend/src/services/git-target-source";
+import { lockConnectorTargetSnapshot,materializeLockedConnectorTargetSource } from "../../apps/backend/src/services/connector-target-source";
 import { serverAiConfigured } from "../../apps/backend/src/server-env";
 
 function controlJob(input:EvolutionWorkflowRunInput,args:{
@@ -328,6 +329,49 @@ export async function planMissionStep(input:EvolutionWorkflowRunInput,iteration:
   const runtime=getServerProductionRuntime();
   let mission=await runtime.missions.get(input.missionId);
   if(!mission)throw new FatalError(`Mission 不存在：${input.missionId}`);
+  if(mission.targetConnection.adapter==="connector"
+    &&mission.targetConnection.status==="connected"
+    &&!mission.sourceArtifacts.some((artifact)=>artifact.role==="target")){
+    const locked=await lockConnectorTargetSnapshot(mission);
+    if(locked!==mission){
+      await runtime.missions.save(locked);
+      await runtime.events.append(createEvolutionEvent({
+        id:`evt-${input.controlJobId}-connector-snapshot-lock`,
+        missionId:input.missionId,jobId:input.controlJobId,
+        type:"ActionCompleted",source:"connector-target",
+        payload:{
+          action:"snapshot-lock",
+          connectorId:locked.targetConnection.connectorSnapshot?.connectorId,
+          targetId:locked.targetConnection.connectorSnapshot?.targetId,
+          versionRef:locked.targetConnection.connectorSnapshot?.versionRef,
+          snapshotRef:locked.targetConnection.connectorSnapshot?.snapshotRef,
+          artifactId:locked.targetConnection.connectorSnapshot?.artifactId,
+        },
+      }));
+      mission=locked;
+    }
+    const materialized=await materializeLockedConnectorTargetSource(mission);
+    if(materialized!==mission){
+      const artifact=materialized.sourceArtifacts.find((item)=>item.id===materialized.targetConnection.connectorSnapshot?.artifactId);
+      await runtime.missions.save(materialized);
+      if(artifact){
+        await runtime.events.append(createEvolutionEvent({
+          id:`evt-${input.controlJobId}-connector-artifact-${artifact.id}`,
+          missionId:input.missionId,jobId:input.controlJobId,
+          type:"ArtifactParsed",source:"connector-target",
+          payload:{
+            artifactId:artifact.id,name:artifact.name,role:artifact.role,
+            connectorId:materialized.targetConnection.connectorSnapshot?.connectorId,
+            targetId:materialized.targetConnection.connectorSnapshot?.targetId,
+            versionRef:materialized.targetConnection.connectorSnapshot?.versionRef,
+            snapshotRef:materialized.targetConnection.connectorSnapshot?.snapshotRef,
+            storageRef:artifact.storageRef,
+          },
+        }));
+      }
+      mission=materialized;
+    }
+  }
   if(mission.targetConnection.adapter==="git"
     &&mission.targetConnection.status==="connected"
     &&!mission.sourceArtifacts.some((artifact)=>artifact.role==="target")){

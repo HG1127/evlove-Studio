@@ -72,6 +72,7 @@ export const EvolutionWorkflowCapabilitiesSchema=z.object({
     targetRunConfigured:z.boolean().default(false),
     targetReleaseConfigured:z.boolean().default(false),
     targetObserveConfigured:z.boolean().default(false),
+    connectorFullLifecycleIds:z.array(z.string()).default([]),
     securityCodeReady:z.boolean().default(false),
     securityConfigured:z.boolean().default(false),
     securityProductionSafe:z.boolean().default(false),

@@ -35,6 +35,34 @@ export const ConnectorPublicManifestSchema=z.object({
 });
 export type ConnectorPublicManifest=z.infer<typeof ConnectorPublicManifestSchema>;
 
+export const ConnectorTargetBindingSchema=z.object({
+  connectorId:z.string().min(1),
+  targetId:z.string().min(1),
+});
+export type ConnectorTargetBinding=z.infer<typeof ConnectorTargetBindingSchema>;
+
+export const ConnectorTargetSnapshotBindingSchema=z.object({
+  connectorId:z.string().min(1),
+  targetId:z.string().min(1),
+  versionRef:z.string().min(1),
+  snapshotRef:z.string().optional(),
+  artifactId:z.string().min(1),
+  observedAt:z.string(),
+});
+export type ConnectorTargetSnapshotBinding=z.infer<typeof ConnectorTargetSnapshotBindingSchema>;
+
+export const ConnectorCandidateBindingSchema=z.object({
+  connectorId:z.string().min(1),
+  targetId:z.string().min(1),
+  baseVersionRef:z.string().min(1),
+  versionRef:z.string().min(1),
+  artifactFingerprint:z.string().min(1),
+  snapshotRef:z.string().optional(),
+  evidenceRefs:z.array(z.string()).default([]),
+  observedAt:z.string(),
+});
+export type ConnectorCandidateBinding=z.infer<typeof ConnectorCandidateBindingSchema>;
+
 export const ConnectorRegistryCapabilitiesSchema=z.object({
   codeReady:z.literal(true),
   configured:z.boolean(),

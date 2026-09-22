@@ -5,6 +5,8 @@ import { runServerAi } from "./ai-gateway";
 import { getServerArtifactStore } from "./artifact-runtime";
 import { attachServerVisualEvidence } from "./server-visual-evidence";
 import { runServerHttpTargetBatch, serverHttpTargetEnabled } from "./server-http-target-execution";
+import {runServerConnectorTargetBatch,stageServerConnectorCandidate} from "./server-connector-target-execution";
+import {serverConnectorTargetEnabled} from "./connector-target-source";
 import {
   buildServerExperimentCandidate,
   serverArtifactSha256,
@@ -45,6 +47,7 @@ function unavailableExternal(testCase: TestCase, detail: string): TargetRunResul
 }
 
 async function executeServerCandidateExternal(project: EvolveProject, candidate: Candidate, testCases: TestCase[]) {
+  if(serverConnectorTargetEnabled(project))return runServerConnectorTargetBatch(project,testCases,candidate);
   if (serverHttpTargetEnabled(project)) return runServerHttpTargetBatch(project, testCases, candidate);
   const source = codebaseTarget(project);
   if (!source) return testCases.map((testCase) => unavailableExternal(testCase, "当前 Server External Runner 仅支持 codebase/package ZIP Target。"));
@@ -72,7 +75,12 @@ async function executeServerCandidateExternal(project: EvolveProject, candidate:
 /** Production composition root for the server-native Candidate Experiment. */
 export async function runServerMissionExperiment(project: EvolveProject) {
   return runServerExperiment(project, {
-    buildCandidate: ({ project: current, candidate }) => buildServerExperimentCandidate(current, candidate),
+    buildCandidate: async({ project: current, candidate }) => {
+      const built=await buildServerExperimentCandidate(current,candidate);
+      return serverConnectorTargetEnabled(current)
+        ?stageServerConnectorCandidate(current,built)
+        :built;
+    },
     executeSemanticBatch: ({ project: current, candidate, testCases, artifactContext }) => runServerAi("execute-artifact-batch", {
       project: {
         name: current.name,

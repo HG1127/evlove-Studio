@@ -5,6 +5,8 @@ import { runServerAi } from "./ai-gateway";
 import { getServerArtifactStore } from "./artifact-runtime";
 import { attachServerVisualEvidence } from "./server-visual-evidence";
 import { runServerHttpTargetBatch, serverHttpTargetEnabled } from "./server-http-target-execution";
+import {runServerConnectorTargetBatch} from "./server-connector-target-execution";
+import {serverConnectorTargetEnabled} from "./connector-target-source";
 import { resolveServerBaselineCodebaseBinding } from "./server-baseline";
 import { serverArtifactSha256 } from "./server-experiment-artifacts";
 
@@ -25,6 +27,7 @@ function codebaseTarget(project:EvolveProject){
 }
 
 async function executeCurrentExternal(project:EvolveProject,testCases:TestCase[]){
+  if(serverConnectorTargetEnabled(project))return runServerConnectorTargetBatch(project,testCases);
   if(serverHttpTargetEnabled(project))return runServerHttpTargetBatch(project,testCases);
   const binding=resolveServerBaselineCodebaseBinding(project);
   if(!binding.source||!binding.blobId)return testCases.map((testCase)=>unavailable(testCase,binding.reason??"当前版本 External Runner 尚未连接。"));
@@ -47,6 +50,7 @@ async function executeCurrentExternal(project:EvolveProject,testCases:TestCase[]
 }
 
 async function executeCandidateExternal(project:EvolveProject,candidate:Candidate,testCases:TestCase[]){
+  if(serverConnectorTargetEnabled(project))return runServerConnectorTargetBatch(project,testCases,candidate);
   if(serverHttpTargetEnabled(project))return runServerHttpTargetBatch(project,testCases,candidate);
   const source=codebaseTarget(project);
   if(!source)return testCases.map((testCase)=>unavailable(testCase,"Candidate External Runner 当前仅支持 codebase/package ZIP Target。"));

@@ -13,6 +13,7 @@ const capabilities={
     targetReleaseConfigured:true,
     targetObserveConfigured:true,
     gitTargetConfigured:true,
+    connectorFullLifecycleIds:["workflow-main"],
   },
   closure:{
     codeReady:true,
@@ -137,5 +138,25 @@ describe("server workflow routing",()=>{
     vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(missingGit),{status:200,headers:{"Content-Type":"application/json"}})));
     await getServerWorkflowCapabilities(true);
     expect(await shouldUseServerAutoPilot(gitMission)).toBe(false);
+  });
+
+  it("hands a Connector Mission to Durable AutoPilot only for the exact full-lifecycle connector id",async()=>{
+    const connectorMission={
+      ...demoProject,
+      sourceArtifacts:[],
+      targetConnection:{
+        adapter:"connector",connectionId:"connector-workflow-main",status:"connected",label:"Workflow Connector",
+        connector:{connectorId:"workflow-main",targetId:"workflow-42"},
+      },
+      releaseTarget:undefined,
+    } as EvolveProject;
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(capabilities),{status:200,headers:{"Content-Type":"application/json"}})));
+    await getServerWorkflowCapabilities(true);
+    expect(await shouldUseServerAutoPilot(connectorMission)).toBe(true);
+
+    const otherOnly={...capabilities,backend:{...capabilities.backend,connectorFullLifecycleIds:["other"]}};
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(otherOnly),{status:200,headers:{"Content-Type":"application/json"}})));
+    await getServerWorkflowCapabilities(true);
+    expect(await shouldUseServerAutoPilot(connectorMission)).toBe(false);
   });
 });

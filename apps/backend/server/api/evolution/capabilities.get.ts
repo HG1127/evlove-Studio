@@ -2,6 +2,7 @@ import { defineEventHandler } from "nitro/h3";
 import { EvolutionWorkflowCapabilitiesSchema } from "@evolution/contracts";
 import { githubTargetConfigured, githubWebhookConfigured, serverAiConfigured, serverSupabaseConfigured, serverSupabaseSecureConfigured, targetProxyCapabilities, vercelReleaseWriteConfigured } from "../../../src/server-env";
 import {getSecurityCapabilities,requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
+import {getConnectorRegistryCapabilities} from "../../../src/services/connector-registry";
 
 const CONTROL_ACTIONS=["adopt-defaults","approve-contract","wait-human","complete","package"] as const;
 const AI_ACTIONS=["understand","compile-contract","build-eval","distill","next-queue"] as const;
@@ -17,6 +18,10 @@ export default defineEventHandler(async(event)=>{
   const gitConfigured=githubTargetConfigured();
   const gitWebhook=githubWebhookConfigured();
   const targetProxy=targetProxyCapabilities();
+  const connectorRegistry=await getConnectorRegistryCapabilities().catch(()=>undefined);
+  const connectorFullLifecycleIds=(connectorRegistry?.connectors??[])
+    .filter((connector)=>connector.credentialConfigured&&Object.values(connector.lifecycle).every(Boolean))
+    .map((connector)=>connector.id);
   const releaseWrite=vercelRelease||targetProxy.releaseConfigured;
   const releaseObserve=vercelRelease||targetProxy.observeConfigured;
   const security=getSecurityCapabilities();
@@ -85,6 +90,7 @@ export default defineEventHandler(async(event)=>{
       targetRunConfigured:targetProxy.runConfigured,
       targetReleaseConfigured:targetProxy.releaseConfigured,
       targetObserveConfigured:targetProxy.observeConfigured,
+      connectorFullLifecycleIds,
       securityCodeReady:true,
       securityConfigured:security.configured,
       securityProductionSafe:security.productionSafe,

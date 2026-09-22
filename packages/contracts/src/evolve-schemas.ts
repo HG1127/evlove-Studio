@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { GitRepositoryBindingSchema, GitTargetSnapshotBindingSchema } from "./git-target-contract";
+import {ConnectorCandidateBindingSchema,ConnectorTargetBindingSchema,ConnectorTargetSnapshotBindingSchema} from "./connector-contract";
 
 export const StageSchema = z.enum([
   "target",
@@ -472,6 +473,7 @@ export const CandidateSchema = z.object({
   addressesAdvice: z.array(z.string()).default([]),
   /** 设计论证链（plan 生成的 JSON Schema 中为必填；旧项目数据缺失时保持可解析）。 */
   designRationale: CandidateDesignRationaleSchema.optional(),
+  connectorBinding:ConnectorCandidateBindingSchema.optional(),
 });
 export type Candidate = z.infer<typeof CandidateSchema>;
 
@@ -847,12 +849,14 @@ export const NextQueueItemSchema = z.object({
 export type NextQueueItem = z.infer<typeof NextQueueItemSchema>;
 
 export const TargetConnectionSchema = z.object({
-  adapter: z.enum(["mock", "artifact", "http", "git"]).default("mock"),
+  adapter: z.enum(["mock", "artifact", "http", "git", "connector"]).default("mock"),
   connectionId: z.string().default("demo-agent"),
   status: z.enum(["connected", "not-configured", "error"]).default("connected"),
   label: z.string().default("Demo Target Adapter"),
   git:GitRepositoryBindingSchema.optional(),
   gitSnapshot:GitTargetSnapshotBindingSchema.optional(),
+  connector:ConnectorTargetBindingSchema.optional(),
+  connectorSnapshot:ConnectorTargetSnapshotBindingSchema.optional(),
 });
 
 export const ReleaseTargetSchema = z.object({
