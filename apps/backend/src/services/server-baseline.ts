@@ -4,6 +4,7 @@ import { runServerBaseline, trustedServerBaselineChampion } from "@evolution/har
 import { runServerAi } from "./ai-gateway";
 import { getServerArtifactStore } from "./artifact-runtime";
 import { attachServerVisualEvidence } from "./server-visual-evidence";
+import { runServerHttpTargetBatch, serverHttpTargetEnabled } from "./server-http-target-execution";
 
 function codebaseTarget(project: EvolveProject) {
   return project.sourceArtifacts.find((artifact) =>
@@ -55,6 +56,38 @@ function unavailableExternal(testCase: TestCase, detail: string): TargetRunResul
   };
 }
 
+export async function executeServerBaselineExternal(current:EvolveProject,testCases:TestCase[]){
+  if (serverHttpTargetEnabled(current)) return runServerHttpTargetBatch(current, testCases);
+  const binding = resolveServerBaselineCodebaseBinding(current);
+  if (!binding.source || !binding.blobId) {
+    return testCases.map((testCase) => unavailableExternal(
+      testCase,
+      binding.reason ?? "当前 Server Baseline 没有可用的 HTTP Target 或冻结源码包/codebase。",
+    ));
+  }
+  try {
+    const blob = await getServerArtifactStore().get(binding.blobId);
+    if (!blob) {
+      return testCases.map((testCase) => unavailableExternal(
+        testCase,
+        `找不到当前 Baseline Artifact Blob ${binding.blobId}，不能回退其他版本冒充真实代码执行。`,
+      ));
+    }
+    const response = await runVercelSandboxCodebaseValidation({
+      id: `${current.id}-baseline-${binding.candidateId ?? "source"}`,
+      archive: new Uint8Array(await blob.arrayBuffer()),
+      testCases,
+    });
+    return attachServerVisualEvidence(current, testCases, response.results);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return testCases.map((testCase) => unavailableExternal(
+      testCase,
+      `Vercel Sandbox 未完成：${message}`,
+    ));
+  }
+}
+
 /** Composition root: wires Harness Baseline ports to production Server AI + Artifact Store + Vercel Sandbox. */
 export async function runServerMissionBaseline(project: EvolveProject) {
   return runServerBaseline(project, {
@@ -79,36 +112,7 @@ export async function runServerMissionBaseline(project: EvolveProject) {
       evidenceInstruction: "Inspect the current Baseline artifact only. Missing evidence must be reported as UNVERIFIED; never infer future Candidate behavior.",
       variant: null,
     }),
-    executeExternalBatch: async ({ project: current, testCases }) => {
-      const binding = resolveServerBaselineCodebaseBinding(current);
-      if (!binding.source || !binding.blobId) {
-        return testCases.map((testCase) => unavailableExternal(
-          testCase,
-          binding.reason ?? "当前 Server Baseline 的 Vercel Sandbox 路径仅支持冻结源码包/codebase；HTML/远端 Target Runner 尚未迁入 Server。",
-        ));
-      }
-      try {
-        const blob = await getServerArtifactStore().get(binding.blobId);
-        if (!blob) {
-          return testCases.map((testCase) => unavailableExternal(
-            testCase,
-            `找不到当前 Baseline Artifact Blob ${binding.blobId}，不能回退其他版本冒充真实代码执行。`,
-          ));
-        }
-        const response = await runVercelSandboxCodebaseValidation({
-          id: `${current.id}-baseline-${binding.candidateId ?? "source"}`,
-          archive: new Uint8Array(await blob.arrayBuffer()),
-          testCases,
-        });
-        return attachServerVisualEvidence(current, testCases, response.results);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        return testCases.map((testCase) => unavailableExternal(
-          testCase,
-          `Vercel Sandbox 未完成：${message}`,
-        ));
-      }
-    },
+    executeExternalBatch: ({ project: current, testCases }) => executeServerBaselineExternal(current,testCases),
     judge: (payload) => runServerAi("evaluate", payload),
   });
 }

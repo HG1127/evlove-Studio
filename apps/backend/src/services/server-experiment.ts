@@ -4,6 +4,7 @@ import { runServerExperiment } from "@evolution/harness";
 import { runServerAi } from "./ai-gateway";
 import { getServerArtifactStore } from "./artifact-runtime";
 import { attachServerVisualEvidence } from "./server-visual-evidence";
+import { runServerHttpTargetBatch, serverHttpTargetEnabled } from "./server-http-target-execution";
 import {
   buildServerExperimentCandidate,
   serverArtifactSha256,
@@ -44,6 +45,7 @@ function unavailableExternal(testCase: TestCase, detail: string): TargetRunResul
 }
 
 async function executeServerCandidateExternal(project: EvolveProject, candidate: Candidate, testCases: TestCase[]) {
+  if (serverHttpTargetEnabled(project)) return runServerHttpTargetBatch(project, testCases, candidate);
   const source = codebaseTarget(project);
   if (!source) return testCases.map((testCase) => unavailableExternal(testCase, "当前 Server External Runner 仅支持 codebase/package ZIP Target。"));
   const snapshot = candidate.artifactSnapshots.find((item) => item.sourceArtifactId === source.id);
