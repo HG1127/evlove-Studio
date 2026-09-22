@@ -19,7 +19,7 @@ async function json(path:string,init?:RequestInit){
     const message=String((body as {statusMessage?:string;message?:string}).statusMessage
       ??(body as {message?:string}).message
       ??`Parse API HTTP ${response.status}`);
-    if(response.status===404||response.status===503)throw new ServerParseUnavailableError(message);
+    if([401,403,404,503].includes(response.status))throw new ServerParseUnavailableError(message);
     throw new Error(message);
   }
   return body;
