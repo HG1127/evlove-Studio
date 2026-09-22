@@ -54,6 +54,8 @@ The server re-checks this isolation declaration before Candidate mutation, so by
 
 Connector webhooks use `x-evolution-connector-signature: sha256=<HMAC>` and are not trusted by signature alone. A webhook that names a `missionId` must also match that Mission's connected `connectorId`, `targetId`, and an exact currently bound `versionRef` (locked target snapshot, current Candidate, or Search Champion). Unknown/stale versions are rejected before Event persistence. Event persistence is fail-closed: storage failure returns an error instead of acknowledging success. Identical signed webhook retries derive the same deterministic Event id from the connector id plus raw request body, so the Event Store de-duplicates delivery retries.
 
+Connector release reconciliation is also exact-bound. An `observe` response may not silently switch to another deployment or stable deployment: if the provider returns a `deploymentRef` / `stableDeploymentRef`, it must match the Mission deployment being reconciled. When the provider omits the deployment ref, the server preserves the explicit Mission ref rather than replacing it with a version id.
+
 ## Outcome Telemetry
 
 Release reconciliation always records provider health/latency evidence when the secure Outcome Warehouse is available. External business KPI, cost, latency, and safety metrics can additionally be pulled server-side with `EVOLUTION_OUTCOME_TELEMETRY_JSON`. Credentials stay in server environment variables referenced by name; secrets are never embedded in the JSON.

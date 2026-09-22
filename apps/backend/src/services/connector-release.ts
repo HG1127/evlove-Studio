@@ -55,6 +55,8 @@ function toReleaseResult(args:{
   project:EvolveProject;
   response:ConnectorActionResponse;
   action:DurableReleaseAction;
+  observedDeploymentId?:string;
+  observedStableDeploymentId?:string;
 }):ReleaseAdapterResult{
   const {candidate,binding}=releaseBinding(args.project);
   const receipt=ConnectorReleaseReceiptSchema.parse(args.response.output);
@@ -68,14 +70,30 @@ function toReleaseResult(args:{
   }else if(args.response.versionRef!==binding.versionRef){
     throw new Error(`Connector release versionRef ${args.response.versionRef??"missing"} != Candidate ${binding.versionRef}`);
   }
+  if(args.observedDeploymentId&&args.response.deploymentRef&&args.response.deploymentRef!==args.observedDeploymentId){
+    throw new Error(
+      `Connector observe deploymentRef ${args.response.deploymentRef} != expected ${args.observedDeploymentId}`,
+    );
+  }
+  if(args.observedStableDeploymentId
+    &&receipt.stableDeploymentRef
+    &&receipt.stableDeploymentRef!==args.observedStableDeploymentId){
+    throw new Error(
+      `Connector observe stableDeploymentRef ${receipt.stableDeploymentRef} != expected ${args.observedStableDeploymentId}`,
+    );
+  }
   const deploymentId=args.response.deploymentRef
+    ??args.observedDeploymentId
     ??(args.action==="rollback"
       ?receipt.stableDeploymentRef??args.project.release.stableDeploymentId??binding.baseVersionRef
       :binding.versionRef);
   if(!deploymentId)throw new Error("Connector Release receipt 缺少 deploymentRef/version identity");
   const stableDeploymentId=args.action==="rollback"
     ?deploymentId
-    :receipt.stableDeploymentRef??args.project.release.stableDeploymentId??binding.baseVersionRef;
+    :receipt.stableDeploymentRef
+      ??args.observedStableDeploymentId
+      ??args.project.release.stableDeploymentId
+      ??binding.baseVersionRef;
   return{
     ok:args.response.ok,
     trafficPercent:receipt.trafficPercent,
@@ -161,5 +179,11 @@ export async function observeConnectorReleaseReality(
     },
   });
   const receipt=ConnectorReleaseReceiptSchema.parse(response.output);
-  return toReleaseResult({project,response,action:receipt.effectiveAction});
+  return toReleaseResult({
+    project,
+    response,
+    action:receipt.effectiveAction,
+    observedDeploymentId:args.deploymentId,
+    observedStableDeploymentId:args.stableDeploymentId,
+  });
 }

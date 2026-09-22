@@ -90,6 +90,51 @@ describe("Connector release adapter",()=>{
     expect(result).toMatchObject({effectiveAction:"promote",deploymentId:"preview-v43",stableDeploymentId:"prod-v42",evidenceMode:"live"});
   });
 
+  it("fails closed when observe reports another deployment or stable deployment",async()=>{
+    const {project}=fixture();
+    project.release={...project.release,status:"shadow",deploymentId:"preview-v43",stableDeploymentId:"prod-v42"};
+    const wrongDeployment=vi.fn(async(input:ConnectorActionRequest)=>response(
+      {...input,payload:{...input.payload,releaseAction:"shadow"}},
+      {deploymentRef:"preview-other"},
+    ));
+    await expect(observeConnectorReleaseReality(
+      project,
+      {deploymentId:"preview-v43",stableDeploymentId:"prod-v42"},
+      wrongDeployment,
+      ()=>undefined,
+    )).rejects.toThrow(/deploymentRef preview-other != expected preview-v43/);
+
+    const wrongStable=vi.fn(async(input:ConnectorActionRequest)=>response(
+      {...input,payload:{...input.payload,releaseAction:"shadow"}},
+      {output:{
+        effectiveAction:"shadow",trafficPercent:0,healthy:true,observationStatus:"healthy",
+        environment:"preview",stableDeploymentRef:"prod-other",
+      }},
+    ));
+    await expect(observeConnectorReleaseReality(
+      project,
+      {deploymentId:"preview-v43",stableDeploymentId:"prod-v42"},
+      wrongStable,
+      ()=>undefined,
+    )).rejects.toThrow(/stableDeploymentRef prod-other != expected prod-v42/);
+  });
+
+  it("uses the explicitly requested deployment identity when observe omits deploymentRef",async()=>{
+    const {project}=fixture();
+    project.release={...project.release,status:"shadow",deploymentId:"preview-v43",stableDeploymentId:"prod-v42"};
+    const execute=vi.fn(async(input:ConnectorActionRequest)=>response(
+      {...input,payload:{...input.payload,releaseAction:"shadow"}},
+      {deploymentRef:undefined},
+    ));
+    const result=await observeConnectorReleaseReality(
+      project,
+      {deploymentId:"preview-v43",stableDeploymentId:"prod-v42"},
+      execute,
+      ()=>undefined,
+    );
+    expect(result).toMatchObject({deploymentId:"preview-v43",stableDeploymentId:"prod-v42"});
+  });
+
   it("requires rollback to resolve to the stable base version",async()=>{
     const {project}=fixture();
     project.release={...project.release,status:"promoted",deploymentId:"prod-v43",stableDeploymentId:"prod-v42"};
