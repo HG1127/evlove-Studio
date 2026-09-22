@@ -8,6 +8,11 @@ const capabilities={
   fullAuto:false,
   durable:true,
   serverAi:true,
+  backend:{
+    vercelReleaseConfigured:true,
+    targetReleaseConfigured:true,
+    targetObserveConfigured:true,
+  },
   closure:{
     codeReady:true,
     offlineFullAuto:true,
@@ -68,5 +73,45 @@ describe("server workflow routing",()=>{
     expect(await shouldUseServerAutoPilot(online)).toBe(true);
     online.releaseTarget={...online.releaseTarget!,mode:"progressive"};
     expect(await shouldUseServerAutoPilot(online)).toBe(true);
+  });
+
+  it("hands an approved HTTP Release mission to Durable AutoPilot only when HTTP write and observe are both configured",async()=>{
+    const httpCapabilities={
+      ...capabilities,
+      backend:{...capabilities.backend,vercelReleaseConfigured:false,targetReleaseConfigured:true,targetObserveConfigured:true},
+    };
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(httpCapabilities),{status:200,headers:{"Content-Type":"application/json"}})));
+    await getServerWorkflowCapabilities(true);
+    const online={
+      ...demoProject,
+      targetConnection:{adapter:"http",connectionId:"http-prod",status:"connected",label:"HTTP Target"},
+      releaseTarget:{provider:"http",mode:"preview-promote",status:"connected",label:"HTTP Release",healthPath:"/"},
+      gates:demoProject.gates.map((gate)=>gate.id==="release-ready"?{...gate,status:"approved" as const}:gate),
+    } as EvolveProject;
+    expect(await shouldUseServerAutoPilot(online)).toBe(true);
+
+    const missingObserve={
+      ...httpCapabilities,
+      backend:{...httpCapabilities.backend,targetObserveConfigured:false},
+    };
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(missingObserve),{status:200,headers:{"Content-Type":"application/json"}})));
+    await getServerWorkflowCapabilities(true);
+    expect(await shouldUseServerAutoPilot(online)).toBe(false);
+  });
+
+  it("does not mistake a configured Vercel provider for HTTP mission support",async()=>{
+    const vercelOnly={
+      ...capabilities,
+      backend:{...capabilities.backend,vercelReleaseConfigured:true,targetReleaseConfigured:false,targetObserveConfigured:false},
+    };
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(vercelOnly),{status:200,headers:{"Content-Type":"application/json"}})));
+    await getServerWorkflowCapabilities(true);
+    const httpMission={
+      ...demoProject,
+      targetConnection:{adapter:"http",connectionId:"http-prod",status:"connected",label:"HTTP Target"},
+      releaseTarget:{provider:"http",mode:"preview-promote",status:"connected",label:"HTTP Release",healthPath:"/"},
+      gates:demoProject.gates.map((gate)=>gate.id==="release-ready"?{...gate,status:"approved" as const}:gate),
+    } as EvolveProject;
+    expect(await shouldUseServerAutoPilot(httpMission)).toBe(false);
   });
 });

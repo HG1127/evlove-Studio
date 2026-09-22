@@ -64,6 +64,7 @@ export const EvolutionWorkflowCapabilitiesSchema=z.object({
     sandboxCodeReady:z.boolean().default(false),
     browserCodeReady:z.boolean().default(false),
     releaseCodeReady:z.boolean().default(false),
+    vercelReleaseConfigured:z.boolean().default(false),
     gitTargetCodeReady:z.boolean().default(false),
     gitTargetConfigured:z.boolean().default(false),
     gitWebhookConfigured:z.boolean().default(false),

@@ -11,7 +11,7 @@ import {
   type SandboxBrowserHealth,
   type SandboxHealth,
 } from "@evolution/contracts";
-import { projectHasOnlineReleaseTarget } from "@evolution/core";
+import { projectHasOnlineReleaseTarget,projectUsesHttpRelease,projectUsesVercelRelease } from "@evolution/core";
 
 async function apiJson(url:string,init?:RequestInit){
   const response=await fetch(url,init);
@@ -71,8 +71,14 @@ export async function shouldUseServerAutoPilot(project:EvolveProject){
     if(!capability.available||!capability.durable)return false;
     if(!projectHasOnlineReleaseTarget(project))return capability.closure.offlineFullAuto;
     const authorized=project.gates.find((gate)=>gate.id==="release-ready")?.status==="approved";
-    const supported=project.releaseTarget?.provider==="vercel";
-    return Boolean(authorized&&supported&&capability.closure.onlinePostApprovalAuto);
+    if(!authorized||!capability.closure.offlineFullAuto)return false;
+    if(projectUsesVercelRelease(project)){
+      return Boolean(capability.backend.vercelReleaseConfigured);
+    }
+    if(projectUsesHttpRelease(project)){
+      return Boolean(capability.backend.targetReleaseConfigured&&capability.backend.targetObserveConfigured);
+    }
+    return false;
   }catch{
     return false;
   }

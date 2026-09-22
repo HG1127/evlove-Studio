@@ -77,6 +77,7 @@ export default defineEventHandler(async(event)=>{
       sandboxCodeReady:true,
       browserCodeReady:true,
       releaseCodeReady:true,
+      vercelReleaseConfigured:vercelRelease,
       gitTargetCodeReady:true,
       gitTargetConfigured:gitConfigured,
       gitWebhookConfigured:gitWebhook,
