@@ -117,8 +117,8 @@ export function baselineLocalEvidence(project: EvolveProject, testCase: TestCase
   if (testCase.criterionIds.length > 0 && testCase.criterionIds.every((id) => id === "SYS-PAIRWISE")) {
     return unavailableBaselineRun(testCase, "原版是 Pairwise 比较起点；相对改进只能在 Candidate 实验中验证。");
   }
-  if (testCase.executionMode === "visual-review" || testCase.executionMode === "manual") {
-    return unavailableBaselineRun(testCase, `需要 ${testCase.executionMode === "visual-review" ? "真实截图/浏览器" : "人工验收"} 证据，Server Baseline 不会用 AI 模拟替代。`);
+  if (testCase.executionMode === "manual") {
+    return unavailableBaselineRun(testCase, "需要人工验收证据，Server Baseline 不会用 AI 模拟替代。");
   }
   if (testCase.executionMode === "roundtrip") {
     const started = Date.now();

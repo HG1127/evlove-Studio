@@ -3,6 +3,7 @@ import { runVercelSandboxCodebaseValidation } from "@evolution/adapters/sandbox"
 import { runServerBaseline, trustedServerBaselineChampion } from "@evolution/harness";
 import { runServerAi } from "./ai-gateway";
 import { getServerArtifactStore } from "./artifact-runtime";
+import { attachServerVisualEvidence } from "./server-visual-evidence";
 
 function codebaseTarget(project: EvolveProject) {
   return project.sourceArtifacts.find((artifact) =>
@@ -99,7 +100,7 @@ export async function runServerMissionBaseline(project: EvolveProject) {
           archive: new Uint8Array(await blob.arrayBuffer()),
           testCases,
         });
-        return response.results;
+        return attachServerVisualEvidence(current, testCases, response.results);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return testCases.map((testCase) => unavailableExternal(

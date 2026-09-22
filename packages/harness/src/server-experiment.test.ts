@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Candidate, EvaluateAiResult, EvolveProject, TargetRunResult } from "@evolution/contracts";
 import { runServerExperiment } from "./server-experiment";
 
-function fixture(executionMode:"artifact-runtime"|"external-runner"="artifact-runtime"):EvolveProject{
+function fixture(executionMode:"artifact-runtime"|"external-runner"|"visual-review"="artifact-runtime"):EvolveProject{
   const now="2026-09-20T13:00:00.000Z";
   const candidate={
     id:"C1",name:"闭环修复",change:"补齐验证与回滚",hypothesis:"补齐闭环可提升",
@@ -16,7 +16,7 @@ function fixture(executionMode:"artifact-runtime"|"external-runner"="artifact-ru
     evolutionCommand:"让内容更完整",protectedItems:["事实"],editableItems:["表达"],metrics:[],
     sourceArtifacts:[{id:"source",name:"source.md",role:"target",artifactKind:"document",mimeType:"text/markdown",size:20,extension:"md",inputMode:"paste",parseStatus:"ready",textContent:"安装完成。缺少验证与回滚。",textExcerpt:"安装完成",structure:[],warnings:[],createdAt:now}],
     inputClarifications:[],commandHistory:[],supplementalValidationEvidence:[],adviceLedger:[],
-    acceptanceRubric:[{id:"CONTENT",title:"内容闭环",requirement:"安装、验证与回滚完整",source:"user-command",weight:100,hardGate:true,judgeType:"llm",validationMethod:executionMode==="external-runner"?"executable-test":"semantic-judge",minScore:80,evidenceExpected:["验证","回滚"],protectedConstraint:false,artifactIds:["source"],category:"outcome"}],
+    acceptanceRubric:[{id:"CONTENT",title:"内容闭环",requirement:"安装、验证与回滚完整",source:"user-command",weight:100,hardGate:true,judgeType:"llm",validationMethod:executionMode==="external-runner"?"executable-test":executionMode==="visual-review"?"visual-review":"semantic-judge",minScore:80,evidenceExpected:["验证","回滚"],protectedConstraint:false,artifactIds:["source"],category:"outcome"}],
     acceptanceRubricState:{status:"ready",summary:"ready",version:1,weightTotal:100,uncoveredCriterionIds:[],warnings:[],confirmedAt:now},
     evalSuite:[{id:"V1",title:"闭环",input:"检查闭环",expected:["验证","回滚"],tags:[],hidden:false,criterionIds:["CONTENT"],executionMode,evidenceScope:"product-behavior"}],
     hiddenEvalSuite:[{id:"H1",title:"隐藏闭环",input:"检查闭环",expected:["验证","回滚"],tags:[],hidden:true,criterionIds:["CONTENT"],executionMode,evidenceScope:"product-behavior"}],
@@ -105,6 +105,24 @@ describe("server experiment",()=>{
     expect(outcome.winnerId).toBeUndefined();
     expect(outcome.pendingEvidenceCandidateId).toBe("C1");
     expect(outcome.project.candidates[0]?.artifactSnapshots[0]?.id).toBe("snap-C1");
+  });
+
+  it("routes visual-review to the external/browser port after the exact Candidate is frozen",async()=>{
+    const project=fixture("visual-review");
+    let externalCalls=0;
+    const outcome=await runServerExperiment(project,{
+      buildCandidate:async({candidate})=>frozenCandidate(candidate),
+      executeSemanticBatch:async()=>({results:[]}),
+      executeExternalBatch:async({testCases})=>{
+        externalCalls+=1;
+        return testCases.map((testCase):TargetRunResult=>({
+          testCaseId:testCase.id,output:"Sandbox visual evidence",latencyMs:10,cost:0,verificationStatus:"partial",trace:[],
+        }));
+      },
+      judge:async()=>judge(90),
+    });
+    expect(externalCalls).toBe(1);
+    expect(outcome.experiment.candidateResults[0]?.runs[0]?.verificationStatus).toBe("partial");
   });
 
   it("archives a verified non-Winner and advances to the next round without human intervention",async()=>{

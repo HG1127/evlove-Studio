@@ -62,7 +62,7 @@ export async function executeServerCurrentArtifactSuite(
     if(gap){ordered.set(testCase.id,unavailableBaselineRun(testCase,gap));continue;}
     const local=baselineLocalEvidence(project,testCase);
     if(local){ordered.set(testCase.id,local);continue;}
-    if(testCase.executionMode==="external-runner"){externalCases.push(testCase);continue;}
+    if(testCase.executionMode==="external-runner"||testCase.executionMode==="visual-review"){externalCases.push(testCase);continue;}
     if(testCase.executionMode==="artifact-runtime"){semanticCases.push(testCase);continue;}
     ordered.set(testCase.id,unavailableBaselineRun(testCase,`Server 当前版本暂不支持 executionMode=${testCase.executionMode} 的真实执行。`));
   }

@@ -102,6 +102,25 @@ describe("server baseline",()=>{
     expect(outcome.baseline.result?.failures).not.toContain("Sandbox OIDC unavailable");
   });
 
+  it("routes visual-review through the real external/browser port instead of a local text substitute",async()=>{
+    const project=fixture();
+    project.acceptanceRubric[0]={...project.acceptanceRubric[0]!,validationMethod:"visual-review"};
+    project.evalSuite[0]={...project.evalSuite[0]!,executionMode:"visual-review"};
+    let externalCalls=0;
+    const outcome=await runServerBaseline(project,{
+      executeSemanticBatch:async()=>({results:[]}),
+      executeExternalBatch:async({testCases})=>{
+        externalCalls+=1;
+        return testCases.map((testCase):TargetRunResult=>({
+          testCaseId:testCase.id,output:"真实 Chromium 截图已经由外部端口评审。",latencyMs:10,cost:0,verificationStatus:"partial",trace:[],
+        }));
+      },
+      judge:async()=>judge(),
+    });
+    expect(externalCalls).toBe(1);
+    expect(outcome.baseline.runs.find((run)=>run.testCaseId==="V1")?.verificationStatus).toBe("partial");
+  });
+
   it("measures the accepted Search Champion snapshot instead of falling back to the original text",async()=>{
     const project=fixture();
     const candidate={

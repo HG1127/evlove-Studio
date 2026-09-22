@@ -494,6 +494,7 @@ export type TestCase = z.infer<typeof TestCaseSchema>;
 export const TargetRunResultSchema = z.object({
   artifactHash:z.string().optional(),
   screenshots:z.array(z.object({name:z.string(),width:z.number(),height:z.number(),dataUrl:z.string(),artifactHash:z.string()})).optional(),
+  visualEvidenceRefs:z.array(z.object({name:z.string(),width:z.number(),height:z.number(),artifactHash:z.string(),blobId:z.string()})).optional(),
   testCaseId: z.string(),
   output: z.string(),
   latencyMs: z.number(),

@@ -58,6 +58,22 @@ export type ServerAiOperation=AiOperation;
 
 type StructuredSchema={name:string;schema:Record<string,unknown>};
 type Contract<T>={schema:StructuredSchema;parser:ZodType<T>;instruction:string};
+export type ServerAiMedia={imageDataUrls?:string[]};
+type ParsedImage={dataUrl:string;base64:string;mediaType:string};
+const MAX_AI_IMAGES=4;
+const MAX_AI_IMAGE_BYTES=4*1024*1024;
+
+function parseServerAiImages(media?:ServerAiMedia):ParsedImage[]{
+  const values=media?.imageDataUrls??[];
+  if(values.length>MAX_AI_IMAGES)throw new Error(`Server AI 最多接受 ${MAX_AI_IMAGES} 张图片`);
+  return values.map((dataUrl,index)=>{
+    const match=/^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl);
+    if(!match)throw new Error(`Server AI 图片 ${index+1} 必须是 PNG/JPEG/WebP data URL`);
+    const base64=match[2]!;
+    if(Buffer.byteLength(base64,"base64")>MAX_AI_IMAGE_BYTES)throw new Error(`Server AI 图片 ${index+1} 超过 4MB`);
+    return{dataUrl,base64,mediaType:match[1]!};
+  });
+}
 
 async function loadVercelAiSdk(){
   // Keep @ai-sdk/gateway out of the shared Nitro function bootstrap. On Vercel,
@@ -134,12 +150,21 @@ async function callVercelGateway<T>(args:{
   config:Extract<NonNullable<ReturnType<typeof getServerAiConfig>>,{mode:"vercel-gateway"}>;
   contract:Contract<T>;
   payload:unknown;
+  images:ParsedImage[];
 }){
   const {Output,generateText,gateway}=await loadVercelAiSdk();
   const generated=await generateText({
     model:gateway(args.config.model),
     system:SYSTEM+"\n\nTask: "+args.contract.instruction,
-    prompt:JSON.stringify(args.payload),
+    messages:[{
+      role:"user" as const,
+      content:args.images.length
+        ?[
+            {type:"text" as const,text:JSON.stringify(args.payload)},
+            ...args.images.map((image)=>({type:"image" as const,image:image.base64,mediaType:image.mediaType})),
+          ]
+        :JSON.stringify(args.payload),
+    }],
     output:Output.object({
       schema:args.contract.parser,
       name:args.contract.schema.name,
@@ -150,7 +175,7 @@ async function callVercelGateway<T>(args:{
   return args.contract.parser.parse(generated.output);
 }
 
-async function callResponses<T>(args:{config:Extract<NonNullable<ReturnType<typeof getServerAiConfig>>,{mode:"openai-compatible"}>;contract:Contract<T>;payload:unknown}){
+async function callResponses<T>(args:{config:Extract<NonNullable<ReturnType<typeof getServerAiConfig>>,{mode:"openai-compatible"}>;contract:Contract<T>;payload:unknown;images:ParsedImage[]}){
   const response=await fetch(args.config.baseUrl+"/responses",{
     method:"POST",
     signal:AbortSignal.timeout(args.config.timeoutMs),
@@ -160,7 +185,10 @@ async function callResponses<T>(args:{config:Extract<NonNullable<ReturnType<type
       store:false,
       input:[
         {role:"system",content:[{type:"input_text",text:SYSTEM+"\n\nTask: "+args.contract.instruction}]},
-        {role:"user",content:[{type:"input_text",text:JSON.stringify(args.payload)}]},
+        {role:"user",content:[
+          {type:"input_text",text:JSON.stringify(args.payload)},
+          ...args.images.map((image)=>({type:"input_image",image_url:image.dataUrl})),
+        ]},
       ],
       max_output_tokens:10000,
       text:{format:{type:"json_schema",name:args.contract.schema.name,strict:true,schema:args.contract.schema.schema}},
@@ -175,7 +203,7 @@ async function callResponses<T>(args:{config:Extract<NonNullable<ReturnType<type
   return args.contract.parser.parse(JSON.parse(responseText(json)));
 }
 
-async function callChat<T>(args:{config:Extract<NonNullable<ReturnType<typeof getServerAiConfig>>,{mode:"openai-compatible"}>;contract:Contract<T>;payload:unknown}){
+async function callChat<T>(args:{config:Extract<NonNullable<ReturnType<typeof getServerAiConfig>>,{mode:"openai-compatible"}>;contract:Contract<T>;payload:unknown;images:ParsedImage[]}){
   const response=await fetch(args.config.baseUrl+"/chat/completions",{
     method:"POST",
     signal:AbortSignal.timeout(args.config.timeoutMs),
@@ -184,7 +212,10 @@ async function callChat<T>(args:{config:Extract<NonNullable<ReturnType<typeof ge
       model:args.config.model,
       messages:[
         {role:"system",content:SYSTEM+"\n\nTask: "+args.contract.instruction},
-        {role:"user",content:JSON.stringify(args.payload)},
+        {role:"user",content:args.images.length?[
+          {type:"text",text:JSON.stringify(args.payload)},
+          ...args.images.map((image)=>({type:"image_url",image_url:{url:image.dataUrl}})),
+        ]:JSON.stringify(args.payload)},
       ],
       response_format:{type:"json_schema",json_schema:{name:args.contract.schema.name,strict:true,schema:args.contract.schema.schema}},
     }),
@@ -194,7 +225,7 @@ async function callChat<T>(args:{config:Extract<NonNullable<ReturnType<typeof ge
   return args.contract.parser.parse(JSON.parse(chatText(json)));
 }
 
-async function structured<T>(payload:unknown,schema:Contract<T>):Promise<T>{
+async function structured<T>(payload:unknown,schema:Contract<T>,media?:ServerAiMedia):Promise<T>{
   const config=getServerAiConfig();
   if(!config){
     throw Object.assign(
@@ -202,15 +233,16 @@ async function structured<T>(payload:unknown,schema:Contract<T>):Promise<T>{
       {code:"SERVER_AI_UNAVAILABLE"},
     );
   }
+  const images=parseServerAiImages(media);
   if(config.mode==="vercel-gateway"){
-    return callVercelGateway({config,contract:schema,payload});
+    return callVercelGateway({config,contract:schema,payload,images});
   }
   try{
-    return await callResponses({config,contract:schema,payload});
+    return await callResponses({config,contract:schema,payload,images});
   }catch(error){
     const status=(error as {httpStatus?:number}).httpStatus;
     if(status!==404&&status!==405&&status!==400)throw error;
-    return callChat({config,contract:schema,payload});
+    return callChat({config,contract:schema,payload,images});
   }
 }
 
@@ -237,11 +269,11 @@ export function runServerAi(operation:"next-queue",payload:unknown):Promise<Next
 export function runServerAi(operation:"copilot",payload:unknown):Promise<CopilotAiResult>;
 export function runServerAi(operation:"gap-cluster",payload:unknown):Promise<GapClusterAiResult>;
 export function runServerAi(operation:"gap-advice",payload:unknown):Promise<GapAdviceAiResult>;
-export function runServerAi(operation:"visual-judge",payload:unknown):Promise<VisualJudgeAiResult>;
-export function runServerAi(operation:AiOperation,payload:unknown):Promise<unknown>;
-export function runServerAi(operation:ServerAiOperation,payload:unknown){
+export function runServerAi(operation:"visual-judge",payload:unknown,media?:ServerAiMedia):Promise<VisualJudgeAiResult>;
+export function runServerAi(operation:AiOperation,payload:unknown,media?:ServerAiMedia):Promise<unknown>;
+export function runServerAi(operation:ServerAiOperation,payload:unknown,media?:ServerAiMedia){
   AiOperationSchema.parse(operation);
-  return structured(payload,contract(operation));
+  return structured(payload,contract(operation),media);
 }
 
 export function isServerAiUnavailable(error:unknown){

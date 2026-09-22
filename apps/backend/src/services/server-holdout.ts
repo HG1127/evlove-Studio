@@ -3,6 +3,7 @@ import { runVercelSandboxCodebaseValidation } from "@evolution/adapters/sandbox"
 import { runServerHoldout } from "@evolution/harness";
 import { runServerAi } from "./ai-gateway";
 import { getServerArtifactStore } from "./artifact-runtime";
+import { attachServerVisualEvidence } from "./server-visual-evidence";
 import { resolveServerBaselineCodebaseBinding } from "./server-baseline";
 import { serverArtifactSha256 } from "./server-experiment-artifacts";
 
@@ -36,7 +37,7 @@ async function executeCurrentExternal(project:EvolveProject,testCases:TestCase[]
       archive:new Uint8Array(await blob.arrayBuffer()),
       testCases,
     });
-    return response.results;
+    return attachServerVisualEvidence(project,testCases,response.results);
   }catch(error){
     const message=error instanceof Error?error.message:String(error);
     return testCases.map((testCase)=>unavailable(testCase,`Vercel Sandbox 未完成：${message}`));
@@ -60,7 +61,7 @@ async function executeCandidateExternal(project:EvolveProject,candidate:Candidat
       expectedSha256:snapshot.frozenArtifact.sha256,
       testCases,
     });
-    return response.results;
+    return attachServerVisualEvidence(project,testCases,response.results);
   }catch(error){
     const message=error instanceof Error?error.message:String(error);
     return testCases.map((testCase)=>unavailable(testCase,`Vercel Sandbox 未完成：${message}`));

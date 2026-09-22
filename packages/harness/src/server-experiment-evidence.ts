@@ -43,10 +43,10 @@ export function candidateLocalEvidence(
   candidate: Candidate,
   testCase: TestCase,
 ): TargetRunResult | undefined {
-  if (testCase.executionMode === "visual-review" || testCase.executionMode === "manual") {
+  if (testCase.executionMode === "manual") {
     return unavailableExperimentRun(
       testCase,
-      `Candidate ${candidate.id} 需要 ${testCase.executionMode === "visual-review" ? "真实浏览器/截图" : "人工验收"} 证据；Server Experiment 不会用 AI 文本替代。`,
+      `Candidate ${candidate.id} 需要人工验收证据；Server Experiment 不会用 AI 文本替代。`,
     );
   }
   if (testCase.executionMode === "roundtrip") {

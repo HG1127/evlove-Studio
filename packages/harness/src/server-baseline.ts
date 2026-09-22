@@ -101,7 +101,7 @@ export async function runServerBaseline(
       ordered.set(testCase.id, local);
       continue;
     }
-    if (testCase.executionMode === "external-runner") {
+    if (testCase.executionMode === "external-runner" || testCase.executionMode === "visual-review") {
       externalCases.push(testCase);
       continue;
     }

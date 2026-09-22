@@ -3,6 +3,7 @@ import { runVercelSandboxCodebaseValidation } from "@evolution/adapters/sandbox"
 import { runServerExperiment } from "@evolution/harness";
 import { runServerAi } from "./ai-gateway";
 import { getServerArtifactStore } from "./artifact-runtime";
+import { attachServerVisualEvidence } from "./server-visual-evidence";
 import {
   buildServerExperimentCandidate,
   serverArtifactSha256,
@@ -59,7 +60,7 @@ async function executeServerCandidateExternal(project: EvolveProject, candidate:
       expectedSha256: snapshot.frozenArtifact.sha256,
       testCases,
     });
-    return result.results;
+    return attachServerVisualEvidence(project, testCases, result.results);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return testCases.map((testCase) => unavailableExternal(testCase, `Vercel Sandbox 未完成：${message}`));

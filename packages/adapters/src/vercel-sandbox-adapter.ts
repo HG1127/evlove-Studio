@@ -106,6 +106,7 @@ server.listen(port,"0.0.0.0",()=>console.log("EVOLUTION_PREVIEW_READY "+port));
 
 const BROWSER_RUNNER_SCRIPT=String.raw`
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import { chromium } from "../browser/node_modules/playwright/index.mjs";
 const cases=JSON.parse(fs.readFileSync(process.argv[2],"utf8"));
 const baseUrl=process.argv[3];
@@ -114,7 +115,7 @@ const browser=await chromium.launch({headless:true});
 const results=[];
 for(const testCase of cases){
   const started=Date.now();
-  const trace=[];const errors=[];const blocked=[];
+  const trace=[];const errors=[];const blocked=[];const screenshots=[];
   const context=await browser.newContext({serviceWorkers:"block",acceptDownloads:false,viewport:{width:1440,height:960}});
   try{
     await context.route("**/*",route=>{
@@ -146,15 +147,25 @@ for(const testCase of cases){
         break;
       }
     }
-    for(const width of [1440,390]){
-      await page.setViewportSize({width,height:960});
+    for(const viewport of [{name:"desktop",width:1440,height:900},{name:"mobile",width:390,height:844}]){
+      await page.setViewportSize({width:viewport.width,height:viewport.height});
       const layout=await page.evaluate(()=>({overflow:document.documentElement.scrollWidth>innerWidth+2,title:document.title}));
-      trace.push({id:"viewport-"+width,stage:"layout",status:layout.overflow?"fail":"pass",summary:width+"px "+(layout.overflow?"存在横向溢出":"无横向溢出"),detail:layout.title});
-      if(layout.overflow&&!failed)failed=width+"px 存在横向溢出";
+      trace.push({id:"viewport-"+viewport.width,stage:"layout",status:layout.overflow?"fail":"pass",summary:viewport.width+"px "+(layout.overflow?"存在横向溢出":"无横向溢出"),detail:layout.title});
+      if(layout.overflow&&!failed)failed=viewport.width+"px 存在横向溢出";
+      if(testCase.captureScreenshots){
+        const bytes=await page.screenshot({type:"jpeg",quality:60,fullPage:false});
+        if(bytes.length<=1500000){
+          const artifactHash=createHash("sha256").update(bytes).digest("hex");
+          screenshots.push({name:testCase.id+"-"+viewport.name+".jpg",width:viewport.width,height:viewport.height,dataUrl:"data:image/jpeg;base64,"+bytes.toString("base64"),artifactHash});
+          trace.push({id:"screenshot-"+viewport.name,stage:"visual-evidence",status:"pass",summary:"已采集 "+viewport.name+" 真实截图",detail:artifactHash});
+        }else{
+          trace.push({id:"screenshot-"+viewport.name,stage:"visual-evidence",status:"warning",summary:"截图超过 1.5MB，未嵌入证据传输"});
+        }
+      }
     }
     const assertions=(testCase.browserSteps||[]).filter(step=>["visible","text","count"].includes(step.action)).length;
     const status=failed||errors.length?"failed":blocked.length||!assertions?"partial":"verified";
-    results.push({testCaseId:testCase.id,verificationStatus:status,error:failed||errors[0],assertions,blockedResources:blocked.slice(0,20),trace,latencyMs:Date.now()-started});
+    results.push({testCaseId:testCase.id,verificationStatus:status,error:failed||errors[0],assertions,blockedResources:blocked.slice(0,20),screenshots,trace,latencyMs:Date.now()-started});
   }catch(error){
     results.push({testCaseId:testCase.id,verificationStatus:"failed",error:String(error),assertions:0,blockedResources:blocked.slice(0,20),trace,latencyMs:Date.now()-started});
   }finally{
@@ -364,6 +375,7 @@ type BrowserCaseEvidence={
   assertions:number;
   blockedResources:string[];
   latencyMs:number;
+  screenshots?:Array<{name:string;width:number;height:number;dataUrl:string;artifactHash:string}>;
   trace:Array<{id:string;stage:string;status:"pass"|"fail"|"warning"|"info";summary:string;detail?:string}>;
 };
 
@@ -383,6 +395,7 @@ async function executeSandboxBrowserCases(sandbox:Sandbox,testCases:TestCase[],i
   await sandbox.writeFiles([{path:file,content:JSON.stringify(testCases.map((testCase)=>({
     id:testCase.id,
     browserSteps:testCase.browserSteps??[],
+    captureScreenshots:testCase.executionMode==="visual-review",
   })))}]);
   const result=await sandbox.runCommand("node",[
     ".evolution/runtime/browser-runner.mjs",
@@ -679,6 +692,7 @@ function resultFromBrowserEvidence(args:{
     latencyMs:args.browser.latencyMs+args.steps.reduce((sum,item)=>sum+(item.durationMs??0),0),
     cost:0,
     artifactHash:args.artifactHash,
+    ...(args.browser.screenshots?.length?{screenshots:args.browser.screenshots}:{}),
     verificationStatus,
     ...(args.browser.error?{error:args.browser.error}:{}),
     trace:[
@@ -750,8 +764,8 @@ export async function runVercelSandboxCodebaseValidation(args:{
   const scriptsToRun:string[]=[];
   if(typeof scripts.build==="string")scriptsToRun.push("build");
   if(typeof scripts.test==="string"&&!/no test specified/i.test(scripts.test))scriptsToRun.push("test");
-  const needsBehavior=args.testCases.some((testCase)=>testCase.evidenceScope==="product-behavior"||Boolean(testCase.browserSteps?.length));
-  const browserCases=args.testCases.filter((testCase)=>Boolean(testCase.browserSteps?.length));
+  const needsBehavior=args.testCases.some((testCase)=>testCase.evidenceScope==="product-behavior"||testCase.executionMode==="visual-review"||Boolean(testCase.browserSteps?.length));
+  const browserCases=args.testCases.filter((testCase)=>testCase.executionMode==="visual-review"||Boolean(testCase.browserSteps?.length));
   const e2eName=needsBehavior
     ? (typeof scripts["test:e2e"]==="string"?"test:e2e":typeof scripts.e2e==="string"?"e2e":typeof scripts.integration==="string"?"integration":undefined)
     : undefined;
