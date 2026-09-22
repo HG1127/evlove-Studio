@@ -63,6 +63,21 @@ export const ConnectorCandidateBindingSchema=z.object({
 });
 export type ConnectorCandidateBinding=z.infer<typeof ConnectorCandidateBindingSchema>;
 
+export const ConnectorReleaseActionSchema=z.enum(["shadow","canary-5","canary-20","canary-50","promote","rollback"]);
+export type ConnectorReleaseAction=z.infer<typeof ConnectorReleaseActionSchema>;
+export const ConnectorReleaseReceiptSchema=z.object({
+  effectiveAction:ConnectorReleaseActionSchema,
+  trafficPercent:z.number().min(0).max(100),
+  healthy:z.boolean(),
+  observationStatus:z.enum(["observing","healthy","unhealthy"]),
+  environment:z.string().min(1),
+  stableDeploymentRef:z.string().min(1).optional(),
+  latencyMs:z.number().nonnegative().optional(),
+  sampleSize:z.number().int().nonnegative().optional(),
+  windowMinutes:z.number().nonnegative().optional(),
+});
+export type ConnectorReleaseReceipt=z.infer<typeof ConnectorReleaseReceiptSchema>;
+
 export const ConnectorRegistryCapabilitiesSchema=z.object({
   codeReady:z.literal(true),
   configured:z.boolean(),

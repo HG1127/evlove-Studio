@@ -1,7 +1,7 @@
 // @vitest-environment node
 import {describe,expect,it} from "vitest";
 import type {Candidate,EvolveProject,ReleaseAdapterResult,VercelReleaseObservation} from "@evolution/contracts";
-import {buildHttpReleaseOutcomeBatch,buildReleaseOutcomeBatch} from "./release-outcome-telemetry";
+import {buildConnectorReleaseOutcomeBatch,buildHttpReleaseOutcomeBatch,buildReleaseOutcomeBatch} from "./release-outcome-telemetry";
 
 function fixture(){
   const candidate={id:"C1",name:"candidate",change:"x",patches:[],artifactSnapshots:[]} as unknown as Candidate;
@@ -109,5 +109,19 @@ describe("release outcome telemetry",()=>{
       effectiveAction:"promote",deploymentId:"other-deployment",observedAt:"2026-09-21T03:10:00.000Z",
     } as ReleaseAdapterResult;
     expect(buildHttpReleaseOutcomeBatch(project,receipt)).toBeUndefined();
+  });
+
+  it("labels Connector live receipt samples as Connector rather than HTTP",()=>{
+    const project=fixture();
+    project.release.status="promoted";
+    project.release.trafficPercent=100;
+    const receipt={
+      ok:true,trafficPercent:100,note:"healthy",healthy:true,kpis:[],evidenceMode:"live",
+      effectiveAction:"promote",observationStatus:"healthy",deploymentId:"dpl-candidate",stableDeploymentId:"dpl-stable",
+      artifactHashes:[],environment:"production",observedAt:"2026-09-21T03:20:00.000Z",latencyMs:55,sampleSize:5,windowMinutes:1,
+    } as ReleaseAdapterResult;
+    const batch=buildConnectorReleaseOutcomeBatch(project,receipt);
+    expect(batch?.samples.every((sample)=>sample.metadata?.provider==="connector")).toBe(true);
+    expect(batch?.samples.every((sample)=>sample.source==="connector-release-observation")).toBe(true);
   });
 });

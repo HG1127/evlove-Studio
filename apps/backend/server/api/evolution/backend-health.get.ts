@@ -17,6 +17,7 @@ import {requireGovernedEvolutionPermission} from "../../../src/services/security
 import {releaseApprovalStoreHealth} from "../../../src/services/release-approval-store";
 import {organizationMemberDirectoryHealth} from "../../../src/services/organization-member-directory";
 import {serverVaultHealth} from "../../../src/services/server-vault";
+import {getConnectorRegistryCapabilities} from "../../../src/services/connector-registry";
 
 export default defineEventHandler(async(event)=>{
   await requireGovernedEvolutionPermission(event,"data.read");
@@ -66,6 +67,8 @@ export default defineEventHandler(async(event)=>{
     &&members.activeAdmins>0
     &&(!vault.configured||vault.databaseReady);
   const targetProxy=targetProxyCapabilities();
+  const connectorRegistry=await getConnectorRegistryCapabilities().catch(()=>undefined);
+  const connectorRelease=Boolean(connectorRegistry?.connectors.some((connector)=>connector.credentialConfigured&&Object.values(connector.lifecycle).every(Boolean)));
   return EvolutionBackendHealthSchema.parse({
     checkedAt:new Date().toISOString(),
     dataPlane,
@@ -75,7 +78,7 @@ export default defineEventHandler(async(event)=>{
     serverAi:{codeReady:true,configured:serverAiConfigured()},
     sandbox:{codeReady:true},
     browser:{codeReady:true},
-    release:{codeReady:true,writeConfigured:vercelReleaseWriteConfigured()||targetProxy.releaseConfigured},
+    release:{codeReady:true,writeConfigured:vercelReleaseWriteConfigured()||targetProxy.releaseConfigured||connectorRelease},
     git:{codeReady:true,configured:githubTargetConfigured(),webhookConfigured:githubWebhookConfigured()},
     targetProxy,
     security,

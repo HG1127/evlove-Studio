@@ -1,9 +1,11 @@
 import {
+  ReleaseActionResponseSchema,
   VercelReleaseActionResponseSchema,
   VercelReleaseCapabilitiesSchema,
   VercelReleaseDeploymentsSchema,
   VercelReleaseHealthSchema,
   ReleaseReconcileResponseSchema,
+  type ReleaseActionRequest,
   type VercelReleaseActionRequest,
 } from "@evolution/contracts";
 
@@ -33,6 +35,14 @@ export async function listServerVercelDeployments(){
 
 export async function runServerVercelReleaseAction(input:VercelReleaseActionRequest){
   return VercelReleaseActionResponseSchema.parse(await apiJson("/api/evolution/release-action",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify(input),
+  }));
+}
+
+export async function runServerReleaseAction(input:ReleaseActionRequest){
+  return ReleaseActionResponseSchema.parse(await apiJson("/api/evolution/release-action",{
     method:"POST",
     headers:{"Content-Type":"application/json"},
     body:JSON.stringify(input),

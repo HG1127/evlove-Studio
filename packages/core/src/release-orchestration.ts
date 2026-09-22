@@ -1,6 +1,6 @@
 import type { Candidate, EvolveProject, ReleaseAdapterResult } from "@evolution/contracts";
 import { appendReleaseObservation } from "./release-outcome";
-import { projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, projectReleaseMode, projectUsesHttpRelease, projectUsesVercelRelease } from "./release-target";
+import { projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, projectReleaseMode, projectUsesConnectorRelease, projectUsesHttpRelease, projectUsesVercelRelease } from "./release-target";
 
 export type DurableReleaseAction =
   |"shadow"
@@ -35,13 +35,14 @@ export function nextDurableReleaseAction(project:EvolveProject):DurableReleaseAc
   if(!projectHasOnlineReleaseTarget(project)||projectHasLiveReleaseDecision(project))return undefined;
   const vercel=projectUsesVercelRelease(project);
   const http=projectUsesHttpRelease(project);
-  if(!vercel&&!http)return undefined;
+  const connector=projectUsesConnectorRelease(project);
+  if(!vercel&&!http&&!connector)return undefined;
   if(project.gates.find((gate)=>gate.id==="release-ready")?.status!=="approved")return undefined;
   const candidate=currentReleaseCandidate(project);
   if(!candidate)return undefined;
   if(project.release.candidateId!==candidate.id)return undefined;
   if(vercel&&!project.release.deploymentId)return undefined;
-  if(http&&project.release.status!=="idle"&&!project.release.deploymentId)return undefined;
+  if((http||connector)&&project.release.status!=="idle"&&!project.release.deploymentId)return undefined;
   const mode=projectReleaseMode(project);
   const liveHealthy=project.release.evidenceMode==="live"
     &&project.release.healthy===true
@@ -89,12 +90,12 @@ export function applyReleaseResultToProject(args:{
   }
   if(effective!=="rollback"){
     const boundDeploymentId=args.project.release.deploymentId;
-    const mayBindHttpShadow=projectUsesHttpRelease(args.project)
+    const mayBindProviderShadow=(projectUsesHttpRelease(args.project)||projectUsesConnectorRelease(args.project))
       &&args.project.release.status==="idle"
       &&effective==="shadow"
       &&!boundDeploymentId;
-    if(!boundDeploymentId&&!mayBindHttpShadow){
-      throw new Error(`${effective} 缺少预绑定 Candidate Deployment；只有 HTTP Target 首次 Shadow 可由 live receipt 建立绑定`);
+    if(!boundDeploymentId&&!mayBindProviderShadow){
+      throw new Error(`${effective} 缺少预绑定 Candidate Deployment；只有可返回 live deployment receipt 的 Provider 首次 Shadow 可建立绑定`);
     }
     if(boundDeploymentId&&args.result.deploymentId!==boundDeploymentId){
       throw new Error(`${effective} receipt deploymentId 与绑定 Candidate Deployment 不一致`);

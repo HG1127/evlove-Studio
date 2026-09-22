@@ -860,7 +860,7 @@ export const TargetConnectionSchema = z.object({
 });
 
 export const ReleaseTargetSchema = z.object({
-  provider: z.enum(["none", "http", "vercel"]).default("none"),
+  provider: z.enum(["none", "http", "vercel", "connector"]).default("none"),
   mode: z.enum(["progressive", "preview-promote"]).default("progressive"),
   status: z.enum(["connected", "not-configured", "error"]).default("not-configured"),
   label: z.string().default("未连接发布平台"),

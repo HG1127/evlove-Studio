@@ -16,7 +16,7 @@ import { buildCandidateArtifacts } from "./artifact-quality";
 import { mapTestsToRubric, normalizeAcceptanceRubric, rubricCoverage, rubricValidation } from "./acceptance-rubric";
 import { describeArtifact, resolveProjectArtifactStrategy } from "./artifact-strategy";
 import { buildArtifactGraph, compileSemanticEvolution } from "./semantic-evolution";
-import { candidateWinnerDecision, computeGapAnalysis, gapHeadline, REGRESSION_TOLERANCE, validationRegression as coreValidationRegression } from "@evolution/core";
+import { candidateWinnerDecision, computeGapAnalysis, gapHeadline, projectHasOnlineReleaseTarget, REGRESSION_TOLERANCE, validationRegression as coreValidationRegression } from "@evolution/core";
 import { extractSource } from "../sources/source-loader";
 import { getArtifactBlob, putArtifactBlob } from "./artifact-blob-store";
 import { readFrozenArtifact } from "./frozen-artifact";
@@ -27,7 +27,7 @@ import { searchBaseCandidate } from "./search-base";
 import { applySupplementalEvidenceToEvaluation } from "./supplemental-validation-evidence";
 import { getTargetAdapter, getTargetStatus } from "../target/registry";
 import { getProductionRuntime, productionRuntimeMode } from "./production-runtime";
-import { runServerVercelReleaseAction } from "./server-release-client";
+import { runServerReleaseAction } from "./server-release-client";
 import {
   ArtifactRoleSchema,
   CandidateSchema,
@@ -1375,17 +1375,21 @@ export async function runRelease(project: EvolveProject, inputCandidate: Candida
   }
 
   let result: ReleaseAdapterResult;
-  if (parsed.releaseTarget?.provider === "vercel") {
-    // Release API re-reads the Mission from Supabase before touching production.
+  const serverManagedOnlineRelease=productionRuntimeMode()!=="local"&&projectHasOnlineReleaseTarget(parsed);
+  if (serverManagedOnlineRelease) {
+    // Server API re-reads the Mission and durable approval before touching production.
     // Force the latest browser projection to the backend first so Winner/Gate/Artifact Hash cannot be stale.
-    if (productionRuntimeMode() !== "local") await getProductionRuntime().missions.save(parsed);
-    result = await runServerVercelReleaseAction({
+    await getProductionRuntime().missions.save(parsed);
+    result = await runServerReleaseAction({
       missionId: parsed.id,
       candidateId: candidate.id,
       action,
       deploymentId: action === "rollback" ? parsed.release.stableDeploymentId : parsed.release.deploymentId,
     });
   } else {
+    if(parsed.releaseTarget?.provider==="connector"){
+      throw new Error("Connector Production Release 只能由 Server Durable Workflow / Release API 执行；本地模式禁止直接触发生产副作用。");
+    }
     const adapter = getTargetAdapter(parsed);
     if (!adapter.live) throw new Error("当前项目使用离线 Artifact/Mock Runner，不能执行真实 Shadow、Canary 或 Promote。请连接独立 Release Target 或真实 HTTP Target Runner。");
     if (!adapter.release) throw new Error("Target adapter does not implement release()");

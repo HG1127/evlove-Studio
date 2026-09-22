@@ -26,6 +26,17 @@ function httpFixture(){
   return x;
 }
 
+function connectorFixture(){
+  const x=fixture();
+  x.project.targetConnection={
+    adapter:"connector",connectionId:"connector",status:"connected",label:"Connector",
+    connector:{connectorId:"workflow-main",targetId:"workflow-42"},
+  };
+  x.project.releaseTarget={provider:"connector",mode:"preview-promote",status:"connected",label:"Connector Release",healthPath:"/"};
+  x.project.release={...x.project.release,deploymentId:undefined,stableDeploymentId:"connector-stable"};
+  return x;
+}
+
 function receipt(action:ReleaseAction,healthy=true):ReleaseAdapterResult{
   const traffic=action==="canary-5"?5:action==="canary-20"?20:action==="canary-50"?50:action==="promote"?100:0;
   return {
@@ -59,6 +70,24 @@ describe("server release orchestration",()=>{
     const promoted=await runServerReleaseOrchestration(shadow.project,{authorize,execute});
     expect(promoted.action).toBe("promote");
     expect(execute.mock.calls[1]?.[0].deploymentId).toBe("http-candidate");
+    expect(promoted.terminal).toBe(true);
+  });
+
+  it("starts Connector shadow without a fake deploymentId and then promotes the same live binding",async()=>{
+    const x=connectorFixture();
+    const execute=vi.fn(async(args:Parameters<ServerReleasePorts["execute"]>[0])=>({
+      ...httpReceipt(args.action),
+      stableDeploymentId:"connector-stable",
+      deploymentId:args.action==="rollback"?"connector-stable":"connector-candidate",
+    }));
+    const authorize=vi.fn(async()=>({ok:true}));
+    const shadow=await runServerReleaseOrchestration(x.project,{authorize,execute});
+    expect(shadow.action).toBe("shadow");
+    expect(execute.mock.calls[0]?.[0].deploymentId).toBeUndefined();
+    expect(shadow.project.release.deploymentId).toBe("connector-candidate");
+    const promoted=await runServerReleaseOrchestration(shadow.project,{authorize,execute});
+    expect(promoted.action).toBe("promote");
+    expect(execute.mock.calls[1]?.[0].deploymentId).toBe("connector-candidate");
     expect(promoted.terminal).toBe(true);
   });
 

@@ -1,4 +1,4 @@
-import { applyProductionLearningGovernance, applyReleaseResultToProject, beginReleaseCycle, completeAutonomousMission, experimentNeedsEvidenceRepair, buildExperimentGapAdvicePayload, buildGapAdvicePayload, fallbackExperimentAdvice, integrateDistilledLesson, mergeGovernedNextQueue, nextDurableReleaseAction, productionOutcomeFreshness, productionOutcomeTrend, projectHasStableHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, projectUsesHttpRelease, projectUsesVercelRelease } from "@evolution/core";
+import { applyProductionLearningGovernance, applyReleaseResultToProject, beginReleaseCycle, completeAutonomousMission, experimentNeedsEvidenceRepair, buildExperimentGapAdvicePayload, buildGapAdvicePayload, fallbackExperimentAdvice, integrateDistilledLesson, mergeGovernedNextQueue, nextDurableReleaseAction, productionOutcomeFreshness, productionOutcomeTrend, projectHasStableHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, projectUsesConnectorRelease, projectUsesHttpRelease, projectUsesVercelRelease } from "@evolution/core";
 import { deliveryReadiness } from "./delivery-readiness";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -1101,7 +1101,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
     if (!winner) throw new Error("没有 Release Candidate");
     const result = await run(`发布动作：${action}`, () => runRelease(project, winner, action));
     const effectiveAction = result.action;
-    const durableOnlineRelease=projectUsesVercelRelease(project)||projectUsesHttpRelease(project);
+    const durableOnlineRelease=projectUsesVercelRelease(project)||projectUsesHttpRelease(project)||projectUsesConnectorRelease(project);
     commit((current) => {
       const base:EvolveProject=durableOnlineRelease
         ?applyReleaseResultToProject({

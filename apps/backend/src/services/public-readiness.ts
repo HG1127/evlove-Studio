@@ -79,8 +79,8 @@ export async function getPublicReadinessSnapshot(){
     sandboxPolicy:getVercelSandboxPolicyCapabilities().codeReady,
     browser:Boolean(browser?.ready),
     release:{
-      read:Boolean(release?.readEnabled||targetProxy.observeConfigured),
-      write:Boolean(release?.writeEnabled||targetProxy.releaseConfigured),
+      read:Boolean(release?.readEnabled||targetProxy.observeConfigured||connectors?.fullLifecycleCount),
+      write:Boolean(release?.writeEnabled||targetProxy.releaseConfigured||connectors?.fullLifecycleCount),
     },
     git:{configured:githubTargetConfigured(),webhook:githubWebhookConfigured()},
     capability:{

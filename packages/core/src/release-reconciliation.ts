@@ -16,15 +16,16 @@ export type ReleaseReconcileResult={
   reason:string;
 };
 
-export function reconcileHttpReleaseObservation(args:{
+export function reconcileAdapterReleaseObservation(args:{
   project:EvolveProject;
   candidate:Candidate;
   observation:ReleaseAdapterResult;
+  providerLabel:string;
 }):ReleaseReconcileResult{
   const observedAt=args.observation.observedAt??new Date().toISOString();
   const action=args.observation.effectiveAction;
   if(!action){
-    const reason="HTTP Observe receipt 缺少 effectiveAction；无法确认外部真实 Release 状态。";
+    const reason=`${args.providerLabel} receipt 缺少 effectiveAction；无法确认外部真实 Release 状态。`;
     return {project:withRecovery(args.project,{status:"manual-check",reason,observedAt}),disposition:"manual-check",reason};
   }
   try{
@@ -44,7 +45,7 @@ export function reconcileHttpReleaseObservation(args:{
           recovery:{
             status:"reconciled",
             action:"rollback",
-            reason:"HTTP Observe 已确认此前 rollback 未生效；当前状态已只读核实，可安全重试 rollback。",
+            reason:`${args.providerLabel} 已确认此前 rollback 未生效；当前状态已只读核实，可安全重试 rollback。`,
             at:args.project.release.recovery.at,
             lastObservedAt:observedAt,
           },
@@ -53,13 +54,29 @@ export function reconcileHttpReleaseObservation(args:{
     }
     const terminal=projectHasLiveReleaseDecision(project);
     const reason=terminal
-      ?`HTTP Observe 已确认 live ${project.release.status} 终态。`
-      :`HTTP Observe 已确认当前 live ${project.release.status} 状态，可从已观测状态继续。`;
+      ?`${args.providerLabel} 已确认 live ${project.release.status} 终态。`
+      :`${args.providerLabel} 已确认当前 live ${project.release.status} 状态，可从已观测状态继续。`;
     return{project,disposition:terminal?"terminal-live-decision":"safe-to-resume",reason};
   }catch(error){
-    const reason=`HTTP Observe receipt 无法安全结算：${error instanceof Error?error.message:String(error)}`;
+    const reason=`${args.providerLabel} receipt 无法安全结算：${error instanceof Error?error.message:String(error)}`;
     return {project:withRecovery(args.project,{status:"manual-check",reason,observedAt,action}),disposition:"manual-check",reason};
   }
+}
+
+export function reconcileHttpReleaseObservation(args:{
+  project:EvolveProject;
+  candidate:Candidate;
+  observation:ReleaseAdapterResult;
+}):ReleaseReconcileResult{
+  return reconcileAdapterReleaseObservation({...args,providerLabel:"HTTP Observe"});
+}
+
+export function reconcileConnectorReleaseObservation(args:{
+  project:EvolveProject;
+  candidate:Candidate;
+  observation:ReleaseAdapterResult;
+}):ReleaseReconcileResult{
+  return reconcileAdapterReleaseObservation({...args,providerLabel:"Connector Observe"});
 }
 
 function withRecovery(

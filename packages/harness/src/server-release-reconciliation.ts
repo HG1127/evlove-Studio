@@ -1,5 +1,5 @@
 import type {Candidate,EvolveProject,ReleaseAdapterResult,VercelReleaseObservation} from "@evolution/contracts";
-import {applyProductionLearningGovernance,currentReleaseCandidate,expectedReleaseArtifactHashes,reconcileHttpReleaseObservation,reconcileReleaseObservation,type DurableReleaseAction} from "@evolution/core";
+import {applyProductionLearningGovernance,currentReleaseCandidate,expectedReleaseArtifactHashes,reconcileAdapterReleaseObservation,reconcileHttpReleaseObservation,reconcileReleaseObservation,type DurableReleaseAction} from "@evolution/core";
 
 export type ServerReleaseReconciliationPorts={
   observe(args:{boundDeploymentId?:string;healthPath?:string}):Promise<VercelReleaseObservation>;
@@ -37,8 +37,16 @@ export async function runServerHttpReleaseReconciliation(
   project:EvolveProject,
   ports:ServerHttpReleaseReconciliationPorts,
 ):Promise<ServerHttpReleaseReconciliationOutcome>{
+  return runServerAdapterReleaseReconciliation(project,ports,{providerLabel:"HTTP Observe",failureLabel:"HTTP Observe"});
+}
+
+export async function runServerAdapterReleaseReconciliation(
+  project:EvolveProject,
+  ports:ServerHttpReleaseReconciliationPorts,
+  options:{providerLabel:string;failureLabel:string},
+):Promise<ServerHttpReleaseReconciliationOutcome>{
   const candidate=currentReleaseCandidate(project);
-  if(!candidate)throw new Error("HTTP Release reconcile requires the exact current Candidate");
+  if(!candidate)throw new Error(`${options.providerLabel} reconcile requires the exact current Candidate`);
   let observation:ReleaseAdapterResult;
   try{
     observation=await ports.observe({
@@ -51,7 +59,7 @@ export async function runServerHttpReleaseReconciliation(
     });
   }catch(error){
     const observedAt=new Date().toISOString();
-    const reason=`HTTP Observe 未完成：${error instanceof Error?error.message:String(error)}。系统不会自动重放生产写操作。`;
+    const reason=`${options.failureLabel} 未完成：${error instanceof Error?error.message:String(error)}。系统不会自动重放生产写操作。`;
     return{
       control:"stop",
       disposition:"manual-check",
@@ -66,7 +74,9 @@ export async function runServerHttpReleaseReconciliation(
       },
     };
   }
-  const result=reconcileHttpReleaseObservation({project,candidate,observation});
+  const result=options.providerLabel==="HTTP Observe"
+    ?reconcileHttpReleaseObservation({project,candidate,observation})
+    :reconcileAdapterReleaseObservation({project,candidate,observation,providerLabel:options.providerLabel});
   const observedAt=observation.observedAt??new Date().toISOString();
   const governed=applyProductionLearningGovernance(result.project,{at:observedAt,now:Date.parse(observedAt)});
   const manual=result.disposition==="manual-check";

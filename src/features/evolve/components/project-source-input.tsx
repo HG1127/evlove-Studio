@@ -1,13 +1,13 @@
 
 
-import { useRef, useState } from "react";
-import { Bot, ChevronDown, Loader2, MessageSquareText, Paperclip, Plus, RotateCcw, Send, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Bot, ChevronDown, Loader2, MessageSquareText, Network, Paperclip, Plus, RotateCcw, Send, Unplug, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Textarea } from "@/components/ui/input";
+import { Input, Textarea } from "@/components/ui/input";
 import { CommandAiResultSchema, TargetAiResultSchema } from "../ai/schemas";
 import { runAi, runIntake } from "../runtime/api";
-import type { ArtifactKind, ArtifactRole } from "../schemas";
+import type { ArtifactKind, ArtifactRole, ConnectorRegistryCapabilities } from "../schemas";
 import type { ProjectRuntime } from "../runtime/use-project-runtime";
 import { resetDownstream } from "../runtime/downstream";
 import { CommandScopeNote } from "./stage-panels";
@@ -15,6 +15,13 @@ import { artifactProfile } from "../runtime/artifact-compatibility";
 import { describeArtifact } from "../runtime/artifact-strategy";
 import { compileSemanticEvolution } from "../runtime/semantic-evolution";
 import { normalizeAcceptanceRubric, rubricValidation } from "../runtime/acceptance-rubric";
+import { getServerConnectorCapabilities, runServerConnectorAction } from "../runtime/server-connector-client";
+import {
+  bindConnectorTarget,
+  connectorSupportsExperiment,
+  connectorSupportsFullLifecycle,
+  disconnectConnectorTarget,
+} from "../runtime/connector-target-binding";
 
 const now = () => new Date().toISOString();
 const preservationLabel: Record<string,string> = { "same-package": "原文件包回写", "same-format-rebuild": "原格式重建", "same-text-format": "原文本格式", "external-required": "需要外部渲染器" };
@@ -35,14 +42,84 @@ export function ProjectSourceInput({ runtime }: { runtime: ProjectRuntime }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [assistantReply, setAssistantReply] = useState<string>();
+  const [connectorCaps,setConnectorCaps]=useState<ConnectorRegistryCapabilities>();
+  const [connectorBusy,setConnectorBusy]=useState(false);
+  const [connectorMessage,setConnectorMessage]=useState("");
+  const [connectorId,setConnectorId]=useState(runtime.project.targetConnection.connector?.connectorId??"");
+  const [connectorTargetId,setConnectorTargetId]=useState(runtime.project.targetConnection.connector?.targetId??"");
+  const [connectorRelease,setConnectorRelease]=useState(runtime.project.releaseTarget?.provider==="connector");
+  const initialConnectorIdRef=useRef(runtime.project.targetConnection.connector?.connectorId??"");
   const inputRef = useRef<HTMLInputElement>(null);
   const p = runtime.project;
+
+  useEffect(()=>{
+    let active=true;
+    void getServerConnectorCapabilities().then((capabilities)=>{
+      if(!active)return;
+      setConnectorCaps(capabilities);
+      const eligible=capabilities.connectors.filter(connectorSupportsExperiment);
+      const currentId=initialConnectorIdRef.current;
+      const selected=eligible.find((item)=>item.id===currentId)??eligible[0];
+      if(selected&&!currentId){
+        setConnectorId(selected.id);
+        setConnectorRelease(connectorSupportsFullLifecycle(selected));
+      }
+    }).catch((cause)=>{
+      if(active)setConnectorMessage(cause instanceof Error?cause.message:String(cause));
+    });
+    return()=>{active=false;};
+  },[]);
+
+
+  const selectedConnector=connectorCaps?.connectors.find((item)=>item.id===connectorId);
+  const experimentConnectors=connectorCaps?.connectors.filter(connectorSupportsExperiment)??[];
+  const selectedFullLifecycle=Boolean(selectedConnector&&connectorSupportsFullLifecycle(selectedConnector));
+
+  const connectConnectorTarget=async()=>{
+    if(!selectedConnector)throw new Error("请选择一个具备实验生命周期的 Connector");
+    const targetId=connectorTargetId.trim();
+    if(!targetId)throw new Error("请输入 Connector Target ID");
+    setConnectorBusy(true);
+    setConnectorMessage("");
+    try{
+      const snapshot=await runServerConnectorAction({
+        connectorId:selectedConnector.id,
+        operation:"snapshot",
+        missionId:p.id,
+        targetId,
+        payload:{purpose:"connection-preflight"},
+      });
+      if(!snapshot.ok||!snapshot.versionRef)throw new Error("Connector Snapshot 预检没有返回 exact versionRef");
+      const next=bindConnectorTarget({
+        project:p,
+        manifest:selectedConnector,
+        targetId,
+        useForRelease:connectorRelease&&selectedFullLifecycle,
+      });
+      runtime.commit(()=>next);
+      runtime.setStage("target");
+      setConnectorMessage(`已验证 ${selectedConnector.label} / ${targetId} @ ${snapshot.versionRef}；正式运行时 Server Workflow 会重新锁定并持久化 exact snapshot。`);
+    }catch(cause){
+      setConnectorMessage(cause instanceof Error?cause.message:String(cause));
+    }finally{
+      setConnectorBusy(false);
+    }
+  };
+
+  const disconnectConnector=()=>{
+    runtime.commit((current)=>disconnectConnectorTarget(current));
+    runtime.setStage("target");
+    setConnectorMessage("已断开 Connector Target；旧 Connector Source 与下游评测已失效。");
+  };
 
   const add = (list: FileList) => setFiles((current) => {
     const next = [...current];
     for (const [index, file] of Array.from(list).entries()) {
       if (next.some((x) => x.file.name === file.name && x.file.size === file.size)) continue;
-      next.push({ id: `${Date.now()}-${index}`, file, role: next.some((x) => x.role === "target") ? "reference" : "target" });
+      const role:ArtifactRole=p.targetConnection.adapter==="connector"
+        ?"reference"
+        :next.some((x) => x.role === "target")?"reference":"target";
+      next.push({ id: `${Date.now()}-${index}`, file, role });
     }
     return next.slice(0, 12);
   });
@@ -100,7 +177,10 @@ export function ProjectSourceInput({ runtime }: { runtime: ProjectRuntime }) {
         const result = await runIntake(form);
         const reply = result.intake.currentStateSummary;
         runtime.commit((current) => {
-          const sourceArtifacts = [...current.sourceArtifacts, ...result.artifacts];
+          const intakeArtifacts=current.targetConnection.adapter==="connector"
+            ?result.artifacts.map((artifact)=>artifact.role==="target"?{...artifact,role:"reference" as const}:artifact)
+            :result.artifacts;
+          const sourceArtifacts = [...current.sourceArtifacts, ...intakeArtifacts];
           const evolutionCommand = [current.evolutionCommand, userMessage].filter(Boolean).join("\n\n补充要求：");
           const compiled = compileSemanticEvolution({ artifacts: sourceArtifacts, command: evolutionCommand, aiSemanticObject: result.intake.semanticObject, aiWorkflowStages: result.intake.semanticWorkflowStages });
           const semanticIds = new Set(compiled.semanticEvolution.acceptanceRubric.map((item)=>item.id));
@@ -110,7 +190,7 @@ export function ProjectSourceInput({ runtime }: { runtime: ProjectRuntime }) {
           return {
             ...resetDownstream(current, {invalidateUnderstanding:true}),
             name: result.intake.projectName || current.name, objectType: result.intake.detectedObjectType, goal: result.intake.goal, evolutionCommand,
-            commandHistory: [...current.commandHistory, { id: `cmd-u-${Date.now()}`, role: "user", content: userMessage, artifactIds: attachedIds, createdAt: now() }, { id: `cmd-a-${Date.now()+1}`, role: "assistant", content: reply, artifactIds: result.artifacts.map((a) => a.id), createdAt: now() }],
+            commandHistory: [...current.commandHistory, { id: `cmd-u-${Date.now()}`, role: "user", content: userMessage, artifactIds: attachedIds, createdAt: now() }, { id: `cmd-a-${Date.now()+1}`, role: "assistant", content: reply, artifactIds: intakeArtifacts.map((a) => a.id), createdAt: now() }],
             sourceArtifacts, artifactGraph: compiled.artifactGraph, semanticEvolution: { ...compiled.semanticEvolution, acceptanceRubric, warnings: [...compiled.semanticEvolution.warnings, ...result.intake.semanticWarnings] },
             sourceUnderstanding: { currentStateSummary: result.intake.currentStateSummary, evolutionIntent: result.intake.evolutionIntent, detectedObjectType: result.intake.detectedObjectType, artifactSummaries: [...(current.sourceUnderstanding?.artifactSummaries ?? []), ...result.intake.artifactSummaries], acceptanceCriteria: result.intake.acceptanceCriteria, followUpQuestions: result.intake.followUpQuestions },
             protectedItems: result.intake.protectedItems, editableItems: result.intake.editableItems, metrics: result.intake.metrics.map((m) => ({ key: m.key, label: m.label, value: 0, unit: m.unit, target: m.target, direction: m.direction, description: m.why })),
@@ -179,6 +259,35 @@ export function ProjectSourceInput({ runtime }: { runtime: ProjectRuntime }) {
     </div>
 
     {open && <div className="mt-5 border-t border-sky-100 pt-5">
+      <div className="mb-4 rounded-2xl border border-violet-100 bg-violet-50/50 p-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-xs font-semibold text-violet-900"><Network className="size-3.5"/>外部系统 Connector Target</div>
+            <p className="mt-1 max-w-3xl text-[11px] leading-5 text-violet-700/80">用于直接进化 Agent、Workflow、Memory、API、数据库或 SaaS 对象。连接前先做只读 Snapshot 预检；正式实验会由 Server Workflow 锁定 exact versionRef，再执行 Candidate Mutation 与验证。</p>
+          </div>
+          {p.targetConnection.adapter==="connector"&&<Badge className="w-fit border-emerald-200 bg-emerald-50 text-emerald-700">已连接 {p.targetConnection.connector?.connectorId}</Badge>}
+        </div>
+        {connectorCaps?.configured&&experimentConnectors.length>0?<div className="mt-3 grid gap-2 lg:grid-cols-[minmax(180px,.8fr)_minmax(220px,1.2fr)_auto]">
+          <select className="h-9 rounded-xl border bg-white px-3 text-xs" value={connectorId} onChange={(event)=>{
+            const nextId=event.target.value;
+            setConnectorId(nextId);
+            const manifest=connectorCaps.connectors.find((item)=>item.id===nextId);
+            setConnectorRelease(Boolean(manifest&&connectorSupportsFullLifecycle(manifest)));
+          }}>
+            {experimentConnectors.map((item)=><option key={item.id} value={item.id}>{item.label} · {item.targetType}</option>)}
+          </select>
+          <Input value={connectorTargetId} onChange={(event)=>setConnectorTargetId(event.target.value)} placeholder="Target ID，例如 workflow-42 / agent-prod / memory-main"/>
+          <div className="flex gap-2">
+            <Button size="sm" disabled={connectorBusy||!connectorId||!connectorTargetId.trim()} onClick={()=>void connectConnectorTarget()}>{connectorBusy?<Loader2 className="size-3.5 animate-spin"/>:<Network className="size-3.5"/>}{p.targetConnection.adapter==="connector"?"重新绑定":"验证并连接"}</Button>
+            {p.targetConnection.adapter==="connector"&&<Button size="sm" variant="secondary" disabled={connectorBusy} onClick={disconnectConnector}><Unplug className="size-3.5"/>断开</Button>}
+          </div>
+          <label className="lg:col-span-3 flex items-start gap-2 rounded-xl border bg-white/80 px-3 py-2 text-[11px] leading-5 text-slate-600">
+            <input type="checkbox" className="mt-1" checked={connectorRelease} disabled={!selectedFullLifecycle} onChange={(event)=>setConnectorRelease(event.target.checked)}/>
+            <span><b>同时作为生产 Release Target</b> · {selectedFullLifecycle?"该 Connector 已具备 7/7 Lifecycle；默认使用保守的 Preview → Promote，不假设它支持真实百分比 Canary。":"当前 Connector 仅支持实验闭环；缺少 Deploy / Observe / Rollback 时不会宣称可上线。"}</span>
+          </label>
+        </div>:<div className="mt-3 rounded-xl border border-dashed bg-white/70 p-3 text-[11px] leading-5 text-slate-500">{connectorCaps?.configured?"已注册 Connector，但暂无具备 Read / Snapshot / Mutate / Validate + credential 的实验 Connector。":"服务器尚未配置 EVOLUTION_CONNECTORS_JSON；当前仍可继续使用文件/ZIP Artifact Target。"}</div>}
+        {connectorMessage&&<div className="mt-2 text-[11px] leading-5 text-violet-700">{connectorMessage}</div>}
+      </div>
       {p.semanticEvolution&&<div className="mb-4 rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50/80 via-white to-sky-50/60 p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><div className="text-[10px] font-bold uppercase tracking-wider text-indigo-500">业务对象理解 · 先理解“这套东西是什么”，再决定怎么进化</div><div className="mt-1 flex flex-wrap items-center gap-2"><h4 className="text-sm font-bold text-slate-900">{p.semanticEvolution.semanticObject.label}</h4><Badge className={p.semanticEvolution.semanticObject.confidence>=.75?"border-emerald-200 bg-emerald-50 text-emerald-700":p.semanticEvolution.semanticObject.confidence>=.6?"border-amber-200 bg-amber-50 text-amber-700":"border-rose-200 bg-rose-50 text-rose-700"}>置信度 {Math.round(p.semanticEvolution.semanticObject.confidence*100)}%</Badge><Badge>{p.semanticEvolution.semanticObject.domain}</Badge></div><p className="mt-1 max-w-3xl text-[11px] leading-5 text-slate-500">{p.semanticEvolution.semanticObject.description}</p></div><div className="rounded-xl border bg-white px-3 py-2 text-[10px] text-slate-500"><b className="text-slate-700">目标结果</b><br/>{p.semanticEvolution.semanticObject.primaryOutcome}</div></div><div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{p.semanticEvolution.workflowStages.map((stage,index)=><div key={stage.id} className="rounded-xl border bg-white p-2.5"><div className="text-[9px] font-bold text-indigo-500">{index+1}. {stage.label}</div><div className="mt-1 text-[10px] leading-4 text-slate-600">{stage.flow}</div></div>)}</div>{p.semanticEvolution.semanticObject.crossArtifactRequirements.length>0&&<div className="mt-3 rounded-xl border border-sky-100 bg-sky-50/70 p-3 text-[10px] leading-4 text-sky-800"><b>联合验收：</b>{p.semanticEvolution.semanticObject.crossArtifactRequirements.join(" · ")}</div>}<div className="mt-3 text-[10px] leading-4 text-slate-400">ZIP / 文件夹只被视为容器。若识别结果不准确，直接在下方命令框说明“这套成果实际是什么、用于什么场景”，发送后系统会重新编译业务对象、流程与验收标准。</div></div>}
       {p.sourceArtifacts.filter((artifact)=>artifact.role==="target").length>0&&<div className="mb-4"><div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">要修改的成果 · 可读取和交付的范围</div><div className="grid gap-2 md:grid-cols-2">{p.sourceArtifacts.filter((artifact)=>artifact.role==="target").map((artifact)=>{const profile=artifactProfile(artifact);const descriptor=artifact.artifactDescriptor;return <div key={artifact.id} className="rounded-xl border bg-white p-3"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><div className="truncate text-xs font-semibold text-slate-800">{artifact.name}</div><div className="mt-1 text-[10px] text-slate-400">{profile.label} · {profile.buildStrategy}</div></div><div className="flex shrink-0 items-center gap-1"><Badge>{descriptor?.subtype||artifact.artifactKind}</Badge><select aria-label={`修正 ${artifact.name} 的成果物类型`} className="h-6 rounded-lg border bg-white px-1.5 text-[9px] text-slate-500" value={artifact.artifactKind} onChange={(e)=>correctArtifactKind(artifact.id,e.target.value as ArtifactKind)}>{artifactKindOptions.map((item)=><option key={item.value} value={item.value}>{item.label}</option>)}</select></div></div>{descriptor&&<div className="mt-2 grid grid-cols-2 gap-1.5 text-[9px]"><div className="rounded-lg bg-emerald-50 px-2 py-1.5 text-emerald-700"><b>格式保留：</b>{preservationLabel[descriptor.preservationMode]??descriptor.preservationMode}</div><div className="rounded-lg bg-sky-50 px-2 py-1.5 text-sky-700"><b>保真：</b>{fidelityLabel[descriptor.fidelity]??descriptor.fidelity}</div></div>}<div className="mt-2 flex flex-wrap gap-1">{profile.evaluationFocus.slice(0,4).map((focus)=><span key={focus} className="rounded-md bg-slate-50 px-1.5 py-0.5 text-[9px] text-slate-500">{focus}</span>)}</div>{(descriptor?.requiredValidations?.length??0)>0&&<div className="mt-2 text-[9px] leading-4 text-slate-500"><b>专属验收：</b>{descriptor?.requiredValidations?.slice(0,3).join(" · ")}</div>}{(descriptor?.limitations?.length??0)>0&&<div className="mt-2 rounded-lg bg-amber-50 px-2 py-1.5 text-[9px] leading-4 text-amber-700">{descriptor?.limitations?.[0]}</div>}{artifact.warnings.length>0&&<div className="mt-2 text-[9px] leading-4 text-amber-600">{artifact.warnings[0]}</div>}</div>})}</div><p className="mt-2 text-[10px] leading-4 text-slate-400">请核对文件类型。格式决定当前能修改和验证哪些内容；业务目标在「理解材料与目标」中确认。无法验证的内容会明确标记，不会作为通过项。</p></div>}
       {recent.length > 0 && <div className="mb-4 max-h-56 space-y-2.5 overflow-auto rounded-2xl border bg-white/80 p-4">
@@ -186,7 +295,7 @@ export function ProjectSourceInput({ runtime }: { runtime: ProjectRuntime }) {
       </div>}
       {assistantReply && <div className="mb-3 rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-2 text-xs text-indigo-700"><Bot className="mr-1 inline size-3" />{assistantReply}</div>}
       {error && <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</div>}
-      {files.length > 0 && <div className="mb-3 flex flex-wrap gap-2">{files.map((item) => <div key={item.id} className="flex items-center gap-2 rounded-xl border bg-white px-2 py-1.5 text-[11px]"><span className="max-w-40 truncate">{item.file.name}</span><select className="h-6 rounded border px-1 text-[10px]" value={item.role} onChange={(e) => setFiles((current) => current.map((x) => x.id === item.id ? { ...x, role: e.target.value as ArtifactRole } : x))}><option value="target">进化对象</option><option value="reference">参考材料</option><option value="eval">测试样本</option></select><button onClick={() => setFiles((current) => current.filter((x) => x.id !== item.id))}><X className="size-3 text-slate-400" /></button></div>)}</div>}
+      {files.length > 0 && <div className="mb-3 flex flex-wrap gap-2">{files.map((item) => <div key={item.id} className="flex items-center gap-2 rounded-xl border bg-white px-2 py-1.5 text-[11px]"><span className="max-w-40 truncate">{item.file.name}</span><select className="h-6 rounded border px-1 text-[10px]" value={item.role} onChange={(e) => setFiles((current) => current.map((x) => x.id === item.id ? { ...x, role: e.target.value as ArtifactRole } : x))}><option value="target" disabled={p.targetConnection.adapter==="connector"}>进化对象</option><option value="reference">参考材料</option><option value="eval">测试样本</option></select><button onClick={() => setFiles((current) => current.filter((x) => x.id !== item.id))}><X className="size-3 text-slate-400" /></button></div>)}</div>}
       {showPaste && <Textarea className="mb-2 min-h-28 bg-white font-mono text-xs" value={pastedText} onChange={(e) => setPastedText(e.target.value)} placeholder="也可以直接粘贴提示词、代码、工作流 JSON、报告模板或其他待进化内容…" />}
       <div className="rounded-2xl border bg-white p-3 shadow-sm">
         <Textarea className="min-h-20 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0" value={command} onChange={(e) => setCommand(e.target.value)} placeholder="告诉 AI 这次要怎么进化。例如：保留输出字段不变，把证据引用和风险反证做得更严格；参考我上传的优秀样例。" />

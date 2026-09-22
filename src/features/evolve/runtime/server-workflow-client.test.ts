@@ -13,6 +13,7 @@ const capabilities={
     targetReleaseConfigured:true,
     targetObserveConfigured:true,
     gitTargetConfigured:true,
+    connectorExperimentIds:["workflow-main"],
     connectorFullLifecycleIds:["workflow-main"],
   },
   closure:{
@@ -140,7 +141,7 @@ describe("server workflow routing",()=>{
     expect(await shouldUseServerAutoPilot(gitMission)).toBe(false);
   });
 
-  it("hands a Connector Mission to Durable AutoPilot only for the exact full-lifecycle connector id",async()=>{
+  it("hands a Connector Mission to Durable AutoPilot when the exact connector supports the experiment lifecycle",async()=>{
     const connectorMission={
       ...demoProject,
       sourceArtifacts:[],
@@ -154,9 +155,51 @@ describe("server workflow routing",()=>{
     await getServerWorkflowCapabilities(true);
     expect(await shouldUseServerAutoPilot(connectorMission)).toBe(true);
 
-    const otherOnly={...capabilities,backend:{...capabilities.backend,connectorFullLifecycleIds:["other"]}};
+    const otherOnly={...capabilities,backend:{...capabilities.backend,connectorExperimentIds:["other"],connectorFullLifecycleIds:["other"]}};
     vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(otherOnly),{status:200,headers:{"Content-Type":"application/json"}})));
     await getServerWorkflowCapabilities(true);
     expect(await shouldUseServerAutoPilot(connectorMission)).toBe(false);
+  });
+
+  it("allows experiment-only Connector Missions without claiming Connector production Release support",async()=>{
+    const connectorMission={
+      ...demoProject,
+      sourceArtifacts:[],
+      targetConnection:{
+        adapter:"connector",connectionId:"connector-workflow-main",status:"connected",label:"Workflow Connector",
+        connector:{connectorId:"workflow-main",targetId:"workflow-42"},
+      },
+      releaseTarget:undefined,
+    } as EvolveProject;
+    const experimentOnly={
+      ...capabilities,
+      backend:{...capabilities.backend,connectorExperimentIds:["workflow-main"],connectorFullLifecycleIds:[]},
+    };
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(experimentOnly),{status:200,headers:{"Content-Type":"application/json"}})));
+    await getServerWorkflowCapabilities(true);
+    expect(await shouldUseServerAutoPilot(connectorMission)).toBe(true);
+    connectorMission.releaseTarget={provider:"connector",mode:"preview-promote",status:"connected",label:"Connector Release",healthPath:"/"};
+    connectorMission.gates=connectorMission.gates.map((gate)=>gate.id==="release-ready"?{...gate,status:"approved" as const}:gate);
+    expect(await shouldUseServerAutoPilot(connectorMission)).toBe(false);
+  });
+
+  it("keeps an online Connector Release mission provider-specific after Release Ready approval",async()=>{
+    const connectorRelease={
+      ...demoProject,
+      targetConnection:{
+        adapter:"connector",connectionId:"connector-workflow-main",status:"connected",label:"Workflow Connector",
+        connector:{connectorId:"workflow-main",targetId:"workflow-42"},
+      },
+      releaseTarget:{provider:"connector",mode:"preview-promote",status:"connected",label:"Connector Release",healthPath:"/"},
+      gates:demoProject.gates.map((gate)=>gate.id==="release-ready"?{...gate,status:"approved" as const}:gate),
+    } as EvolveProject;
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(capabilities),{status:200,headers:{"Content-Type":"application/json"}})));
+    await getServerWorkflowCapabilities(true);
+    expect(await shouldUseServerAutoPilot(connectorRelease)).toBe(true);
+
+    const wrongConnector={...capabilities,backend:{...capabilities.backend,connectorFullLifecycleIds:["other"]}};
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(wrongConnector),{status:200,headers:{"Content-Type":"application/json"}})));
+    await getServerWorkflowCapabilities(true);
+    expect(await shouldUseServerAutoPilot(connectorRelease)).toBe(false);
   });
 });

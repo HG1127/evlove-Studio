@@ -1,10 +1,11 @@
 import { createError, defineEventHandler, readBody } from "nitro/h3";
-import { createEvolutionEvent, VercelReleaseActionRequestSchema, VercelReleaseActionResponseSchema } from "@evolution/contracts";
-import { applyProductionLearningGovernance, applyReleaseResultToProject } from "@evolution/core";
+import { createEvolutionEvent, VercelReleaseActionRequestSchema } from "@evolution/contracts";
+import { applyProductionLearningGovernance, applyReleaseResultToProject, projectHasOnlineReleaseTarget, projectUsesConnectorRelease, projectUsesHttpRelease, projectUsesVercelRelease } from "@evolution/core";
 import { getServerVercelReleaseConfig } from "../../../src/server-env";
 import { getServerProductionRuntime } from "../../../src/services/production-runtime";
 import { requireActiveReleaseApprovalGrant } from "../../../src/services/release-approval-store";
-import { executeVercelReleaseAction } from "../../../src/services/vercel-release";
+import { executeServerReleaseProvider } from "../../../src/services/server-release-orchestration";
+import {recordConnectorReleaseOutcomeObservation,recordHttpReleaseOutcomeObservation} from "../../../src/services/release-outcome-telemetry";
 import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 
 function fail(statusCode:number,statusMessage:string):never{
@@ -19,10 +20,13 @@ export default defineEventHandler(async(event)=>{
   if(!mission)fail(404,"Mission not found");
 
   const releaseTarget=mission.releaseTarget;
-  if(releaseTarget?.provider!=="vercel")fail(409,"Mission 未连接 Vercel Release Target");
-  const serverConfig=getServerVercelReleaseConfig();
-  if(releaseTarget.projectId&&serverConfig.projectId&&releaseTarget.projectId!==serverConfig.projectId){
-    fail(409,"Mission Release Target 与当前 Vercel Project 不一致");
+  if(!projectHasOnlineReleaseTarget(mission))fail(409,"Mission 未连接受支持的线上 Release Target");
+  const vercelRelease=projectUsesVercelRelease(mission);
+  if(vercelRelease){
+    const serverConfig=getServerVercelReleaseConfig();
+    if(releaseTarget?.projectId&&serverConfig.projectId&&releaseTarget.projectId!==serverConfig.projectId){
+      fail(409,"Mission Release Target 与当前 Vercel Project 不一致");
+    }
   }
 
   const candidate=mission.candidates.find((item)=>item.id===input.candidateId)
@@ -48,9 +52,9 @@ export default defineEventHandler(async(event)=>{
     }
   }
 
-  const mode=releaseTarget.mode;
+  const mode=releaseTarget?.mode??"progressive";
   if(mode==="preview-promote"&&["canary-5","canary-20","canary-50"].includes(input.action)){
-    fail(409,"当前 Vercel Target 使用 Preview → Promote，不支持 5/20/50 Canary");
+    fail(409,"当前 Release Target 使用 Preview → Promote，不支持 5/20/50 Canary");
   }
   const liveHealthy=mission.release.evidenceMode==="live"
     &&mission.release.healthy===true
@@ -86,11 +90,13 @@ export default defineEventHandler(async(event)=>{
   const deploymentId=input.action==="rollback"
     ? mission.release.stableDeploymentId
     : input.deploymentId??mission.release.deploymentId;
-  if(input.action==="shadow"){
-    if(!input.deploymentId)fail(409,"Preview Gate 必须显式选择 Candidate Deployment");
+  if(input.action==="shadow"&&vercelRelease){
+    if(!input.deploymentId)fail(409,"Vercel Preview Gate 必须显式选择 Candidate Deployment");
     if(mission.release.deploymentId!==input.deploymentId||mission.release.candidateId!==candidate.id){
       fail(409,"Preview Deployment 尚未与当前 Release Candidate 显式绑定");
     }
+  }else if(input.action==="shadow"&&input.deploymentId&&mission.release.deploymentId&&mission.release.deploymentId!==input.deploymentId){
+    fail(409,"Shadow deploymentId 与当前 Mission 已绑定 Deployment 不一致");
   }
   if(input.action!=="shadow"&&input.action!=="rollback"
     &&(!deploymentId||deploymentId!==mission.release.deploymentId||mission.release.candidateId!==candidate.id)){
@@ -100,20 +106,19 @@ export default defineEventHandler(async(event)=>{
 
   let result;
   try{
-    result=VercelReleaseActionResponseSchema.parse(await executeVercelReleaseAction({
+    result=await executeServerReleaseProvider(mission,{
       action:input.action,
       deploymentId,
       stableDeploymentId:mission.release.stableDeploymentId,
-      expectedGitCommitSha:mission.release.sourceGitCommitSha,
-      healthPath:releaseTarget.healthPath,
+      healthPath:releaseTarget?.healthPath,
       artifactHashes,
-    }));
+    });
   }catch(error){
     const code=(error as {code?:string}).code;
-    if(code==="VERCEL_RELEASE_CREDENTIAL_REQUIRED")fail(503,"Vercel Release 写操作尚未授权：需要 VERCEL_RELEASE_TOKEN");
-    if(code==="VERCEL_ROLLING_RELEASE_NOT_ENABLED")fail(409,error instanceof Error?error.message:String(error));
+    if(vercelRelease&&code==="VERCEL_RELEASE_CREDENTIAL_REQUIRED")fail(503,"Vercel Release 写操作尚未授权：需要 VERCEL_RELEASE_TOKEN");
+    if(vercelRelease&&code==="VERCEL_ROLLING_RELEASE_NOT_ENABLED")fail(409,error instanceof Error?error.message:String(error));
     const at=new Date().toISOString();
-    const gitCommitMismatch=code==="VERCEL_RELEASE_GIT_COMMIT_MISMATCH";
+    const gitCommitMismatch=vercelRelease&&code==="VERCEL_RELEASE_GIT_COMMIT_MISMATCH";
     const recoveryStatus=gitCommitMismatch?"manual-check" as const:"pending" as const;
     const reason=gitCommitMismatch
       ?`[server-release-manual-check] ${input.action} 绑定的 Vercel Deployment 与 exact Git commit 不一致：${error instanceof Error?error.message:String(error)}`
@@ -135,7 +140,7 @@ export default defineEventHandler(async(event)=>{
       source:"manual-release-api",
       payload:{requestedAction:input.action,candidateId:candidate.id,deploymentId,stableDeploymentId:mission.release.stableDeploymentId,recovery:recoveryMission.release.recovery,reason},
     })).catch(()=>undefined);
-    if(gitCommitMismatch||code?.startsWith("VERCEL_ROLLING_RELEASE_"))fail(409,error instanceof Error?error.message:String(error));
+    if(gitCommitMismatch||(vercelRelease&&code?.startsWith("VERCEL_ROLLING_RELEASE_")))fail(409,error instanceof Error?error.message:String(error));
     throw error;
   }
   try{
@@ -149,6 +154,8 @@ export default defineEventHandler(async(event)=>{
     const governanceAt=result.observedAt??new Date().toISOString();
     const updated=applyProductionLearningGovernance(released,{at:governanceAt,now:Date.parse(governanceAt)});
     await runtime.missions.save(updated);
+    if(projectUsesConnectorRelease(mission))await recordConnectorReleaseOutcomeObservation(updated,result).catch(()=>undefined);
+    else if(projectUsesHttpRelease(mission))await recordHttpReleaseOutcomeObservation(updated,result).catch(()=>undefined);
     await runtime.events.append(createEvolutionEvent({
       missionId:mission.id,
       type:"ReleaseChanged",
@@ -166,7 +173,7 @@ export default defineEventHandler(async(event)=>{
         healthy:updated.release.healthy,
         observationStatus:updated.release.observationStatus,
         approvalGrantId,
-        rollingRelease:result.rollingRelease,
+        rollingRelease:"rollingRelease" in result?result.rollingRelease:undefined,
         reason:result.note,
       },
     })).catch(()=>undefined);

@@ -124,16 +124,17 @@ export function buildReleaseOutcomeBatch(
   };
 }
 
-export function buildHttpReleaseOutcomeBatch(
+export function buildAdapterReleaseOutcomeBatch(
   project:EvolveProject,
   observation:ReleaseAdapterResult,
+  provider:"http"|"connector",
 ):OutcomeMetricBatchRequest|undefined{
   const deploymentId=observation.deploymentId;
   const observedAt=observation.observedAt;
   const arm=armForDeployment(project,deploymentId);
   if(!deploymentId||!observedAt||!arm)return undefined;
   const metadata={
-    provider:"http",
+    provider,
     releaseStatus:project.release.status,
     trafficPercent:observation.trafficPercent,
     effectiveAction:observation.effectiveAction,
@@ -146,13 +147,13 @@ export function buildHttpReleaseOutcomeBatch(
     candidateId:project.release.candidateId,
     deploymentId,
     arm,
-    source:"http-release-observation",
+    source:provider+"-release-observation",
     observedAt,
     metadata,
   };
   const samples:OutcomeMetricSampleInput[]=[{
     ...common,
-    id:sampleId([project.id,observedAt,deploymentId,"health_ready","all","http"]),
+    id:sampleId([project.id,observedAt,deploymentId,"health_ready","all",provider]),
     metricKey:"health_ready",
     metricKind:"safety",
     direction:"higher",
@@ -163,7 +164,7 @@ export function buildHttpReleaseOutcomeBatch(
   if(observation.latencyMs!==undefined){
     samples.push({
       ...common,
-      id:sampleId([project.id,observedAt,deploymentId,"latency_ms","all","http"]),
+      id:sampleId([project.id,observedAt,deploymentId,"latency_ms","all",provider]),
       metricKey:"latency_ms",
       metricKind:"latency",
       direction:"lower",
@@ -173,6 +174,14 @@ export function buildHttpReleaseOutcomeBatch(
     });
   }
   return{missionId:project.id,candidateId:project.release.candidateId,samples};
+}
+
+export function buildHttpReleaseOutcomeBatch(project:EvolveProject,observation:ReleaseAdapterResult){
+  return buildAdapterReleaseOutcomeBatch(project,observation,"http");
+}
+
+export function buildConnectorReleaseOutcomeBatch(project:EvolveProject,observation:ReleaseAdapterResult){
+  return buildAdapterReleaseOutcomeBatch(project,observation,"connector");
 }
 
 async function persistOutcomeSamples(args:{
@@ -226,9 +235,10 @@ export async function recordReleaseOutcomeObservation(
   return persistOutcomeSamples({project,healthBatch,telemetry});
 }
 
-export async function recordHttpReleaseOutcomeObservation(
+export async function recordAdapterReleaseOutcomeObservation(
   project:EvolveProject,
   observation:ReleaseAdapterResult,
+  provider:"http"|"connector",
 ){
   const telemetryCapabilities=getOutcomeTelemetryCapabilities();
   if(!serverSupabaseSecureConfigured())return {
@@ -237,14 +247,22 @@ export async function recordHttpReleaseOutcomeObservation(
   };
   const observedAt=observation.observedAt;
   if(!observedAt)return {
-    recorded:false,inserted:0,reason:"http-release-observation-missing-observedAt",
+    recorded:false,inserted:0,reason:provider+"-release-observation-missing-observedAt",
     telemetry:{...telemetryCapabilities,requestCount:0,sampleCount:0,warnings:[] as string[]},
   };
-  const healthBatch=buildHttpReleaseOutcomeBatch(project,observation);
+  const healthBatch=buildAdapterReleaseOutcomeBatch(project,observation,provider);
   const telemetry=await collectConfiguredOutcomeTelemetry(project,{
     observedAt,
     trafficPercent:observation.trafficPercent,
     rollingReleaseActive:["canary-5","canary-20","canary-50"].includes(observation.effectiveAction??""),
   });
   return persistOutcomeSamples({project,healthBatch,telemetry});
+}
+
+export function recordHttpReleaseOutcomeObservation(project:EvolveProject,observation:ReleaseAdapterResult){
+  return recordAdapterReleaseOutcomeObservation(project,observation,"http");
+}
+
+export function recordConnectorReleaseOutcomeObservation(project:EvolveProject,observation:ReleaseAdapterResult){
+  return recordAdapterReleaseOutcomeObservation(project,observation,"connector");
 }

@@ -6,6 +6,7 @@ import {
   expectedReleaseArtifactHashes,
   nextDurableReleaseAction,
   projectHasLiveReleaseDecision,
+  projectUsesConnectorRelease,
   projectUsesHttpRelease,
   type DurableReleaseAction,
 } from "@evolution/core";
@@ -107,8 +108,8 @@ export async function runServerReleaseOrchestration(
     }
   }
   const deploymentId=action==="rollback"?project.release.stableDeploymentId:project.release.deploymentId;
-  const mayBindHttpShadow=projectUsesHttpRelease(project)&&action==="shadow"&&project.release.status==="idle";
-  if(!deploymentId&&!mayBindHttpShadow)return pause(project,`[server-release-binding-pending] ${action} 缺少显式 deploymentId。`);
+  const mayBindProviderShadow=(projectUsesHttpRelease(project)||projectUsesConnectorRelease(project))&&action==="shadow"&&project.release.status==="idle";
+  if(!deploymentId&&!mayBindProviderShadow)return pause(project,`[server-release-binding-pending] ${action} 缺少显式 deploymentId。`);
 
   let receipt:ReleaseAdapterResult;
   try{

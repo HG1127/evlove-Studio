@@ -11,8 +11,13 @@ export function projectUsesHttpRelease(project:EvolveProject){
     ||project.releaseTarget.provider==="none";
 }
 
+export function projectUsesConnectorRelease(project:EvolveProject){
+  if(project.targetConnection?.adapter!=="connector")return false;
+  return project.releaseTarget?.provider==="connector";
+}
+
 export function projectHasOnlineReleaseTarget(project:EvolveProject){
-  return projectUsesVercelRelease(project)||projectUsesHttpRelease(project);
+  return projectUsesVercelRelease(project)||projectUsesHttpRelease(project)||projectUsesConnectorRelease(project);
 }
 
 export function projectHasLiveReleaseDecision(project:EvolveProject){

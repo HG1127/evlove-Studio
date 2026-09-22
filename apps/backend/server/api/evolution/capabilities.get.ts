@@ -19,11 +19,19 @@ export default defineEventHandler(async(event)=>{
   const gitWebhook=githubWebhookConfigured();
   const targetProxy=targetProxyCapabilities();
   const connectorRegistry=await getConnectorRegistryCapabilities().catch(()=>undefined);
+  const connectorExperimentIds=(connectorRegistry?.connectors??[])
+    .filter((connector)=>connector.credentialConfigured
+      &&connector.lifecycle.read
+      &&connector.lifecycle.snapshot
+      &&connector.lifecycle.mutate
+      &&connector.lifecycle.validate)
+    .map((connector)=>connector.id);
   const connectorFullLifecycleIds=(connectorRegistry?.connectors??[])
     .filter((connector)=>connector.credentialConfigured&&Object.values(connector.lifecycle).every(Boolean))
     .map((connector)=>connector.id);
-  const releaseWrite=vercelRelease||targetProxy.releaseConfigured;
-  const releaseObserve=vercelRelease||targetProxy.observeConfigured;
+  const connectorRelease=connectorFullLifecycleIds.length>0;
+  const releaseWrite=vercelRelease||targetProxy.releaseConfigured||connectorRelease;
+  const releaseObserve=vercelRelease||targetProxy.observeConfigured||connectorRelease;
   const security=getSecurityCapabilities();
   const blockedActions=[
     ...(!ai?[
@@ -39,8 +47,8 @@ export default defineEventHandler(async(event)=>{
   ];
   const configBlocked=[
     ...(!ai?[{capability:"server-ai",reason:"server-ai-not-configured"}]:[]),
-    ...(!releaseWrite?[{capability:"online-release-write",reason:"configure-vercel-or-http-release"}]:[]),
-    ...(!releaseObserve?[{capability:"online-release-observe",reason:"configure-vercel-or-http-observe"}]:[]),
+    ...(!releaseWrite?[{capability:"online-release-write",reason:"configure-vercel-http-or-full-lifecycle-connector"}]:[]),
+    ...(!releaseObserve?[{capability:"online-release-observe",reason:"configure-vercel-http-observe-or-full-lifecycle-connector"}]:[]),
     ...(!dataPlane?[{capability:"server-data-plane",reason:"supabase-server-config-required"}]:[]),
     ...(dataPlane&&!secureDataPlane?[{capability:"server-data-plane-security",reason:"server-only-supabase-secret-required-for-production"}]:[]),
     ...(!security.productionSafe?[{capability:"rbac-identity",reason:"trusted-signed-actor-required-for-production"}]:[]),
@@ -90,6 +98,7 @@ export default defineEventHandler(async(event)=>{
       targetRunConfigured:targetProxy.runConfigured,
       targetReleaseConfigured:targetProxy.releaseConfigured,
       targetObserveConfigured:targetProxy.observeConfigured,
+      connectorExperimentIds,
       connectorFullLifecycleIds,
       securityCodeReady:true,
       securityConfigured:security.configured,

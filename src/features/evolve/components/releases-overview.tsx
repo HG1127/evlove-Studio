@@ -28,7 +28,7 @@ const releaseSteps: Array<{ label: string; statuses: ReleaseState["status"][]; t
 ];
 
 function releaseStepsFor(project: EvolveProject) {
-  if (project.releaseTarget?.provider === "vercel" && project.releaseTarget.mode === "preview-promote") {
+  if (projectHasOnlineReleaseTarget(project) && project.releaseTarget?.mode === "preview-promote") {
     return [
       { label: "Offline Gate", statuses: ["idle","shadow","promoted","rolled-back"] as ReleaseState["status"][], traffic: "0%" },
       { label: "Preview Gate", statuses: ["shadow","promoted"] as ReleaseState["status"][], traffic: "0% Production" },
@@ -65,7 +65,7 @@ export function ReleasesOverview() {
 
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><Stat label="Release Ready" value={ready} icon={<ShieldCheck className="size-4"/>} tone="indigo"/><Stat label="Canary 运行中" value={activeCanary} icon={<Activity className="size-4"/>} tone="sky"/><Stat label="已 Promote" value={promoted} icon={<Rocket className="size-4"/>} tone="emerald"/><Stat label="异常 / Rollback" value={unhealthy} icon={<TriangleAlert className="size-4"/>} tone="rose"/></div>
 
-    {rows.length===0 ? <Card><CardContent className="py-12 text-center text-sm text-slate-400">暂无需要线上发布的 Mission。只有配置真实 HTTP / Production Target 且完成离线验收的任务才进入这里；文档类成果在成果中心完成闭环。</CardContent></Card> : <div className="grid gap-4 xl:grid-cols-[330px_minmax(0,1fr)]">
+    {rows.length===0 ? <Card><CardContent className="py-12 text-center text-sm text-slate-400">暂无需要线上发布的 Mission。只有配置真实 Vercel / HTTP / Connector Production Target 且完成离线验收的任务才进入这里；文档类成果在成果中心完成闭环。</CardContent></Card> : <div className="grid gap-4 xl:grid-cols-[330px_minmax(0,1fr)]">
       <Card className="h-fit overflow-hidden"><CardContent className="p-0"><div className="border-b px-4 py-4"><div className="font-semibold">发布队列</div><p className="mt-1 text-xs text-slate-400">按风险与当前流量观察每个 Release Candidate。</p></div><div className="divide-y">{rows.map((project)=>{const active=selected?.id===project.id;return <button key={project.id} onClick={()=>setSelectedId(project.id)} className={`w-full p-4 text-left transition ${active?'bg-indigo-50/60':'hover:bg-slate-50'}`}><div className="flex items-start justify-between gap-2"><div className="font-semibold">{project.name}</div><Badge className={project.release.healthy===false||project.release.status==='rolled-back'?'border-rose-200 bg-rose-50 text-rose-700':project.release.status==='promoted'?'border-emerald-200 bg-emerald-50 text-emerald-700':'border-indigo-200 bg-indigo-50 text-indigo-700'}>{statusText(project)}</Badge></div><div className="mt-2 text-xs text-slate-400">{project.searchChampion ? `${project.searchChampion.versionLabel} / ${project.searchChampion.candidate?.id ?? 'Champion'}` : project.experimentRun.winnerId || 'Candidate'} · {project.release.trafficPercent}% traffic</div>{project.release.kpis.length>0&&<div className="mt-2 text-[10px] text-slate-400">{project.release.kpis.slice(0,2).map((m)=>`${m.label} ${m.value}${m.unit}`).join(' · ')}</div>}</button>})}</div></CardContent></Card>
 
       {selected && <div className="space-y-4">

@@ -105,7 +105,7 @@ export const VercelReleaseReconcileResponseSchema=z.object({
 export type VercelReleaseReconcileResponse=z.infer<typeof VercelReleaseReconcileResponseSchema>;
 
 export const ReleaseReconcileResponseSchema=z.object({
-  provider:z.enum(["vercel","http"]),
+  provider:z.enum(["vercel","http","connector"]),
   disposition:z.enum(["safe-to-resume","terminal-live-decision","manual-check"]),
   reason:z.string(),
   observedAt:z.string(),
@@ -122,6 +122,11 @@ export const VercelReleaseActionRequestSchema=z.object({
   deploymentId:z.string().optional(),
 });
 export type VercelReleaseActionRequest=z.infer<typeof VercelReleaseActionRequestSchema>;
+
+export const ReleaseActionRequestSchema=VercelReleaseActionRequestSchema;
+export type ReleaseActionRequest=z.infer<typeof ReleaseActionRequestSchema>;
+export const ReleaseActionResponseSchema=ReleaseAdapterResultSchema;
+export type ReleaseActionResponse=z.infer<typeof ReleaseActionResponseSchema>;
 
 export const ReleaseApprovalRequestSchema=z.object({
   missionId:z.string().min(1),

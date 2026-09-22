@@ -11,7 +11,7 @@ import {
   type SandboxBrowserHealth,
   type SandboxHealth,
 } from "@evolution/contracts";
-import { projectHasOnlineReleaseTarget,projectUsesHttpRelease,projectUsesVercelRelease } from "@evolution/core";
+import { projectHasOnlineReleaseTarget,projectUsesConnectorRelease,projectUsesHttpRelease,projectUsesVercelRelease } from "@evolution/core";
 
 async function apiJson(url:string,init?:RequestInit){
   const response=await fetch(url,init);
@@ -80,7 +80,7 @@ export async function shouldUseServerAutoPilot(project:EvolveProject){
       ||Boolean(
         project.targetConnection.status==="connected"
         &&project.targetConnection.connector
-        &&capability.backend.connectorFullLifecycleIds.includes(project.targetConnection.connector.connectorId)
+        &&capability.backend.connectorExperimentIds.includes(project.targetConnection.connector.connectorId)
       );
     if(!connectorSourceReady)return false;
     if(!projectHasOnlineReleaseTarget(project))return capability.closure.offlineFullAuto;
@@ -91,6 +91,10 @@ export async function shouldUseServerAutoPilot(project:EvolveProject){
     }
     if(projectUsesHttpRelease(project)){
       return Boolean(capability.backend.targetReleaseConfigured&&capability.backend.targetObserveConfigured);
+    }
+    if(projectUsesConnectorRelease(project)){
+      const connectorId=project.targetConnection.connector?.connectorId;
+      return Boolean(connectorId&&capability.backend.connectorFullLifecycleIds.includes(connectorId));
     }
     return false;
   }catch{

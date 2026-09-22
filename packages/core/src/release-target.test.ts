@@ -1,6 +1,6 @@
 import { describe,expect,it } from "vitest";
 import type { EvolveProject, ReleaseState } from "@evolution/contracts";
-import { beginReleaseCycle, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, projectReleaseMode } from "./release-target";
+import { beginReleaseCycle, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, projectReleaseMode, projectUsesConnectorRelease } from "./release-target";
 
 const baseRelease:ReleaseState={
   status:"idle",
@@ -26,6 +26,16 @@ describe("release target domain",()=>{
     } as EvolveProject;
     expect(projectHasOnlineReleaseTarget(project)).toBe(true);
     expect(projectReleaseMode(project)).toBe("progressive");
+  });
+
+  it("treats an explicitly configured Connector as an online release target",()=>{
+    const project={
+      targetConnection:{adapter:"connector",connector:{connectorId:"workflow-main",targetId:"workflow-42"}},
+      releaseTarget:{provider:"connector",mode:"preview-promote"},
+    } as EvolveProject;
+    expect(projectUsesConnectorRelease(project)).toBe(true);
+    expect(projectHasOnlineReleaseTarget(project)).toBe(true);
+    expect(projectReleaseMode(project)).toBe("preview-promote");
   });
 
   it("preserves the currently promoted deployment as rollback baseline when a new cycle starts",()=>{
