@@ -1,6 +1,7 @@
 import type {EvolveProject,ReleaseObservation} from "@evolution/contracts";
 
 export const PRODUCTION_OUTCOME_FRESHNESS_MS=30*60*1000;
+export const PRODUCTION_OUTCOME_MAX_FUTURE_SKEW_MS=2*60*1000;
 export const RELEASE_OBSERVATION_RETENTION_MS=7*24*60*60*1000;
 export const RELEASE_OBSERVATION_MAX_ENTRIES=120;
 export const PRODUCTION_OUTCOME_MIN_HEALTHY_STREAK=2;
@@ -54,9 +55,10 @@ export type ProductionOutcomeFreshness={
 
 export function productionOutcomeFreshness(
   project:EvolveProject,
-  options?:{now?:number;maxAgeMs?:number},
+  options?:{now?:number;maxAgeMs?:number;maxFutureSkewMs?:number},
 ):ProductionOutcomeFreshness{
   const maxAgeMs=options?.maxAgeMs??PRODUCTION_OUTCOME_FRESHNESS_MS;
+  const maxFutureSkewMs=options?.maxFutureSkewMs??PRODUCTION_OUTCOME_MAX_FUTURE_SKEW_MS;
   const observedAt=project.release.observedAt;
   if(!["promoted","rolled-back"].includes(project.release.status)){
     return {status:"unknown",reason:"当前 Release 尚无 Production 终态。",observedAt,maxAgeMs};
@@ -72,6 +74,13 @@ export function productionOutcomeFreshness(
     return {status:"unknown",reason:"Production Outcome observedAt 无法解析。",observedAt,maxAgeMs};
   }
   const now=options?.now??Date.now();
+  if(observedMs>now+maxFutureSkewMs){
+    return {
+      status:"unknown",
+      reason:`Production Outcome observedAt 超前超过 ${Math.round(maxFutureSkewMs/1000)} 秒允许时钟漂移，拒绝作为 fresh evidence。`,
+      observedAt,maxAgeMs,
+    };
+  }
   const ageMs=Math.max(0,now-observedMs);
   if(ageMs>maxAgeMs){
     return {
@@ -93,7 +102,7 @@ export function productionOutcomeFreshness(
 
 export function projectHasFreshHealthyProductionOutcome(
   project:EvolveProject,
-  options?:{now?:number;maxAgeMs?:number},
+  options?:{now?:number;maxAgeMs?:number;maxFutureSkewMs?:number},
 ){
   const freshness=productionOutcomeFreshness(project,options);
   return freshness.status==="fresh"
@@ -118,7 +127,12 @@ export type ProductionOutcomeTrend={
   observations:number;
 };
 
-function currentProductionObservations(project:EvolveProject,now:number,maxAgeMs:number){
+function currentProductionObservations(
+  project:EvolveProject,
+  now:number,
+  maxAgeMs:number,
+  maxFutureSkewMs:number,
+){
   const deploymentId=project.release.deploymentId;
   return (project.release.observations??[])
     .filter((item)=>item.evidenceMode==="live"
@@ -127,26 +141,27 @@ function currentProductionObservations(project:EvolveProject,now:number,maxAgeMs
       &&item.deploymentId===deploymentId)
     .filter((item)=>{
       const at=Date.parse(item.at);
-      return Number.isFinite(at)&&Math.max(0,now-at)<=maxAgeMs;
+      return Number.isFinite(at)&&at<=now+maxFutureSkewMs&&Math.max(0,now-at)<=maxAgeMs;
     })
     .sort((a,b)=>Date.parse(b.at)-Date.parse(a.at));
 }
 
 export function productionOutcomeTrend(
   project:EvolveProject,
-  options?:{now?:number;maxAgeMs?:number;minHealthyStreak?:number},
+  options?:{now?:number;maxAgeMs?:number;maxFutureSkewMs?:number;minHealthyStreak?:number},
 ):ProductionOutcomeTrend{
   const now=options?.now??Date.now();
   const maxAgeMs=options?.maxAgeMs??PRODUCTION_OUTCOME_FRESHNESS_MS;
+  const maxFutureSkewMs=options?.maxFutureSkewMs??PRODUCTION_OUTCOME_MAX_FUTURE_SKEW_MS;
   const minHealthyStreak=options?.minHealthyStreak??PRODUCTION_OUTCOME_MIN_HEALTHY_STREAK;
-  const freshness=productionOutcomeFreshness(project,{now,maxAgeMs});
+  const freshness=productionOutcomeFreshness(project,{now,maxAgeMs,maxFutureSkewMs});
   if(freshness.status==="stale"){
     return {status:"stale",reason:freshness.reason,healthyStreak:0,unhealthyStreak:0,transitions:0,observations:0};
   }
   if(freshness.status==="unknown"){
     return {status:"unknown",reason:freshness.reason,healthyStreak:0,unhealthyStreak:0,transitions:0,observations:0};
   }
-  const observations=currentProductionObservations(project,now,maxAgeMs).slice(0,PRODUCTION_OUTCOME_TREND_WINDOW);
+  const observations=currentProductionObservations(project,now,maxAgeMs,maxFutureSkewMs).slice(0,PRODUCTION_OUTCOME_TREND_WINDOW);
   if(!observations.length){
     return {
       status:project.release.healthy===true?"healthy-insufficient":"unknown",
@@ -211,7 +226,7 @@ export function productionOutcomeTrend(
 
 export function projectHasStableHealthyProductionOutcome(
   project:EvolveProject,
-  options?:{now?:number;maxAgeMs?:number;minHealthyStreak?:number},
+  options?:{now?:number;maxAgeMs?:number;maxFutureSkewMs?:number;minHealthyStreak?:number},
 ){
   return projectHasFreshHealthyProductionOutcome(project,options)
     &&productionOutcomeTrend(project,options).status==="stable-healthy";

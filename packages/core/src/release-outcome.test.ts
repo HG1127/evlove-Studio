@@ -4,6 +4,7 @@ import {
   appendReleaseObservation,
   PRODUCTION_OUTCOME_MIN_HEALTHY_STREAK,
   PRODUCTION_OUTCOME_FRESHNESS_MS,
+  PRODUCTION_OUTCOME_MAX_FUTURE_SKEW_MS,
   productionOutcomeFreshness,
   productionOutcomeTrend,
   projectHasFreshHealthyProductionOutcome,
@@ -57,6 +58,22 @@ describe("production outcome freshness",()=>{
     expect(result.status).toBe("stale");
     expect(result.reason).toContain("freshness");
     expect(projectHasFreshHealthyProductionOutcome(p,{now})).toBe(false);
+  });
+
+  it("rejects future production timestamps beyond the allowed clock skew",()=>{
+    const future=new Date(now+PRODUCTION_OUTCOME_MAX_FUTURE_SKEW_MS+1).toISOString();
+    const p=project(future);
+    const result=productionOutcomeFreshness(p,{now});
+    expect(result.status).toBe("unknown");
+    expect(result.reason).toContain("时钟漂移");
+    expect(projectHasFreshHealthyProductionOutcome(p,{now})).toBe(false);
+  });
+
+  it("tolerates small clock skew without converting it into negative age",()=>{
+    const p=project(new Date(now+PRODUCTION_OUTCOME_MAX_FUTURE_SKEW_MS).toISOString());
+    const result=productionOutcomeFreshness(p,{now});
+    expect(result.status).toBe("fresh");
+    expect(result.ageMs).toBe(0);
   });
 
   it("returns unknown when the mission has no production observation timestamp",()=>{
@@ -123,6 +140,22 @@ describe("production outcome freshness",()=>{
     });
     expect(productionOutcomeTrend(p,{now}).status).toBe("stable-healthy");
     expect(projectHasStableHealthyProductionOutcome(p,{now})).toBe(true);
+  });
+
+  it("does not count far-future observations toward the stable healthy streak",()=>{
+    const p=project("2026-09-20T08:29:00.000Z");
+    const base={
+      source:"reconcile" as const,action:"reconcile" as const,candidateId:"C1",deploymentId:"dpl_candidate",
+      evidenceMode:"live" as const,environment:"production",healthy:true,observationStatus:"healthy" as const,reason:"health",
+    };
+    p.release.observations=[
+      {...base,id:"valid",at:"2026-09-20T08:29:00.000Z"},
+      {...base,id:"future",at:"2026-09-20T08:40:00.000Z"},
+    ];
+    const trend=productionOutcomeTrend(p,{now});
+    expect(trend.status).toBe("healthy-insufficient");
+    expect(trend.healthyStreak).toBe(1);
+    expect(trend.observations).toBe(1);
   });
 
   it("detects degrading and flapping production trends",()=>{
