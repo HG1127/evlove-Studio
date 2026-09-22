@@ -31,6 +31,17 @@ describe("HTTP production adapter",()=>{
     expect(calls.some((call)=>call.url==="/api/evolution/jobs?missionId=m1")).toBe(true);
   });
 
+  it("surfaces bounded server auth details instead of hiding the 401 cause",async()=>{
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({
+      statusCode:401,
+      statusMessage:"Trusted Evolution actor headers are required",
+    }),{status:401,headers:{"Content-Type":"application/json"}})));
+    const ports=createHttpProductionPorts("/api/evolution");
+    await expect(ports.missions.list()).rejects.toThrow(
+      "Production API HTTP 401: Trusted Evolution actor headers are required",
+    );
+  });
+
   it("uses append-only event and binary artifact routes",async()=>{
     const event=EvolutionEventSchema.parse({
       schemaVersion:"event-v1",id:"e1",missionId:"m1",type:"JobCompleted",source:"test",payload:{ok:true},at,

@@ -1,7 +1,7 @@
 import {afterEach,describe,expect,it,vi} from "vitest";
 import {demoProject} from "../data/mock-project";
 import type {EvolveProject} from "../schemas";
-import {getServerWorkflowCapabilities,shouldUseServerAutoPilot,startServerEvolutionWorkflow} from "./server-workflow-client";
+import {checkPublicReadiness,getServerWorkflowCapabilities,shouldUseServerAutoPilot,startServerEvolutionWorkflow} from "./server-workflow-client";
 
 const capabilities={
   available:true,
@@ -42,6 +42,25 @@ describe("server workflow routing",()=>{
     await getServerWorkflowCapabilities(true);
     const offline={...demoProject,targetConnection:{adapter:"artifact",connectionId:"artifact",status:"connected",label:"Artifact"}} as EvolveProject;
     expect(await shouldUseServerAutoPilot(offline)).toBe(true);
+  });
+
+  it("reads the unauthenticated public readiness snapshot for degraded control-plane diagnostics",async()=>{
+    const snapshot={
+      checkedAt:"2026-09-22T10:00:00.000Z",workflow:{durable:true},
+      dataPlane:{configured:true,secureCredential:true,database:true,storage:true,coreTables:true,credentialMode:"secret",urlPresent:true,secretPresent:true,publishablePresent:false,artifactBucketPresent:true,configValid:true,issueFields:[]},
+      sourceParse:true,artifactRenderer:true,serverAi:true,sandbox:true,sandboxPolicy:true,browser:true,
+      release:{read:true,write:true},git:{configured:true,webhook:true},
+      capability:{database:true,semantic:true,sharing:true},evidence:{database:true,signing:true,immutable:true,export:true},
+      outcome:{database:true,ingestion:true,analysis:true,telemetry:true},
+      security:{configured:true,enforced:true,productionSafe:true,vault:true,approvalStore:true,memberDirectory:true},
+      connectors:{configured:true,fullLifecycle:true},targetProxy:{run:true,release:true,observe:true},
+    };
+    const fetchMock=vi.fn(async(url:RequestInfo|URL)=>{
+      expect(String(url)).toBe("/api/evolution/public-readiness");
+      return new Response(JSON.stringify(snapshot),{status:200,headers:{"Content-Type":"application/json"}});
+    });
+    vi.stubGlobal("fetch",fetchMock);
+    expect(await checkPublicReadiness()).toEqual(snapshot);
   });
 
   it("passes scheduledFor through the durable workflow start request",async()=>{

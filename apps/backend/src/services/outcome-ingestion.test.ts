@@ -64,6 +64,19 @@ describe("Outcome ingestion Mission binding",()=>{
     expect(()=>bindOutcomeMetricBatchToMission(mission(),future,{now})).toThrow(/future clock skew/);
   });
 
+  it("rejects incomparable Stable/Candidate metric contracts in the same batch",()=>{
+    const wrongUnit=batch();
+    wrongUnit.samples[1]={...wrongUnit.samples[1]!,unit:"percent"};
+    wrongUnit.samples[0]={...wrongUnit.samples[0]!,unit:"ratio"};
+    expect(()=>bindOutcomeMetricBatchToMission(mission(),wrongUnit,{now}))
+      .toThrow(/inconsistent kind\/direction\/unit\/source/);
+
+    const wrongSource=batch();
+    wrongSource.samples[1]={...wrongSource.samples[1]!,source:"other-source"};
+    expect(()=>bindOutcomeMetricBatchToMission(mission(),wrongSource,{now}))
+      .toThrow(/inconsistent kind\/direction\/unit\/source/);
+  });
+
   it("defaults analysis to current Release Candidate while preserving explicit historical candidate analysis",()=>{
     expect(resolveOutcomeAnalysisCandidate(mission())).toBe("C1");
     expect(resolveOutcomeAnalysisCandidate(mission(),"C0")).toBe("C0");

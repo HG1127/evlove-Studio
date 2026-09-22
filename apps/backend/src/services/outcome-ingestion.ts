@@ -27,6 +27,15 @@ function releaseDeploymentForArm(project:EvolveProject,arm:OutcomeArm){
   return deploymentId;
 }
 
+function metricContract(sample:OutcomeMetricBatchRequest["samples"][number]){
+  return [
+    sample.metricKind,
+    sample.direction,
+    sample.unit?.trim()??"",
+    sample.source.trim(),
+  ].join("\u0000");
+}
+
 export function bindOutcomeMetricBatchToMission(
   project:EvolveProject,
   raw:OutcomeMetricBatchRequest,
@@ -41,6 +50,7 @@ export function bindOutcomeMetricBatchToMission(
   }
   const now=options?.now??Date.now();
   const maxFutureSkewMs=options?.maxFutureSkewMs??PRODUCTION_OUTCOME_MAX_FUTURE_SKEW_MS;
+  const metricContracts=new Map<string,string>();
   const samples=input.samples.map((sample,index)=>{
     if(sample.candidateId&&sample.candidateId!==candidateId){
       fail("Outcome sample "+index+" candidateId does not match current Release Candidate");
@@ -55,6 +65,12 @@ export function bindOutcomeMetricBatchToMission(
     if(observedMs>now+maxFutureSkewMs){
       fail("Outcome sample "+index+" observedAt exceeds allowed future clock skew");
     }
+    const contract=metricContract(sample);
+    const existing=metricContracts.get(sample.metricKey);
+    if(existing&&existing!==contract){
+      fail("Outcome metric "+sample.metricKey+" has inconsistent kind/direction/unit/source within the batch");
+    }
+    metricContracts.set(sample.metricKey,contract);
     return {...sample,candidateId,deploymentId:expectedDeploymentId};
   });
   return {...input,candidateId,samples};

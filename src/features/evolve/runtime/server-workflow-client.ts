@@ -2,12 +2,14 @@ import {
   EvolutionBackendHealthSchema,
   EvolutionWorkflowCapabilitiesSchema,
   EvolutionWorkflowStartResponseSchema,
+  PublicReadinessSnapshotSchema,
   SandboxBrowserHealthSchema,
   SandboxHealthSchema,
   type EvolutionBackendHealth,
   type EvolutionWorkflowCapabilities,
   type EvolutionWorkflowStartResponse,
   type EvolveProject,
+  type PublicReadinessSnapshot,
   type SandboxBrowserHealth,
   type SandboxHealth,
 } from "@evolution/contracts";
@@ -16,7 +18,10 @@ import { projectHasOnlineReleaseTarget,projectUsesConnectorRelease,projectUsesHt
 async function apiJson(url:string,init?:RequestInit){
   const response=await fetch(url,init);
   const data=await response.json().catch(()=>({}));
-  if(!response.ok)throw new Error((data as {message?:string;error?:string}).message||(data as {error?:string}).error||`Workflow API HTTP ${response.status}`);
+  if(!response.ok){
+    const detail=data as {statusMessage?:string;message?:string;error?:string};
+    throw new Error(detail.statusMessage||detail.message||detail.error||`Workflow API HTTP ${response.status}`);
+  }
   return data;
 }
 
@@ -31,6 +36,10 @@ export async function getServerWorkflowCapabilities(force=false){
 
 export async function checkServerBackendHealth():Promise<EvolutionBackendHealth>{
   return EvolutionBackendHealthSchema.parse(await apiJson("/api/evolution/backend-health"));
+}
+
+export async function checkPublicReadiness():Promise<PublicReadinessSnapshot>{
+  return PublicReadinessSnapshotSchema.parse(await apiJson("/api/evolution/public-readiness"));
 }
 
 export async function startServerEvolutionWorkflow(

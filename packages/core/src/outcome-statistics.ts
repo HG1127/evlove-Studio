@@ -87,6 +87,25 @@ function groups(samples:OutcomeMetricSample[]){
   return [...map.values()];
 }
 
+function assertComparableMetricContracts(samples:OutcomeMetricSample[]){
+  const contracts=new Map<string,string>();
+  for(const sample of samples){
+    const contract=[
+      sample.metricKind,
+      sample.direction,
+      sample.unit?.trim()??"",
+      sample.source.trim(),
+    ].join("\u0000");
+    const existing=contracts.get(sample.metricKey);
+    if(existing&&existing!==contract){
+      throw new Error(
+        `Outcome metric ${sample.metricKey} has inconsistent kind/direction/unit/source and cannot be compared safely`,
+      );
+    }
+    contracts.set(sample.metricKey,contract);
+  }
+}
+
 function drift(rows:OutcomeMetricSample[],segment:string,minPerArm:number){
   const candidate=rows.filter((row)=>row.arm==="candidate")
     .sort((a,b)=>Date.parse(a.observedAt)-Date.parse(b.observedAt));
@@ -128,6 +147,7 @@ export function analyzeOutcomeSamples(input:{
     return Number.isFinite(observedAt)&&observedAt<=checkedAtMs+PRODUCTION_OUTCOME_MAX_FUTURE_SKEW_MS;
   });
   const dropped=input.samples.length-samples.length;
+  assertComparableMetricContracts(samples);
   const grouped=groups(samples);
   const metrics=grouped.map((group)=>analyzeGroup(group.rows,group.segment,input.minimumSamplesPerArm));
   const driftRows=grouped.map((group)=>drift(group.rows,group.segment,input.minimumSamplesPerArm));

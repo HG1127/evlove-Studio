@@ -107,4 +107,19 @@ describe("outcome statistics",()=>{
       checkedAt:"2026-09-22T00:00:00.000Z",
     })).toThrow(/candidateId is required/);
   });
+
+  it("refuses Stable/Candidate comparisons when a metric contract changes across stored samples",()=>{
+    const rows=samples({
+      metricKey:"latency",kind:"latency",direction:"lower",
+      stable:[100,101,99,100,101],
+      candidate:[90,91,89,90,91],
+    });
+    rows[rows.length-1]={...rows[rows.length-1]!,unit:"seconds"};
+    rows[0]={...rows[0]!,unit:"ms"};
+    expect(()=>analyzeOutcomeSamples({
+      missionId:"m1",candidateId:"c1",minimumSamplesPerArm:5,
+      checkedAt:"2026-09-22T00:00:00.000Z",
+      samples:rows,
+    })).toThrow(/inconsistent kind\/direction\/unit\/source/);
+  });
 });
