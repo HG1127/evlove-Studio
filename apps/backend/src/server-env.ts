@@ -346,6 +346,7 @@ export function githubWebhookConfigured(){
 export type ServerTargetProxyConfig={
   runUrl?:string;
   releaseUrl?:string;
+  observeUrl?:string;
   token?:string;
   timeoutMs:number;
 };
@@ -354,6 +355,7 @@ export function getServerTargetProxyConfig():ServerTargetProxyConfig{
   return {
     runUrl:value(process.env.EVOLUTION_TARGET_RUN_URL,process.env.EVOLVE_TARGET_RUN_URL),
     releaseUrl:value(process.env.EVOLUTION_TARGET_RELEASE_URL,process.env.EVOLVE_TARGET_RELEASE_URL),
+    observeUrl:value(process.env.EVOLUTION_TARGET_OBSERVE_URL,process.env.EVOLVE_TARGET_OBSERVE_URL),
     token:value(process.env.EVOLUTION_TARGET_BEARER_TOKEN,process.env.EVOLVE_TARGET_BEARER_TOKEN),
     timeoutMs:Math.max(5_000,Math.min(Number(value(process.env.EVOLUTION_TARGET_TIMEOUT_MS,process.env.EVOLVE_TARGET_TIMEOUT_MS)??"90000")||90_000,300_000)),
   };
@@ -365,6 +367,7 @@ export function targetProxyCapabilities(){
     codeReady:true,
     runConfigured:Boolean(config.runUrl),
     releaseConfigured:Boolean(config.releaseUrl),
+    observeConfigured:Boolean(config.observeUrl),
     credentialConfigured:Boolean(config.token),
   };
 }

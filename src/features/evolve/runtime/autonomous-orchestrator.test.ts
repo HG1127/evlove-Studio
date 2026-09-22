@@ -436,7 +436,7 @@ describe("autonomous orchestrator", () => {
     expect(deriveAutonomousDecision(base).action).toBe("complete");
   });
 
-  it("does not auto-replay or Vercel-reconcile an uncertain HTTP production write", () => {
+  it("uses read-only HTTP observe instead of replaying an uncertain HTTP production write", () => {
     const candidate = CandidateSchema.parse({
       id:"http-release",name:"HTTP Release Candidate",change:"完成",status:"passed",artifactBuildStatus:"ready",
       artifactSnapshots:[CandidateArtifactSnapshotSchema.parse({id:"snap-http-release",sourceArtifactId:demoProject.sourceArtifacts[0]!.id,name:"result.txt",mimeType:"text/plain",content:"final",contentHash:"hash-http-release",createdAt:"now"})],
@@ -458,9 +458,9 @@ describe("autonomous orchestrator", () => {
     base.validationRun.evidenceFingerprint=binding;
     base.artifactAcceptance.evidenceFingerprint=binding;
     const decision=deriveAutonomousDecision(base);
-    expect(decision.action).toBe("wait-human");
-    expect(decision.attention?.title).toContain("HTTP Release");
-    expect(decision.attention?.suggestedAction).toContain("不会自动重放");
+    expect(decision.action).toBe("reconcile-release");
+    expect(decision.reason).toContain("Target Observe");
+    expect(decision.reason).toContain("绝不自动重放");
   });
 
   it("resolves a stale attention request automatically after the blocker disappears", () => {

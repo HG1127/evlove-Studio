@@ -92,6 +92,9 @@ export const VercelReleaseReconcileRequestSchema=z.object({
 });
 export type VercelReleaseReconcileRequest=z.infer<typeof VercelReleaseReconcileRequestSchema>;
 
+export const ReleaseReconcileRequestSchema=VercelReleaseReconcileRequestSchema;
+export type ReleaseReconcileRequest=z.infer<typeof ReleaseReconcileRequestSchema>;
+
 export const VercelReleaseReconcileResponseSchema=z.object({
   disposition:z.enum(["safe-to-resume","terminal-live-decision","manual-check"]),
   reason:z.string(),
@@ -100,6 +103,17 @@ export const VercelReleaseReconcileResponseSchema=z.object({
   recoveryStatus:z.enum(["pending","manual-check","reconciled"]).optional(),
 });
 export type VercelReleaseReconcileResponse=z.infer<typeof VercelReleaseReconcileResponseSchema>;
+
+export const ReleaseReconcileResponseSchema=z.object({
+  provider:z.enum(["vercel","http"]),
+  disposition:z.enum(["safe-to-resume","terminal-live-decision","manual-check"]),
+  reason:z.string(),
+  observedAt:z.string(),
+  observation:z.union([VercelReleaseObservationSchema,ReleaseAdapterResultSchema]).optional(),
+  releaseStatus:z.enum(["idle","shadow","canary-5","canary-20","canary-50","promoted","rolled-back"]),
+  recoveryStatus:z.enum(["pending","manual-check","reconciled"]).optional(),
+});
+export type ReleaseReconcileResponse=z.infer<typeof ReleaseReconcileResponseSchema>;
 
 export const VercelReleaseActionRequestSchema=z.object({
   missionId:z.string().min(1),

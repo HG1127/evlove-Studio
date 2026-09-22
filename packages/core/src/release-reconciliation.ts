@@ -1,10 +1,12 @@
 import type {
   Candidate,
   EvolveProject,
+  ReleaseAdapterResult,
   VercelReleaseObservation,
 } from "@evolution/contracts";
 import { appendReleaseObservation } from "./release-outcome";
-import { expectedReleaseArtifactHashes } from "./release-orchestration";
+import {applyReleaseResultToProject, expectedReleaseArtifactHashes} from "./release-orchestration";
+import {projectHasLiveReleaseDecision} from "./release-target";
 
 export type ReleaseReconcileDisposition="safe-to-resume"|"terminal-live-decision"|"manual-check";
 
@@ -13,6 +15,52 @@ export type ReleaseReconcileResult={
   disposition:ReleaseReconcileDisposition;
   reason:string;
 };
+
+export function reconcileHttpReleaseObservation(args:{
+  project:EvolveProject;
+  candidate:Candidate;
+  observation:ReleaseAdapterResult;
+}):ReleaseReconcileResult{
+  const observedAt=args.observation.observedAt??new Date().toISOString();
+  const action=args.observation.effectiveAction;
+  if(!action){
+    const reason="HTTP Observe receipt 缺少 effectiveAction；无法确认外部真实 Release 状态。";
+    return {project:withRecovery(args.project,{status:"manual-check",reason,observedAt}),disposition:"manual-check",reason};
+  }
+  try{
+    let project=applyReleaseResultToProject({
+      project:args.project,
+      candidate:args.candidate,
+      requestedAction:action,
+      result:args.observation,
+      at:observedAt,
+      observationSource:"reconcile",
+    });
+    if(args.project.release.recovery?.action==="rollback"&&action!=="rollback"){
+      project={
+        ...project,
+        release:{
+          ...project.release,
+          recovery:{
+            status:"reconciled",
+            action:"rollback",
+            reason:"HTTP Observe 已确认此前 rollback 未生效；当前状态已只读核实，可安全重试 rollback。",
+            at:args.project.release.recovery.at,
+            lastObservedAt:observedAt,
+          },
+        },
+      };
+    }
+    const terminal=projectHasLiveReleaseDecision(project);
+    const reason=terminal
+      ?`HTTP Observe 已确认 live ${project.release.status} 终态。`
+      :`HTTP Observe 已确认当前 live ${project.release.status} 状态，可从已观测状态继续。`;
+    return{project,disposition:terminal?"terminal-live-decision":"safe-to-resume",reason};
+  }catch(error){
+    const reason=`HTTP Observe receipt 无法安全结算：${error instanceof Error?error.message:String(error)}`;
+    return {project:withRecovery(args.project,{status:"manual-check",reason,observedAt,action}),disposition:"manual-check",reason};
+  }
+}
 
 function withRecovery(
   project:EvolveProject,

@@ -274,7 +274,7 @@ export function deriveAutonomousDecision(project: EvolveProject): AutonomousDeci
     if(onlineRelease&&liveReleaseDecision){
       const freshness=productionOutcomeFreshness(project);
       if(freshness.status!=="fresh"){
-        if(project.releaseTarget?.provider==="vercel"){
+        if(projectUsesVercelRelease(project)||projectUsesHttpRelease(project)){
           return {
             action:"reconcile-release",
             reason:`${freshness.reason} 先只读刷新 Production Outcome，再继续 Learning / Complete。`,
@@ -291,7 +291,7 @@ export function deriveAutonomousDecision(project: EvolveProject): AutonomousDeci
       }
       const trend=productionOutcomeTrend(project);
       if(trend.status==="healthy-insufficient"||trend.status==="unknown"){
-        if(project.releaseTarget?.provider==="vercel"){
+        if(projectUsesVercelRelease(project)||projectUsesHttpRelease(project)){
           return {
             action:"reconcile-release",
             reason:`${trend.reason} 先补充只读 Production Observation，再判断是否足以进入 Learning。`,
@@ -321,13 +321,11 @@ export function deriveAutonomousDecision(project: EvolveProject): AutonomousDeci
         };
       }
       if(project.release.recovery?.status==="pending"&&httpRelease){
-        const request=attention({
-          type:"capability",title:"HTTP Release 结果需要人工核对",
-          reason:project.release.recovery.reason,
-          stage:"release",riskLevel:"high",blocking:true,questions:[],criterionIds:[],
-          suggestedAction:"HTTP Release 写操作结果不确定且当前协议没有只读 observe endpoint；请先到外部发布平台核对实际 Production/Canary 状态。系统不会自动重放生产副作用。",
-        });
-        return {action:"wait-human",reason:request.reason,stage:request.stage,attention:request};
+        return {
+          action:"reconcile-release",
+          reason:"HTTP Release 上一步写操作结果不确定；只读调用 Target Observe 核对真实外部状态，绝不自动重放生产副作用。",
+          stage:"release",
+        };
       }
       if(project.release.recovery?.status==="manual-check"){
         const request=attention({

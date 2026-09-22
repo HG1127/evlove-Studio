@@ -94,7 +94,7 @@ export async function testRunnerGateway(config: RunnerGatewayConfig): Promise<{ 
     return {
       ok:ready,
       message:ready
-        ?`Server Target Proxy 已就绪；Run=${data.runConfigured?"READY":"BLOCKED"}，Release=${data.releaseConfigured?"READY":"BLOCKED"}。真实外部凭证仅保存在服务器。`
+        ?`Server Target Proxy 已就绪；Run=${data.runConfigured?"READY":"BLOCKED"}，Release=${data.releaseConfigured?"READY":"BLOCKED"}，Observe=${data.observeConfigured?"READY":"BLOCKED"}。真实外部凭证仅保存在服务器。`
         :"Server Target Proxy 代码已就绪，但服务器尚未配置 EVOLUTION_TARGET_RUN_URL。",
     };
   } catch (error) {

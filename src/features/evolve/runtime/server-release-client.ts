@@ -3,7 +3,7 @@ import {
   VercelReleaseCapabilitiesSchema,
   VercelReleaseDeploymentsSchema,
   VercelReleaseHealthSchema,
-  VercelReleaseReconcileResponseSchema,
+  ReleaseReconcileResponseSchema,
   type VercelReleaseActionRequest,
 } from "@evolution/contracts";
 
@@ -39,10 +39,12 @@ export async function runServerVercelReleaseAction(input:VercelReleaseActionRequ
   }));
 }
 
-export async function reconcileServerVercelRelease(missionId:string){
-  return VercelReleaseReconcileResponseSchema.parse(await apiJson("/api/evolution/release-reconcile",{
+export async function reconcileServerRelease(missionId:string){
+  return ReleaseReconcileResponseSchema.parse(await apiJson("/api/evolution/release-reconcile",{
     method:"POST",
     headers:{"Content-Type":"application/json"},
     body:JSON.stringify({missionId}),
   }));
 }
+
+export const reconcileServerVercelRelease=reconcileServerRelease;

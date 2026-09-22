@@ -1,9 +1,38 @@
 import type {EvolveProject} from "@evolution/contracts";
-import {runServerReleaseReconciliation} from "@evolution/harness";
+import {projectUsesHttpRelease,projectUsesVercelRelease} from "@evolution/core";
+import {runServerHttpReleaseReconciliation,runServerReleaseReconciliation} from "@evolution/harness";
+import {observeHttpTarget} from "./http-target-gateway";
 import {observeVercelReleaseReality} from "./vercel-release";
 import {recordReleaseOutcomeObservation} from "./release-outcome-telemetry";
 
 export async function runServerMissionReleaseReconciliation(project:EvolveProject){
+  if(projectUsesHttpRelease(project)){
+    const outcome=await runServerHttpReleaseReconciliation(project,{
+      observe:({candidate,deploymentId,stableDeploymentId,expectedArtifactHashes,recoveryAction,healthPath})=>observeHttpTarget({
+        projectId:project.id,
+        connectionId:project.targetConnection.connectionId,
+        candidate,
+        deploymentId,
+        stableDeploymentId,
+        expectedArtifactHashes,
+        recoveryAction,
+        healthPath,
+      }),
+    });
+    return{
+      ...outcome,
+      provider:"http" as const,
+      previewReady:outcome.observation?.effectiveAction==="shadow"&&outcome.observation.healthy===true,
+      productionDeploymentId:outcome.project.release.environment==="production"?outcome.project.release.deploymentId:undefined,
+      boundDeploymentId:outcome.project.release.deploymentId,
+      productionHealthReady:outcome.project.release.environment==="production"?outcome.project.release.healthy:undefined,
+      boundHealthReady:outcome.project.release.environment!=="production"?outcome.project.release.healthy:undefined,
+      observationErrors:[] as string[],
+      rollingRelease:undefined,
+    };
+  }
+  if(!projectUsesVercelRelease(project))throw new Error("Mission 未连接受支持的线上 Release Target");
+
   let observed:Awaited<ReturnType<typeof observeVercelReleaseReality>>|undefined;
   const outcome=await runServerReleaseReconciliation(project,{
     observe:async({boundDeploymentId,healthPath})=>{
@@ -21,5 +50,16 @@ export async function runServerMissionReleaseReconciliation(project:EvolveProjec
       console.warn("[outcome-telemetry] release observation completed with warnings",recorded.telemetry.warnings);
     }
   }
-  return outcome;
+  return{
+    ...outcome,
+    provider:"vercel" as const,
+    observedAt:outcome.observation.checkedAt,
+    previewReady:outcome.observation.boundDeployment?.state==="READY",
+    productionDeploymentId:outcome.observation.productionDeployment?.id,
+    boundDeploymentId:outcome.observation.boundDeployment?.id,
+    productionHealthReady:outcome.observation.productionHealth.ready,
+    boundHealthReady:outcome.observation.boundHealth?.ready,
+    observationErrors:outcome.observation.errors,
+    rollingRelease:outcome.observation.rollingRelease,
+  };
 }

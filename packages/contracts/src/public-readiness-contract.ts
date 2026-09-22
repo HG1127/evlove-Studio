@@ -37,6 +37,6 @@ export const PublicReadinessSnapshotSchema=z.object({
     memberDirectory:z.boolean(),
   }),
   connectors:z.object({configured:z.boolean(),fullLifecycle:z.boolean()}),
-  targetProxy:z.object({run:z.boolean(),release:z.boolean()}),
+  targetProxy:z.object({run:z.boolean(),release:z.boolean(),observe:z.boolean().default(false)}),
 });
 export type PublicReadinessSnapshot=z.infer<typeof PublicReadinessSnapshotSchema>;

@@ -1113,14 +1113,15 @@ export async function executeServerControlStep(
 
   if(action==="reconcile-release"){
     const reconcileOutcome=await runServerMissionReleaseReconciliation(mission);
-    const monitor=nextProductionMonitorDelay(reconcileOutcome.project,reconcileOutcome.observation.checkedAt);
+    const monitor=nextProductionMonitorDelay(reconcileOutcome.project,reconcileOutcome.observedAt);
     const previewBindingPending=Boolean(
-      reconcileOutcome.project.release.sourceGitCommitSha
+      reconcileOutcome.provider==="vercel"
+      &&reconcileOutcome.project.release.sourceGitCommitSha
       &&reconcileOutcome.project.release.status==="idle"
       &&reconcileOutcome.project.release.recovery?.status==="pending"
       &&reconcileOutcome.project.release.recovery.action==="shadow"
       &&(!reconcileOutcome.project.release.deploymentId
-        ||reconcileOutcome.observation.boundDeployment?.state!=="READY"),
+        ||reconcileOutcome.previewReady!==true),
     );
     const nextDelayMs=monitor?.delayMs??(previewBindingPending?15_000:undefined);
     await runtime.missions.save(reconcileOutcome.project);
@@ -1130,8 +1131,9 @@ export async function executeServerControlStep(
       jobId:input.controlJobId,
       checkpointId:plan.checkpoint.id,
       type:"ReleaseChanged",
-      source:"vercel-workflow-release-reconcile",
+      source:"workflow-release-reconcile",
       payload:{
+        provider:reconcileOutcome.provider,
         disposition:reconcileOutcome.disposition,
         releaseStatus:reconcileOutcome.project.release.status,
         candidateId:reconcileOutcome.project.release.candidateId,
@@ -1141,12 +1143,12 @@ export async function executeServerControlStep(
         evidenceMode:reconcileOutcome.project.release.evidenceMode,
         observedAt:reconcileOutcome.project.release.observedAt,
         recovery:reconcileOutcome.project.release.recovery,
-        productionDeploymentId:reconcileOutcome.observation.productionDeployment?.id,
-        boundDeploymentId:reconcileOutcome.observation.boundDeployment?.id,
-        productionHealthReady:reconcileOutcome.observation.productionHealth.ready,
-        boundHealthReady:reconcileOutcome.observation.boundHealth?.ready,
-        checkedAt:reconcileOutcome.observation.checkedAt,
-        observationErrors:reconcileOutcome.observation.errors,
+        productionDeploymentId:reconcileOutcome.productionDeploymentId,
+        boundDeploymentId:reconcileOutcome.boundDeploymentId,
+        productionHealthReady:reconcileOutcome.productionHealthReady,
+        boundHealthReady:reconcileOutcome.boundHealthReady,
+        checkedAt:reconcileOutcome.observedAt,
+        observationErrors:reconcileOutcome.observationErrors,
         reason:reconcileOutcome.reason,
         nextObservationDelayMs:nextDelayMs,
         productionTrend:monitor?.trend.status,

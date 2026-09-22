@@ -26,10 +26,29 @@ export const TargetReleaseProxyRequestSchema=z.object({
 export type TargetReleaseProxyRequest=z.infer<typeof TargetReleaseProxyRequestSchema>;
 export const TargetReleaseProxyResponseSchema=ReleaseAdapterResultSchema;
 
+export const TargetObserveProxyRequestSchema=z.object({
+  projectId:z.string().min(1),
+  connectionId:z.string().min(1),
+  candidate:CandidateSchema,
+  deploymentId:z.string().optional(),
+  stableDeploymentId:z.string().optional(),
+  expectedArtifactHashes:z.array(z.object({sourceArtifactId:z.string(),contentHash:z.string()})).default([]),
+  recoveryAction:z.enum(["shadow","canary-5","canary-20","canary-50","promote","rollback"]).optional(),
+  healthPath:z.string().startsWith("/").max(300).optional(),
+});
+export type TargetObserveProxyRequest=z.infer<typeof TargetObserveProxyRequestSchema>;
+export const TargetObserveProxyResponseSchema=ReleaseAdapterResultSchema.extend({
+  evidenceMode:z.literal("live"),
+  effectiveAction:z.enum(["shadow","canary-5","canary-20","canary-50","promote","rollback"]),
+  deploymentId:z.string().min(1),
+  observedAt:z.string().min(1),
+});
+
 export const TargetProxyCapabilitiesSchema=z.object({
   codeReady:z.boolean(),
   runConfigured:z.boolean(),
   releaseConfigured:z.boolean(),
+  observeConfigured:z.boolean().default(false),
   credentialConfigured:z.boolean(),
 });
 export type TargetProxyCapabilities=z.infer<typeof TargetProxyCapabilitiesSchema>;

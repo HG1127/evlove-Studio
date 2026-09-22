@@ -13,20 +13,20 @@ export default defineEventHandler(async(event)=>{
   const ai=serverAiConfigured();
   const dataPlane=serverSupabaseConfigured();
   const secureDataPlane=serverSupabaseSecureConfigured();
-  const releaseWrite=vercelReleaseWriteConfigured();
+  const vercelRelease=vercelReleaseWriteConfigured();
   const gitConfigured=githubTargetConfigured();
   const gitWebhook=githubWebhookConfigured();
   const targetProxy=targetProxyCapabilities();
+  const releaseWrite=vercelRelease||targetProxy.releaseConfigured;
+  const releaseObserve=vercelRelease||targetProxy.observeConfigured;
   const security=getSecurityCapabilities();
   const blockedActions=[
     ...(!ai?[
       ...AI_ACTIONS.map((action)=>({action,reason:"server-ai-not-configured"})),
       {action:"run-campaign",reason:"server-ai-not-configured"},
     ]:[]),
-    ...(!releaseWrite?[
-      {action:"run-release",reason:"vercel-release-credential-required"},
-      {action:"reconcile-release",reason:"vercel-release-credential-required"},
-    ]:[]),
+    ...(!releaseWrite?[{action:"run-release",reason:"online-release-provider-not-configured"}]:[]),
+    ...(!releaseObserve?[{action:"reconcile-release",reason:"online-release-observe-not-configured"}]:[]),
     ...(!dataPlane?[
       {action:"revalidate",reason:"server-data-plane-not-configured"},
       {action:"run-campaign",reason:"server-data-plane-not-configured"},
@@ -34,7 +34,8 @@ export default defineEventHandler(async(event)=>{
   ];
   const configBlocked=[
     ...(!ai?[{capability:"server-ai",reason:"server-ai-not-configured"}]:[]),
-    ...(!releaseWrite?[{capability:"vercel-release-write",reason:"vercel-release-credential-required"}]:[]),
+    ...(!releaseWrite?[{capability:"online-release-write",reason:"configure-vercel-or-http-release"}]:[]),
+    ...(!releaseObserve?[{capability:"online-release-observe",reason:"configure-vercel-or-http-observe"}]:[]),
     ...(!dataPlane?[{capability:"server-data-plane",reason:"supabase-server-config-required"}]:[]),
     ...(dataPlane&&!secureDataPlane?[{capability:"server-data-plane-security",reason:"server-only-supabase-secret-required-for-production"}]:[]),
     ...(!security.productionSafe?[{capability:"rbac-identity",reason:"trusted-signed-actor-required-for-production"}]:[]),
@@ -46,16 +47,17 @@ export default defineEventHandler(async(event)=>{
   ];
   const codeReady=MIGRATION_PENDING_ACTIONS.length===0;
   const offlineFullAuto=codeReady&&ai&&dataPlane;
-  const releaseOrchestrationReady=true;
-  const releaseReconciliationReady=releaseWrite;
-  const onlinePostApprovalAuto=offlineFullAuto&&releaseWrite&&releaseOrchestrationReady&&releaseReconciliationReady;
+  const releaseOrchestrationReady=releaseWrite;
+  const releaseReconciliationReady=releaseObserve;
+  const onlinePostApprovalAuto=offlineFullAuto&&releaseOrchestrationReady&&releaseReconciliationReady;
   const onlineFullAuto=onlinePostApprovalAuto&&externalCapabilityBlocked.length===0;
   const serverNativeActions=[
     ...CONTROL_ACTIONS,
     ...(ai?AI_ACTIONS:[]),
     ...(ai?["campaign-baseline","campaign-experiment","campaign-holdout","campaign-artifact-acceptance"]:[]),
     ...(dataPlane?["campaign-schedule"]:[]),
-    ...(releaseWrite?["run-release","reconcile-release"]:[]),
+    ...(releaseWrite?["run-release"]:[]),
+    ...(releaseObserve?["reconcile-release"]:[]),
   ];
   return EvolutionWorkflowCapabilitiesSchema.parse({
     available:true,
@@ -81,6 +83,7 @@ export default defineEventHandler(async(event)=>{
       targetProxyCodeReady:true,
       targetRunConfigured:targetProxy.runConfigured,
       targetReleaseConfigured:targetProxy.releaseConfigured,
+      targetObserveConfigured:targetProxy.observeConfigured,
       securityCodeReady:true,
       securityConfigured:security.configured,
       securityProductionSafe:security.productionSafe,

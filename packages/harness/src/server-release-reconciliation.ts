@@ -1,5 +1,5 @@
-import type {EvolveProject,VercelReleaseObservation} from "@evolution/contracts";
-import {applyProductionLearningGovernance,currentReleaseCandidate,reconcileReleaseObservation} from "@evolution/core";
+import type {Candidate,EvolveProject,ReleaseAdapterResult,VercelReleaseObservation} from "@evolution/contracts";
+import {applyProductionLearningGovernance,currentReleaseCandidate,expectedReleaseArtifactHashes,reconcileHttpReleaseObservation,reconcileReleaseObservation,type DurableReleaseAction} from "@evolution/core";
 
 export type ServerReleaseReconciliationPorts={
   observe(args:{boundDeploymentId?:string;healthPath?:string}):Promise<VercelReleaseObservation>;
@@ -12,6 +12,71 @@ export type ServerReleaseReconciliationOutcome={
   observation:VercelReleaseObservation;
   reason:string;
 };
+
+export type ServerHttpReleaseReconciliationPorts={
+  observe(args:{
+    candidate:Candidate;
+    deploymentId?:string;
+    stableDeploymentId?:string;
+    expectedArtifactHashes:Array<{sourceArtifactId:string;contentHash:string}>;
+    recoveryAction?:DurableReleaseAction;
+    healthPath?:string;
+  }):Promise<ReleaseAdapterResult>;
+};
+
+export type ServerHttpReleaseReconciliationOutcome={
+  control:"continue"|"stop";
+  project:EvolveProject;
+  disposition:"safe-to-resume"|"terminal-live-decision"|"manual-check";
+  observation?:ReleaseAdapterResult;
+  observedAt:string;
+  reason:string;
+};
+
+export async function runServerHttpReleaseReconciliation(
+  project:EvolveProject,
+  ports:ServerHttpReleaseReconciliationPorts,
+):Promise<ServerHttpReleaseReconciliationOutcome>{
+  const candidate=currentReleaseCandidate(project);
+  if(!candidate)throw new Error("HTTP Release reconcile requires the exact current Candidate");
+  let observation:ReleaseAdapterResult;
+  try{
+    observation=await ports.observe({
+      candidate,
+      deploymentId:project.release.deploymentId,
+      stableDeploymentId:project.release.stableDeploymentId,
+      expectedArtifactHashes:expectedReleaseArtifactHashes(candidate),
+      recoveryAction:project.release.recovery?.action,
+      healthPath:project.releaseTarget?.healthPath,
+    });
+  }catch(error){
+    const observedAt=new Date().toISOString();
+    const reason=`HTTP Observe 未完成：${error instanceof Error?error.message:String(error)}。系统不会自动重放生产写操作。`;
+    return{
+      control:"stop",
+      disposition:"manual-check",
+      observedAt,
+      reason,
+      project:{
+        ...project,
+        stage:"release",
+        release:{...project.release,recovery:{status:"manual-check",action:project.release.recovery?.action,reason,at:project.release.recovery?.at??observedAt,lastObservedAt:observedAt}},
+        campaign:{...project.campaign,status:"paused",stopReason:`[server-release-manual-check] ${reason}`,schedule:{...project.campaign.schedule,enabled:false,nextRunAt:undefined}},
+        updatedAt:observedAt,
+      },
+    };
+  }
+  const result=reconcileHttpReleaseObservation({project,candidate,observation});
+  const observedAt=observation.observedAt??new Date().toISOString();
+  const governed=applyProductionLearningGovernance(result.project,{at:observedAt,now:Date.parse(observedAt)});
+  const manual=result.disposition==="manual-check";
+  const next:EvolveProject=manual?{
+    ...governed,
+    stage:"release",
+    campaign:{...governed.campaign,status:"paused",stopReason:`[server-release-manual-check] ${result.reason}`,schedule:{...governed.campaign.schedule,enabled:false,nextRunAt:undefined}},
+  }:governed;
+  return{control:manual?"stop":"continue",project:next,disposition:result.disposition,observation,observedAt,reason:result.reason};
+}
 
 export async function runServerReleaseReconciliation(
   project:EvolveProject,

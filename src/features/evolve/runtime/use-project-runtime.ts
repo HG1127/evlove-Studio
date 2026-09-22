@@ -65,7 +65,7 @@ import { getProductionRuntime, productionRuntimeMode } from "./production-runtim
 import { shouldUseServerAutoPilot, startServerEvolutionWorkflow } from "./server-workflow-client";
 import { flushProductionMissionSync } from "./production-sync";
 import { classifyRuntimeFailure, retryDelayMs } from "./failure-router";
-import { reconcileServerVercelRelease } from "./server-release-client";
+import { reconcileServerRelease } from "./server-release-client";
 import { withProjectAiProfile } from "../ai/service";
 import { automaticEvidenceKey, ensureAutomaticEvidence } from "./automatic-evidence";
 
@@ -1145,7 +1145,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
 
   const reconcileRelease = useCallback(async () => {
     const missionId=projectRef.current.id;
-    const response=await run("核对线上 Release 状态",()=>reconcileServerVercelRelease(missionId));
+    const response=await run("核对线上 Release 状态",()=>reconcileServerRelease(missionId));
     const persisted=await getProductionRuntime().missions.get(missionId).catch(()=>undefined);
     if(persisted){
       commit(persisted);

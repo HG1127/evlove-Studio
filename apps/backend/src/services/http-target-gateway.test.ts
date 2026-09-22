@@ -1,8 +1,8 @@
 // @vitest-environment node
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
-import {getHttpTargetGatewayCapabilities,releaseHttpTarget,runHttpTarget} from "./http-target-gateway";
+import {getHttpTargetGatewayCapabilities,observeHttpTarget,releaseHttpTarget,runHttpTarget} from "./http-target-gateway";
 
-const KEYS=["EVOLUTION_TARGET_RUN_URL","EVOLUTION_TARGET_RELEASE_URL","EVOLUTION_TARGET_BEARER_TOKEN","EVOLUTION_TARGET_TIMEOUT_MS"] as const;
+const KEYS=["EVOLUTION_TARGET_RUN_URL","EVOLUTION_TARGET_RELEASE_URL","EVOLUTION_TARGET_OBSERVE_URL","EVOLUTION_TARGET_BEARER_TOKEN","EVOLUTION_TARGET_TIMEOUT_MS"] as const;
 const previous=new Map<string,string|undefined>();
 
 describe("server HTTP target gateway",()=>{
@@ -13,7 +13,7 @@ describe("server HTTP target gateway",()=>{
   });
 
   it("is code-ready but fail-closed when no external target endpoint is configured",async()=>{
-    expect(getHttpTargetGatewayCapabilities()).toMatchObject({codeReady:true,runConfigured:false,releaseConfigured:false});
+    expect(getHttpTargetGatewayCapabilities()).toMatchObject({codeReady:true,runConfigured:false,releaseConfigured:false,observeConfigured:false});
     const fetchMock=vi.fn();vi.stubGlobal("fetch",fetchMock);
     await expect(runHttpTarget({
       projectId:"p",connectionId:"c",
@@ -58,5 +58,46 @@ describe("server HTTP target gateway",()=>{
     };
     const result=await releaseHttpTarget({projectId:"p",connectionId:"c",candidate,action:"promote"});
     expect(result.ok).toBe(true);
+  });
+
+  it("proxies a read-only observe receipt with strict live release identity",async()=>{
+    process.env.EVOLUTION_TARGET_OBSERVE_URL="https://runner.internal/observe";
+    process.env.EVOLUTION_TARGET_BEARER_TOKEN="secret-server-token";
+    const fetchMock=vi.fn(async(_input:RequestInfo|URL,init?:RequestInit)=>{
+      expect((init?.headers as Record<string,string>).Authorization).toBe("Bearer secret-server-token");
+      const body=JSON.parse(String(init?.body)) as {candidate:{id:string};recoveryAction?:string;expectedArtifactHashes?:unknown[]};
+      expect(body.candidate.id).toBe("C1");
+      expect(body.recoveryAction).toBe("promote");
+      expect(body.expectedArtifactHashes).toHaveLength(1);
+      return new Response(JSON.stringify({
+        ok:true,trafficPercent:100,note:"production observed",healthy:true,kpis:[],evidenceMode:"live",
+        effectiveAction:"promote",observationStatus:"healthy",deploymentId:"http-candidate",stableDeploymentId:"http-stable",
+        artifactHashes:[{sourceArtifactId:"source",contentHash:"hash-c1"}],
+        environment:"production",observedAt:"2026-09-22T01:10:00Z",sampleSize:2,windowMinutes:1,
+      }),{status:200,headers:{"Content-Type":"application/json"}});
+    });
+    vi.stubGlobal("fetch",fetchMock);
+    const candidate={
+      id:"C1",name:"c",change:"x",patches:[],addressesAdvice:[],riskLevel:"low",risks:[],
+      accuracy:90,evidence:90,riskCoverage:90,costDelta:0,speedDelta:0,safety:"PASS",recommended:true,status:"passed",notes:[],
+      artifactSnapshots:[{id:"s",sourceArtifactId:"source",name:"a.txt",mimeType:"text/plain",content:"new",contentHash:"hash-c1",createdAt:"now"}],
+    };
+    const result=await observeHttpTarget({
+      projectId:"p",connectionId:"c",candidate,deploymentId:"http-candidate",stableDeploymentId:"http-stable",
+      expectedArtifactHashes:[{sourceArtifactId:"source",contentHash:"hash-c1"}],recoveryAction:"promote",healthPath:"/",
+    });
+    expect(result).toMatchObject({evidenceMode:"live",effectiveAction:"promote",deploymentId:"http-candidate"});
+  });
+
+  it("rejects an observe response that is successful HTTP but lacks a live deployment receipt",async()=>{
+    process.env.EVOLUTION_TARGET_OBSERVE_URL="https://runner.internal/observe";
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({
+      ok:true,trafficPercent:100,note:"incomplete",healthy:true,kpis:[],evidenceMode:"simulation",
+    }),{status:200,headers:{"Content-Type":"application/json"}})));
+    const candidate={
+      id:"C1",name:"c",change:"x",patches:[],addressesAdvice:[],riskLevel:"low",risks:[],
+      accuracy:90,evidence:90,riskCoverage:90,costDelta:0,speedDelta:0,safety:"PASS",recommended:true,status:"passed",notes:[],artifactSnapshots:[],
+    };
+    await expect(observeHttpTarget({projectId:"p",connectionId:"c",candidate,expectedArtifactHashes:[]})).rejects.toThrow();
   });
 });

@@ -65,6 +65,7 @@ export default defineEventHandler(async(event)=>{
     &&members.databaseReady
     &&members.activeAdmins>0
     &&(!vault.configured||vault.databaseReady);
+  const targetProxy=targetProxyCapabilities();
   return EvolutionBackendHealthSchema.parse({
     checkedAt:new Date().toISOString(),
     dataPlane,
@@ -74,9 +75,9 @@ export default defineEventHandler(async(event)=>{
     serverAi:{codeReady:true,configured:serverAiConfigured()},
     sandbox:{codeReady:true},
     browser:{codeReady:true},
-    release:{codeReady:true,writeConfigured:vercelReleaseWriteConfigured()},
+    release:{codeReady:true,writeConfigured:vercelReleaseWriteConfigured()||targetProxy.releaseConfigured},
     git:{codeReady:true,configured:githubTargetConfigured(),webhookConfigured:githubWebhookConfigured()},
-    targetProxy:targetProxyCapabilities(),
+    targetProxy,
     security,
     securityGovernance:{
       codeReady:true,

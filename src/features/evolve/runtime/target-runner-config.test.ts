@@ -17,10 +17,17 @@ it("自定义远程地址不会继续保存在浏览器", () => {
   expect(resetRunnerGatewayConfig()).toEqual(builtinRunnerGateway());
 });
 it("Server Proxy 在线但未配置 Run endpoint 不能报告就绪", async () => {
-  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ codeReady:true,runConfigured:false,releaseConfigured:false }) }));
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ codeReady:true,runConfigured:false,releaseConfigured:false,observeConfigured:false }) }));
   const result = await testRunnerGateway(builtinRunnerGateway());
   expect(result.ok).toBe(false);
   expect(result.message).toContain("尚未配置");
+});
+it("Server Proxy 就绪时会明确显示 Release Observe 能力", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ codeReady:true,runConfigured:true,releaseConfigured:true,observeConfigured:true }) }));
+  const result = await testRunnerGateway(builtinRunnerGateway());
+  expect(result.ok).toBe(true);
+  expect(result.message).toContain("Release=READY");
+  expect(result.message).toContain("Observe=READY");
 });
 it("Server Proxy HTTP 错误不能当作连接成功", async () => {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 502, json: async () => ({}) }));

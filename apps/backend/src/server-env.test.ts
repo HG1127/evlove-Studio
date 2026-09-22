@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach,beforeEach,describe,expect,it } from "vitest";
-import { getCapabilityEmbeddingConfig, getServerSupabaseConfig, getVaultEncryptionConfig, serverSupabaseCredentialMode, serverSupabaseSecureConfigured, vaultEncryptionConfigured } from "./server-env";
+import { getCapabilityEmbeddingConfig, getServerSupabaseConfig, getServerTargetProxyConfig, getVaultEncryptionConfig, serverSupabaseCredentialMode, serverSupabaseSecureConfigured, targetProxyCapabilities, vaultEncryptionConfigured } from "./server-env";
 
 const KEYS=[
   "SUPABASE_URL",
@@ -20,6 +20,11 @@ const KEYS=[
   "EVOLUTION_CAPABILITY_EMBEDDING_MODEL",
   "EVOLUTION_CAPABILITY_EMBEDDING_BASE_URL",
   "EVOLUTION_CAPABILITY_EMBEDDING_DIMENSIONS",
+  "EVOLUTION_TARGET_RUN_URL",
+  "EVOLUTION_TARGET_RELEASE_URL",
+  "EVOLUTION_TARGET_OBSERVE_URL",
+  "EVOLUTION_TARGET_BEARER_TOKEN",
+  "EVOLUTION_TARGET_TIMEOUT_MS",
   "EVOLUTION_WORKSPACE_ID",
   "EVOLUTION_VAULT_MASTER_KEY",
   "EVOLUTION_VAULT_KEY_ID",
@@ -85,6 +90,25 @@ describe("server Supabase env",()=>{
       model:"text-embedding-test",
       baseUrl:"https://embed.test/v1",
     });
+  });
+
+  it("reports HTTP Target Run / Release / Observe capabilities independently",()=>{
+    process.env.EVOLUTION_TARGET_RUN_URL="https://runner.test/run";
+    process.env.EVOLUTION_TARGET_RELEASE_URL="https://runner.test/release";
+    process.env.EVOLUTION_TARGET_OBSERVE_URL="https://runner.test/observe";
+    process.env.EVOLUTION_TARGET_BEARER_TOKEN="server-token";
+    expect(getServerTargetProxyConfig()).toMatchObject({
+      runUrl:"https://runner.test/run",
+      releaseUrl:"https://runner.test/release",
+      observeUrl:"https://runner.test/observe",
+      token:"server-token",
+    });
+    expect(targetProxyCapabilities()).toEqual({
+      codeReady:true,runConfigured:true,releaseConfigured:true,observeConfigured:true,credentialConfigured:true,
+    });
+    delete process.env.EVOLUTION_TARGET_OBSERVE_URL;
+    expect(targetProxyCapabilities().observeConfigured).toBe(false);
+    expect(targetProxyCapabilities().releaseConfigured).toBe(true);
   });
 
   it("builds a Vault active key plus historical decrypt key ring without exposing values",()=>{

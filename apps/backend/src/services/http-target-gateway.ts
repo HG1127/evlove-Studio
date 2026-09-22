@@ -1,5 +1,7 @@
 import {
   TargetProxyCapabilitiesSchema,
+  TargetObserveProxyRequestSchema,
+  TargetObserveProxyResponseSchema,
   TargetReleaseProxyRequestSchema,
   TargetReleaseProxyResponseSchema,
   TargetRunProxyRequestSchema,
@@ -43,4 +45,9 @@ export async function runHttpTarget(raw:unknown){
 export async function releaseHttpTarget(raw:unknown){
   const input=TargetReleaseProxyRequestSchema.parse(raw);
   return TargetReleaseProxyResponseSchema.parse(await post(getServerTargetProxyConfig().releaseUrl,input,"Target Release"));
+}
+
+export async function observeHttpTarget(raw:unknown){
+  const input=TargetObserveProxyRequestSchema.parse(raw);
+  return TargetObserveProxyResponseSchema.parse(await post(getServerTargetProxyConfig().observeUrl,input,"Target Observe"));
 }

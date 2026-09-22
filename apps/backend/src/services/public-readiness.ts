@@ -109,6 +109,6 @@ export async function getPublicReadinessSnapshot(){
       configured:Boolean(connectors?.configured),
       fullLifecycle:Boolean(connectors?.fullLifecycleCount),
     },
-    targetProxy:{run:targetProxy.runConfigured,release:targetProxy.releaseConfigured},
+    targetProxy:{run:targetProxy.runConfigured,release:targetProxy.releaseConfigured,observe:targetProxy.observeConfigured},
   });
 }

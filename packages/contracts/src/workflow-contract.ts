@@ -70,6 +70,7 @@ export const EvolutionWorkflowCapabilitiesSchema=z.object({
     targetProxyCodeReady:z.boolean().default(false),
     targetRunConfigured:z.boolean().default(false),
     targetReleaseConfigured:z.boolean().default(false),
+    targetObserveConfigured:z.boolean().default(false),
     securityCodeReady:z.boolean().default(false),
     securityConfigured:z.boolean().default(false),
     securityProductionSafe:z.boolean().default(false),
@@ -116,7 +117,7 @@ export const EvolutionBackendHealthSchema=z.object({
   browser:z.object({codeReady:z.boolean()}),
   release:z.object({codeReady:z.boolean(),writeConfigured:z.boolean()}),
   git:z.object({codeReady:z.boolean(),configured:z.boolean(),webhookConfigured:z.boolean()}),
-  targetProxy:z.object({codeReady:z.boolean(),runConfigured:z.boolean(),releaseConfigured:z.boolean(),credentialConfigured:z.boolean()}),
+  targetProxy:z.object({codeReady:z.boolean(),runConfigured:z.boolean(),releaseConfigured:z.boolean(),observeConfigured:z.boolean().default(false),credentialConfigured:z.boolean()}),
   security:SecurityCapabilitiesSchema,
   securityGovernance:SecurityGovernanceHealthSchema,
 });

@@ -76,6 +76,7 @@ export function applyReleaseResultToProject(args:{
   requestedAction:DurableReleaseAction;
   result:ReleaseAdapterResult;
   at?:string;
+  observationSource?:"release-action"|"reconcile";
 }):EvolveProject{
   const at=args.at??new Date().toISOString();
   const effective=args.result.effectiveAction??args.requestedAction;
@@ -98,10 +99,13 @@ export function applyReleaseResultToProject(args:{
     if(boundDeploymentId&&args.result.deploymentId!==boundDeploymentId){
       throw new Error(`${effective} receipt deploymentId 与绑定 Candidate Deployment 不一致`);
     }
+  }else if(args.project.release.stableDeploymentId
+    &&args.result.deploymentId!==args.project.release.stableDeploymentId){
+    throw new Error("rollback receipt deploymentId 与 stable Deployment 不一致");
   }
   const durableAction=effective as DurableReleaseAction;
   const observation= {
-    source:"release-action" as const,
+    source:args.observationSource??"release-action",
     action:durableAction,
     at:args.result.observedAt,
     candidateId:args.candidate.id,
@@ -155,14 +159,15 @@ export function applyReleaseResultToProject(args:{
     &&args.result.healthy===true
     &&args.result.observationStatus==="healthy";
   const settledHealthy=args.result.ok&&args.result.healthy===true;
+  const newlyPromoted=successfulPromote&&args.project.release.status!=="promoted";
   const settledObservation=args.result.ok
     ?args.result.observationStatus
     :args.result.observationStatus==="observing"?"observing":"unhealthy";
   return {
     ...args.project,
-    version:successfulPromote?`V${Number(args.project.version.replace(/\D/g,"")||"12")+1}`:args.project.version,
-    appliedPatches:successfulPromote?[...args.project.appliedPatches,...args.candidate.patches]:args.project.appliedPatches,
-    versions:successfulPromote
+    version:newlyPromoted?`V${Number(args.project.version.replace(/\D/g,"")||"12")+1}`:args.project.version,
+    appliedPatches:newlyPromoted?[...args.project.appliedPatches,...args.candidate.patches]:args.project.appliedPatches,
+    versions:newlyPromoted
       ?args.project.versions.map((version)=>version.id===args.project.currentVersionId?{...version,releasedAt:at}:version)
       :args.project.versions,
     release:{

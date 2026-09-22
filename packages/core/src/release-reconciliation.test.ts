@@ -1,7 +1,7 @@
 import {describe,expect,it} from "vitest";
-import type {Candidate,EvolveProject,VercelReleaseObservation} from "@evolution/contracts";
+import type {Candidate,EvolveProject,ReleaseAdapterResult,VercelReleaseObservation} from "@evolution/contracts";
 import {nextDurableReleaseAction} from "./release-orchestration";
-import {reconcileReleaseObservation} from "./release-reconciliation";
+import {reconcileHttpReleaseObservation,reconcileReleaseObservation} from "./release-reconciliation";
 
 function fixture(){
   const candidate={id:"C1",name:"candidate",change:"x",patches:[],artifactSnapshots:[{id:"s",sourceArtifactId:"source",name:"a.txt",mimeType:"text/plain",content:"new",contentHash:"hash-c1",createdAt:"now"}]} as unknown as Candidate;
@@ -30,7 +30,81 @@ function observation(productionId:string,productionReady=true,boundReady=true):V
   };
 }
 
+function httpFixture(){
+  const x=fixture();
+  x.project.targetConnection={adapter:"http",connectionId:"http-release",status:"connected",label:"HTTP Target"};
+  x.project.releaseTarget={provider:"http",mode:"preview-promote",status:"connected",label:"HTTP Release",healthPath:"/"};
+  x.project.release={...x.project.release,deploymentId:"http-candidate",stableDeploymentId:"http-stable"};
+  return x;
+}
+
+function httpObserved(action:"shadow"|"promote"|"rollback",at="2026-09-22T01:10:00Z",deploymentId=action==="rollback"?"http-stable":"http-candidate"):ReleaseAdapterResult{
+  return{
+    ok:true,trafficPercent:action==="promote"?100:0,note:`observed ${action}`,healthy:true,kpis:[],evidenceMode:"live",
+    effectiveAction:action,observationStatus:"healthy",deploymentId,stableDeploymentId:"http-stable",
+    artifactHashes:action==="rollback"?undefined:[{sourceArtifactId:"source",contentHash:"hash-c1"}],
+    environment:action==="shadow"?"preview":"production",observedAt:at,sampleSize:2,windowMinutes:1,
+  };
+}
+
 describe("release reconciliation",()=>{
+  it("settles an uncertain HTTP promote from a read-only live receipt",()=>{
+    const x=httpFixture();
+    const result=reconcileHttpReleaseObservation({project:x.project,candidate:x.candidate,observation:httpObserved("promote")});
+    expect(result.disposition).toBe("terminal-live-decision");
+    expect(result.project.release).toMatchObject({
+      status:"promoted",deploymentId:"http-candidate",environment:"production",healthy:true,observationStatus:"healthy",
+    });
+    expect(result.project.release.observations?.at(-1)?.source).toBe("reconcile");
+    expect(result.project.version).toBe("V13");
+  });
+
+  it("does not re-apply a promoted HTTP Candidate when a later read-only observation refreshes Production health",()=>{
+    const x=httpFixture();
+    (x.candidate as unknown as {patches:string[]}).patches=["patch-new"];
+    x.project.candidates=[x.candidate];
+    const first=reconcileHttpReleaseObservation({project:x.project,candidate:x.candidate,observation:httpObserved("promote","2026-09-22T01:10:00Z")});
+    expect(first.project.version).toBe("V13");
+    expect(first.project.appliedPatches).toHaveLength(1);
+    const second=reconcileHttpReleaseObservation({project:first.project,candidate:x.candidate,observation:httpObserved("promote","2026-09-22T01:20:00Z")});
+    expect(second.project.version).toBe("V13");
+    expect(second.project.appliedPatches).toHaveLength(1);
+    expect(second.project.release.observations?.filter((item)=>item.source==="reconcile")).toHaveLength(2);
+  });
+
+  it("fails closed when HTTP Observe claims another Candidate deployment",()=>{
+    const x=httpFixture();
+    const result=reconcileHttpReleaseObservation({
+      project:x.project,candidate:x.candidate,observation:httpObserved("promote","2026-09-22T01:10:00Z","http-other"),
+    });
+    expect(result.disposition).toBe("manual-check");
+    expect(result.project.release.recovery?.status).toBe("manual-check");
+    expect(result.reason).toContain("deploymentId");
+  });
+
+  it("fails closed when HTTP Observe returns an artifact hash for another Candidate snapshot",()=>{
+    const x=httpFixture();
+    const observed={...httpObserved("promote"),artifactHashes:[{sourceArtifactId:"source",contentHash:"wrong"}]};
+    const result=reconcileHttpReleaseObservation({project:x.project,candidate:x.candidate,observation:observed});
+    expect(result.disposition).toBe("manual-check");
+    expect(result.reason).toContain("Artifact Hash");
+  });
+
+  it("keeps an explicit rollback recovery intent when Observe proves the rollback did not take effect",()=>{
+    const x=httpFixture();
+    x.project.release={
+      ...x.project.release,
+      status:"promoted",
+      trafficPercent:100,
+      environment:"production",
+      recovery:{status:"pending",action:"rollback",reason:"rollback response lost",at:"2026-09-22T01:00:00Z"},
+    };
+    const result=reconcileHttpReleaseObservation({project:x.project,candidate:x.candidate,observation:httpObserved("promote")});
+    expect(result.disposition).toBe("safe-to-resume");
+    expect(result.project.release.recovery).toMatchObject({status:"reconciled",action:"rollback"});
+    expect(nextDurableReleaseAction(result.project)).toBe("rollback");
+  });
+
   it("recovers a Promote that succeeded after the process lost its receipt",()=>{
     const x=fixture();
     const result=reconcileReleaseObservation({project:x.project,candidate:x.candidate,observation:observation("dpl_candidate")});
