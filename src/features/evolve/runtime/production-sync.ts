@@ -1,4 +1,5 @@
 import {MissionRevisionConflictError} from "@evolution/adapters";
+import type {EvolutionJob} from "@evolution/contracts";
 import { cacheLocalEvolutionEvent, listPendingLocalEvolutionEvents, markLocalEvolutionEventSynced } from "./event-contract";
 import { getLocalProject, listLocalProjects, saveLocalProject, deleteLocalProject } from "./local-store";
 import { cacheRemoteEvolutionJob, localProductionPorts } from "./local-production-adapters";
@@ -21,6 +22,28 @@ let knownRemoteIds=new Set<string>();
 let missionConflicts=new Set<string>();
 let realtimeStatus="disabled";
 let lastError:string|undefined;
+
+const TERMINAL_JOB_STATUSES=new Set<EvolutionJob["status"]>(["completed","partial","failed","cancelled"]);
+
+function remoteJobWins(remote:EvolutionJob,local?:EvolutionJob){
+  if(!local)return true;
+  if(remote.generation!==local.generation)return remote.generation>local.generation;
+  if(TERMINAL_JOB_STATUSES.has(remote.status))return true;
+  if(TERMINAL_JOB_STATUSES.has(local.status))return false;
+  if((remote.status==="running"||remote.status==="waiting")&&local.status==="queued")return true;
+  if((local.status==="running"||local.status==="waiting")&&remote.status==="queued")return false;
+  return remote.updatedAt>=local.updatedAt;
+}
+
+function shouldPushLocalJob(local:EvolutionJob,remote?:EvolutionJob){
+  if(!remote)return true;
+  if(local.generation!==remote.generation)return local.generation>remote.generation;
+  if(TERMINAL_JOB_STATUSES.has(remote.status))return false;
+  if(TERMINAL_JOB_STATUSES.has(local.status))return true;
+  if((remote.status==="running"||remote.status==="waiting")&&local.status==="queued")return false;
+  if((local.status==="running"||local.status==="waiting")&&remote.status==="queued")return true;
+  return local.updatedAt>remote.updatedAt;
+}
 
 function withRemoteProjection(fn:()=>void){
   applyingRemote=true;
@@ -86,10 +109,7 @@ async function pushLocalJobs(remoteJobsInput?:Awaited<ReturnType<typeof localPro
   const localJobs=localJobsInput??await localProductionPorts.jobs.list();
   const remoteJobs=remoteJobsInput??await remote.jobs.list();
   const remoteById=new Map(remoteJobs.map((job)=>[job.id,job]));
-  const newer=localJobs.filter((job)=>{
-    const current=remoteById.get(job.id);
-    return !current||job.updatedAt>current.updatedAt;
-  });
+  const newer=localJobs.filter((job)=>shouldPushLocalJob(job,remoteById.get(job.id)));
   await Promise.all(newer.map((job)=>remote.jobs.put(job)));
 }
 
@@ -167,7 +187,7 @@ async function applyRemoteJobsAndEvents(jobs:Awaited<ReturnType<typeof localProd
   withRemoteProjection(()=>{
     for(const job of jobs){
       const current=localById.get(job.id);
-      if(!current||job.updatedAt>=current.updatedAt)cacheRemoteEvolutionJob(job);
+      if(remoteJobWins(job,current))cacheRemoteEvolutionJob(job);
     }
     for(const event of [...events].reverse())cacheLocalEvolutionEvent(event);
   });
@@ -216,7 +236,7 @@ async function pollHttpProjection(){
       const localJobsById=new Map(localJobsBefore.map((job)=>[job.id,job]));
       for(const job of jobs){
         const current=localJobsById.get(job.id);
-        if(!current||job.updatedAt>=current.updatedAt)cacheRemoteEvolutionJob(job);
+        if(remoteJobWins(job,current))cacheRemoteEvolutionJob(job);
       }
       for(const event of [...events].reverse())cacheLocalEvolutionEvent(event);
       knownRemoteIds=remoteIds;

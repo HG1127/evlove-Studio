@@ -56,8 +56,23 @@ describe("Supabase production security invariants",()=>{
     expect(tailSql).toContain("grant execute on function public.delete_mission_if_revision(text,bigint)");
   });
 
+  it("enforces monotonic Job generations, terminal states and generation-bound cancel",()=>{
+    expect(tailSql).toContain("create or replace function public.put_evolution_job_monotonic(p_job jsonb)");
+    expect(tailSql).toContain("create or replace function public.cancel_evolution_job_generation(");
+    expect(tailSql).toContain("pg_advisory_xact_lock(hashtextextended('job:' || v_id, 0))");
+    expect(tailSql).toContain("v_generation < v_current.generation");
+    expect(tailSql).toContain("terminal-immutable");
+    expect(tailSql).toContain("terminal-idempotent");
+    expect(tailSql).toContain("state-regression");
+    expect(tailSql).toContain("v_current.generation <> p_expected_generation");
+    expect(tailSql).toContain("grant execute on function public.put_evolution_job_monotonic(jsonb) to service_role;");
+    expect(tailSql).toContain("grant execute on function public.cancel_evolution_job_generation(text,integer,timestamptz) to service_role;");
+  });
+
   it("removes PUBLIC execution from every externally callable SECURITY DEFINER RPC",()=>{
     const requiredRpcRevokes=[
+      "public.put_evolution_job_monotonic(",
+      "public.cancel_evolution_job_generation(",
       "public.compare_and_swap_mission(",
       "public.delete_mission_if_revision(",
       "public.append_evidence_ledger(",

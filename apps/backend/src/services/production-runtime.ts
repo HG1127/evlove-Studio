@@ -25,19 +25,6 @@ function rowMissionEnvelope(row:JsonRecord):MissionEnvelope{
     updatedAt:row.updated_at,
   });
 }
-function jobRow(job:EvolutionJob){
-  const value=EvolutionJobSchema.parse(job);
-  return {
-    id:value.id,mission_id:value.missionId??null,schema_version:value.schemaVersion,
-    type:value.type,status:value.status,label:value.label,idempotency_key:value.idempotencyKey,
-    generation:value.generation,attempts:value.attempts,priority:value.priority,
-    checkpoint_id:value.checkpointId??null,input_ref:value.inputRef??null,output_ref:value.outputRef??null,
-    metadata:value.metadata??{},progress:value.progress??null,error:value.error??null,created_at:value.createdAt,
-    started_at:value.startedAt??null,heartbeat_at:value.heartbeatAt??null,
-    finished_at:value.finishedAt??null,updated_at:value.updatedAt,
-  };
-}
-
 function rowJob(row:JsonRecord):EvolutionJob{
   return EvolutionJobSchema.parse({
     schemaVersion:row.schema_version,id:row.id,missionId:row.mission_id??undefined,
@@ -95,6 +82,26 @@ function createRestClient(){
   return {request};
 }
 
+export class JobStateConflictError extends Error{
+  readonly code="JOB_STATE_CONFLICT";
+  readonly jobId:string;
+  readonly reason:string;
+  readonly current?:EvolutionJob;
+  constructor(jobId:string,reason:string,current?:EvolutionJob){
+    super(`Job ${jobId} write rejected: ${reason}`);
+    this.name="JobStateConflictError";
+    this.jobId=jobId;
+    this.reason=reason;
+    this.current=current;
+  }
+}
+
+export function isBenignJobBookkeepingConflict(error:unknown,generation:number){
+  return error instanceof JobStateConflictError
+    &&error.current?.generation===generation
+    &&["state-regression","terminal-immutable","older-update"].includes(error.reason);
+}
+
 export class MissionRevisionConflictError extends Error{
   readonly code="MISSION_REVISION_CONFLICT";
   readonly missionId:string;
@@ -112,6 +119,38 @@ export class MissionRevisionConflictError extends Error{
 function revisionValue(value:unknown){
   const parsed=Number(value);
   return Number.isSafeInteger(parsed)&&parsed>=0?parsed:undefined;
+}
+
+function rpcJob(value:unknown){
+  if(!value||typeof value!=="object"||Array.isArray(value))return undefined;
+  return rowJob(value as JsonRecord);
+}
+
+async function putServerJobMonotonic(request:ReturnType<typeof createRestClient>["request"],jobInput:EvolutionJob){
+  const job=EvolutionJobSchema.parse(jobInput);
+  const rows=await request("rpc/put_evolution_job_monotonic",{
+    method:"POST",body:JSON.stringify({p_job:job}),
+  }) as Array<{applied?:unknown;reason?:unknown;job?:unknown}>;
+  const result=rows?.[0];
+  const current=rpcJob(result?.job);
+  if(result?.applied===true&&current)return current;
+  throw new JobStateConflictError(job.id,typeof result?.reason==="string"?result.reason:"unknown",current);
+}
+
+async function cancelServerJobGeneration(
+  request:ReturnType<typeof createRestClient>["request"],
+  id:string,
+  expectedGeneration:number,
+){
+  const at=new Date().toISOString();
+  const rows=await request("rpc/cancel_evolution_job_generation",{
+    method:"POST",body:JSON.stringify({p_id:id,p_expected_generation:expectedGeneration,p_at:at}),
+  }) as Array<{applied?:unknown;reason?:unknown;job?:unknown}>;
+  const result=rows?.[0];
+  const current=rpcJob(result?.job);
+  if(result?.applied===true&&current)return current;
+  if(result?.reason==="already-terminal"&&current)return current;
+  throw new JobStateConflictError(id,typeof result?.reason==="string"?result.reason:"unknown",current);
 }
 
 export async function listServerMissionEnvelopes(){
@@ -169,6 +208,7 @@ export function getServerProductionRuntime():ServerControlRuntime{
   // between concurrent callers, or one caller could accidentally advance another's CAS token.
   const {request}=createRestClient();
   const missionRevisions=new Map<string,number>();
+  const jobGenerations=new Map<string,number>();
 
   return {
     missions:{
@@ -203,21 +243,32 @@ export function getServerProductionRuntime():ServerControlRuntime{
       list:async(missionId)=>{
         const filter=missionId?"&mission_id=eq."+encodeURIComponent(missionId):"";
         const rows=await request("jobs?select=*&order=updated_at.desc"+filter) as JsonRecord[];
-        return (rows??[]).map(rowJob);
+        const jobs=(rows??[]).map(rowJob);
+        for(const job of jobs)jobGenerations.set(job.id,job.generation);
+        return jobs;
       },
       get:async(id)=>{
         const rows=await request("jobs?id=eq."+encodeURIComponent(id)+"&select=*&limit=1") as JsonRecord[];
-        return rows?.[0]?rowJob(rows[0]):undefined;
+        if(!rows?.[0]){jobGenerations.delete(id);return undefined;}
+        const job=rowJob(rows[0]);
+        jobGenerations.set(id,job.generation);
+        return job;
       },
       put:async(job)=>{
-        await request("jobs?on_conflict=id",{method:"POST",headers:{Prefer:"resolution=merge-duplicates,return=minimal"},body:JSON.stringify(jobRow(job))});
+        const saved=await putServerJobMonotonic(request,job);
+        jobGenerations.set(saved.id,saved.generation);
       },
       cancel:async(id)=>{
-        const now=new Date().toISOString();
-        await request("jobs?id=eq."+encodeURIComponent(id),{
-          method:"PATCH",headers:{Prefer:"return=minimal"},
-          body:JSON.stringify({status:"cancelled",finished_at:now,updated_at:now}),
-        });
+        let generation=jobGenerations.get(id);
+        if(generation===undefined){
+          const rows=await request("jobs?id=eq."+encodeURIComponent(id)+"&select=*&limit=1") as JsonRecord[];
+          if(!rows?.[0])throw new JobStateConflictError(id,"missing");
+          const current=rowJob(rows[0]);
+          generation=current.generation;
+          jobGenerations.set(id,generation);
+        }
+        const saved=await cancelServerJobGeneration(request,id,generation);
+        jobGenerations.set(id,saved.generation);
       },
     },
     events:{

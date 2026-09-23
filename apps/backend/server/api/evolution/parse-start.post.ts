@@ -9,7 +9,11 @@ import {
   SourceParseWorkflowInputSchema,
 } from "@evolution/contracts";
 import {getServerArtifactStore} from "../../../src/services/artifact-runtime";
-import {getServerProductionRuntime} from "../../../src/services/production-runtime";
+import {
+  getServerProductionRuntime,
+  isBenignJobBookkeepingConflict,
+  JobStateConflictError,
+} from "../../../src/services/production-runtime";
 import {serverSupabaseConfigured} from "../../../src/server-env";
 import {sourceParseWorkflow} from "../../../../../workflows/source-parse";
 import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
@@ -68,7 +72,7 @@ export default defineEventHandler(async(event)=>{
   });
   const bytes=Uint8Array.from(file.data);
   await artifacts.put(inputRef,new Blob([bytes.buffer],{type:input.mimeType}));
-  await runtime.jobs.put(EvolutionJobSchema.parse({
+  const queuedJob=EvolutionJobSchema.parse({
     schemaVersion:PRODUCTION_SCHEMA_VERSIONS.job,id:jobId,type:"parse",status:"queued",
     label:`Parse ${input.name}`,idempotencyKey,
     generation:(existing?.generation??0)+1,attempts:existing?.attempts??0,priority:80,inputRef,outputRef,
@@ -82,22 +86,65 @@ export default defineEventHandler(async(event)=>{
       lastModified,
     },
     progress:{percent:0,detail:"等待 Durable Parse Workflow"},createdAt:requestedAt,updatedAt:requestedAt,
-  }));
+  });
   try{
-    const run=await start(sourceParseWorkflow,[input]);
-    const queued=await runtime.jobs.get(jobId);
-    if(queued)await runtime.jobs.put(EvolutionJobSchema.parse({
-      ...queued,
-      metadata:{...(queued.metadata??{}),runId:run.runId},
-      updatedAt:new Date().toISOString(),
-    }));
-    return SourceParseStartResponseSchema.parse({jobId,runId:run.runId,artifactId,status:"queued"});
+    await runtime.jobs.put(queuedJob);
+  }catch(error){
+    if(error instanceof JobStateConflictError&&error.reason==="idempotency-conflict"&&error.current?.idempotencyKey===idempotencyKey){
+      const current=error.current;
+      if(["queued","running","waiting","completed"].includes(current.status)){
+        return SourceParseStartResponseSchema.parse({
+          jobId:current.id,
+          runId:typeof current.metadata?.runId==="string"?current.metadata.runId:`existing-${current.id}`,
+          artifactId,
+          status:current.status,
+          reused:true,
+        });
+      }
+      throw createError({
+        statusCode:409,
+        statusMessage:"同一 Parse 请求已有终态记录，请刷新后重试",
+        data:{code:error.code,jobId:current.id,status:current.status,generation:current.generation},
+      });
+    }
+    throw error;
+  }
+  let run;
+  try{
+    run=await start(sourceParseWorkflow,[input]);
   }catch(error){
     const message=error instanceof Error?error.message:String(error);
     const current=await runtime.jobs.get(jobId);
-    if(current)await runtime.jobs.put(EvolutionJobSchema.parse({
-      ...current,status:"failed",error:message,finishedAt:new Date().toISOString(),updatedAt:new Date().toISOString(),
-    }));
+    if(current){
+      const finishedAt=new Date().toISOString();
+      await runtime.jobs.put(EvolutionJobSchema.parse({
+        ...current,status:"failed",error:message,finishedAt,updatedAt:finishedAt,
+      })).catch((writeError)=>{
+        if(!isBenignJobBookkeepingConflict(writeError,current.generation))throw writeError;
+      });
+    }
     throw createError({statusCode:500,statusMessage:"Parse Workflow 启动失败",data:{message}});
   }
+
+  const queued=await runtime.jobs.get(jobId);
+  if(queued){
+    try{
+      await runtime.jobs.put(EvolutionJobSchema.parse({
+        ...queued,
+        metadata:{...(queued.metadata??{}),runId:run.runId},
+        updatedAt:new Date().toISOString(),
+      }));
+    }catch(error){
+      if(!isBenignJobBookkeepingConflict(error,queued.generation)){
+        if(error instanceof JobStateConflictError){
+          throw createError({
+            statusCode:409,statusMessage:error.message,
+            data:{code:error.code,jobId:error.jobId,reason:error.reason,current:error.current},
+          });
+        }
+        throw error;
+      }
+    }
+  }
+  return SourceParseStartResponseSchema.parse({jobId,runId:run.runId,artifactId,status:"queued"});
 });

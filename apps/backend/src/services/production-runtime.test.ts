@@ -1,8 +1,10 @@
 // @vitest-environment node
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
 import {demoProject} from "../../../../src/features/evolve/data/mock-project";
+import {EvolutionJobSchema,type EvolutionJob} from "@evolution/contracts";
 import {
   getServerProductionRuntime,
+  JobStateConflictError,
   MissionRevisionConflictError,
   resetServerProductionRuntime,
 } from "./production-runtime";
@@ -20,6 +22,25 @@ function missionRow(revision:number,payload=demoProject){
     payload,
     created_at:at,
     updated_at:payload.updatedAt,
+  };
+}
+
+const baseJob=EvolutionJobSchema.parse({
+  schemaVersion:"job-v1",id:"job-monotonic",missionId:demoProject.id,type:"campaign",
+  status:"running",label:"Monotonic Job",idempotencyKey:"job-monotonic-key",
+  generation:3,attempts:3,priority:70,metadata:{scope:"test"},
+  createdAt:at,startedAt:at,updatedAt:at,
+});
+
+function jobRow(job:EvolutionJob=baseJob){
+  return {
+    id:job.id,mission_id:job.missionId??null,schema_version:job.schemaVersion,
+    type:job.type,status:job.status,label:job.label,idempotency_key:job.idempotencyKey,
+    generation:job.generation,attempts:job.attempts,priority:job.priority,
+    checkpoint_id:job.checkpointId??null,input_ref:job.inputRef??null,output_ref:job.outputRef??null,
+    metadata:job.metadata??{},progress:job.progress??null,error:job.error??null,
+    created_at:job.createdAt,started_at:job.startedAt??null,heartbeat_at:job.heartbeatAt??null,
+    finished_at:job.finishedAt??null,updated_at:job.updatedAt,
   };
 }
 
@@ -114,6 +135,77 @@ describe("server Mission revision CAS",()=>{
         currentRevision:6,
       } satisfies Partial<MissionRevisionConflictError>);
     expect(attempted).toEqual([5,5]);
+  });
+
+  it("uses the monotonic Job RPC and rejects terminal-state regression",async()=>{
+    let call=0;
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
+      const url=String(input);
+      if(url.endsWith("/rest/v1/rpc/put_evolution_job_monotonic")){
+        const body=JSON.parse(String(init?.body??"{}")) as {p_job:EvolutionJob};
+        expect(body.p_job.generation).toBe(3);
+        call+=1;
+        if(call===1){
+          return new Response(JSON.stringify([{
+            applied:true,reason:"updated",job:jobRow(body.p_job),
+          }]),{status:200});
+        }
+        const completed=EvolutionJobSchema.parse({
+          ...baseJob,status:"completed",finishedAt:"2026-09-23T00:05:00.000Z",updatedAt:"2026-09-23T00:05:00.000Z",
+        });
+        return new Response(JSON.stringify([{
+          applied:false,reason:"terminal-immutable",job:jobRow(completed),
+        }]),{status:200});
+      }
+      throw new Error("unexpected request "+url);
+    }));
+
+    const runtime=getServerProductionRuntime();
+    await runtime.jobs.put(baseJob);
+    const error=await runtime.jobs.put({...baseJob,updatedAt:"2026-09-23T00:06:00.000Z"}).catch((cause)=>cause);
+    expect(error).toBeInstanceOf(JobStateConflictError);
+    expect(error).toMatchObject({
+      name:"JobStateConflictError",code:"JOB_STATE_CONFLICT",reason:"terminal-immutable",
+      current:{status:"completed",generation:3},
+    });
+  });
+
+  it("binds cancel to the observed Job generation and rejects a stale cancel",async()=>{
+    let cancelCall=0;
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
+      const url=String(input);
+      if(url.includes("/rest/v1/jobs?id=eq.job-monotonic&select=*&limit=1")){
+        return new Response(JSON.stringify([jobRow(baseJob)]),{status:200});
+      }
+      if(url.endsWith("/rest/v1/rpc/cancel_evolution_job_generation")){
+        const body=JSON.parse(String(init?.body??"{}")) as Record<string,unknown>;
+        expect(body.p_expected_generation).toBe(3);
+        cancelCall+=1;
+        if(cancelCall===1){
+          const cancelled=EvolutionJobSchema.parse({
+            ...baseJob,status:"cancelled",finishedAt:"2026-09-23T00:04:00.000Z",updatedAt:"2026-09-23T00:04:00.000Z",
+          });
+          return new Response(JSON.stringify([{applied:true,reason:"cancelled",job:jobRow(cancelled)}]),{status:200});
+        }
+        const retry=EvolutionJobSchema.parse({
+          ...baseJob,status:"running",generation:4,attempts:4,updatedAt:"2026-09-23T00:05:00.000Z",
+        });
+        return new Response(JSON.stringify([{applied:false,reason:"generation-conflict",job:jobRow(retry)}]),{status:200});
+      }
+      throw new Error("unexpected request "+url);
+    }));
+
+    const runtimeA=getServerProductionRuntime();
+    await runtimeA.jobs.get(baseJob.id);
+    await runtimeA.jobs.cancel(baseJob.id);
+
+    const runtimeB=getServerProductionRuntime();
+    await runtimeB.jobs.get(baseJob.id);
+    const error=await runtimeB.jobs.cancel(baseJob.id).catch((cause)=>cause);
+    expect(error).toBeInstanceOf(JobStateConflictError);
+    expect(error).toMatchObject({
+      name:"JobStateConflictError",reason:"generation-conflict",current:{generation:4,status:"running"},
+    });
   });
 
   it("rejects a stale server worker instead of overwriting the current Mission",async()=>{

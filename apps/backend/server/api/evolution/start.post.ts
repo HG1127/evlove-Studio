@@ -8,7 +8,12 @@ import {
   PRODUCTION_SCHEMA_VERSIONS,
   type EvolutionWorkflowStartResponse,
 } from "@evolution/contracts";
-import { getServerProductionRuntime } from "../../../src/services/production-runtime";
+import {
+  getServerProductionRuntime,
+  isBenignJobBookkeepingConflict,
+  JobStateConflictError,
+  MissionRevisionConflictError,
+} from "../../../src/services/production-runtime";
 import { evolutionMissionWorkflow } from "../../../../../workflows/evolution-mission";
 import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 
@@ -85,41 +90,20 @@ export default defineEventHandler(async(event)=>{
     await runtime.missions.save(mission);
   }
 
+  let run;
   try{
-    const run=await start(evolutionMissionWorkflow,[input]);
-    const queued=await runtime.jobs.get(controlJobId);
-    if(queued)await runtime.jobs.put(EvolutionJobSchema.parse({
-      ...queued,
-      outputRef:run.runId,
-      updatedAt:new Date().toISOString(),
-    }));
-    if(scheduledFor){
-      const currentMission=await runtime.missions.get(mission.id);
-      if(currentMission?.campaign.schedule.durableJobId===controlJobId&&currentMission.campaign.schedule.durableScheduledFor===scheduledFor){
-        await runtime.missions.save({
-          ...currentMission,
-          campaign:{
-            ...currentMission.campaign,
-            schedule:{...currentMission.campaign.schedule,durableRunId:run.runId},
-          },
-          updatedAt:new Date().toISOString(),
-        });
-      }
-    }
-    const response:EvolutionWorkflowStartResponse={
-      missionId:mission.id,
-      controlJobId,
-      runId:run.runId,
-      status:"queued",
-      ...(scheduledFor?{scheduledFor}:{}),
-    };
-    return response;
+    run=await start(evolutionMissionWorkflow,[input]);
   }catch(error){
     const message=error instanceof Error?error.message:String(error);
     const current=await runtime.jobs.get(controlJobId);
-    if(current)await runtime.jobs.put(EvolutionJobSchema.parse({
-      ...current,status:"failed",error:message,finishedAt:new Date().toISOString(),updatedAt:new Date().toISOString(),
-    }));
+    if(current){
+      const finishedAt=new Date().toISOString();
+      await runtime.jobs.put(EvolutionJobSchema.parse({
+        ...current,status:"failed",error:message,finishedAt,updatedAt:finishedAt,
+      })).catch((writeError)=>{
+        if(!isBenignJobBookkeepingConflict(writeError,current.generation))throw writeError;
+      });
+    }
     if(scheduledFor){
       const currentMission=await runtime.missions.get(mission.id);
       if(currentMission?.campaign.schedule.durableJobId===controlJobId){
@@ -131,10 +115,62 @@ export default defineEventHandler(async(event)=>{
           ...currentMission,
           campaign:{...currentMission.campaign,schedule},
           updatedAt:new Date().toISOString(),
+        }).catch((writeError)=>{
+          if(!(writeError instanceof MissionRevisionConflictError))throw writeError;
         });
       }
     }
     setResponseStatus(event,500);
     return {error:"Workflow 启动失败",message};
   }
+
+  const queued=await runtime.jobs.get(controlJobId);
+  if(queued){
+    try{
+      await runtime.jobs.put(EvolutionJobSchema.parse({
+        ...queued,
+        outputRef:run.runId,
+        updatedAt:new Date().toISOString(),
+      }));
+    }catch(error){
+      if(!isBenignJobBookkeepingConflict(error,queued.generation)){
+        if(error instanceof JobStateConflictError){
+          setResponseStatus(event,409);
+          return {error:"Workflow 已启动，但 Job bookkeeping 发生并发冲突",message:error.message,runId:run.runId};
+        }
+        throw error;
+      }
+    }
+  }
+
+  if(scheduledFor){
+    for(let attempt=0;attempt<2;attempt++){
+      const currentMission=await runtime.missions.get(mission.id);
+      if(currentMission?.campaign.schedule.durableJobId!==controlJobId||currentMission.campaign.schedule.durableScheduledFor!==scheduledFor)break;
+      try{
+        await runtime.missions.save({
+          ...currentMission,
+          campaign:{
+            ...currentMission.campaign,
+            schedule:{...currentMission.campaign.schedule,durableRunId:run.runId},
+          },
+          updatedAt:new Date().toISOString(),
+        });
+        break;
+      }catch(error){
+        if(error instanceof MissionRevisionConflictError&&attempt===0)continue;
+        if(error instanceof MissionRevisionConflictError)break;
+        throw error;
+      }
+    }
+  }
+
+  const response:EvolutionWorkflowStartResponse={
+    missionId:mission.id,
+    controlJobId,
+    runId:run.runId,
+    status:"queued",
+    ...(scheduledFor?{scheduledFor}:{}),
+  };
+  return response;
 });

@@ -1,5 +1,5 @@
 import {createError,defineEventHandler,getRouterParam} from "nitro/h3";
-import {getServerProductionRuntime} from "../../../../../src/services/production-runtime";
+import {getServerProductionRuntime,JobStateConflictError} from "../../../../../src/services/production-runtime";
 import {requireGovernedEvolutionPermission} from "../../../../../src/services/security-policy";
 
 export default defineEventHandler(async(event)=>{
@@ -9,6 +9,18 @@ export default defineEventHandler(async(event)=>{
   const runtime=getServerProductionRuntime();
   const job=await runtime.jobs.get(id);
   if(!job)throw createError({statusCode:404,statusMessage:"Job not found"});
-  await runtime.jobs.cancel(id);
-  return {ok:true,jobId:id,status:"cancelled"};
+  try{
+    await runtime.jobs.cancel(id);
+  }catch(error){
+    if(error instanceof JobStateConflictError){
+      throw createError({
+        statusCode:409,
+        statusMessage:error.message,
+        data:{code:error.code,jobId:error.jobId,reason:error.reason,current:error.current},
+      });
+    }
+    throw error;
+  }
+  const current=await runtime.jobs.get(id);
+  return {ok:true,jobId:id,status:current?.status??job.status};
 });

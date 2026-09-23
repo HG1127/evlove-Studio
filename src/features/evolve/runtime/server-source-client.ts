@@ -67,7 +67,7 @@ export async function cancelServerParseJob(jobId:string,deleteArtifact=true){
     method:"POST",
     headers:{"Content-Type":"application/json"},
     body:JSON.stringify({jobId,deleteArtifact}),
-  }) as Promise<{jobId:string;status:"cancelled"}>;
+  }) as Promise<{jobId:string;status:EvolutionJob["status"]}>;
 }
 
 export function parseJobMetadata(job:EvolutionJob){

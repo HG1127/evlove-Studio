@@ -69,6 +69,61 @@ describe("production sync bootstrap",()=>{
     expect(await localProductionPorts.jobs.get("job-newer-remote")).toMatchObject({status:"completed",updatedAt:remoteAt,generation:2});
   });
 
+  it("keeps a persisted terminal Job authoritative over a later local timestamp in the same generation",async()=>{
+    vi.useFakeTimers();
+    const remoteAt="2026-09-22T10:00:00.000Z";
+    const localAt="2026-09-22T10:10:00.000Z";
+    await localProductionPorts.jobs.put(EvolutionJobSchema.parse({
+      schemaVersion:"job-v1",id:"job-terminal-remote",missionId:"m1",type:"parse",status:"running",label:"Local stale running",
+      idempotencyKey:"parse:terminal",generation:3,attempts:3,priority:50,metadata:{},createdAt:remoteAt,updatedAt:localAt,
+    }));
+    const remoteJob=EvolutionJobSchema.parse({
+      schemaVersion:"job-v1",id:"job-terminal-remote",missionId:"m1",type:"parse",status:"cancelled",label:"Remote cancelled",
+      idempotencyKey:"parse:terminal",generation:3,attempts:3,priority:50,metadata:{},createdAt:remoteAt,finishedAt:remoteAt,updatedAt:remoteAt,
+    });
+    const putJob=vi.fn(async()=>undefined);
+    configureProductionRuntime({
+      ...localProductionPorts,
+      missions:{...localProductionPorts.missions,list:async()=>[],save:async()=>undefined,delete:async()=>undefined},
+      jobs:{...localProductionPorts.jobs,list:async()=>[remoteJob],put:putJob},
+      events:{...localProductionPorts.events,list:async()=>[],append:async()=>undefined},
+    },"http");
+
+    await initializeProductionSync();
+
+    expect(putJob).not.toHaveBeenCalled();
+    expect(await localProductionPorts.jobs.get("job-terminal-remote")).toMatchObject({
+      status:"cancelled",generation:3,updatedAt:remoteAt,
+    });
+  });
+
+  it("pushes a higher local Job generation even when the remote lower generation is terminal",async()=>{
+    vi.useFakeTimers();
+    const remoteAt="2026-09-22T10:00:00.000Z";
+    const localAt="2026-09-22T10:01:00.000Z";
+    const localJob=EvolutionJobSchema.parse({
+      schemaVersion:"job-v1",id:"job-retry-generation",missionId:"m1",type:"parse",status:"queued",label:"Retry",
+      idempotencyKey:"parse:retry",generation:4,attempts:4,priority:50,metadata:{},createdAt:remoteAt,updatedAt:localAt,
+    });
+    await localProductionPorts.jobs.put(localJob);
+    const remoteJob=EvolutionJobSchema.parse({
+      ...localJob,status:"failed",generation:3,attempts:3,error:"old failure",finishedAt:remoteAt,updatedAt:remoteAt,
+    });
+    const putJob=vi.fn(async()=>undefined);
+    configureProductionRuntime({
+      ...localProductionPorts,
+      missions:{...localProductionPorts.missions,list:async()=>[],save:async()=>undefined,delete:async()=>undefined},
+      jobs:{...localProductionPorts.jobs,list:async()=>[remoteJob],put:putJob},
+      events:{...localProductionPorts.events,list:async()=>[],append:async()=>undefined},
+    },"http");
+
+    await initializeProductionSync();
+
+    expect(putJob).toHaveBeenCalledWith(expect.objectContaining({
+      id:"job-retry-generation",generation:4,status:"queued",
+    }));
+  });
+
   it("treats a Mission CAS conflict as remote-authoritative even when local updatedAt is newer",async()=>{
     vi.useFakeTimers();
     const remoteAt="2026-09-22T10:00:00.000Z";
