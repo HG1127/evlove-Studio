@@ -1,0 +1,149 @@
+name: Supabase Migrations
+
+on:
+  pull_request:
+    paths:
+      - "supabase/migrations/**"
+      - "apps/backend/src/services/migration-security-invariants.test.ts"
+      - ".github/workflows/supabase-migrations.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "supabase/migrations/**"
+      - "apps/backend/src/services/migration-security-invariants.test.ts"
+      - ".github/workflows/supabase-migrations.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supabase-production-migrations
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate migration invariants
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.23.0 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate final database security invariants
+        run: pnpm exec vitest run apps/backend/src/services/migration-security-invariants.test.ts
+
+      - name: Validate migration filenames
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t migrations < <(find supabase/migrations -maxdepth 1 -type f -name '*.sql' -printf '%f\n' | sort)
+          if [ "${#migrations[@]}" -eq 0 ]; then
+            echo "::error::No Supabase migrations were found."
+            exit 1
+          fi
+          previous=""
+          for file in "${migrations[@]}"; do
+            if [[ ! "$file" =~ ^[0-9]{14}_[a-z0-9_]+\.sql$ ]]; then
+              echo "::error file=supabase/migrations/$file::Migration filename must be <14-digit timestamp>_<snake_case>.sql"
+              exit 1
+            fi
+            stamp="${file%%_*}"
+            if [ "$stamp" = "$previous" ]; then
+              echo "::error::Duplicate migration timestamp: $stamp"
+              exit 1
+            fi
+            previous="$stamp"
+          done
+
+  deploy-production:
+    name: Apply production migrations
+    needs: validate
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Check production migration credentials
+        id: credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${SUPABASE_ACCESS_TOKEN:-}" ] && [ -n "${SUPABASE_DB_PASSWORD:-}" ] && [ -n "${SUPABASE_PROJECT_REF:-}" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "Supabase production migration credentials are configured." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "## Supabase migration deployment skipped"
+              echo ""
+              echo "The migration validation passed, but production DB deployment did **not** run."
+              echo "Configure these GitHub Environment/Repository secrets to enable automatic deployment:"
+              echo "- \`SUPABASE_ACCESS_TOKEN\`"
+              echo "- \`SUPABASE_DB_PASSWORD\`"
+              echo "- \`SUPABASE_PROJECT_REF\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::Supabase production migration credentials are incomplete; production DB was not modified."
+          fi
+
+      - name: Link Supabase project
+        if: steps.credentials.outputs.ready == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes supabase@2.115.0 link \
+            --project-ref "$SUPABASE_PROJECT_REF" \
+            --password "$SUPABASE_DB_PASSWORD"
+
+      - name: Dry-run production migrations
+        if: steps.credentials.outputs.ready == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes supabase@2.115.0 db push --linked --dry-run --skip-vault
+
+      - name: Apply production migrations
+        if: steps.credentials.outputs.ready == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes supabase@2.115.0 db push --linked --skip-vault --yes
+
+      - name: Verify no migration drift remains
+        if: steps.credentials.outputs.ready == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(npx --yes supabase@2.115.0 db push --linked --dry-run --skip-vault 2>&1)"
+          echo "$output"
+          if echo "$output" | grep -q "Would push these migrations"; then
+            echo "::error::Migration drift remains after production db push."
+            exit 1
+          fi
+          echo "Production migration history is aligned with the repository." >> "$GITHUB_STEP_SUMMARY"
