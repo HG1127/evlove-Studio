@@ -139,7 +139,7 @@ export function EvolutionReadinessCenter() {
       sourceParse: Boolean(backendHealthCheck.health?.sourceParse.codeReady&&backendHealthCheck.health?.sourceParse.configured),
       artifactStore: Boolean(backendHealthCheck.health?.dataPlane.storage),
       artifactRenderer: Boolean(backendHealthCheck.health?.artifactRenderer.codeReady&&backendHealthCheck.health?.artifactRenderer.configured),
-      serverAi: Boolean((backendHealthCheck.health?.serverAi.codeReady&&backendHealthCheck.health?.serverAi.configured)||publicReadiness?.serverAi),
+      serverAi: Boolean(workflowCheck.capabilities?.serverAiVerified||backendHealthCheck.health?.serverAi.runtimeVerified),
       sandbox: Boolean(sandboxCheck.health?.ready),
       sandboxPolicy: Boolean(sandboxCheck.health?.policy.codeReady||publicReadiness?.sandboxPolicy),
       browser: Boolean(browserCheck.health?.ready),
@@ -191,6 +191,9 @@ export function EvolutionReadinessCenter() {
   const p03Connected = Boolean(workflowCheck.capabilities?.available&&workflowCheck.capabilities?.durable);
   const p03FullAuto = Boolean(workflowCheck.capabilities?.fullAuto);
   const p03OfflineAuto = Boolean(workflowCheck.capabilities?.closure.offlineFullAuto);
+  const serverAiConfigured=Boolean(workflowCheck.capabilities?.serverAi||backendHealthCheck.health?.serverAi.configured||publicReadiness?.serverAi);
+  const serverAiVerified=Boolean(workflowCheck.capabilities?.serverAiVerified||backendHealthCheck.health?.serverAi.runtimeVerified);
+  const serverAiRuntimeStatus=workflowCheck.capabilities?.backend.serverAiRuntimeStatus??backendHealthCheck.health?.serverAi.runtimeStatus;
   const p04Ready = Boolean(sandboxCheck.health?.ready&&sandboxCheck.health.policy.codeReady);
   const p04BrowserReady = Boolean(browserCheck.health?.ready);
   const connectorCount=connectorCheck.capabilities?.connectorCount??0;
@@ -264,7 +267,7 @@ export function EvolutionReadinessCenter() {
   useEffect(() => {
     let active = true;
     queueMicrotask(() => { if (active) setWorkflowCheck({ busy: true, message: "正在检测 Durable Workflow…" }); });
-    void getServerWorkflowCapabilities(true).then((capabilities) => {
+    void getServerWorkflowCapabilities(false).then((capabilities) => {
       if (!active) return;
       setWorkflowCheck({
         busy: false,
@@ -620,7 +623,7 @@ export function EvolutionReadinessCenter() {
             </div>
             <div className="mt-3 grid grid-cols-2 gap-2 text-[10px] sm:grid-cols-4 xl:grid-cols-12">
               <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>durable</b><div className={workflowCheck.capabilities?.durable ? "text-emerald-600" : "text-slate-400"}>{workflowCheck.capabilities?.durable ? "READY" : "—"}</div></div>
-              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>server AI</b><div className={workflowCheck.capabilities?.serverAi||publicReadiness?.serverAi ? "text-emerald-600" : "text-amber-600"}>{workflowCheck.capabilities?.serverAi||publicReadiness?.serverAi ? (workflowCheck.capabilities?.serverAi?"READY":"CONFIGURED") : "NOT CONFIGURED"}</div></div>
+              <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>server AI</b><div className={serverAiVerified?"text-emerald-600":serverAiConfigured?"text-amber-600":"text-slate-400"}>{serverAiVerified?"READY":serverAiRuntimeStatus==="unavailable"?"UNAVAILABLE":serverAiConfigured?"CONFIGURED · NOT VERIFIED":"NOT CONFIGURED"}</div></div>
               <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>server data</b><div className={workflowCheck.capabilities?.backend.dataPlaneConfigured ? "text-emerald-600" : publicReadiness?.dataPlane.configured ? "text-amber-600" : "text-slate-400"}>{workflowCheck.capabilities?.backend.dataPlaneConfigured ? "READY" : publicReadiness?.dataPlane.configured ? "CONFIGURED" : "NOT CONFIGURED"}</div></div>
               <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>HTTP API</b><div className={workflowCheck.capabilities?.backend.httpDataPlaneCodeReady ? "text-emerald-600" : "text-slate-400"}>{workflowCheck.capabilities?.backend.httpDataPlaneCodeReady ? "CODE READY" : "—"}</div></div>
               <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>source parse</b><div className={workflowCheck.capabilities?.backend.sourceParseConfigured ? "text-emerald-600" : workflowCheck.capabilities?.backend.sourceParseCodeReady ? "text-amber-600" : "text-slate-400"}>{workflowCheck.capabilities?.backend.sourceParseConfigured ? "READY" : workflowCheck.capabilities?.backend.sourceParseCodeReady ? "CODE READY" : "—"}</div></div>

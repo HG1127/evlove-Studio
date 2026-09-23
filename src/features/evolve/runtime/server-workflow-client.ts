@@ -5,6 +5,7 @@ import {
   PublicReadinessSnapshotSchema,
   SandboxBrowserHealthSchema,
   SandboxHealthSchema,
+  ServerAiRuntimeHealthSchema,
   type EvolutionBackendHealth,
   type EvolutionWorkflowCapabilities,
   type EvolutionWorkflowStartResponse,
@@ -12,6 +13,7 @@ import {
   type PublicReadinessSnapshot,
   type SandboxBrowserHealth,
   type SandboxHealth,
+  type ServerAiRuntimeHealth,
 } from "@evolution/contracts";
 import { projectHasOnlineReleaseTarget,projectUsesConnectorRelease,projectUsesHttpRelease,projectUsesVercelRelease } from "@evolution/core";
 
@@ -29,13 +31,17 @@ let capabilityCache:{value:EvolutionWorkflowCapabilities;at:number}|undefined;
 
 export async function getServerWorkflowCapabilities(force=false){
   if(!force&&capabilityCache&&Date.now()-capabilityCache.at<15_000)return capabilityCache.value;
-  const value=EvolutionWorkflowCapabilitiesSchema.parse(await apiJson("/api/evolution/capabilities"));
+  const value=EvolutionWorkflowCapabilitiesSchema.parse(await apiJson(force?"/api/evolution/capabilities?probeAi=1":"/api/evolution/capabilities"));
   capabilityCache={value,at:Date.now()};
   return value;
 }
 
 export async function checkServerBackendHealth():Promise<EvolutionBackendHealth>{
   return EvolutionBackendHealthSchema.parse(await apiJson("/api/evolution/backend-health"));
+}
+
+export async function checkServerAiRuntimeHealth():Promise<ServerAiRuntimeHealth>{
+  return ServerAiRuntimeHealthSchema.parse(await apiJson("/api/evolution/ai-health"));
 }
 
 export async function checkPublicReadiness():Promise<PublicReadinessSnapshot>{
@@ -76,7 +82,7 @@ export async function checkServerBrowserHealth():Promise<SandboxBrowserHealth>{
 
 export async function shouldUseServerAutoPilot(project:EvolveProject){
   try{
-    const capability=await getServerWorkflowCapabilities();
+    const capability=await getServerWorkflowCapabilities(true);
     if(!capability.available||!capability.durable)return false;
     const gitSourceReady=project.targetConnection.adapter!=="git"
       ||Boolean(

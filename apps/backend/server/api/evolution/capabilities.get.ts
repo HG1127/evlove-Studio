@@ -1,8 +1,9 @@
-import { defineEventHandler } from "nitro/h3";
+import { defineEventHandler,getQuery } from "nitro/h3";
 import { EvolutionWorkflowCapabilitiesSchema } from "@evolution/contracts";
 import { githubTargetConfigured, githubWebhookConfigured, serverAiConfigured, serverSupabaseConfigured, serverSupabaseSecureConfigured, targetProxyCapabilities, vercelReleaseWriteConfigured } from "../../../src/server-env";
 import {getSecurityCapabilities,requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 import {getConnectorRegistryCapabilities} from "../../../src/services/connector-registry";
+import {getPassiveServerAiHealth,probeServerAiRuntime} from "../../../src/services/server-ai-health";
 
 const CONTROL_ACTIONS=["adopt-defaults","approve-contract","wait-human","complete","package"] as const;
 const AI_ACTIONS=["understand","compile-contract","build-eval","distill","next-queue"] as const;
@@ -12,6 +13,10 @@ const MIGRATION_PENDING_ACTIONS:string[]=[];
 export default defineEventHandler(async(event)=>{
   await requireGovernedEvolutionPermission(event,"data.read");
   const ai=serverAiConfigured();
+  const probeAi=String(getQuery(event).probeAi??"")==="1";
+  if(probeAi)await requireGovernedEvolutionPermission(event,"ai.execute");
+  const aiHealth=probeAi?await probeServerAiRuntime():getPassiveServerAiHealth();
+  const aiVerified=aiHealth.ready;
   const dataPlane=serverSupabaseConfigured();
   const secureDataPlane=serverSupabaseSecureConfigured();
   const vercelRelease=vercelReleaseWriteConfigured();
@@ -40,6 +45,9 @@ export default defineEventHandler(async(event)=>{
     ...(!ai?[
       ...AI_ACTIONS.map((action)=>({action,reason:"server-ai-not-configured"})),
       {action:"run-campaign",reason:"server-ai-not-configured"},
+    ]:probeAi&&!aiVerified?[
+      ...AI_ACTIONS.map((action)=>({action,reason:"server-ai-runtime-unavailable"})),
+      {action:"run-campaign",reason:"server-ai-runtime-unavailable"},
     ]:[]),
     ...(!releaseWrite?[{action:"run-release",reason:"online-release-provider-not-configured"}]:[]),
     ...(!releaseObserve?[{action:"reconcile-release",reason:"online-release-observe-not-configured"}]:[]),
@@ -49,7 +57,11 @@ export default defineEventHandler(async(event)=>{
     ]:[]),
   ];
   const configBlocked=[
-    ...(!ai?[{capability:"server-ai",reason:"server-ai-not-configured"}]:[]),
+    ...(!ai
+      ?[{capability:"server-ai",reason:"server-ai-not-configured"}]
+      :!aiVerified
+        ?[{capability:"server-ai-runtime",reason:probeAi?"server-ai-runtime-unavailable":"active-runtime-probe-required"}]
+        :[]),
     ...(!releaseWrite?[{capability:"online-release-write",reason:"configure-vercel-http-or-full-lifecycle-connector"}]:[]),
     ...(!releaseObserve?[{capability:"online-release-observe",reason:"configure-vercel-http-observe-or-full-lifecycle-connector"}]:[]),
     ...(!dataPlane?[{capability:"server-data-plane",reason:"supabase-server-config-required"}]:[]),
@@ -62,7 +74,7 @@ export default defineEventHandler(async(event)=>{
     {capability:"online-release-authorization",reason:"human-release-ready-approval-required"},
   ];
   const codeReady=MIGRATION_PENDING_ACTIONS.length===0;
-  const offlineFullAuto=codeReady&&ai&&dataPlane;
+  const offlineFullAuto=codeReady&&aiVerified&&dataPlane;
   const releaseOrchestrationReady=releaseWrite;
   const releaseReconciliationReady=releaseObserve;
   const onlinePostApprovalAuto=offlineFullAuto&&releaseOrchestrationReady&&releaseReconciliationReady;
@@ -80,6 +92,7 @@ export default defineEventHandler(async(event)=>{
     fullAuto:offlineFullAuto&&onlineFullAuto,
     durable:true,
     serverAi:ai,
+    serverAiVerified:aiVerified,
     backend:{
       dataPlaneConfigured:dataPlane,
       secureDataPlaneCredential:secureDataPlane,
@@ -90,6 +103,8 @@ export default defineEventHandler(async(event)=>{
       sourceParseCodeReady:true,
       sourceParseConfigured:dataPlane,
       serverAiCodeReady:true,
+      serverAiRuntimeStatus:aiHealth.status,
+      serverAiMessage:aiHealth.message,
       sandboxCodeReady:true,
       browserCodeReady:true,
       releaseCodeReady:true,

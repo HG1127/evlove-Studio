@@ -1,6 +1,6 @@
 // @vitest-environment node
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
-import {runServerAi} from "./ai-gateway";
+import {isServerAiUnavailable,runServerAi,serverAiUnavailableReason} from "./ai-gateway";
 
 const KEYS=[
   "VERCEL","VERCEL_ENV","VERCEL_OIDC_TOKEN","EVOLUTION_AI_GATEWAY_ENABLED",
@@ -23,6 +23,20 @@ afterEach(()=>{
     else process.env[key]=value;
   }
   vi.unstubAllGlobals();
+});
+
+describe("Server AI provider availability classification",()=>{
+  it("classifies Vercel customer verification failures as unavailable",()=>{
+    const error=Object.assign(new Error("AI Gateway requires a valid credit card; customer_verification_required"),{status:403});
+    expect(serverAiUnavailableReason(error)).toBe("customer-verification-required");
+    expect(isServerAiUnavailable(error)).toBe(true);
+  });
+
+  it("classifies nested provider auth/rate limit failures but not schema bugs",()=>{
+    expect(serverAiUnavailableReason(Object.assign(new Error("outer"),{cause:{statusCode:403}}))).toBe("provider-auth-or-billing");
+    expect(serverAiUnavailableReason(Object.assign(new Error("rate limit"),{statusCode:429}))).toBe("provider-rate-limit");
+    expect(serverAiUnavailableReason(new Error("Zod schema mismatch"))).toBeUndefined();
+  });
 });
 
 describe("server AI multimodal gateway",()=>{

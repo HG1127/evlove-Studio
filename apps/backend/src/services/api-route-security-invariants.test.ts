@@ -61,6 +61,12 @@ describe("Evolution API route security invariants",()=>{
     }
   });
 
+  it("requires ai.execute before the capabilities route performs an active Server AI probe",()=>{
+    const route=routes.find((item)=>item.relative==="capabilities.get.ts");
+    expect(route).toBeTruthy();
+    expect(route!.source).toContain('if(probeAi)await requireGovernedEvolutionPermission(event,"ai.execute")');
+  });
+
   it("requires cryptographic signature verification on every RBAC-bypassed webhook",()=>{
     for(const relative of webhookRoutes){
       const route=routes.find((item)=>item.relative===relative);

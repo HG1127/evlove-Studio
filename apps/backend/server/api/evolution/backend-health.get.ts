@@ -5,7 +5,6 @@ import {
   getServerSupabaseConfig,
   githubTargetConfigured,
   githubWebhookConfigured,
-  serverAiConfigured,
   serverSupabaseConfigured,
   serverSupabaseCredentialMode,
   serverSupabaseSecureConfigured,
@@ -18,6 +17,7 @@ import {releaseApprovalStoreHealth} from "../../../src/services/release-approval
 import {organizationMemberDirectoryHealth} from "../../../src/services/organization-member-directory";
 import {serverVaultHealth} from "../../../src/services/server-vault";
 import {getConnectorRegistryCapabilities} from "../../../src/services/connector-registry";
+import {getPassiveServerAiHealth} from "../../../src/services/server-ai-health";
 
 export default defineEventHandler(async(event)=>{
   await requireGovernedEvolutionPermission(event,"data.read");
@@ -69,13 +69,22 @@ export default defineEventHandler(async(event)=>{
   const targetProxy=targetProxyCapabilities();
   const connectorRegistry=await getConnectorRegistryCapabilities().catch(()=>undefined);
   const connectorRelease=Boolean(connectorRegistry?.connectors.some((connector)=>connector.credentialConfigured&&Object.values(connector.lifecycle).every(Boolean)));
+  const serverAiHealth=getPassiveServerAiHealth();
   return EvolutionBackendHealthSchema.parse({
     checkedAt:new Date().toISOString(),
     dataPlane,
     httpDataPlane:{codeReady:true},
     sourceParse:{codeReady:true,configured,durable:true},
     artifactRenderer:{codeReady:true,configured:Boolean(configured&&dataPlane.storage)},
-    serverAi:{codeReady:true,configured:serverAiConfigured()},
+    serverAi:{
+      codeReady:true,
+      configured:serverAiHealth.configured,
+      mode:serverAiHealth.mode,
+      model:serverAiHealth.model,
+      runtimeVerified:false,
+      runtimeStatus:serverAiHealth.status,
+      message:serverAiHealth.message,
+    },
     sandbox:{codeReady:true},
     browser:{codeReady:true},
     release:{codeReady:true,writeConfigured:vercelReleaseWriteConfigured()||targetProxy.releaseConfigured||connectorRelease},

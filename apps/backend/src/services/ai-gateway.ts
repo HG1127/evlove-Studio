@@ -276,6 +276,41 @@ export function runServerAi(operation:ServerAiOperation,payload:unknown,media?:S
   return structured(payload,contract(operation),media);
 }
 
+function serverAiErrorChain(error:unknown){
+  const chain:unknown[]=[];
+  let current=error;
+  for(let depth=0;depth<6&&current&&typeof current==="object";depth+=1){
+    chain.push(current);
+    current=(current as {cause?:unknown}).cause;
+  }
+  return chain;
+}
+
+export function serverAiUnavailableReason(error:unknown):string|undefined{
+  const chain=serverAiErrorChain(error);
+  for(const item of chain){
+    if((item as {code?:string}).code==="SERVER_AI_UNAVAILABLE")return "not-configured";
+  }
+  const text=chain.map((item)=>item instanceof Error?item.message:String(item)).join(" | ").toLowerCase();
+  if(/customer_verification_required|valid credit card|add-credit-card|credit card on file/.test(text))return "customer-verification-required";
+  const statuses=chain.flatMap((item)=>{
+    const value=item as {status?:number;statusCode?:number;httpStatus?:number};
+    return [value.status,value.statusCode,value.httpStatus].filter((status):status is number=>typeof status==="number");
+  });
+  if(statuses.some((status)=>status===401||status===402||status===403))return "provider-auth-or-billing";
+  if(statuses.some((status)=>status===429)||/rate.?limit|quota|insufficient (?:credit|balance)|billing/.test(text))return "provider-rate-limit";
+  if(statuses.some((status)=>status===502||status===503||status===504))return "provider-unavailable";
+  return undefined;
+}
+
+export function serverAiUnavailableMessage(reasonCode:string){
+  if(reasonCode==="customer-verification-required")return "Vercel AI Gateway 已配置，但团队尚未完成信用卡/账户验证；请改用真实 BYOK，或之后完成 Vercel AI Gateway 计费验证。";
+  if(reasonCode==="provider-auth-or-billing")return "Server AI Provider 鉴权或计费不可用；请检查服务端 Provider 配置，或改用真实 BYOK。";
+  if(reasonCode==="provider-rate-limit")return "Server AI Provider 当前额度/频率受限；请稍后重试或改用真实 BYOK。";
+  if(reasonCode==="provider-unavailable")return "Server AI Provider 当前不可用；请稍后重试或改用真实 BYOK。";
+  return "Server AI 未配置或当前不可用；请配置真实 Server AI / BYOK 后重试。";
+}
+
 export function isServerAiUnavailable(error:unknown){
-  return (error as {code?:string})?.code==="SERVER_AI_UNAVAILABLE";
+  return Boolean(serverAiUnavailableReason(error));
 }

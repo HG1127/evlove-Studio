@@ -46,11 +46,27 @@ export const EvolutionWorkflowStartResponseSchema = z.object({
 });
 export type EvolutionWorkflowStartResponse = z.infer<typeof EvolutionWorkflowStartResponseSchema>;
 
+export const ServerAiRuntimeStatusSchema=z.enum(["not-checked","ready","unconfigured","unavailable","error"]);
+export const ServerAiRuntimeHealthSchema=z.object({
+  checkedAt:z.string(),
+  codeReady:z.boolean(),
+  configured:z.boolean(),
+  mode:z.enum(["vercel-gateway","openai-compatible","missing"]),
+  model:z.string().optional(),
+  ready:z.boolean(),
+  runtimeVerified:z.boolean(),
+  status:ServerAiRuntimeStatusSchema,
+  reasonCode:z.string().optional(),
+  message:z.string(),
+});
+export type ServerAiRuntimeHealth=z.infer<typeof ServerAiRuntimeHealthSchema>;
+
 export const EvolutionWorkflowCapabilitiesSchema=z.object({
   available:z.boolean(),
   fullAuto:z.boolean(),
   durable:z.boolean(),
   serverAi:z.boolean(),
+  serverAiVerified:z.boolean().default(false),
   backend:z.object({
     dataPlaneConfigured:z.boolean().default(false),
     secureDataPlaneCredential:z.boolean().default(false),
@@ -61,6 +77,8 @@ export const EvolutionWorkflowCapabilitiesSchema=z.object({
     sourceParseCodeReady:z.boolean().default(false),
     sourceParseConfigured:z.boolean().default(false),
     serverAiCodeReady:z.boolean().default(false),
+    serverAiRuntimeStatus:ServerAiRuntimeStatusSchema.default("not-checked"),
+    serverAiMessage:z.string().default("Server AI runtime not actively probed."),
     sandboxCodeReady:z.boolean().default(false),
     browserCodeReady:z.boolean().default(false),
     releaseCodeReady:z.boolean().default(false),
@@ -115,7 +133,15 @@ export const EvolutionBackendHealthSchema=z.object({
   httpDataPlane:z.object({codeReady:z.boolean()}),
   sourceParse:z.object({codeReady:z.boolean(),configured:z.boolean(),durable:z.boolean()}),
   artifactRenderer:z.object({codeReady:z.boolean(),configured:z.boolean()}),
-  serverAi:z.object({codeReady:z.boolean(),configured:z.boolean()}),
+  serverAi:z.object({
+    codeReady:z.boolean(),
+    configured:z.boolean(),
+    mode:z.enum(["vercel-gateway","openai-compatible","missing"]).default("missing"),
+    model:z.string().optional(),
+    runtimeVerified:z.boolean().default(false),
+    runtimeStatus:ServerAiRuntimeStatusSchema.default("not-checked"),
+    message:z.string().default("Server AI runtime not actively probed."),
+  }),
   sandbox:z.object({codeReady:z.boolean()}),
   browser:z.object({codeReady:z.boolean()}),
   release:z.object({codeReady:z.boolean(),writeConfigured:z.boolean()}),
