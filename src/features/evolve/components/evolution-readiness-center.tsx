@@ -60,6 +60,9 @@ function readRunnerCapabilities(): RunnerCapabilitySnapshot | undefined {
 
 function workflowCapabilityMessage(capabilities: EvolutionWorkflowCapabilities) {
   if (capabilities.fullAuto) return "Durable Workflow 已具备离线 + 线上完整 AutoPilot 接管能力";
+  const serverAiDetail=!capabilities.serverAiVerified&&capabilities.backend.serverAiMessage
+    ? `Server AI：${capabilities.backend.serverAiMessage}`
+    : "";
   return [
     capabilities.closure.offlineFullAuto
       ? "离线闭环：FULL AUTO"
@@ -73,6 +76,7 @@ function workflowCapabilityMessage(capabilities: EvolutionWorkflowCapabilities) 
         : `线上闭环：${capabilities.closure.externalCapabilityBlocked.map((item) => item.capability).join("、") || "待能力接入"}`,
     capabilities.migrationPendingActions.length ? `待迁：${capabilities.migrationPendingActions.join("、")}` : "",
     capabilities.closure.configBlocked.length ? `待配置：${capabilities.closure.configBlocked.map((item) => item.capability).join("、")}` : "",
+    serverAiDetail,
   ].filter(Boolean).join("；");
 }
 
