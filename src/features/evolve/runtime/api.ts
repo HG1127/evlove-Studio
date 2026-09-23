@@ -29,8 +29,8 @@ import {productionRuntimeMode} from "./production-runtime";
 /**
  * Client compatibility surface.
  * Production/server-capable environments use the backend AI gateway first.
- * Browser BYOK/demo remains an explicit offline fallback when the backend AI
- * is unavailable or the browser has no trusted server identity; arbitrary semantic/server errors are not hidden.
+ * Browser BYOK remains a truthful offline fallback when the backend AI is unavailable.
+ * Production never substitutes Demo AI for a missing live route; arbitrary semantic/server errors are not hidden.
  */
 export async function runAi<T>(
   operation:AiOperation,
@@ -150,7 +150,21 @@ export async function runIntake(formData:FormData):Promise<{intake:IntakeAiResul
     });
   }catch(error){
     if(!(error instanceof ServerParseUnavailableError))throw error;
-    return runLocalIntake(formData);
+    const artifacts=await ingestLocalSources({
+      files,
+      text:pastedText,
+      role:"target",
+      roles:intakeRoles(formData.get("roles"),files.length),
+    });
+    return runIntakeFromArtifacts({
+      command,
+      artifacts,
+      department:String(formData.get("department")??"其他"),
+      requestedObjectType:String(formData.get("requestedObjectType")??"auto"),
+      conversation:String(formData.get("conversation")??""),
+      aiProfile,
+      pastedText,
+    });
   }
 }
 

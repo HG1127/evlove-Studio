@@ -114,7 +114,7 @@ function defaultRouting(): AiRoutingPolicy {
     mode: "independent-eval",
     operationRoutes: {},
     requireIndependentEvaluator: true,
-    fallbackToDemo: true,
+    fallbackToDemo: false,
   };
 }
 
@@ -472,7 +472,7 @@ export function applyRoutingPreset(kind: "balanced" | "quality" | "cost" | "inde
     operationRoutes,
     defaultRoute: { connectionId: first.id, model, fallbackConnectionIds: connections.slice(1).map((x) => x.id) },
     requireIndependentEvaluator: kind !== "cost",
-    fallbackToDemo: true,
+    fallbackToDemo: false,
   };
   saveAiRoutingPolicy(next);
   return next;

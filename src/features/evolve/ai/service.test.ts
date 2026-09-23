@@ -1,10 +1,22 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { OPERATION_PROFILES } from "./performance";
 import { EvaluateAiResultSchema } from "./schemas";
-import { getAiProviderStatus, reasoningEffortForOperation, routedOperationDeadlineMs, selectDiverseAiRoutes, withProjectAiProfile } from "./service";
+import { getAiProviderStatus, reasoningEffortForOperation, resolveFallbackAiProvider, routedOperationDeadlineMs, selectDiverseAiRoutes, withProjectAiProfile } from "./service";
 import { saveProviderConnections, type ProviderConnection } from "./providers/registry";
 
 afterEach(() => localStorage.clear());
+
+describe("browser AI fallback truthfulness",()=>{
+  it("fails closed in Production when auto mode has no live provider",()=>{
+    expect(resolveFallbackAiProvider({requested:"auto",hasOpenAI:false,production:true})).toBe("unavailable");
+  });
+
+  it("keeps Demo explicit and preserves local development convenience",()=>{
+    expect(resolveFallbackAiProvider({requested:"demo",hasOpenAI:false,production:true})).toBe("demo");
+    expect(resolveFallbackAiProvider({requested:"auto",hasOpenAI:false,production:false})).toBe("demo");
+    expect(resolveFallbackAiProvider({requested:"auto",hasOpenAI:true,production:true})).toBe("openai");
+  });
+});
 
 describe("real AI route time budgets", () => {
   it("gives both plan routes their full call budget plus a bounded JSON correction", () => {

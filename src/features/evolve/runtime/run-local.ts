@@ -321,7 +321,7 @@ export async function runIntakeFromArtifacts(args: {
 const INGEST_MAX_FILES = MAX_FILES;
 const INGEST_MAX_FILE_BYTES = MAX_FILE_BYTES;
 
-export async function ingestSources(args: { files?: File[]; text?: string; role?: "target" | "reference" | "eval" }): Promise<SourceArtifact[]> {
+export async function ingestSources(args: { files?: File[]; text?: string; role?: "target" | "reference" | "eval"; roles?: ArtifactRole[] }): Promise<SourceArtifact[]> {
   const files = args.files ?? [];
   if (files.length > INGEST_MAX_FILES) throw new Error(`单次最多上传 ${INGEST_MAX_FILES} 个附件`);
   const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
@@ -336,7 +336,7 @@ export async function ingestSources(args: { files?: File[]; text?: string; role?
     const id = `artifact-${crypto.randomUUID()}`;
     const buffer = new Uint8Array(await file.arrayBuffer());
     const extracted = await extractSource({ name: file.name, mimeType: file.type || "application/octet-stream", buffer });
-    const role: ArtifactRole = index === 0 ? requestedRole : "reference";
+    const role: ArtifactRole = args.roles?.[index] ?? (index === 0 ? requestedRole : "reference");
     const needsAiFile = file.type.startsWith("image/") || file.type === "application/pdf" || !extracted.extractedText;
     const warnings = [...extracted.warnings];
     let openaiFileId: string | undefined;

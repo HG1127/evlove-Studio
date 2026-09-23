@@ -146,6 +146,18 @@ function findProjectAiProfile(value: unknown, depth = 0): ProjectAiProfile | und
   return undefined;
 }
 
+export function resolveFallbackAiProvider(args:{
+  requested?:string;
+  hasOpenAI:boolean;
+  production:boolean;
+}):"openai"|"demo"|"unavailable"{
+  const requested=args.requested?.trim()||"auto";
+  if(requested==="demo")return "demo";
+  if(requested==="openai")return args.hasOpenAI?"openai":"unavailable";
+  if(args.hasOpenAI)return "openai";
+  return args.production?"unavailable":"demo";
+}
+
 export function getAiProviderStatus(operation: AiOperation = "copilot", payload?: unknown) {
   const routed = payload ? resolveProjectOperationConnections(operation, findProjectAiProfile(payload))[0] : resolveOperationConnection(operation);
   if (routed) {
@@ -163,14 +175,18 @@ export function getAiProviderStatus(operation: AiOperation = "copilot", payload?
 
   const requested = serverEnv.EVOLVE_AI_PROVIDER || "auto";
   const hasOpenAI = Boolean(serverEnv.OPENAI_API_KEY);
-  const provider = requested === "demo" ? "demo" : requested === "openai" ? (hasOpenAI ? "openai" : "unavailable") : (hasOpenAI ? "openai" : "demo");
+  const provider=resolveFallbackAiProvider({
+    requested,
+    hasOpenAI,
+    production:import.meta.env.PROD,
+  });
   return {
     provider,
     providerId: provider,
     connectionId: undefined,
     configured: provider !== "unavailable",
     live: provider === "openai",
-    model: provider === "openai" ? (serverEnv.OPENAI_MODEL || "gpt-5.6-terra") : "demo-evolve-engine",
+    model: provider === "openai" ? (serverEnv.OPENAI_MODEL || "gpt-5.6-terra") : provider === "demo" ? "demo-evolve-engine" : "unavailable",
     evaluator: serverEnv.EVOLVE_EVALUATOR || "auto",
     routeSource: "server-default" as const,
   };
@@ -359,7 +375,7 @@ export async function runEvolveAi(operation: AiOperation, payload: unknown, medi
     recordAiPerformance({ operation, provider: "Demo Engine", model: "demo-evolve-engine", durationMs: 0, inputChars, cached: false, routeAttempt: 0, status: "demo" });
     return result;
   }
-  if (status.provider === "unavailable") throw new Error("No live AI route is configured. Configure a provider connection in Settings or enable the demo engine.");
+  if (status.provider === "unavailable") throw new Error("正式模式没有可用的真实 AI 路由。请使用 Server AI，或在「AI 模型与连接」配置真实 BYOK 后重试；系统不会用演示结果替代真实执行。");
 
   const collected = [...collectOpenAIFileIds(payload)];
   const fileIds = [...new Set([...(media?.fileIds ?? []), ...collected])];
