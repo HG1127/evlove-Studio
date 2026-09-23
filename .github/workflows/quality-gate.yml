@@ -1,0 +1,59 @@
+name: Quality Gate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Lint / Architecture / Tests / Build / Runner
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Node 24
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.23.0 --activate
+
+      - name: Install root dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Architecture boundaries
+        run: pnpm architecture:check
+
+      - name: Full test suite
+        run: pnpm exec vitest run --maxWorkers 1
+
+      - name: Production build
+        run: pnpm build
+
+      - name: Install Runner Gateway dependencies
+        run: pnpm runner:setup
+
+      - name: Install Runner Chromium
+        run: pnpm runner:install-browser
+
+      - name: Runner Gateway tests
+        run: pnpm runner:test
