@@ -11,6 +11,7 @@ export * from "./outcome-analytics-contract";
 export * from "./target-proxy-contract";
 export * from "./connector-contract";
 export * from "./public-readiness-contract";
+export * from "./build-info-contract";
 export * from "./security-contract";
 export * from "./backend-config";
 export * from "./workflow-contract";

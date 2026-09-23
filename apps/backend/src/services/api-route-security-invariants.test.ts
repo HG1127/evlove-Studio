@@ -20,7 +20,7 @@ function routeFiles(dir:string,prefix=""):Array<{relative:string;source:string}>
 }
 
 const routes=routeFiles(routeRoot);
-const publicRoute="public-readiness.get.ts";
+const publicRoutes=new Set(["public-readiness.get.ts","build-info.get.ts"]);
 const webhookRoutes=new Set(["git-webhook.post.ts","connector-webhook/[id].post.ts"]);
 const readOnlyPosts=new Set(["evidence-ledger-export-verify.post.ts","target-observe.post.ts"]);
 const dynamicPermissionRoutes=new Set(["connector-action.post.ts","git-action.post.ts"]);
@@ -42,16 +42,17 @@ describe("Evolution API route security invariants",()=>{
   it("keeps the middleware bypass allowlist exact and narrow",()=>{
     const middleware=fs.readFileSync(middlewarePath,"utf8");
     expect(middleware).toContain('path==="/api/evolution/public-readiness"');
+    expect(middleware).toContain('path==="/api/evolution/build-info"');
     expect(middleware).toContain('path==="/api/evolution/git-webhook"');
     expect(middleware).toContain('/^\\/api\\/evolution\\/connector-webhook\\/[^/]+$/');
     expect(middleware).not.toContain('endsWith("/public-readiness")');
     expect(middleware).not.toContain('includes("/connector-webhook/")');
   });
 
-  it("allows exactly one ordinary public endpoint; all other non-webhook routes declare authorization",()=>{
-    expect(routes.some((route)=>route.relative===publicRoute)).toBe(true);
+  it("allows only the bounded passive public endpoints; all other non-webhook routes declare authorization",()=>{
+    for(const publicRoute of publicRoutes)expect(routes.some((route)=>route.relative===publicRoute),publicRoute).toBe(true);
     for(const route of routes){
-      if(route.relative===publicRoute){
+      if(publicRoutes.has(route.relative)){
         expect(declaredPermission(route)).toBeUndefined();
         continue;
       }
@@ -73,7 +74,7 @@ describe("Evolution API route security invariants",()=>{
 
   it("does not authorize state-changing routes with reader-only permission",()=>{
     for(const route of routes){
-      if(route.relative===publicRoute||webhookRoutes.has(route.relative)||readOnlyPosts.has(route.relative))continue;
+      if(publicRoutes.has(route.relative)||webhookRoutes.has(route.relative)||readOnlyPosts.has(route.relative))continue;
       const method=route.relative.match(/\.(get|post|put|patch|delete)\.ts$/)?.[1];
       if(method==="get")continue;
       expect(declaredPermission(route),route.relative).toBeTruthy();

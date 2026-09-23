@@ -1,0 +1,85 @@
+name: Production Smoke
+
+on:
+  workflow_run:
+    workflows:
+      - Quality Gate
+    types:
+      - completed
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-smoke
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Main alias smoke
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      PRODUCTION_URL: https://500ipo-evolve-studio.vercel.app
+      EXPECTED_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - name: Wait for main alias to reach the verified commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 72); do
+            body="$(curl --fail --silent --show-error "$PRODUCTION_URL/api/evolution/build-info" || true)"
+            commit="$(printf '%s' "$body" | jq -r '.commitSha // empty' 2>/dev/null || true)"
+            ref="$(printf '%s' "$body" | jq -r '.commitRef // empty' 2>/dev/null || true)"
+            env_name="$(printf '%s' "$body" | jq -r '.vercelEnvironment // empty' 2>/dev/null || true)"
+            if [ "$commit" = "$EXPECTED_SHA" ] && [ "$ref" = "main" ] && [ "$env_name" = "production" ]; then
+              echo "Main alias is serving $commit"
+              exit 0
+            fi
+            echo "Waiting for main alias: attempt $attempt/72, observed=${commit:-none}, expected=$EXPECTED_SHA"
+            sleep 5
+          done
+          echo "::error::Main alias did not reach the Quality Gate commit within six minutes."
+          exit 1
+
+      - name: Homepage renders
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(curl --silent --show-error --output /tmp/home.html --write-out '%{http_code}' "$PRODUCTION_URL/")"
+          test "$status" = "200"
+          test -s /tmp/home.html
+
+      - name: Public readiness remains readable JSON
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error "$PRODUCTION_URL/api/evolution/public-readiness" > /tmp/readiness.json
+          jq -e '.probeMode == "passive-config" and (.blockers | type == "array") and (.security | type == "object")' /tmp/readiness.json >/dev/null
+
+      - name: Protected business API stays closed on the public alias
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(curl --silent --show-error --output /tmp/protected.json --write-out '%{http_code}' "$PRODUCTION_URL/api/evolution/backend-health")"
+          if [ "$status" != "401" ]; then
+            echo "::error::Expected public backend-health to remain 401, got $status."
+            cat /tmp/protected.json || true
+            exit 1
+          fi
+
+      - name: Smoke summary
+        shell: bash
+        run: |
+          {
+            echo "## Production smoke passed"
+            echo ""
+            echo "- Main alias commit: `$EXPECTED_SHA`"
+            echo "- Homepage: 200"
+            echo "- Public readiness: readable"
+            echo "- Public backend-health: 401 as required"
+          } >> "$GITHUB_STEP_SUMMARY"
