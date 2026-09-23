@@ -117,20 +117,31 @@ export function vaultEncryptionConfigured(){
 }
 
 export type ServerSecurityConfig={
-  mode:"trusted-header"|"internal-dev"|"blocked";
+  mode:"trusted-header"|"vercel-protected-internal"|"internal-dev"|"blocked";
   identitySecret?:string;
+  protectedDeploymentHost?:string;
   maxActorAgeSeconds:number;
   workspaceId?:string;
 };
 
+function normalizedVercelHost(raw:string|undefined){
+  const host=value(raw)?.replace(/^https?:\/\//i,"").split("/")[0]?.trim().toLowerCase();
+  return host||undefined;
+}
+
 export function getServerSecurityConfig():ServerSecurityConfig{
   const rawIdentitySecret=value(process.env.EVOLUTION_IDENTITY_HMAC_SECRET);
   const identitySecret=rawIdentitySecret&&rawIdentitySecret.length>=32?rawIdentitySecret:undefined;
+  const protectedDeploymentHost=normalizedVercelHost(process.env.VERCEL_URL);
+  const allowProtectedInternal=/^(1|true|yes|on)$/i.test(value(process.env.EVOLUTION_ALLOW_PROTECTED_DEPLOYMENT_INTERNAL_AUTH)??"")
+    &&process.env.VERCEL==="1"
+    &&Boolean(protectedDeploymentHost);
   const allowInternal=/^(1|true|yes|on)$/i.test(value(process.env.EVOLUTION_ALLOW_INSECURE_INTERNAL_AUTH)??"")
     ||process.env.NODE_ENV!=="production";
   return {
-    mode:identitySecret?"trusted-header":allowInternal?"internal-dev":"blocked",
+    mode:allowProtectedInternal?"vercel-protected-internal":identitySecret?"trusted-header":allowInternal?"internal-dev":"blocked",
     identitySecret,
+    protectedDeploymentHost,
     maxActorAgeSeconds:Math.max(60,Math.min(Number(value(process.env.EVOLUTION_IDENTITY_MAX_AGE_SECONDS)??"3600")||3600,86_400)),
     workspaceId:getEvolutionWorkspaceId(),
   };

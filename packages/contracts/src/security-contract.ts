@@ -26,7 +26,7 @@ export const EvolutionActorSchema=z.object({
   workspaceId:z.string().optional(),
   issuedAt:z.number().int().optional(),
   expiresAt:z.number().int().optional(),
-  source:z.enum(["trusted-header","internal-dev","service"]).default("trusted-header"),
+  source:z.enum(["trusted-header","vercel-protected-internal","internal-dev","service"]).default("trusted-header"),
 });
 export type EvolutionActor=z.infer<typeof EvolutionActorSchema>;
 
@@ -159,9 +159,10 @@ export type ReleaseApprovalGrant=z.infer<typeof ReleaseApprovalGrantSchema>;
 
 export const SecurityCapabilitiesSchema=z.object({
   codeReady:z.literal(true),
-  mode:z.enum(["trusted-header","internal-dev","blocked"]),
+  mode:z.enum(["trusted-header","vercel-protected-internal","internal-dev","blocked"]),
   configured:z.boolean(),
   enforced:z.boolean(),
+  protectedDeploymentInternal:z.boolean().default(false),
   productionSafe:z.boolean(),
   workspaceId:z.string().optional(),
   roles:z.array(EvolutionRoleSchema),

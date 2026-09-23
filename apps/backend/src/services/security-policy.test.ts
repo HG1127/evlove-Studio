@@ -1,10 +1,11 @@
 // @vitest-environment node
 import {afterEach,beforeEach,describe,expect,it} from "vitest";
 import {getServerSecurityConfig} from "../server-env";
-import {getSecurityCapabilities,permissionAllowed} from "./security-policy";
+import {getSecurityCapabilities,permissionAllowed,protectedDeploymentInternalRequestAllowed} from "./security-policy";
 
 const KEYS=[
   "NODE_ENV","EVOLUTION_IDENTITY_HMAC_SECRET","EVOLUTION_ALLOW_INSECURE_INTERNAL_AUTH",
+  "EVOLUTION_ALLOW_PROTECTED_DEPLOYMENT_INTERNAL_AUTH","VERCEL","VERCEL_URL",
   "EVOLUTION_WORKSPACE_ID","SUPABASE_URL","SUPABASE_SECRET_KEY","SUPABASE_SERVICE_ROLE_KEY",
   "SUPABASE_PUBLISHABLE_KEY","VITE_SUPABASE_ANON_KEY",
 ] as const;
@@ -33,6 +34,40 @@ describe("security policy",()=>{
     process.env.NODE_ENV="production";
     process.env.EVOLUTION_IDENTITY_HMAC_SECRET="too-short";
     expect(getServerSecurityConfig().mode).toBe("blocked");
+  });
+
+  it("keeps the temporary Vercel protected-deployment bridge narrow and non-production-safe",()=>{
+    process.env.NODE_ENV="production";
+    process.env.VERCEL="1";
+    process.env.VERCEL_URL="deploy-abc.vercel.app";
+    process.env.EVOLUTION_ALLOW_PROTECTED_DEPLOYMENT_INTERNAL_AUTH="true";
+    process.env.EVOLUTION_IDENTITY_HMAC_SECRET="0123456789abcdef0123456789abcdef";
+    process.env.EVOLUTION_WORKSPACE_ID="workspace-test";
+    const config=getServerSecurityConfig();
+    expect(config).toMatchObject({
+      mode:"vercel-protected-internal",
+      protectedDeploymentHost:"deploy-abc.vercel.app",
+      workspaceId:"workspace-test",
+    });
+    expect(protectedDeploymentInternalRequestAllowed({
+      host:"deploy-abc.vercel.app",
+      vercelId:"hnd1::abc",
+    },config)).toBe(true);
+    expect(protectedDeploymentInternalRequestAllowed({
+      host:"500ipo-evolve-studio.vercel.app",
+      vercelId:"hnd1::abc",
+    },config)).toBe(false);
+    expect(protectedDeploymentInternalRequestAllowed({
+      host:"deploy-abc.vercel.app",
+      vercelId:"",
+    },config)).toBe(false);
+    expect(getSecurityCapabilities()).toMatchObject({
+      mode:"vercel-protected-internal",
+      configured:true,
+      enforced:true,
+      protectedDeploymentInternal:true,
+      productionSafe:false,
+    });
   });
 
   it("reports production-safe only with trusted identity, workspace and server-only Supabase credential",()=>{

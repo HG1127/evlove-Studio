@@ -51,9 +51,40 @@ export function permissionAllowed(role:EvolutionRole,permission:EvolutionPermiss
   return ROLE_PERMISSIONS[role].has(permission);
 }
 
+export function protectedDeploymentInternalRequestAllowed(
+  headers:{host?:string;vercelId?:string},
+  config=getServerSecurityConfig(),
+){
+  if(config.mode!=="vercel-protected-internal"||!config.protectedDeploymentHost)return false;
+  const host=(headers.host??"").split(",")[0]?.trim().toLowerCase();
+  return Boolean(host===config.protectedDeploymentHost&&headers.vercelId?.trim());
+}
+
 export function resolveEvolutionActor(event:H3Event):EvolutionActor{
   const config=getServerSecurityConfig();
   if(config.mode==="blocked")throw createError({statusCode:503,statusMessage:"Evolution identity/RBAC is not configured"});
+  if(config.mode==="vercel-protected-internal"){
+    const allowed=protectedDeploymentInternalRequestAllowed({
+      host:getHeader(event,"x-forwarded-host")??getHeader(event,"host")??"",
+      vercelId:getHeader(event,"x-vercel-id")??"",
+    },config);
+    if(allowed){
+      return EvolutionActorSchema.parse({
+        id:"vercel-protected-internal",
+        role:"operator",
+        workspaceId:config.workspaceId,
+        source:"vercel-protected-internal",
+      });
+    }
+    if(!config.identitySecret){
+      throw createError({
+        statusCode:401,
+        statusMessage:"Protected internal auth is only allowed on the exact Vercel deployment URL",
+      });
+    }
+    // Exact deployment URLs may use the temporary perimeter bridge; every other host
+    // continues to require the normal signed actor assertion when a HMAC key exists.
+  }
   if(config.mode==="internal-dev"){
     return EvolutionActorSchema.parse({
       id:"internal-dev",role:"admin",workspaceId:config.workspaceId,source:"internal-dev",
@@ -87,7 +118,7 @@ export function requireEvolutionPermission(event:H3Event,permission:EvolutionPer
 
 export async function requireGovernedEvolutionPermission(event:H3Event,permission:EvolutionPermission){
   const actor=requireEvolutionPermission(event,permission);
-  if(permission!=="data.read"&&actor.source!=="internal-dev"){
+  if(permission!=="data.read"&&actor.source!=="internal-dev"&&actor.source!=="vercel-protected-internal"){
     try{
       await requireActiveOrganizationMember(actor);
     }catch(error){
@@ -120,12 +151,14 @@ export function getSecurityCapabilities(){
     {id:"evidence-signing-vault",provider:"external-vault" as const,envVars:["EVOLUTION_EVIDENCE_SIGNING_VAULT_ID"],purpose:"Immutable Evidence Ledger HMAC Vault primary",configured:Boolean(getEvidenceLedgerSigningVaultId())&&vaultEncryptionConfigured(),scopes:["evidence"]},
   ];
   const configuredIdentity=security.mode!=="blocked";
+  const protectedDeploymentInternal=security.mode==="vercel-protected-internal";
   const productionSafe=security.mode==="trusted-header"&&Boolean(security.workspaceId)&&serverSupabaseSecureConfigured();
   return SecurityCapabilitiesSchema.parse({
     codeReady:true,
     mode:security.mode,
     configured:configuredIdentity,
-    enforced:security.mode==="trusted-header",
+    enforced:security.mode==="trusted-header"||protectedDeploymentInternal,
+    protectedDeploymentInternal,
     productionSafe,
     workspaceId:security.workspaceId,
     roles:Object.keys(ROLE_PERMISSIONS),
@@ -133,8 +166,10 @@ export function getSecurityCapabilities(){
     checkedAt:new Date().toISOString(),
     message:productionSafe
       ?"Trusted actor RBAC + server-only credential references are production-safe."
-      :security.mode==="internal-dev"
-        ?"RBAC code is ready, but internal-dev identity is not production-safe."
-        :"RBAC code is ready; configure a 32+ character EVOLUTION_IDENTITY_HMAC_SECRET, EVOLUTION_WORKSPACE_ID, and server-only data-plane credential.",
+      :security.mode==="vercel-protected-internal"
+        ?"Temporary operator identity is restricted to the exact Vercel generated deployment URL; it is functional but not production-safe user authentication."
+        :security.mode==="internal-dev"
+          ?"RBAC code is ready, but internal-dev identity is not production-safe."
+          :"RBAC code is ready; configure a 32+ character EVOLUTION_IDENTITY_HMAC_SECRET, EVOLUTION_WORKSPACE_ID, and server-only data-plane credential.",
   });
 }
