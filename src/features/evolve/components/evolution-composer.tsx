@@ -23,7 +23,7 @@ import { Input, Textarea } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import type { IntakeAiResult } from "../ai/schemas";
 import type { ArtifactRole, EvolveProject, ProjectAiProfile, SourceArtifact } from "../schemas";
-import { defaultProjectAiProfile } from "./project-ai-profile-selector";
+import { defaultProjectAiProfile } from "../ai/project-profile";
 import { ingestSources, runIntakeFromArtifacts } from "../runtime/api";
 import { deleteArtifactBlob, getArtifactBlob, putArtifactBlob } from "../runtime/artifact-blob-store";
 import {
@@ -404,7 +404,7 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
       }catch(cause){
         if(!(cause instanceof ServerParseUnavailableError))throw cause;
         const [fresh]=await ingestSources({files:[file],role:old.role});
-        if(!fresh)throw new Error("未能读取新文件");
+        if(!fresh)throw new Error("未能读取新文件",{cause});
         await putArtifactBlob(old.id,file);
         if(fresh.id!==old.id)await deleteArtifactBlob(fresh.id).catch(()=>undefined);
         replacement={...fresh,id:old.id,role:old.role,textExcerpt:fresh.textExcerpt||`[附件] ${file.name}`};

@@ -81,20 +81,16 @@ export function ModelCombobox({ models, value, onChange, placeholder, className,
   // 键盘导航用扁平顺序：测通组在前、其余在后，与视觉顺序一致。
   const ordered = useMemo(() => [...testedTop, ...rest], [testedTop, rest]);
   const [activeIndex, setActiveIndex] = useState(-1);
+  const navigableIndex = activeIndex >= 0 && activeIndex < ordered.length ? activeIndex : -1;
   useEffect(() => {
-    setActiveIndex(-1);
-  }, [keyword, open]);
-  useEffect(() => {
-    if (activeIndex >= ordered.length) setActiveIndex(ordered.length ? ordered.length - 1 : -1);
-  }, [ordered, activeIndex]);
-  useEffect(() => {
-    if (activeIndex < 0) return;
-    dropdownRef.current?.querySelector(`[data-idx="${activeIndex}"]`)?.scrollIntoView({ block: "nearest" });
-  }, [activeIndex]);
+    if (navigableIndex < 0) return;
+    dropdownRef.current?.querySelector(`[data-idx="${navigableIndex}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [navigableIndex]);
 
   const pick = (model: string) => {
     onChange(model);
     setSearch("");
+    setActiveIndex(-1);
     setCoords(null);
   };
 
@@ -107,10 +103,12 @@ export function ModelCombobox({ models, value, onChange, placeholder, className,
         placeholder={placeholder}
         onChange={(event) => {
           setSearch(event.target.value);
+          setActiveIndex(-1);
           if (!coords) place();
         }}
         onFocus={() => {
           setSearch("");
+          setActiveIndex(-1);
           place();
         }}
         onKeyDown={(event) => {
@@ -130,13 +128,20 @@ export function ModelCombobox({ models, value, onChange, placeholder, className,
           }
           if (event.key === "ArrowDown") {
             event.preventDefault();
-            setActiveIndex((value) => Math.min(value + 1, ordered.length - 1));
+            setActiveIndex((current) => {
+              const index = current >= 0 && current < ordered.length ? current : -1;
+              return Math.min(index + 1, ordered.length - 1);
+            });
           } else if (event.key === "ArrowUp") {
             event.preventDefault();
-            setActiveIndex((value) => Math.max(value - 1, 0));
+            setActiveIndex((current) => {
+              if (!ordered.length) return -1;
+              const index = current >= 0 && current < ordered.length ? current : 0;
+              return Math.max(index - 1, 0);
+            });
           } else if (event.key === "Enter") {
             event.preventDefault();
-            const target = activeIndex >= 0 ? ordered[activeIndex] : undefined;
+            const target = navigableIndex >= 0 ? ordered[navigableIndex] : undefined;
             if (target) pick(target);
             else close(true);
           }

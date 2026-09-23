@@ -9,14 +9,6 @@ import { listTestedModelChoices } from "../ai/providers/registry";
 
 type ModelChoice = ReturnType<typeof listTestedModelChoices>[number];
 
-export function defaultProjectAiProfile(): ProjectAiProfile {
-  const choices=listTestedModelChoices();
-  if(!choices.length) return {mode:"global"};
-  const primary=choices[0]!;
-  const route:ProjectModelRoute={connectionId:primary.connectionId,model:primary.model,label:primary.label};
-  return {mode:"project",primary:route,judge:route,builder:route,copilot:route};
-}
-
 function EmptyModelNotice(){
   return <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-800"><div className="flex items-center gap-2 font-semibold"><Bot className="size-4"/>还没有“测试通过”的模型</div><p className="mt-1">先到「AI 模型与连接」测试模型。创建项目时只允许选择已经实际连接成功的模型，避免运行到一半才发现 model 不可用。</p><Link to="/settings" className="mt-2 inline-flex items-center gap-1 font-semibold text-amber-900">前往设置 <ExternalLink className="size-3"/></Link></div>;
 }

@@ -194,7 +194,7 @@ const GOAL_PRESETS: Array<{ id: string; label: string; pattern: RegExp; query: s
 ];
 
 function tokenize(value: string) {
-  const ascii = value.toLowerCase().match(/[a-z0-9_.\/-]{2,}/g) ?? [];
+  const ascii = value.toLowerCase().match(/[a-z0-9_./-]{2,}/g) ?? [];
   const cjk = value.match(/[\u4e00-\u9fff]{2,12}/g) ?? [];
   const cjkParts = cjk.flatMap((part) => {
     const pieces = [part];

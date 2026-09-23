@@ -149,7 +149,7 @@ export function setCachedAiResult(operation: AiOperation, model: string, payload
   trimMemoryCache();
   // Large candidate/artifact results are fast and useful inside the current session but expensive to
   // stringify into localStorage after every completion. Keep those memory-only.
-  let serialized = "";
+  let serialized: string;
   try { serialized = JSON.stringify(next); } catch { return; }
   if (serialized.length > 200_000) return;
   const current = cacheEntries().filter((item) => item.key !== key);

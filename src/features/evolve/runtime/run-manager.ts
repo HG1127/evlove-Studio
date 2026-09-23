@@ -111,7 +111,9 @@ export function getTaskRuntimeStatus(projectId: string): RuntimeStatus | undefin
 
 export function updateRunTaskProgress(projectId: string, status: RuntimeStatus) {
   const tasks = readTasks(); const task = tasks[projectId]; if (!task) return;
-  const { busy: _busy, ...progress } = status;
+  const progress=Object.fromEntries(
+    Object.entries(status).filter(([key])=>key!=="busy"),
+  ) as Omit<RuntimeStatus,"busy">;
   tasks[projectId] = { ...task, progress, heartbeatAt: new Date().toISOString(), interrupted: false };
   writeTasks(tasks);
 }

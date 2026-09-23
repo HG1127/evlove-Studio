@@ -250,11 +250,11 @@ export function reasoningEffortForOperation(operation: AiOperation, payload: unk
   const hint = OPERATION_PROFILES[operation].reasoningHint;
   const base = hint === "fast" ? "low" : hint === "deep" ? "high" : "medium";
   if (base !== "high" || !["diagnose", "plan", "artifact-acceptance"].includes(operation)) return base;
-  let text = "";
+  let text: string;
   try { text = JSON.stringify(payload); } catch { return base; }
   const simpleDocument = text.length <= 70_000
-    && /\"artifactKind\":\"document\"|\"objectType\":\"document\"|text\/plain|text\/markdown/i.test(text)
-    && !/\"artifactKind\":\"(?:codebase|spreadsheet|presentation|workflow)\"|repositoryIntelligence|dependencyEdges/i.test(text);
+    && /"artifactKind":"document"|"objectType":"document"|text\/plain|text\/markdown/i.test(text)
+    && !/"artifactKind":"(?:codebase|spreadsheet|presentation|workflow)"|repositoryIntelligence|dependencyEdges/i.test(text);
   return simpleDocument ? "medium" : base;
 }
 
