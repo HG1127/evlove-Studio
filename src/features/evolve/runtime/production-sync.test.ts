@@ -164,6 +164,44 @@ describe("production sync bootstrap",()=>{
     });
   });
 
+  it("treats Data Plane 503 as a short transient outage while preserving local Studio state",async()=>{
+    vi.useFakeTimers();
+    const local={...demoProject,id:"local-data-plane-503",name:"Local survives 503",updatedAt:"2026-09-22T10:00:00.000Z"};
+    saveLocalProject(local);
+
+    const list=vi.fn()
+      .mockRejectedValueOnce(new Error("Production API HTTP 503: SERVER_DATA_PLANE_UNAVAILABLE"))
+      .mockResolvedValue([]);
+    configureProductionRuntime({
+      ...localProductionPorts,
+      missions:{...localProductionPorts.missions,list,save:async()=>undefined,delete:async()=>undefined},
+      jobs:{...localProductionPorts.jobs,list:async()=>[],put:async()=>undefined},
+      events:{...localProductionPorts.events,list:async()=>[],append:async()=>undefined},
+    },"http");
+
+    await expect(initializeProductionSync()).rejects.toThrow("SERVER_DATA_PLANE_UNAVAILABLE");
+    expect(getLocalProject("local-data-plane-503")?.name).toBe("Local survives 503");
+    expect(productionSyncStatus()).toMatchObject({
+      mode:"http",
+      initialized:true,
+      realtimeStatus:"http-error",
+      failureCount:1,
+      lastError:"Production API HTTP 503: SERVER_DATA_PLANE_UNAVAILABLE",
+    });
+
+    await vi.advanceTimersByTimeAsync(2_999);
+    expect(list).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(getLocalProject("local-data-plane-503")?.name).toBe("Local survives 503");
+    expect(productionSyncStatus()).toMatchObject({
+      realtimeStatus:"http-polling",
+      failureCount:0,
+      lastError:undefined,
+    });
+  });
+
   it("degrades on an unavailable Production API and recovers through polling without remounting Studio",async()=>{
     vi.useFakeTimers();
     const at="2026-09-22T10:00:00.000Z";
