@@ -2,6 +2,7 @@ import {createError,defineEventHandler,readBody} from "nitro/h3";
 import {z} from "zod";
 import {getServerArtifactStore} from "../../../src/services/artifact-runtime";
 import {getServerProductionRuntime,JobStateConflictError} from "../../../src/services/production-runtime";
+import {cancelServerJobWithWorkflow} from "../../../src/services/job-workflow-cancel";
 import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 
 const Input=z.object({jobId:z.string().min(1),deleteArtifact:z.boolean().default(true)});
@@ -12,8 +13,9 @@ export default defineEventHandler(async(event)=>{
   const runtime=getServerProductionRuntime();
   const job=await runtime.jobs.get(input.jobId);
   if(!job||job.type!=="parse")throw createError({statusCode:404,statusMessage:"Parse Job 不存在"});
+  let result;
   try{
-    await runtime.jobs.cancel(job.id);
+    result=await cancelServerJobWithWorkflow(runtime,job);
   }catch(error){
     if(error instanceof JobStateConflictError){
       throw createError({
@@ -22,13 +24,16 @@ export default defineEventHandler(async(event)=>{
         data:{code:error.code,jobId:error.jobId,reason:error.reason,current:error.current},
       });
     }
-    throw error;
+    throw createError({
+      statusCode:502,
+      statusMessage:"Parse Workflow cancel failed",
+      data:{jobId:job.id,message:error instanceof Error?error.message:String(error)},
+    });
   }
-  const current=await runtime.jobs.get(job.id)??job;
-  if(input.deleteArtifact&&current.status==="cancelled"){
+  if(input.deleteArtifact&&result.job.status==="cancelled"){
     const artifacts=getServerArtifactStore();
-    if(current.inputRef)await artifacts.delete(current.inputRef).catch(()=>undefined);
-    if(current.outputRef)await artifacts.delete(current.outputRef).catch(()=>undefined);
+    if(result.job.inputRef)await artifacts.delete(result.job.inputRef).catch(()=>undefined);
+    if(result.job.outputRef)await artifacts.delete(result.job.outputRef).catch(()=>undefined);
   }
-  return {jobId:job.id,status:current.status};
+  return {jobId:job.id,status:result.job.status,workflow:result.workflow};
 });

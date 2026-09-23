@@ -1,5 +1,6 @@
 import {createError,defineEventHandler,getRouterParam} from "nitro/h3";
 import {getServerProductionRuntime,JobStateConflictError} from "../../../../../src/services/production-runtime";
+import {cancelServerJobWithWorkflow} from "../../../../../src/services/job-workflow-cancel";
 import {requireGovernedEvolutionPermission} from "../../../../../src/services/security-policy";
 
 export default defineEventHandler(async(event)=>{
@@ -9,8 +10,10 @@ export default defineEventHandler(async(event)=>{
   const runtime=getServerProductionRuntime();
   const job=await runtime.jobs.get(id);
   if(!job)throw createError({statusCode:404,statusMessage:"Job not found"});
+  const mission=job.missionId?await runtime.missions.get(job.missionId):undefined;
   try{
-    await runtime.jobs.cancel(id);
+    const result=await cancelServerJobWithWorkflow(runtime,job,mission);
+    return {ok:true,jobId:id,status:result.job.status,workflow:result.workflow};
   }catch(error){
     if(error instanceof JobStateConflictError){
       throw createError({
@@ -19,8 +22,10 @@ export default defineEventHandler(async(event)=>{
         data:{code:error.code,jobId:error.jobId,reason:error.reason,current:error.current},
       });
     }
-    throw error;
+    throw createError({
+      statusCode:502,
+      statusMessage:"Workflow cancel failed",
+      data:{jobId:id,message:error instanceof Error?error.message:String(error)},
+    });
   }
-  const current=await runtime.jobs.get(id);
-  return {ok:true,jobId:id,status:current?.status??job.status};
 });

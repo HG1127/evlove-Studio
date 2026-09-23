@@ -10,6 +10,7 @@ import {
 } from "@evolution/contracts";
 import {getServerArtifactStore} from "../../../src/services/artifact-runtime";
 import {
+  bindServerJobWorkflowRun,
   getServerProductionRuntime,
   isBenignJobBookkeepingConflict,
   JobStateConflictError,
@@ -17,6 +18,7 @@ import {
 import {serverSupabaseConfigured} from "../../../src/server-env";
 import {sourceParseWorkflow} from "../../../../../workflows/source-parse";
 import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
+import {cancelWorkflowRunById} from "../../../src/services/workflow-run-control";
 
 const MAX_FILE_BYTES=25*1024*1024;
 
@@ -127,24 +129,35 @@ export default defineEventHandler(async(event)=>{
   }
 
   const queued=await runtime.jobs.get(jobId);
-  if(queued){
-    try{
-      await runtime.jobs.put(EvolutionJobSchema.parse({
-        ...queued,
-        metadata:{...(queued.metadata??{}),runId:run.runId},
-        updatedAt:new Date().toISOString(),
-      }));
-    }catch(error){
-      if(!isBenignJobBookkeepingConflict(error,queued.generation)){
-        if(error instanceof JobStateConflictError){
-          throw createError({
-            statusCode:409,statusMessage:error.message,
-            data:{code:error.code,jobId:error.jobId,reason:error.reason,current:error.current},
-          });
-        }
-        throw error;
-      }
-    }
+  if(!queued){
+    await cancelWorkflowRunById(run.runId).catch(()=>undefined);
+    throw createError({statusCode:409,statusMessage:"Parse Workflow 已启动，但对应 Job 已不存在"});
   }
-  return SourceParseStartResponseSchema.parse({jobId,runId:run.runId,artifactId,status:"queued"});
+
+  let boundJob;
+  try{
+    boundJob=await bindServerJobWorkflowRun(jobId,queued.generation,run.runId,"metadata");
+  }catch(error){
+    await cancelWorkflowRunById(run.runId).catch(()=>undefined);
+    if(error instanceof JobStateConflictError){
+      throw createError({
+        statusCode:409,statusMessage:"Parse Workflow runId 绑定失败，已取消孤儿 Workflow",
+        data:{code:error.code,jobId:error.jobId,reason:error.reason,current:error.current,runId:run.runId},
+      });
+    }
+    throw error;
+  }
+
+  if(["cancelled","failed","partial"].includes(boundJob.status)){
+    await cancelWorkflowRunById(run.runId).catch(()=>undefined);
+    throw createError({
+      statusCode:409,
+      statusMessage:`Parse Job 在 Workflow 启动期间已进入 ${boundJob.status}，已取消刚启动的 Workflow`,
+      data:{jobId,boundStatus:boundJob.status,runId:run.runId},
+    });
+  }
+
+  return SourceParseStartResponseSchema.parse({
+    jobId,runId:run.runId,artifactId,status:boundJob.status,
+  });
 });

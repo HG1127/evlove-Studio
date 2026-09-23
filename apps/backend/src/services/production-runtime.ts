@@ -153,6 +153,29 @@ async function cancelServerJobGeneration(
   throw new JobStateConflictError(id,typeof result?.reason==="string"?result.reason:"unknown",current);
 }
 
+export async function bindServerJobWorkflowRun(
+  id:string,
+  expectedGeneration:number,
+  runId:string,
+  binding:"metadata"|"output-ref",
+){
+  const {request}=createRestClient();
+  const rows=await request("rpc/bind_evolution_job_workflow_run",{
+    method:"POST",
+    body:JSON.stringify({
+      p_id:id,
+      p_expected_generation:expectedGeneration,
+      p_run_id:runId,
+      p_binding:binding,
+      p_at:new Date().toISOString(),
+    }),
+  }) as Array<{applied?:unknown;reason?:unknown;job?:unknown}>;
+  const result=rows?.[0];
+  const current=rpcJob(result?.job);
+  if(result?.applied===true&&current)return current;
+  throw new JobStateConflictError(id,typeof result?.reason==="string"?result.reason:"unknown",current);
+}
+
 export async function listServerMissionEnvelopes(){
   const {request}=createRestClient();
   const rows=await request("missions?select=*&order=updated_at.desc") as JsonRecord[];

@@ -3,6 +3,7 @@ import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
 import {demoProject} from "../../../../src/features/evolve/data/mock-project";
 import {EvolutionJobSchema,type EvolutionJob} from "@evolution/contracts";
 import {
+  bindServerJobWorkflowRun,
   getServerProductionRuntime,
   JobStateConflictError,
   MissionRevisionConflictError,
@@ -205,6 +206,33 @@ describe("server Mission revision CAS",()=>{
     expect(error).toBeInstanceOf(JobStateConflictError);
     expect(error).toMatchObject({
       name:"JobStateConflictError",reason:"generation-conflict",current:{generation:4,status:"running"},
+    });
+  });
+
+  it("binds a Workflow run id to the exact Job generation without changing status",async()=>{
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
+      const url=String(input);
+      if(url.endsWith("/rest/v1/rpc/bind_evolution_job_workflow_run")){
+        const body=JSON.parse(String(init?.body??"{}")) as Record<string,unknown>;
+        expect(body).toMatchObject({
+          p_id:"job-monotonic",
+          p_expected_generation:3,
+          p_run_id:"wf-run-123",
+          p_binding:"metadata",
+        });
+        const bound=EvolutionJobSchema.parse({
+          ...baseJob,
+          metadata:{...(baseJob.metadata??{}),runId:"wf-run-123"},
+          updatedAt:"2026-09-23T00:07:00.000Z",
+        });
+        return new Response(JSON.stringify([{applied:true,reason:"bound",job:jobRow(bound)}]),{status:200});
+      }
+      throw new Error("unexpected request "+url);
+    }));
+
+    const bound=await bindServerJobWorkflowRun("job-monotonic",3,"wf-run-123","metadata");
+    expect(bound).toMatchObject({
+      id:"job-monotonic",generation:3,status:"running",metadata:{runId:"wf-run-123"},
     });
   });
 
