@@ -1,4 +1,5 @@
 import { SupabaseBackendConfigSchema, type SupabaseBackendConfig } from "@evolution/contracts";
+import {createError} from "nitro/h3";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -17,7 +18,20 @@ export function getServerSupabaseConfig():SupabaseBackendConfig {
     ?? "evolution-artifacts";
   const parsed=SupabaseBackendConfigSchema.safeParse({url,anonKey:key,artifactBucket});
   if(!parsed.success){
-    throw new Error("Server Supabase 配置缺失。生产环境请配置 SUPABASE_URL + SUPABASE_SECRET_KEY（或 SUPABASE_SERVICE_ROLE_KEY）；publishable fallback 仅限显式开发/测试。");
+    const diagnostics=serverSupabaseConfigDiagnostics();
+    throw createError({
+      statusCode:503,
+      statusMessage:"Server Data Plane 未配置或当前不可用",
+      data:{
+        code:"SERVER_DATA_PLANE_UNAVAILABLE",
+        credentialMode:diagnostics.credentialMode,
+        urlPresent:diagnostics.urlPresent,
+        secretPresent:diagnostics.secretPresent,
+        publishablePresent:diagnostics.publishablePresent,
+        artifactBucketPresent:diagnostics.artifactBucketPresent,
+        issueFields:diagnostics.issueFields,
+      },
+    });
   }
   return parsed.data;
 }

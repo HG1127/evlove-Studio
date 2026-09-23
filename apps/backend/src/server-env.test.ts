@@ -3,6 +3,7 @@ import { afterEach,beforeEach,describe,expect,it } from "vitest";
 import { getCapabilityEmbeddingConfig, getServerSupabaseConfig, getServerTargetProxyConfig, getVaultEncryptionConfig, serverSupabaseCredentialMode, serverSupabaseSecureConfigured, targetProxyCapabilities, vaultEncryptionConfigured } from "./server-env";
 
 const KEYS=[
+  "NODE_ENV",
   "SUPABASE_URL",
   "SUPABASE_PUBLISHABLE_KEY",
   "SUPABASE_SECRET_KEY",
@@ -61,6 +62,27 @@ describe("server Supabase env",()=>{
     expect(config.anonKey).toBe("service_role_server_fixture_0000000000000000");
     expect(serverSupabaseCredentialMode()).toBe("secret");
     expect(serverSupabaseSecureConfigured()).toBe(true);
+  });
+
+  it("returns explicit 503 semantics without leaking publishable credentials when Production server secret is missing",()=>{
+    process.env.NODE_ENV="production";
+    process.env.SUPABASE_URL="https://example.supabase.co";
+    process.env.SUPABASE_PUBLISHABLE_KEY="sb_publishable_must_not_leak_1234567890";
+
+    let caught:unknown;
+    try{getServerSupabaseConfig();}catch(error){caught=error;}
+
+    const error=caught as {statusCode?:number;statusMessage?:string;data?:Record<string,unknown>};
+    expect(error.statusCode).toBe(503);
+    expect(error.statusMessage).toContain("Server Data Plane");
+    expect(error.data).toMatchObject({
+      code:"SERVER_DATA_PLANE_UNAVAILABLE",
+      credentialMode:"missing",
+      urlPresent:true,
+      secretPresent:false,
+      publishablePresent:true,
+    });
+    expect(JSON.stringify(error.data)).not.toContain("sb_publishable_must_not_leak_1234567890");
   });
 
   it("falls back to the internal-MVP Vite publishable key",()=>{
