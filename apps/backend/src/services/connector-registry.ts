@@ -73,6 +73,11 @@ function lifecycle(manifest:ConnectorServerManifest){
   return Object.fromEntries(OPERATIONS.map((operation)=>[operation,Boolean(manifest.paths[operation])])) as Record<ConnectorLifecycleOperation,boolean>;
 }
 
+export function connectorManifestDeclaresFullLifecycle(manifest:ConnectorServerManifest){
+  const declared=lifecycle(manifest);
+  return manifest.mutationMode==="staged-version"&&OPERATIONS.every((operation)=>declared[operation]);
+}
+
 export async function getConnectorRegistryCapabilities(){
   const connectors=await Promise.all(getServerConnectorManifests().map(async(manifest)=>({
     id:manifest.id,

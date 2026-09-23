@@ -35,11 +35,12 @@ describe("public readiness passive boundary",()=>{
     expect(snapshot.sandbox).toBe(false);
     expect(snapshot.browser).toBe(false);
     expect(snapshot.release).toEqual({read:false,write:false});
-    expect(snapshot.connectors).toEqual({configured:true,fullLifecycle:false});
+    expect(snapshot.connectors).toEqual({configured:true,fullLifecycle:true});
     expect(snapshot.security).toMatchObject({configured:true,enforced:true,productionSafe:false});
     expect(snapshot.blockers.map((item)=>item.code)).not.toContain("SUPABASE_SERVER_SECRET_MISSING");
     expect(snapshot.blockers.map((item)=>item.code)).not.toContain("WORKSPACE_ID_MISSING");
     expect(snapshot.blockers.map((item)=>item.code)).not.toContain("IDENTITY_NOT_CONFIGURED");
+    expect(snapshot.blockers.map((item)=>item.code)).not.toContain("RELEASE_PROVIDER_NOT_CONFIGURED");
     expect(fetch).not.toHaveBeenCalled();
   });
 

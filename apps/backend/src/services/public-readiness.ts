@@ -13,7 +13,7 @@ import {
   vaultEncryptionConfigured,
   vercelReleaseWriteConfigured,
 } from "../server-env";
-import {getServerConnectorManifests} from "./connector-registry";
+import {connectorManifestDeclaresFullLifecycle,getServerConnectorManifests} from "./connector-registry";
 import {getSecurityCapabilities} from "./security-policy";
 
 function readinessBlockers(input:{
@@ -24,6 +24,7 @@ function readinessBlockers(input:{
   gitConfigured:boolean;
   gitWebhook:boolean;
   connectorConfigured:boolean;
+  connectorFullLifecycleConfigured:boolean;
   targetProxy:ReturnType<typeof targetProxyCapabilities>;
 }):PublicReadinessBlocker[]{
   const blockers:PublicReadinessBlocker[]=[];
@@ -70,7 +71,7 @@ function readinessBlockers(input:{
       action:"启用 Vercel AI Gateway/OIDC，或配置 EVOLUTION_AI_API_KEY + EVOLUTION_AI_MODEL。",
     });
   }
-  if(!input.releaseConfigured&&!input.targetProxy.releaseConfigured){
+  if(!input.releaseConfigured&&!input.targetProxy.releaseConfigured&&!input.connectorFullLifecycleConfigured){
     add({
       code:"RELEASE_PROVIDER_NOT_CONFIGURED",severity:"warning",area:"release",
       message:"尚未配置真实 Production Release Provider。",
@@ -119,7 +120,12 @@ export async function getPublicReadinessSnapshot(){
   const security=getSecurityCapabilities();
   const targetProxy=targetProxyCapabilities();
   let connectorConfigured=false;
-  try{connectorConfigured=getServerConnectorManifests().length>0;}catch{/* invalid manifests are surfaced by authenticated capability checks */}
+  let connectorFullLifecycleConfigured=false;
+  try{
+    const manifests=getServerConnectorManifests();
+    connectorConfigured=manifests.length>0;
+    connectorFullLifecycleConfigured=manifests.some(connectorManifestDeclaresFullLifecycle);
+  }catch{/* invalid manifests are surfaced by authenticated capability checks */}
 
   const blockers=readinessBlockers({
     dataPlane:dataPlaneConfig,
@@ -129,6 +135,7 @@ export async function getPublicReadinessSnapshot(){
     gitConfigured:githubTargetConfigured(),
     gitWebhook:githubWebhookConfigured(),
     connectorConfigured,
+    connectorFullLifecycleConfigured,
     targetProxy,
   });
 
@@ -169,7 +176,7 @@ export async function getPublicReadinessSnapshot(){
       approvalStore:false,
       memberDirectory:false,
     },
-    connectors:{configured:connectorConfigured,fullLifecycle:false},
+    connectors:{configured:connectorConfigured,fullLifecycle:connectorFullLifecycleConfigured},
     targetProxy:{run:targetProxy.runConfigured,release:targetProxy.releaseConfigured,observe:targetProxy.observeConfigured},
   });
 }
