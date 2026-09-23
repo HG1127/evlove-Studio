@@ -1,6 +1,6 @@
 // @vitest-environment node
-import {afterEach,beforeEach,describe,expect,it} from "vitest";
-import {getPassiveServerAiHealth,probeServerAiRuntime} from "./server-ai-health";
+import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
+import {getPassiveServerAiHealth,probeServerAiRuntime,resetServerAiRuntimeProbeCache} from "./server-ai-health";
 
 const KEYS=[
   "VERCEL","VERCEL_ENV","VERCEL_OIDC_TOKEN","EVOLUTION_AI_GATEWAY_ENABLED",
@@ -11,7 +11,9 @@ const previous=new Map<string,string|undefined>();
 beforeEach(()=>{
   for(const key of KEYS){previous.set(key,process.env[key]);delete process.env[key];}
 });
+  resetServerAiRuntimeProbeCache();
 afterEach(()=>{
+  resetServerAiRuntimeProbeCache();
   for(const key of KEYS){
     const value=previous.get(key);
     if(value===undefined)delete process.env[key];
@@ -42,6 +44,28 @@ describe("Server AI runtime health",()=>{
       configured:true,ready:false,runtimeVerified:true,status:"unavailable",
       reasonCode:"customer-verification-required",
     });
+  });
+
+  it("deduplicates concurrent probes and reuses the short TTL cache",async()=>{
+    process.env.EVOLUTION_AI_API_KEY="test-key";
+    process.env.EVOLUTION_AI_MODEL="test-model";
+    const runner=vi.fn(async()=>({ok:true}));
+
+    const [first,second]=await Promise.all([
+      probeServerAiRuntime(runner),
+      probeServerAiRuntime(runner),
+    ]);
+    expect(runner).toHaveBeenCalledTimes(1);
+    expect(first.status).toBe("ready");
+    expect(second.status).toBe("ready");
+
+    const cached=await probeServerAiRuntime(runner);
+    expect(cached.status).toBe("ready");
+    expect(runner).toHaveBeenCalledTimes(1);
+
+    const forced=await probeServerAiRuntime(runner,{force:true});
+    expect(forced.status).toBe("ready");
+    expect(runner).toHaveBeenCalledTimes(2);
   });
 
   it("reports a missing provider without invoking the runner",async()=>{
