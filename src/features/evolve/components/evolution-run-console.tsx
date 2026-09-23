@@ -170,7 +170,7 @@ export function EvolutionRunConsole({ runtime }: { runtime: ProjectRuntime }) {
   const recentSwitches = useMemo(() => {
     void routeTick;
     return listAiAuditEvents().filter((event) => event.kind !== "manual-check").slice(0, 2);
-  }, [routeTick, runtime.project.updatedAt, runtime.status.busy]);
+  }, [routeTick]);
   // 本步真实的自动切换顺序（首选模型 → 同连接测通 → 其他连接）：把「跑不通自动切换」可视化。
   const switchChain = useMemo(() => {
     void routeTick;
@@ -210,7 +210,7 @@ export function EvolutionRunConsole({ runtime }: { runtime: ProjectRuntime }) {
     if (lastAutoAction.current === signature) return;
     lastAutoAction.current = signature;
     void executeWorkflowAction(runtime, action).catch(() => setAutoUntilGate(false));
-  }, [autoUntilGate, runtime, runtime.project.updatedAt, runtime.status.busy]);
+  }, [autoUntilGate, runtime, runtime.project.updatedAt, runtime.status.busy, setAutoUntilGate]);
 
   const runNext = async () => {
     await executeWorkflowAction(runtime, deriveNextWorkflowAction(runtime.project));

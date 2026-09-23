@@ -8,7 +8,7 @@
     "predev": "node scripts/ensure-runner.mjs",
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "lint": "eslint .",
+    "lint": "eslint . --max-warnings 0",
     "architecture:check": "eslint packages",
     "test": "vitest run",
     "prepreview": "node scripts/ensure-runner.mjs",

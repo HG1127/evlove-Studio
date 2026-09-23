@@ -839,6 +839,7 @@ function ValidationPanel({ runtime }: { runtime: ProjectRuntime }) {
   const autonomousValidationRunning=autonomousMode&&runtime.status.busy;
   const localPendingKey=`${runtime.winner?.id??"none"}:${localPendingCriteria.map((criterion)=>criterion.id).sort().join(",")}`;
   const autoRevalidateAttemptRef=useRef<string|undefined>(undefined);
+  const resumeAutonomousEvolution=runtime.resumeAutonomousEvolution;
   // Browser execution cannot survive a refresh. If a persisted autonomous run reopens on a purely
   // local evidence pause, resume it once automatically instead of showing a passive “已进入自动复验”
   // badge while no job is actually running. The stable key prevents an evaluator outage from
@@ -848,9 +849,9 @@ function ValidationPanel({ runtime }: { runtime: ProjectRuntime }) {
     if(!["paused","idle"].includes(p.campaign.status))return;
     if(autoRevalidateAttemptRef.current===localPendingKey)return;
     autoRevalidateAttemptRef.current=localPendingKey;
-    const timer=window.setTimeout(()=>{void runtime.resumeAutonomousEvolution();},0);
+    const timer=window.setTimeout(()=>{void resumeAutonomousEvolution();},0);
     return()=>window.clearTimeout(timer);
-  },[autonomousMode,runtime.status.busy,v.status,localPendingKey,localPendingCriteria.length,externalPendingCriteria.length,runtime.winner,p.campaign.status,runtime.resumeAutonomousEvolution]);
+  },[autonomousMode,runtime.status.busy,v.status,localPendingKey,localPendingCriteria.length,externalPendingCriteria.length,runtime.winner,p.campaign.status,resumeAutonomousEvolution]);
   const evidenceIncomplete=v.status==="completed"&&v.recommendation==="hold"&&actualFailedChecks.length===0&&unverifiedCriteriaCount>0;
   const artifactPassed=acceptance?.status==="passed"&&acceptance.hardGatePass;
   const behaviorRepairAttempts=acceptance?.attempts??0;

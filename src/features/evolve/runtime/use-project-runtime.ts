@@ -434,7 +434,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
     });
     setStatus({ busy: false, message: `${id} 已确认` });
     return true;
-  }, [commit, project]);
+  }, [commit, project, setStatus]);
 
   const goNext = useCallback(() => {
     const index = stageOrder.indexOf(stage);
@@ -472,7 +472,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
       };
     });
     return criteria;
-  }, [commit, run]);
+  }, [commit, reportProgress, run]);
 
   const setRubricCriteria = useCallback((criteria: AcceptanceCriterion[], summary: string) => {
     const normalized = criteria;
@@ -564,7 +564,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
       reportProgress(`深度解析完成 ${reparsed}/${refreshed.length}`, refreshed.length, refreshed.length, "输入解析", "intake");
       return { reparsed, total: refreshed.length };
     });
-  }, [commit, run, setStage]);
+  }, [commit, reportProgress, run, setStage]);
 
   const generateEvalSuite = useCallback(async () => {
     const currentProject = projectRef.current;
@@ -615,7 +615,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
     }));
     if (warnings.length) throw new Error(`Eval Suite Coverage 不完整：${warnings.join("；")}`);
     return { ...result, validationCases: mapped.validationCases, hiddenCases: mapped.hiddenCases };
-  }, [commit, run]);
+  }, [commit, reportProgress, run, runProjectAi]);
 
   const updateTestCase = useCallback((caseId: string, patch: Pick<TestCase, "title" | "input"> & Partial<Pick<TestCase, "expected" | "tags" | "criterionIds" | "executionMode" | "evidenceScope">>) => {
     commit((current) => {
@@ -689,7 +689,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
     commit((current) => ({ ...current, problems, selectedProblemId: prioritizeProblems(problems)[0]?.problem.id ?? result.recommendedProblemId, stage: "problem" }));
     setStage("problem");
     return { ...result, problems };
-  }, [commit, project, run, setStage]);
+  }, [commit, project, reportProgress, run, runProjectAi, setStage]);
 
   const selectProblem = useCallback((problemId: string) => {
     if (projectRef.current.selectedProblemId === problemId) return;
@@ -711,7 +711,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
     commit((current) => ({ ...current, diagnosis, stage: "diagnosis" }));
     setStage("diagnosis");
     return diagnosis;
-  }, [commit, project, run]);
+  }, [commit, project, reportProgress, run, runProjectAi]);
 
   const generatePlan = useCallback(async (sourceProject: EvolveProject = project) => {
     const diagnosis = sourceProject.diagnosis;
@@ -755,7 +755,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
     }));
     setStage("plan");
     return result;
-  }, [commit, project, run]);
+  }, [commit, project, reportProgress, run, runProjectAi]);
 
   const toggleCandidate = useCallback((candidateId: string) => {
     commit((current) => {
@@ -900,7 +900,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
     });
     commit((latest) => latest.experimentRun.id !== experiment.id ? latest : ({ ...latest, experimentRun: { ...latest.experimentRun, aiAdvice: advice } }));
     return advice;
-  }, [commit, reportProgress, run]);
+  }, [commit, reportProgress, run, runProjectAi]);
 
   const adoptExperimentAdvice = useCallback(async () => {
     const current = projectRef.current;
@@ -963,7 +963,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
       return { ...experiment, aiAdvice };
     }
     return experiment;
-  }, [applyExperiment, generateExperimentAdvice, project, run]);
+  }, [applyExperiment, generateExperimentAdvice, project, reportProgress, run]);
 
   const winner = useMemo(() => {
     const candidateId = project.experimentRun.winnerId ?? project.experimentRun.pendingEvidenceCandidateId;
@@ -1081,7 +1081,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
       markValidationFailed(winner.id, error instanceof Error ? error.message : "补考/成果验收运行失败");
       return undefined;
     }
-  }, [applyArtifactValidated, markValidationFailed, project, run, winner]);
+  }, [applyArtifactValidated, markValidationFailed, project, reportProgress, run, setStatus, winner]);
 
   // 版本回滚：把所选历史版本的成果物内容固化为新的进化对象；回滚前自动快照当前状态，保证随时能回去。
   // 回滚改变进化输入，旧评测/实验结论作废（resetDownstream），需重跑流程。
@@ -1272,7 +1272,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
       return undefined;
     }
     return run("AI 深度理解输入", execute);
-  }, [commit, run]);
+  }, [commit, run, runProjectAi]);
 
   // 回答一条「待确认歧义」：用户亲答或自动驾驶采用默认假设都记入项目口径，
   // 并写一条系统命令记录，让后续验收 / 出题 / 方案都按同一口径执行。
@@ -2047,7 +2047,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
       setStage("baseline");
       return { round, stopped: false, champion: working.searchChampion };
     });
-  }, [generateEvalSuite, projectId, run]);
+  }, [commit, generateEvalSuite, projectId, run, runProjectAi]);
 
   const runCampaign = useCallback(async () => {
     const before = projectRef.current;
@@ -2475,7 +2475,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
         ...sourceEvidence(project, "Copilot 回答用户问题时只读取与当前问题最相关的真实成果证据和当前运行状态"),
       },
     })));
-  }, [project, run, stage]);
+  }, [project, run, runProjectAi, stage]);
 
   return {
     project,
