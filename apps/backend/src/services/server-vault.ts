@@ -15,6 +15,7 @@ import {
   getVaultEncryptionConfig,
   vaultEncryptionConfigured,
 } from "../server-env";
+import {dataPlaneFetch} from "./data-plane-http";
 
 type JsonRecord=Record<string,unknown>;
 type VaultRow=JsonRecord&{
@@ -113,14 +114,10 @@ function restClient(){
     "Content-Type":"application/json",
   };
   async function request(path:string,init:RequestInit={}){
-    const response=await fetch(root+"/"+path,{
+    const response=await dataPlaneFetch("server-vault",root+"/"+path,{
       ...init,
       headers:{...headers,...(init.headers??{})},
     });
-    if(!response.ok){
-      const detail=await response.text().catch(()=>"");
-      throw new Error("Server Vault HTTP "+response.status+": "+detail.slice(0,500));
-    }
     if(response.status===204)return undefined;
     const text=await response.text();
     return text?JSON.parse(text):undefined;

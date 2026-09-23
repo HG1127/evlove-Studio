@@ -10,6 +10,7 @@ import {
   type ProductionRuntimePorts,
 } from "@evolution/contracts";
 import { getServerSupabaseConfig } from "../server-env";
+import {dataPlaneFetch} from "./data-plane-http";
 import { mirrorEvolutionEventToEvidenceLedger } from "./evidence-ledger";
 
 type JsonRecord=Record<string,unknown>;
@@ -66,14 +67,10 @@ function createRestClient(){
   };
 
   async function request(path:string,init:RequestInit={}){
-    const response=await fetch(root+"/"+path,{
+    const response=await dataPlaneFetch("production-runtime",root+"/"+path,{
       ...init,
       headers:{...baseHeaders,...(init.headers??{})},
     });
-    if(!response.ok){
-      const detail=await response.text().catch(()=>"");
-      throw new Error("Supabase PostgREST HTTP "+response.status+": "+detail.slice(0,500));
-    }
     if(response.status===204)return undefined;
     const text=await response.text();
     return text?JSON.parse(text):undefined;

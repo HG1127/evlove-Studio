@@ -10,6 +10,7 @@ import {
   releaseApprovalTtlSeconds,
   serverSupabaseConfigured,
 } from "../server-env";
+import {dataPlaneFetch} from "./data-plane-http";
 
 type JsonRecord=Record<string,unknown>;
 
@@ -38,11 +39,7 @@ function restClient(){
     "Content-Type":"application/json",
   };
   async function request(path:string,init:RequestInit={}){
-    const response=await fetch(root+"/"+path,{...init,headers:{...headers,...(init.headers??{})}});
-    if(!response.ok){
-      const detail=await response.text().catch(()=>"");
-      throw new Error("Release Approval Store HTTP "+response.status+": "+detail.slice(0,500));
-    }
+    const response=await dataPlaneFetch("release-approval-store",root+"/"+path,{...init,headers:{...headers,...(init.headers??{})}});
     if(response.status===204)return undefined;
     const text=await response.text();
     return text?JSON.parse(text):undefined;

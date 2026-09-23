@@ -7,6 +7,7 @@ import {
   type OutcomeMetricSample,
 } from "@evolution/contracts";
 import {getEvolutionWorkspaceId,getServerSupabaseConfig} from "../server-env";
+import {dataPlaneFetch} from "./data-plane-http";
 
 type JsonRecord=Record<string,unknown>;
 
@@ -15,11 +16,7 @@ function db(){
   const root=config.url.replace(/\/+$/,"")+"/rest/v1";
   const baseHeaders={apikey:config.anonKey,Authorization:"Bearer "+config.anonKey,"Content-Type":"application/json"};
   return async(path:string,init:RequestInit={})=>{
-    const response=await fetch(root+"/"+path,{...init,headers:{...baseHeaders,...(init.headers??{})}});
-    if(!response.ok){
-      const detail=await response.text().catch(()=>"");
-      throw new Error("Outcome sample store HTTP "+response.status+": "+detail.slice(0,500));
-    }
+    const response=await dataPlaneFetch("outcome-sample-store",root+"/"+path,{...init,headers:{...baseHeaders,...(init.headers??{})}});
     if(response.status===204)return undefined;
     const text=await response.text();
     return text?JSON.parse(text):undefined;
