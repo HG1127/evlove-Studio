@@ -19,6 +19,7 @@ import {serverSupabaseConfigured} from "../../../src/server-env";
 import {sourceParseWorkflow} from "../../../../../workflows/source-parse";
 import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 import {cancelWorkflowRunById} from "../../../src/services/workflow-run-control";
+import {sourceParseIdempotencyIdentity} from "../../../src/services/source-parse-identity";
 
 const MAX_FILE_BYTES=25*1024*1024;
 
@@ -30,6 +31,8 @@ export default defineEventHandler(async(event)=>{
   const parts=await readMultipartFormData(event);
   const file=parts?.find((part)=>part.name==="file"&&part.filename);
   if(!file)throw createError({statusCode:400,statusMessage:"缺少 file"});
+  const fileName=file.filename;
+  if(!fileName)throw createError({statusCode:400,statusMessage:"上传文件缺少 filename"});
   if(file.data.byteLength>MAX_FILE_BYTES)throw createError({statusCode:413,statusMessage:"单文件不能超过 25MB"});
   const rolePart=parts?.find((part)=>part.name==="role");
   const role=ArtifactRoleSchema.catch("target").parse(rolePart?new TextDecoder().decode(rolePart.data):"target");
@@ -39,7 +42,15 @@ export default defineEventHandler(async(event)=>{
   const artifactId=(artifactIdPart?new TextDecoder().decode(artifactIdPart.data):"").trim()||`artifact-${randomUUID()}`;
   const lastModifiedPart=parts?.find((part)=>part.name==="lastModified");
   const lastModified=Number(lastModifiedPart?new TextDecoder().decode(lastModifiedPart.data):0)||Date.now();
-  const idempotencyKey=`parse:${artifactId}:${file.data.byteLength}:${lastModified}`;
+  const mimeType=file.type||"application/octet-stream";
+  const bytes=Uint8Array.from(file.data);
+  const {idempotencyKey,contentSha256}=sourceParseIdempotencyIdentity({
+    artifactId,
+    name:fileName,
+    mimeType,
+    role,
+    bytes,
+  });
   const inputRef=artifactId;
   const requestedAt=new Date().toISOString();
   const runtime=getServerProductionRuntime();
@@ -69,10 +80,9 @@ export default defineEventHandler(async(event)=>{
   const jobId=existing?.id??`parse-${randomUUID()}`;
   const outputRef=existing?.outputRef??`parse-result-${jobId}`;
   const input=SourceParseWorkflowInputSchema.parse({
-    jobId,inputRef,outputRef,artifactId,name:file.filename,
-    mimeType:file.type||"application/octet-stream",size:file.data.byteLength,role,requestedAt,
+    jobId,inputRef,outputRef,artifactId,name:fileName,
+    mimeType,size:file.data.byteLength,role,requestedAt,
   });
-  const bytes=Uint8Array.from(file.data);
   await artifacts.put(inputRef,new Blob([bytes.buffer],{type:input.mimeType}));
   const queuedJob=EvolutionJobSchema.parse({
     schemaVersion:PRODUCTION_SCHEMA_VERSIONS.job,id:jobId,type:"parse",status:"queued",
@@ -86,6 +96,8 @@ export default defineEventHandler(async(event)=>{
       role,
       sessionId,
       lastModified,
+      contentSha256,
+      identityVersion:"parse-v2",
     },
     progress:{percent:0,detail:"等待 Durable Parse Workflow"},createdAt:requestedAt,updatedAt:requestedAt,
   });
