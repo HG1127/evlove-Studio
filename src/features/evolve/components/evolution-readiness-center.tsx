@@ -125,6 +125,7 @@ export function EvolutionReadinessCenter() {
   const [outcomeCheck,setOutcomeCheck]=useState<{busy:boolean;message:string;health?:OutcomeAnalyticsHealth}>({busy:false,message:""});
   const visualJudgeLive = getAiProviderStatus("visual-judge").live;
   const publicReadiness=publicReadinessCheck.snapshot;
+  const publicReadinessBlockers=(publicReadiness?.blockers??[]).filter((item)=>item.severity!=="info").slice(0,3);
   const signals = useMemo(() => ({
     runner,
     visualJudgeLive,
@@ -580,6 +581,12 @@ export function EvolutionReadinessCenter() {
               {(["missions","jobs","events","artifacts"] as const).map((name) => {const ready=backendHealthCheck.health?.dataPlane.tables[name]??publicReadiness?.dataPlane.coreTables;return <div key={name} className="rounded-lg bg-slate-50 px-2 py-1.5"><b>{name}</b><div className={ready ? "text-emerald-600" : "text-slate-400"}>{ready ? "READY" : "—"}</div></div>;})}
               <div className="rounded-lg bg-slate-50 px-2 py-1.5"><b>storage</b><div className={dataPlaneReady ? "text-emerald-600" : "text-slate-400"}>{dataPlaneReady ? "READY" : "—"}</div></div>
             </div>
+            {publicReadinessBlockers.length>0&&<div className="mt-3 space-y-1.5">
+              {publicReadinessBlockers.map((blocker)=><div key={blocker.code} className={`rounded-lg border px-2.5 py-2 text-[10px] leading-4 ${blocker.severity==="error"?"border-rose-200 bg-rose-50 text-rose-800":"border-amber-200 bg-amber-50 text-amber-800"}`}>
+                <div className="font-semibold">{blocker.message}</div>
+                <div className="mt-0.5 opacity-80">下一步：{blocker.action}</div>
+              </div>)}
+            </div>}
           </div>
           <div className="rounded-xl border bg-white p-3">
             <div className="flex flex-wrap items-start justify-between gap-3">

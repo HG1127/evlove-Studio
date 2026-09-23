@@ -37,6 +37,44 @@ describe("public readiness passive boundary",()=>{
     expect(snapshot.release).toEqual({read:false,write:false});
     expect(snapshot.connectors).toEqual({configured:true,fullLifecycle:false});
     expect(snapshot.security).toMatchObject({configured:true,enforced:true,productionSafe:false});
+    expect(snapshot.blockers.map((item)=>item.code)).not.toContain("SUPABASE_SERVER_SECRET_MISSING");
+    expect(snapshot.blockers.map((item)=>item.code)).not.toContain("WORKSPACE_ID_MISSING");
+    expect(snapshot.blockers.map((item)=>item.code)).not.toContain("IDENTITY_NOT_CONFIGURED");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("returns actionable configuration blockers without probing external systems",async()=>{
+    process.env.NODE_ENV="production";
+    process.env.SUPABASE_URL="https://example.supabase.co";
+    delete process.env.SUPABASE_SECRET_KEY;
+    delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+    process.env.SUPABASE_PUBLISHABLE_KEY="sb_publishable_fixture";
+    process.env.SUPABASE_ARTIFACT_BUCKET="evolution-artifacts";
+    process.env.EVOLUTION_WORKSPACE_ID="workspace-test";
+    process.env.EVOLUTION_IDENTITY_HMAC_SECRET="x".repeat(40);
+    process.env.EVOLUTION_AI_GATEWAY_ENABLED="true";
+    process.env.VERCEL_ENV="production";
+    vi.stubGlobal("fetch",vi.fn(async()=>{throw new Error("public readiness must remain passive");}));
+
+    vi.resetModules();
+    const {getPublicReadinessSnapshot}=await import("./public-readiness");
+    const snapshot=await getPublicReadinessSnapshot();
+
+    expect(snapshot.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code:"SUPABASE_SERVER_SECRET_MISSING",
+        severity:"error",
+        area:"data-plane",
+        configurationOnly:true,
+      }),
+      expect.objectContaining({
+        code:"RELEASE_PROVIDER_NOT_CONFIGURED",
+        severity:"warning",
+        area:"release",
+      }),
+    ]));
+    expect(snapshot.blockers.find((item)=>item.code==="SUPABASE_SERVER_SECRET_MISSING")?.action)
+      .toContain("SUPABASE_SERVICE_ROLE_KEY");
     expect(fetch).not.toHaveBeenCalled();
   });
 });

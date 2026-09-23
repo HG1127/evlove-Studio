@@ -48,6 +48,7 @@ describe("server workflow routing",()=>{
     const snapshot={
       probeMode:"passive-config",
       checkedAt:"2026-09-22T10:00:00.000Z",workflow:{durable:true},
+      blockers:[],
       dataPlane:{configured:true,secureCredential:true,database:true,storage:true,coreTables:true,credentialMode:"secret",urlPresent:true,secretPresent:true,publishablePresent:false,artifactBucketPresent:true,configValid:true,issueFields:[]},
       sourceParse:true,artifactRenderer:true,serverAi:true,sandbox:true,sandboxPolicy:true,browser:true,
       release:{read:true,write:true},git:{configured:true,webhook:true},

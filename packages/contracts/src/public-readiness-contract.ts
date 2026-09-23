@@ -1,8 +1,19 @@
 import {z} from "zod";
 
+export const PublicReadinessBlockerSchema=z.object({
+  code:z.string().min(1),
+  severity:z.enum(["error","warning","info"]),
+  area:z.enum(["data-plane","security","ai","release","git","connectors","target","outcome"]),
+  message:z.string().min(1),
+  action:z.string().min(1),
+  configurationOnly:z.literal(true).default(true),
+});
+export type PublicReadinessBlocker=z.infer<typeof PublicReadinessBlockerSchema>;
+
 export const PublicReadinessSnapshotSchema=z.object({
   probeMode:z.literal("passive-config"),
   checkedAt:z.string(),
+  blockers:z.array(PublicReadinessBlockerSchema).default([]),
   workflow:z.object({durable:z.boolean()}),
   dataPlane:z.object({
     configured:z.boolean(),
