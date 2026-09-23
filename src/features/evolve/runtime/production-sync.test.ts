@@ -1,6 +1,7 @@
+import {MissionRevisionConflictError} from "@evolution/adapters";
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
 import {demoProject} from "../data/mock-project";
-import {saveLocalProject} from "./local-store";
+import {getLocalProject,saveLocalProject} from "./local-store";
 import {EvolutionJobSchema} from "./job-contract";
 import {createEvolutionEvent,pendingLocalEvolutionEventCount} from "./event-contract";
 import {localProductionPorts} from "./local-production-adapters";
@@ -66,6 +67,46 @@ describe("production sync bootstrap",()=>{
 
     expect(putJob).not.toHaveBeenCalledWith(expect.objectContaining({id:"job-newer-remote",updatedAt:localAt}));
     expect(await localProductionPorts.jobs.get("job-newer-remote")).toMatchObject({status:"completed",updatedAt:remoteAt,generation:2});
+  });
+
+  it("treats a Mission CAS conflict as remote-authoritative even when local updatedAt is newer",async()=>{
+    vi.useFakeTimers();
+    const remoteAt="2026-09-22T10:00:00.000Z";
+    const localAt="2026-09-22T10:05:00.000Z";
+    const remote={...demoProject,id:"mission-revision-conflict",name:"Remote authoritative",updatedAt:remoteAt};
+    const local={...remote,name:"Local stale edit",updatedAt:localAt};
+    saveLocalProject(local);
+
+    const list=vi.fn(async()=>[remote]);
+    const save=vi.fn(async()=>{
+      throw new MissionRevisionConflictError(
+        "mission-revision-conflict",4,
+        "Mission mission-revision-conflict revision conflict: expected 4, current 5",
+      );
+    });
+    configureProductionRuntime({
+      ...localProductionPorts,
+      missions:{...localProductionPorts.missions,list,save,delete:async()=>undefined},
+      jobs:{...localProductionPorts.jobs,list:async()=>[],put:async()=>undefined},
+      events:{...localProductionPorts.events,list:async()=>[],append:async()=>undefined},
+    },"http");
+
+    await initializeProductionSync();
+    expect(productionSyncStatus()).toMatchObject({
+      realtimeStatus:"http-conflict",
+      missionConflictCount:1,
+    });
+    expect(getLocalProject("mission-revision-conflict")?.name).toBe("Local stale edit");
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(getLocalProject("mission-revision-conflict")?.name).toBe("Remote authoritative");
+    expect(productionSyncStatus()).toMatchObject({
+      realtimeStatus:"http-polling",
+      missionConflictCount:0,
+    });
   });
 
   it("degrades on an unavailable Production API and recovers through polling without remounting Studio",async()=>{

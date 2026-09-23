@@ -4,9 +4,9 @@ import {
   MissionEnvelopeSchema,
   PRODUCTION_SCHEMA_VERSIONS,
   missionEnvelope,
-  type EvolveProject,
   type EvolutionEvent,
   type EvolutionJob,
+  type MissionEnvelope,
   type ProductionRuntimePorts,
 } from "@evolution/contracts";
 import { getServerSupabaseConfig } from "../server-env";
@@ -15,20 +15,7 @@ import { mirrorEvolutionEventToEvidenceLedger } from "./evidence-ledger";
 type JsonRecord=Record<string,unknown>;
 export type ServerControlRuntime=Pick<ProductionRuntimePorts,"missions"|"jobs"|"events">;
 
-function missionRow(project:EvolveProject){
-  const envelope=missionEnvelope(project);
-  return {
-    id:envelope.missionId,
-    schema_version:envelope.schemaVersion,
-    stage:project.stage,
-    status:project.campaign.status,
-    payload:envelope.payload,
-    created_at:envelope.createdAt,
-    updated_at:envelope.updatedAt,
-  };
-}
-
-function rowMission(row:JsonRecord):EvolveProject{
+function rowMissionEnvelope(row:JsonRecord):MissionEnvelope{
   return MissionEnvelopeSchema.parse({
     schemaVersion:row.schema_version,
     missionId:row.id,
@@ -36,9 +23,8 @@ function rowMission(row:JsonRecord):EvolveProject{
     payload:row.payload,
     createdAt:row.created_at,
     updatedAt:row.updated_at,
-  }).payload;
+  });
 }
-
 function jobRow(job:EvolutionJob){
   const value=EvolutionJobSchema.parse(job);
   return {
@@ -109,28 +95,107 @@ function createRestClient(){
   return {request};
 }
 
-let runtime:ServerControlRuntime|undefined;
+export class MissionRevisionConflictError extends Error{
+  readonly code="MISSION_REVISION_CONFLICT";
+  readonly missionId:string;
+  readonly expectedRevision:number;
+  readonly currentRevision?:number;
+  constructor(missionId:string,expectedRevision:number,currentRevision?:number){
+    super(`Mission ${missionId} revision conflict: expected ${expectedRevision}, current ${currentRevision??"missing"}`);
+    this.name="MissionRevisionConflictError";
+    this.missionId=missionId;
+    this.expectedRevision=expectedRevision;
+    this.currentRevision=currentRevision;
+  }
+}
+
+function revisionValue(value:unknown){
+  const parsed=Number(value);
+  return Number.isSafeInteger(parsed)&&parsed>=0?parsed:undefined;
+}
+
+export async function listServerMissionEnvelopes(){
+  const {request}=createRestClient();
+  const rows=await request("missions?select=*&order=updated_at.desc") as JsonRecord[];
+  return (rows??[]).map(rowMissionEnvelope);
+}
+
+export async function getServerMissionEnvelope(id:string){
+  const {request}=createRestClient();
+  const rows=await request("missions?id=eq."+encodeURIComponent(id)+"&select=*&limit=1") as JsonRecord[];
+  return rows?.[0]?rowMissionEnvelope(rows[0]):undefined;
+}
+
+export async function compareAndSwapServerMissionEnvelope(envelopeInput:MissionEnvelope){
+  const envelope=MissionEnvelopeSchema.parse(envelopeInput);
+  const {request}=createRestClient();
+  const rows=await request("rpc/compare_and_swap_mission",{
+    method:"POST",
+    body:JSON.stringify({
+      p_id:envelope.missionId,
+      p_expected_revision:envelope.revision,
+      p_schema_version:envelope.schemaVersion,
+      p_stage:envelope.payload.stage,
+      p_status:envelope.payload.campaign.status,
+      p_payload:envelope.payload,
+      p_created_at:envelope.createdAt,
+      p_updated_at:envelope.updatedAt,
+    }),
+  }) as Array<{applied?:unknown;current_revision?:unknown;mission?:unknown}>;
+  const result=rows?.[0];
+  if(result?.applied===true&&result.mission&&typeof result.mission==="object"&&!Array.isArray(result.mission)){
+    return rowMissionEnvelope(result.mission as JsonRecord);
+  }
+  throw new MissionRevisionConflictError(
+    envelope.missionId,
+    envelope.revision,
+    revisionValue(result?.current_revision),
+  );
+}
+
+export async function deleteServerMissionIfRevision(id:string,expectedRevision:number){
+  const {request}=createRestClient();
+  const rows=await request("rpc/delete_mission_if_revision",{
+    method:"POST",
+    body:JSON.stringify({p_id:id,p_expected_revision:expectedRevision}),
+  }) as Array<{applied?:unknown;current_revision?:unknown}>;
+  const result=rows?.[0];
+  if(result?.applied===true)return;
+  throw new MissionRevisionConflictError(id,expectedRevision,revisionValue(result?.current_revision));
+}
 
 export function getServerProductionRuntime():ServerControlRuntime{
-  if(runtime)return runtime;
+  // Request/workflow scoped by construction: revision context must never be shared
+  // between concurrent callers, or one caller could accidentally advance another's CAS token.
   const {request}=createRestClient();
+  const missionRevisions=new Map<string,number>();
 
-  runtime={
+  return {
     missions:{
       initialize:async()=>undefined,
       list:async()=>{
         const rows=await request("missions?select=*&order=updated_at.desc") as JsonRecord[];
-        return (rows??[]).map(rowMission);
+        const envelopes=(rows??[]).map(rowMissionEnvelope);
+        const remoteIds=new Set(envelopes.map((envelope)=>envelope.missionId));
+        for(const envelope of envelopes)missionRevisions.set(envelope.missionId,envelope.revision);
+        for(const id of [...missionRevisions.keys()])if(!remoteIds.has(id))missionRevisions.delete(id);
+        return envelopes.map((envelope)=>envelope.payload);
       },
       get:async(id)=>{
         const rows=await request("missions?id=eq."+encodeURIComponent(id)+"&select=*&limit=1") as JsonRecord[];
-        return rows?.[0]?rowMission(rows[0]):undefined;
+        if(!rows?.[0]){missionRevisions.delete(id);return undefined;}
+        const envelope=rowMissionEnvelope(rows[0]);
+        missionRevisions.set(id,envelope.revision);
+        return envelope.payload;
       },
       save:async(project)=>{
-        await request("missions?on_conflict=id",{method:"POST",headers:{Prefer:"resolution=merge-duplicates,return=minimal"},body:JSON.stringify(missionRow(project))});
+        const expectedRevision=missionRevisions.get(project.id)??0;
+        const saved=await compareAndSwapServerMissionEnvelope(missionEnvelope(project,expectedRevision));
+        missionRevisions.set(project.id,saved.revision);
       },
       delete:async(id)=>{
-        await request("missions?id=eq."+encodeURIComponent(id),{method:"DELETE",headers:{Prefer:"return=minimal"}});
+        await deleteServerMissionIfRevision(id,missionRevisions.get(id)??0);
+        missionRevisions.delete(id);
       },
       flush:async()=>undefined,
     },
@@ -169,10 +234,11 @@ export function getServerProductionRuntime():ServerControlRuntime{
       },
     },
   };
-  return runtime;
 }
 
-export function resetServerProductionRuntime(){runtime=undefined;}
+export function resetServerProductionRuntime(){
+  // Kept for test/API compatibility. The runtime no longer owns process-global mutable state.
+}
 
 export const SERVER_CONTROL_SCHEMA_VERSIONS={
   mission:PRODUCTION_SCHEMA_VERSIONS.mission,

@@ -5,11 +5,12 @@ import { localProductionPorts } from "./local-production-adapters";
 
 let configured:ProductionRuntimePorts|undefined;
 let configuredMode:ProductionRuntimeMode|undefined;
+let automaticHttpRuntime:ProductionRuntimePorts|undefined;
 
 export type ProductionRuntimeMode = "local" | "http";
 
 export function configureProductionRuntime(ports:ProductionRuntimePorts,mode:ProductionRuntimeMode="local"){configured=ports;configuredMode=mode;}
-export function resetProductionRuntime(){configured=undefined;configuredMode=undefined;}
+export function resetProductionRuntime(){configured=undefined;configuredMode=undefined;automaticHttpRuntime=undefined;}
 
 export function productionRuntimeMode():ProductionRuntimeMode{
   if(configured)return configuredMode??"local";
@@ -23,5 +24,6 @@ export function getProductionRuntime():ProductionRuntimePorts{
   if(configured)return configured;
   const mode=productionRuntimeMode();
   if(mode==="local")return localProductionPorts;
-  return createHttpProductionPorts(serverEnv.EVOLUTION_API_URL?.trim()||"/api/evolution");
+  automaticHttpRuntime??=createHttpProductionPorts(serverEnv.EVOLUTION_API_URL?.trim()||"/api/evolution");
+  return automaticHttpRuntime;
 }

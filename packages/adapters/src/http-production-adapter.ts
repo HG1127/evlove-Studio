@@ -32,26 +32,67 @@ async function expectOk(res:Response,context:string){if(!res.ok)throw await http
 async function json<T>(res:Response,parse:(value:unknown)=>T){await expectOk(res,"Production API");return parse(await res.json());}
 function headers(extra:Record<string,string>={}){return {"Content-Type":"application/json",...extra};}
 
+export class MissionRevisionConflictError extends Error{
+  readonly code="MISSION_REVISION_CONFLICT";
+  readonly missionId:string;
+  readonly expectedRevision:number;
+  constructor(missionId:string,expectedRevision:number,message?:string){
+    super(message??`Mission ${missionId} revision conflict at expected revision ${expectedRevision}`);
+    this.name="MissionRevisionConflictError";
+    this.missionId=missionId;
+    this.expectedRevision=expectedRevision;
+  }
+}
+
 export function createHttpProductionPorts(apiUrl:string):ProductionRuntimePorts{
   const root=baseUrl(apiUrl);
+  const missionRevisions=new Map<string,number>();
   return {
     missions:{
       initialize:async()=>undefined,
       list:async()=>{
         const res=await fetch(`${root}/missions`);
         const envelopes=await json(res,(value)=>MissionEnvelopeSchema.array().parse(Array.isArray(value)?value:(value as {items?:unknown}).items??[]));
+        const remoteIds=new Set(envelopes.map((item)=>item.missionId));
+        for(const item of envelopes)missionRevisions.set(item.missionId,item.revision);
+        for(const id of [...missionRevisions.keys()])if(!remoteIds.has(id))missionRevisions.delete(id);
         return envelopes.map((item)=>item.payload);
       },
       get:async(id)=>{
         const res=await fetch(`${root}/missions/${encodeURIComponent(id)}`);
-        if(res.status===404)return undefined;
-        return (await json(res,(value)=>MissionEnvelopeSchema.parse(value))).payload;
+        if(res.status===404){missionRevisions.delete(id);return undefined;}
+        const envelope=await json(res,(value)=>MissionEnvelopeSchema.parse(value));
+        missionRevisions.set(id,envelope.revision);
+        return envelope.payload;
       },
       save:async(project)=>{
-        const res=await fetch(`${root}/missions/${encodeURIComponent(project.id)}`,{method:"PUT",headers:headers(),body:JSON.stringify(missionEnvelope(project))});
-        await expectOk(res,"Mission save failed");
+        const expectedRevision=missionRevisions.get(project.id)??0;
+        const res=await fetch(`${root}/missions/${encodeURIComponent(project.id)}`,{
+          method:"PUT",
+          headers:headers(),
+          body:JSON.stringify(missionEnvelope(project,expectedRevision)),
+        });
+        if(res.status===409){
+          const error=await httpError(res,"Mission save failed");
+          throw new MissionRevisionConflictError(project.id,expectedRevision,error.message);
+        }
+        const saved=await json(res,(value)=>MissionEnvelopeSchema.parse(value));
+        missionRevisions.set(project.id,saved.revision);
       },
-      delete:async(id)=>{const res=await fetch(`${root}/missions/${encodeURIComponent(id)}`,{method:"DELETE"});if(res.status!==404)await expectOk(res,"Mission delete failed");},
+      delete:async(id)=>{
+        const expectedRevision=missionRevisions.get(id)??0;
+        const res=await fetch(`${root}/missions/${encodeURIComponent(id)}`,{
+          method:"DELETE",
+          headers:{"If-Match":`"${expectedRevision}"`},
+        });
+        if(res.status===404){missionRevisions.delete(id);return;}
+        if(res.status===409){
+          const error=await httpError(res,"Mission delete failed");
+          throw new MissionRevisionConflictError(id,expectedRevision,error.message);
+        }
+        await expectOk(res,"Mission delete failed");
+        missionRevisions.delete(id);
+      },
       flush:async()=>undefined,
     },
     jobs:{

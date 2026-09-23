@@ -47,8 +47,19 @@ describe("Supabase production security invariants",()=>{
     expect(tailSql).toContain("revoke execute on function public.prevent_evolution_event_mutation() from public, anon, authenticated;");
   });
 
+  it("serializes Mission compare-and-swap writes and revision-guarded deletes",()=>{
+    expect(tailSql).toContain("create or replace function public.compare_and_swap_mission(");
+    expect(tailSql).toContain("create or replace function public.delete_mission_if_revision(");
+    expect(tailSql).toContain("pg_advisory_xact_lock(hashtextextended('mission:' || p_id, 0))");
+    expect(tailSql).toContain("v_current.revision <> p_expected_revision");
+    expect(tailSql).toContain("grant execute on function public.compare_and_swap_mission(");
+    expect(tailSql).toContain("grant execute on function public.delete_mission_if_revision(text,bigint)");
+  });
+
   it("removes PUBLIC execution from every externally callable SECURITY DEFINER RPC",()=>{
     const requiredRpcRevokes=[
+      "public.compare_and_swap_mission(",
+      "public.delete_mission_if_revision(",
       "public.append_evidence_ledger(",
       "public.evidence_ledger_health()",
       "public.match_organization_capabilities(",

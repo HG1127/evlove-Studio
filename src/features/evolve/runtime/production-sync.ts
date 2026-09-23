@@ -1,3 +1,4 @@
+import {MissionRevisionConflictError} from "@evolution/adapters";
 import { cacheLocalEvolutionEvent, listPendingLocalEvolutionEvents, markLocalEvolutionEventSynced } from "./event-contract";
 import { getLocalProject, listLocalProjects, saveLocalProject, deleteLocalProject } from "./local-store";
 import { cacheRemoteEvolutionJob, localProductionPorts } from "./local-production-adapters";
@@ -17,6 +18,7 @@ let httpPollTimer:number|undefined;
 let httpPollRunning=false;
 let httpPollFailureCount=0;
 let knownRemoteIds=new Set<string>();
+let missionConflicts=new Set<string>();
 let realtimeStatus="disabled";
 let lastError:string|undefined;
 
@@ -25,15 +27,49 @@ function withRemoteProjection(fn:()=>void){
   try{fn();}finally{applyingRemote=false;}
 }
 
-async function pushLocalProjection(){
+async function pushLocalProjection(options?:{
+  projects?:ReturnType<typeof listLocalProjects>;
+  failOnConflict?:boolean;
+}){
   if(productionRuntimeMode()==="local"||applyingRemote)return;
   const ports=getProductionRuntime();
   const local=listLocalProjects();
+  const projects=options?.projects??local;
   const localIds=new Set(local.map((project)=>project.id));
-  await Promise.all(local.map((project)=>ports.missions.save(project)));
+  let firstConflict:MissionRevisionConflictError|undefined;
+
+  for(const project of projects){
+    try{await ports.missions.save(project);}
+    catch(error){
+      if(error instanceof MissionRevisionConflictError){
+        missionConflicts.add(error.missionId);
+        firstConflict??=error;
+        continue;
+      }
+      throw error;
+    }
+  }
+
   const removed=[...knownRemoteIds].filter((id)=>!localIds.has(id));
-  await Promise.all(removed.map((id)=>ports.missions.delete(id)));
+  for(const id of removed){
+    try{await ports.missions.delete(id);}
+    catch(error){
+      if(error instanceof MissionRevisionConflictError){
+        missionConflicts.add(error.missionId);
+        firstConflict??=error;
+        continue;
+      }
+      throw error;
+    }
+  }
+
   knownRemoteIds=new Set(localIds);
+  if(firstConflict){
+    setRealtimeStatus("http-conflict",firstConflict);
+    if(!httpPollRunning)scheduleHttpPoll(0);
+    if(options?.failOnConflict)throw firstConflict;
+  }
+  return firstConflict;
 }
 
 export async function flushProductionMissionSync(){
@@ -41,7 +77,7 @@ export async function flushProductionMissionSync(){
     window.clearTimeout(missionTimer);
     missionTimer=undefined;
   }
-  await pushLocalProjection();
+  await pushLocalProjection({failOnConflict:true});
 }
 
 async function pushLocalJobs(remoteJobsInput?:Awaited<ReturnType<typeof localProductionPorts.jobs.list>>,localJobsInput?:Awaited<ReturnType<typeof localProductionPorts.jobs.list>>){
@@ -164,15 +200,18 @@ async function pollHttpProjection(){
     const remoteById=new Map(missions.map((project)=>[project.id,project]));
     const localBefore=listLocalProjects();
     const localJobsBefore=await localProductionPorts.jobs.list();
-    const shouldPushLocal=localBefore.some((project)=>{
+    const conflictedBefore=new Set(missionConflicts);
+    const localToPush=localBefore.filter((project)=>{
+      if(conflictedBefore.has(project.id))return false;
       const remote=remoteById.get(project.id);
       return !remote||project.updatedAt>remote.updatedAt;
     });
     withRemoteProjection(()=>{
       for(const project of missions){
         const current=getLocalProject(project.id);
-        if(!current||project.updatedAt>=current.updatedAt)saveLocalProject(project);
+        if(conflictedBefore.has(project.id)||!current||project.updatedAt>=current.updatedAt)saveLocalProject(project);
       }
+      for(const id of conflictedBefore)if(!remoteIds.has(id))deleteLocalProject(id);
       for(const id of knownRemoteIds)if(!remoteIds.has(id))deleteLocalProject(id);
       const localJobsById=new Map(localJobsBefore.map((job)=>[job.id,job]));
       for(const job of jobs){
@@ -182,12 +221,17 @@ async function pollHttpProjection(){
       for(const event of [...events].reverse())cacheLocalEvolutionEvent(event);
       knownRemoteIds=remoteIds;
     });
-    if(shouldPushLocal)await pushLocalProjection();
+    for(const id of conflictedBefore)missionConflicts.delete(id);
+    if(localToPush.length)await pushLocalProjection({projects:localToPush});
     if(recovering)await pushLocalJobs(jobs,localJobsBefore);
     await pushLocalEvents();
     await flushPendingArtifactSync();
     httpPollFailureCount=0;
-    setRealtimeStatus("http-polling");
+    if(missionConflicts.size){
+      nextDelay=0;
+    }else{
+      setRealtimeStatus("http-polling");
+    }
   }catch(error){
     console.error("HTTP production projection polling failed",error);
     httpPollFailureCount+=1;
@@ -215,23 +259,29 @@ export async function initializeProductionSync(){
     const remote=await ports.missions.list();
     knownRemoteIds=new Set(remote.map((project)=>project.id));
     const local=listLocalProjects();
-    const merged=new Map(remote.map((project)=>[project.id,project]));
-    for(const project of local){
-      const current=merged.get(project.id);
-      if(!current||project.updatedAt>=current.updatedAt)merged.set(project.id,project);
-    }
+    const remoteById=new Map(remote.map((project)=>[project.id,project]));
+    const localToPush=local.filter((project)=>{
+      const current=remoteById.get(project.id);
+      return !current||project.updatedAt>current.updatedAt;
+    });
+    const merged=new Map(remoteById);
+    for(const project of localToPush)merged.set(project.id,project);
     withRemoteProjection(()=>{
       for(const project of merged.values())saveLocalProject(project);
     });
-    // Seed an empty/new backend from local state and push any locally newer revision.
-    await pushLocalProjection();
+    // Seed an empty/new backend and push only locally newer Mission revisions.
+    if(localToPush.length)await pushLocalProjection({projects:localToPush});
     const projection=await hydrateRemoteProjection();
     await pushLocalJobs(projection.jobs,projection.localJobs);
     await pushLocalEvents();
     await flushPendingArtifactSync();
     httpPollFailureCount=0;
-    setRealtimeStatus("http-polling");
-    scheduleHttpPoll();
+    if(missionConflicts.size){
+      scheduleHttpPoll(0);
+    }else{
+      setRealtimeStatus("http-polling");
+      scheduleHttpPoll();
+    }
   }catch(error){
     // Remote production state must never make the local control plane unusable.
     // Authentication failures use a long retry delay; transient failures back off exponentially.
@@ -261,9 +311,10 @@ export async function stopProductionSync(){
   httpPollFailureCount=0;
   initialized=false;
   knownRemoteIds=new Set();
+  missionConflicts=new Set();
   setRealtimeStatus("disabled");
 }
 
 export function productionSyncStatus(){
-  return {mode:productionRuntimeMode(),initialized,remoteMissionCount:knownRemoteIds.size,realtimeStatus,lastError,failureCount:httpPollFailureCount};
+  return {mode:productionRuntimeMode(),initialized,remoteMissionCount:knownRemoteIds.size,realtimeStatus,lastError,failureCount:httpPollFailureCount,missionConflictCount:missionConflicts.size};
 }

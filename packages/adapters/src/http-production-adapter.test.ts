@@ -1,6 +1,7 @@
 import {afterEach,describe,expect,it,vi} from "vitest";
-import {EvolutionEventSchema,EvolutionJobSchema} from "@evolution/contracts";
-import {createHttpProductionPorts} from "./http-production-adapter";
+import {EvolutionEventSchema,EvolutionJobSchema,missionEnvelope} from "@evolution/contracts";
+import {demoProject} from "../../../src/features/evolve/data/mock-project";
+import {createHttpProductionPorts,MissionRevisionConflictError} from "./http-production-adapter";
 
 const at="2026-09-20T10:00:00.000Z";
 
@@ -29,6 +30,65 @@ describe("HTTP production adapter",()=>{
     expect(await ports.jobs.list("m1")).toEqual([job]);
     expect(JSON.parse(calls.find((call)=>call.method==="PUT")!.body!).metadata).toEqual(job.metadata);
     expect(calls.some((call)=>call.url==="/api/evolution/jobs?missionId=m1")).toBe(true);
+  });
+
+  it("tracks Mission revision across list/save/delete and sends If-Match on delete",async()=>{
+    const remoteProject={...demoProject,id:"mission-cas",name:"Remote",updatedAt:"2026-09-20T10:00:00.000Z"};
+    const localProject={...remoteProject,name:"Local edit",updatedAt:"2026-09-20T10:01:00.000Z"};
+    const remoteEnvelope=missionEnvelope(remoteProject,4);
+    const savedEnvelope=missionEnvelope(localProject,5);
+    let saveBody:Record<string,unknown>|undefined;
+    let deleteIfMatch:string|null=null;
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
+      const url=String(input);const method=init?.method??"GET";
+      if(url.endsWith("/missions")&&method==="GET"){
+        return new Response(JSON.stringify([remoteEnvelope]),{status:200,headers:{"Content-Type":"application/json"}});
+      }
+      if(url.endsWith("/missions/mission-cas")&&method==="PUT"){
+        saveBody=JSON.parse(String(init?.body??"{}")) as Record<string,unknown>;
+        return new Response(JSON.stringify(savedEnvelope),{status:200,headers:{"Content-Type":"application/json"}});
+      }
+      if(url.endsWith("/missions/mission-cas")&&method==="DELETE"){
+        deleteIfMatch=new Headers(init?.headers).get("If-Match");
+        return new Response(JSON.stringify({ok:true}),{status:200,headers:{"Content-Type":"application/json"}});
+      }
+      throw new Error("unexpected "+method+" "+url);
+    }));
+
+    const ports=createHttpProductionPorts("/api/evolution");
+    expect((await ports.missions.list())[0]?.name).toBe("Remote");
+    await ports.missions.save(localProject);
+    expect(saveBody?.revision).toBe(4);
+    await ports.missions.delete("mission-cas");
+    expect(deleteIfMatch).toBe('"5"');
+  });
+
+  it("surfaces a typed Mission revision conflict without advancing the cached revision",async()=>{
+    const project={...demoProject,id:"mission-conflict",updatedAt:"2026-09-20T10:00:00.000Z"};
+    const envelope=missionEnvelope(project,7);
+    const bodies:number[]=[];
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
+      const url=String(input);const method=init?.method??"GET";
+      if(url.endsWith("/missions")&&method==="GET"){
+        return new Response(JSON.stringify([envelope]),{status:200,headers:{"Content-Type":"application/json"}});
+      }
+      if(url.endsWith("/missions/mission-conflict")&&method==="PUT"){
+        bodies.push((JSON.parse(String(init?.body)) as {revision:number}).revision);
+        return new Response(JSON.stringify({
+          statusCode:409,statusMessage:"Mission mission-conflict revision conflict: expected 7, current 8",
+          data:{code:"MISSION_REVISION_CONFLICT",currentRevision:8},
+        }),{status:409,headers:{"Content-Type":"application/json"}});
+      }
+      throw new Error("unexpected "+method+" "+url);
+    }));
+
+    const ports=createHttpProductionPorts("/api/evolution");
+    await ports.missions.list();
+    await expect(ports.missions.save({...project,updatedAt:"2026-09-20T10:02:00.000Z"}))
+      .rejects.toBeInstanceOf(MissionRevisionConflictError);
+    await expect(ports.missions.save({...project,updatedAt:"2026-09-20T10:03:00.000Z"}))
+      .rejects.toBeInstanceOf(MissionRevisionConflictError);
+    expect(bodies).toEqual([7,7]);
   });
 
   it("surfaces bounded server auth details instead of hiding the 401 cause",async()=>{
