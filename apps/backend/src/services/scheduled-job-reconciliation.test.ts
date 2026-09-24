@@ -24,5 +24,8 @@ describe("scheduled Job reconciliation authorization",()=>{
     })).toEqual({reason:"credential-rejected",upstreamStatus:401});
     expect(scheduledReconciliationFailureDiagnostic({data:{reason:"private-token",upstreamStatus:999}}))
       .toEqual({reason:"unclassified"});
+    expect(scheduledReconciliationFailureDiagnostic({data:{reason:"credential-rejected",upstreamStatus:401,
+      service:"production-runtime",token:"private-token"}}))
+      .toEqual({reason:"credential-rejected",upstreamStatus:401,service:"production-runtime"});
   });
 });

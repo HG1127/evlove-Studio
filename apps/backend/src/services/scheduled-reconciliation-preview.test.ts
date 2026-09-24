@@ -49,4 +49,21 @@ describe("scheduled reconciliation preview",()=>{
     vi.spyOn(console,"info").mockImplementation(()=>undefined);
     await expect(route(event("test-preview-cron-secret"))).rejects.toMatchObject({status:503});
   });
+
+  it("identifies a failed Job inspection without starting Artifact inspection",async()=>{
+    jobs.mockRejectedValue({data:{reason:"credential-rejected",upstreamStatus:401,service:"production-runtime"}});
+    const log=vi.spyOn(console,"error").mockImplementation(()=>undefined);
+    await expect(route(event("test-preview-cron-secret"))).rejects.toMatchObject({status:503});
+    expect(log).toHaveBeenCalledWith("Scheduled Job preview failed",{
+      reason:"credential-rejected",upstreamStatus:401,service:"production-runtime",
+    });
+    expect(blobs).not.toHaveBeenCalled();
+  });
+
+  it("identifies a failed Artifact inspection after Job inspection",async()=>{
+    blobs.mockRejectedValue(new Error("private diagnostic"));
+    const log=vi.spyOn(console,"error").mockImplementation(()=>undefined);
+    await expect(route(event("test-preview-cron-secret"))).rejects.toMatchObject({status:503});
+    expect(log).toHaveBeenCalledWith("Scheduled Artifact preview failed",{reason:"unclassified"});
+  });
 });

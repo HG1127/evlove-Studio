@@ -17,7 +17,8 @@ export function scheduledReconciliationFailureDiagnostic(error:unknown){
     &&Number.isInteger(details.upstreamStatus)
     &&details.upstreamStatus>=100&&details.upstreamStatus<=599
     ?details.upstreamStatus:undefined;
-  return {reason,...(upstreamStatus?{upstreamStatus}:{})};
+  const service=details.service==="production-runtime"?"production-runtime":undefined;
+  return {reason,...(upstreamStatus?{upstreamStatus}:{}),...(service?{service}:{})};
 }
 
 export function scheduledReconciliationAuthorized(header:string|undefined,secret:string|undefined){

@@ -19,9 +19,14 @@ export default defineEventHandler(async(event)=>{
   let artifactBlobs:Awaited<ReturnType<typeof cleanupArtifactBlobs>>;
   try{
     jobs=await reconcileWorkflowJobs({minAgeSeconds:900,limit:50,repair:false});
+  }catch(error){
+    console.error("Scheduled Job preview failed",scheduledReconciliationFailureDiagnostic(error));
+    throw createError({statusCode:503,statusMessage:"Scheduled reconciliation preview failed"});
+  }
+  try{
     artifactBlobs=await cleanupArtifactBlobs({limit:50,minAgeSeconds:900,dryRun:true});
   }catch(error){
-    console.error("Scheduled reconciliation preview failed",scheduledReconciliationFailureDiagnostic(error));
+    console.error("Scheduled Artifact preview failed",scheduledReconciliationFailureDiagnostic(error));
     throw createError({statusCode:503,statusMessage:"Scheduled reconciliation preview failed"});
   }
 
