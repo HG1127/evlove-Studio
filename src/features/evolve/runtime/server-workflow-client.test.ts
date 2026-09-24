@@ -47,7 +47,7 @@ describe("server workflow routing",()=>{
   it("reads the unauthenticated public readiness snapshot for degraded control-plane diagnostics",async()=>{
     const snapshot={
       probeMode:"passive-config",
-      checkedAt:"2026-09-22T10:00:00.000Z",workflow:{durable:true},
+      checkedAt:"2026-09-22T10:00:00.000Z",workflow:{durable:true,cronConfigured:true},
       blockers:[],
       dataPlane:{configured:true,secureCredential:true,database:true,storage:true,coreTables:true,credentialMode:"secret",urlPresent:true,secretPresent:true,publishablePresent:false,artifactBucketPresent:true,configValid:true,issueFields:[]},
       sourceParse:true,artifactRenderer:true,serverAi:true,sandbox:true,sandboxPolicy:true,browser:true,

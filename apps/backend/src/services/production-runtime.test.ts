@@ -61,6 +61,20 @@ describe("server Mission revision CAS",()=>{
     vi.unstubAllGlobals();
   });
 
+  it("uses the Supabase secret API key without a bearer token for REST reads",async()=>{
+    const key="sb_secret_0123456789abcdefghijklmnop";
+    process.env.SUPABASE_SECRET_KEY=key;
+    vi.stubGlobal("fetch",vi.fn(async(_input:RequestInfo|URL,init?:RequestInit)=>{
+      const headers=init?.headers as Record<string,string>;
+      expect(headers.apikey).toBe(key);
+      expect(headers.Authorization).toBeUndefined();
+      return new Response("[]",{status:200});
+    }));
+
+    expect(await listServerActiveJobs(1)).toEqual([]);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
   it("carries the revision read by a worker through sequential CAS writes and delete",async()=>{
     const expectedWrites:number[]=[];
     const expectedDeletes:number[]=[];

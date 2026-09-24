@@ -14,6 +14,7 @@ import {
 } from "@evolution/contracts";
 import { getServerSupabaseConfig } from "../server-env";
 import {dataPlaneFetch} from "./data-plane-http";
+import {supabaseRestAuthHeaders} from "./supabase-rest-auth";
 import { mirrorEvolutionEventToEvidenceLedger } from "./evidence-ledger";
 import { getServerArtifactStore } from "./artifact-runtime";
 
@@ -65,8 +66,7 @@ function createRestClient(){
   const config=getServerSupabaseConfig();
   const root=config.url.replace(/\/+$/,"")+"/rest/v1";
   const baseHeaders={
-    apikey:config.anonKey,
-    Authorization:"Bearer "+config.anonKey,
+    ...supabaseRestAuthHeaders(config.anonKey),
     "Content-Type":"application/json",
   };
 

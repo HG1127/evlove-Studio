@@ -13,6 +13,7 @@ import {
   serverSupabaseSecureConfigured,
 } from "../server-env";
 import {dataPlaneFetch} from "./data-plane-http";
+import {supabaseRestAuthHeaders} from "./supabase-rest-auth";
 
 type JsonRecord=Record<string,unknown>;
 
@@ -35,8 +36,7 @@ function restClient(){
   const config=getServerSupabaseConfig();
   const root=config.url.replace(/\/+$/,"")+"/rest/v1";
   const headers={
-    apikey:config.anonKey,
-    Authorization:"Bearer "+config.anonKey,
+    ...supabaseRestAuthHeaders(config.anonKey),
     "Content-Type":"application/json",
   };
   async function request(path:string,init:RequestInit={}){

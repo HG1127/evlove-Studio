@@ -8,13 +8,14 @@ import {
 } from "@evolution/contracts";
 import {getEvolutionWorkspaceId,getServerSupabaseConfig} from "../server-env";
 import {dataPlaneFetch} from "./data-plane-http";
+import {supabaseRestAuthHeaders} from "./supabase-rest-auth";
 
 type JsonRecord=Record<string,unknown>;
 
 function db(){
   const config=getServerSupabaseConfig();
   const root=config.url.replace(/\/+$/,"")+"/rest/v1";
-  const baseHeaders={apikey:config.anonKey,Authorization:"Bearer "+config.anonKey,"Content-Type":"application/json"};
+  const baseHeaders={...supabaseRestAuthHeaders(config.anonKey),"Content-Type":"application/json"};
   return async(path:string,init:RequestInit={})=>{
     const response=await dataPlaneFetch("outcome-sample-store",root+"/"+path,{...init,headers:{...baseHeaders,...(init.headers??{})}});
     if(response.status===204)return undefined;
