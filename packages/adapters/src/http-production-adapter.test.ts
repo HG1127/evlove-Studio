@@ -32,6 +32,20 @@ describe("HTTP production adapter",()=>{
     expect(calls.some((call)=>call.url==="/api/evolution/jobs?missionId=m1")).toBe(true);
   });
 
+  it("validates the Workflow cancellation receipt before reporting Job cancellation",async()=>{
+    const receipt={ok:true,jobId:"j1",status:"cancelled",workflow:{
+      runId:"run-1",bound:true,exists:true,statusBefore:"running",statusAfter:"cancelled",
+      cancelIssued:true,reason:"workflow-run-cancelled",
+    }};
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(receipt),{status:200})));
+    const ports=createHttpProductionPorts("/api/evolution");
+    await expect(ports.jobs.cancel("j1")).resolves.toBeUndefined();
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({
+      ...receipt,workflow:{...receipt.workflow,cancelIssued:"yes"},
+    }),{status:200})));
+    await expect(ports.jobs.cancel("j1")).rejects.toThrow();
+  });
+
   it("tracks Mission revision across list/save/delete and sends If-Match on delete",async()=>{
     const remoteProject={...demoProject,id:"mission-cas",name:"Remote",updatedAt:"2026-09-20T10:00:00.000Z"};
     const localProject={...remoteProject,name:"Local edit",updatedAt:"2026-09-20T10:01:00.000Z"};

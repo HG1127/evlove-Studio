@@ -1,4 +1,5 @@
 import {createError,defineEventHandler,getRouterParam} from "nitro/h3";
+import {EvolutionJobCancelResponseSchema} from "@evolution/contracts";
 import {getServerProductionRuntime,JobStateConflictError} from "../../../../../src/services/production-runtime";
 import {cancelServerJobWithWorkflow} from "../../../../../src/services/job-workflow-cancel";
 import {requireGovernedEvolutionPermission} from "../../../../../src/services/security-policy";
@@ -16,7 +17,7 @@ export default defineEventHandler(async(event)=>{
     if(result.requiresReconciliation){
       throw createError({statusCode:409,statusMessage:"Workflow completed but Job outcome is unresolved",data:{jobId:id,status:result.job.status,workflow:result.workflow}});
     }
-    return {ok:true,jobId:id,status:result.job.status,workflow:result.workflow};
+    return EvolutionJobCancelResponseSchema.parse({ok:true,jobId:id,status:result.job.status,workflow:result.workflow});
   }catch(error){
     if(error instanceof JobStateConflictError){
       throw createError({

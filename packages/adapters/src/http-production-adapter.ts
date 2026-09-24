@@ -1,5 +1,6 @@
 import {
   EvolutionEventSchema,
+  EvolutionJobCancelResponseSchema,
   EvolutionJobSchema,
   MissionEnvelopeSchema,
   missionEnvelope,
@@ -103,7 +104,10 @@ export function createHttpProductionPorts(apiUrl:string):ProductionRuntimePorts{
       },
       get:async(id)=>{const res=await fetch(`${root}/jobs/${encodeURIComponent(id)}`);if(res.status===404)return undefined;return json(res,EvolutionJobSchema.parse);},
       put:async(job)=>{const res=await fetch(`${root}/jobs/${encodeURIComponent(job.id)}`,{method:"PUT",headers:headers(),body:JSON.stringify(EvolutionJobSchema.parse(job))});await expectOk(res,"Job save failed");},
-      cancel:async(id)=>{const res=await fetch(`${root}/jobs/${encodeURIComponent(id)}/cancel`,{method:"POST"});await expectOk(res,"Job cancel failed");},
+      cancel:async(id)=>{
+        const res=await fetch(`${root}/jobs/${encodeURIComponent(id)}/cancel`,{method:"POST"});
+        await json(res,EvolutionJobCancelResponseSchema.parse);
+      },
     },
     events:{
       append:async(event)=>{const res=await fetch(`${root}/events`,{method:"POST",headers:headers(),body:JSON.stringify(EvolutionEventSchema.parse(event))});await expectOk(res,"Event append failed");},

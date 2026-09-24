@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { SecurityCapabilitiesSchema, SecurityGovernanceHealthSchema } from "./security-contract";
-import {EvolutionJobSchema} from "./job-contract";
+import {EvolutionJobSchema,EvolutionJobStatusSchema} from "./job-contract";
 import {EvolutionEventSchema} from "./event-contract";
 
 export const EvolutionWorkflowStatusSchema = z.enum([
@@ -80,6 +80,14 @@ export const WorkflowRunCancelResultSchema=z.object({
   ]),
 });
 export type WorkflowRunCancelResultDto=z.infer<typeof WorkflowRunCancelResultSchema>;
+
+export const EvolutionJobCancelResponseSchema=z.object({
+  ok:z.literal(true),
+  jobId:z.string().min(1),
+  status:EvolutionJobStatusSchema,
+  workflow:WorkflowRunCancelResultSchema,
+});
+export type EvolutionJobCancelResponse=z.infer<typeof EvolutionJobCancelResponseSchema>;
 
 export const ServerAiRuntimeStatusSchema=z.enum(["not-checked","ready","unconfigured","unavailable","error"]);
 export const ServerAiRuntimeHealthSchema=z.object({
