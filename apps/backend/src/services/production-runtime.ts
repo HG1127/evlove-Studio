@@ -251,16 +251,17 @@ export async function listServerActiveJobs(limit=100,missionId?:string){
   const {request}=createRestClient();
   const bounded=Math.max(1,Math.min(limit,100));
   const filter=missionId?"&mission_id=eq."+encodeURIComponent(missionId):"";
-  const base="jobs?select=*&status=in.(queued,running,waiting)&order=updated_at.asc&limit="+bounded+filter;
+  const base="jobs?select=*&order=updated_at.asc&limit="+bounded+filter;
   async function read(query:"parse"|"campaign",path:string){
     try{return await request(path) as JsonRecord[];}
     catch(error){throw new ActiveJobQueryError(query,error);}
   }
-  const [parseRows,controlRows]=await Promise.all([
-    read("parse",base+"&type=eq.parse"),
-    read("campaign",base+"&type=eq.campaign&idempotency_key=like.workflow-control*"),
-  ]);
-  return [...(parseRows??[]),...(controlRows??[])]
+  const statuses=["queued","running","waiting"] as const;
+  const rows=await Promise.all(statuses.flatMap((status)=>[
+    read("parse",base+"&status=eq."+status+"&type=eq.parse"),
+    read("campaign",base+"&status=eq."+status+"&type=eq.campaign&idempotency_key=like.workflow-control*"),
+  ]));
+  return rows.flat()
     .map(rowJob)
     .filter((job)=>job.type==="parse"||(job.type==="campaign"&&job.idempotencyKey.startsWith("workflow-control:")))
     .sort((a,b)=>a.updatedAt.localeCompare(b.updatedAt))

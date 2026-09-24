@@ -76,7 +76,7 @@ describe("server Mission revision CAS",()=>{
     }));
 
     expect(await listServerActiveJobs(1)).toEqual([]);
-    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenCalledTimes(6);
   });
 
   it("carries the revision read by a worker through sequential CAS writes and delete",async()=>{
@@ -342,6 +342,8 @@ describe("server Mission revision CAS",()=>{
     const control=EvolutionJobSchema.parse({...baseJob,id:"control-1",idempotencyKey:"workflow-control:control-1",updatedAt:"2026-09-23T00:02:00.000Z"});
     vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
       const url=String(input);
+      expect(url).not.toContain("status=in.");
+      if(!url.includes("status=eq.running"))return new Response("[]",{status:200});
       if(url.includes("type=eq.parse"))return new Response(JSON.stringify([jobRow(parse)]),{status:200});
       if(url.includes("type=eq.campaign&idempotency_key=like.workflow-control*")){
         return new Response(JSON.stringify([jobRow(control)]),{status:200});
@@ -349,7 +351,7 @@ describe("server Mission revision CAS",()=>{
       return new Response("unexpected query",{status:500});
     }));
     expect((await listServerActiveJobs(2)).map((job)=>job.id)).toEqual(["parse-1","control-1"]);
-    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenCalledTimes(6);
   });
 
   it("attributes an active Job read failure to its filter without exposing the response",async()=>{
