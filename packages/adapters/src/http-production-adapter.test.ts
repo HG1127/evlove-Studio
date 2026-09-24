@@ -21,7 +21,7 @@ describe("HTTP production adapter",()=>{
       calls.push({url,method,body:typeof init?.body==="string"?init.body:undefined});
       if(method==="PUT")return new Response(JSON.stringify({ok:true}),{status:200,headers:{"Content-Type":"application/json"}});
       if(url.endsWith("/jobs/j1"))return new Response(JSON.stringify(job),{status:200,headers:{"Content-Type":"application/json"}});
-      if(url.includes("/jobs"))return new Response(JSON.stringify([job]),{status:200,headers:{"Content-Type":"application/json"}});
+      if(url.includes("/jobs?"))return new Response(JSON.stringify({items:[job]}),{status:200,headers:{"Content-Type":"application/json"}});
       throw new Error("unexpected "+method+" "+url);
     }));
     const ports=createHttpProductionPorts("/api/evolution/");
@@ -29,7 +29,39 @@ describe("HTTP production adapter",()=>{
     expect(await ports.jobs.get("j1")).toEqual(job);
     expect(await ports.jobs.list("m1")).toEqual([job]);
     expect(JSON.parse(calls.find((call)=>call.method==="PUT")!.body!).metadata).toEqual(job.metadata);
-    expect(calls.some((call)=>call.url==="/api/evolution/jobs?missionId=m1")).toBe(true);
+    expect(calls.some((call)=>call.url==="/api/evolution/jobs?missionId=m1&pageLimit=100")).toBe(true);
+  });
+
+  it("collects short HTTP pages before completing Mission and Job synchronization",async()=>{
+    const earlier={...demoProject,id:"mission-a",updatedAt:at};
+    const later={...demoProject,id:"mission-b",updatedAt:"2026-09-20T10:01:00.000Z"};
+    const jobA=EvolutionJobSchema.parse({
+      schemaVersion:"job-v1",id:"job-a",type:"parse",status:"queued",label:"A",
+      idempotencyKey:"a",createdAt:at,updatedAt:at,
+    });
+    const jobB=EvolutionJobSchema.parse({...jobA,id:"job-b",idempotencyKey:"b",updatedAt:later.updatedAt});
+    const calls:string[]=[];
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
+      const url=new URL(String(input),"http://localhost");
+      calls.push(url.pathname+url.search);
+      expect(url.searchParams.get("pageLimit")).toBe("100");
+      const cursor=url.searchParams.get("cursor");
+      if(url.pathname.endsWith("/missions")){
+        const page=cursor==="mission-a"?{items:[missionEnvelope(later,2)],nextCursor:"mission-b"}
+          :cursor==="mission-b"?{items:[]}:{items:[missionEnvelope(earlier,1)],nextCursor:"mission-a"};
+        return new Response(JSON.stringify(page),{status:200});
+      }
+      if(url.pathname.endsWith("/jobs")){
+        const page=cursor==="job-a"?{items:[jobB],nextCursor:"job-b"}
+          :cursor==="job-b"?{items:[]}:{items:[jobA],nextCursor:"job-a"};
+        return new Response(JSON.stringify(page),{status:200});
+      }
+      throw new Error("unexpected "+url);
+    }));
+    const ports=createHttpProductionPorts("/api/evolution");
+    expect((await ports.missions.list()).map((mission)=>mission.id)).toEqual(["mission-b","mission-a"]);
+    expect((await ports.jobs.list()).map((job)=>job.id)).toEqual(["job-b","job-a"]);
+    expect(calls).toHaveLength(6);
   });
 
   it("validates the Workflow cancellation receipt before reporting Job cancellation",async()=>{
@@ -55,8 +87,8 @@ describe("HTTP production adapter",()=>{
     let deleteIfMatch:string|null=null;
     vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
       const url=String(input);const method=init?.method??"GET";
-      if(url.endsWith("/missions")&&method==="GET"){
-        return new Response(JSON.stringify([remoteEnvelope]),{status:200,headers:{"Content-Type":"application/json"}});
+      if(url.includes("/missions?pageLimit=100")&&method==="GET"){
+        return new Response(JSON.stringify({items:[remoteEnvelope]}),{status:200,headers:{"Content-Type":"application/json"}});
       }
       if(url.endsWith("/missions/mission-cas")&&method==="PUT"){
         saveBody=JSON.parse(String(init?.body??"{}")) as Record<string,unknown>;
@@ -83,8 +115,8 @@ describe("HTTP production adapter",()=>{
     const bodies:number[]=[];
     vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
       const url=String(input);const method=init?.method??"GET";
-      if(url.endsWith("/missions")&&method==="GET"){
-        return new Response(JSON.stringify([envelope]),{status:200,headers:{"Content-Type":"application/json"}});
+      if(url.includes("/missions?pageLimit=100")&&method==="GET"){
+        return new Response(JSON.stringify({items:[envelope]}),{status:200,headers:{"Content-Type":"application/json"}});
       }
       if(url.endsWith("/missions/mission-conflict")&&method==="PUT"){
         bodies.push((JSON.parse(String(init?.body)) as {revision:number}).revision);

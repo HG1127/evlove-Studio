@@ -6,6 +6,7 @@ import {
   missionEnvelope,
   type ProductionRuntimePorts,
 } from "@evolution/contracts";
+import {z} from "zod";
 
 function baseUrl(value:string){return value.replace(/\/+$/,"");}
 function safeErrorDetail(value:unknown){
@@ -33,6 +34,28 @@ async function expectOk(res:Response,context:string){if(!res.ok)throw await http
 async function json<T>(res:Response,parse:(value:unknown)=>T){await expectOk(res,"Production API");return parse(await res.json());}
 function headers(extra:Record<string,string>={}){return {"Content-Type":"application/json",...extra};}
 
+async function listPages<T>(
+  root:string,path:string,parse:(value:unknown)=>{items:T[];nextCursor?:string},
+  filters:Record<string,string>={},
+){
+  const items:T[]=[];
+  const seen=new Set<string>();
+  let cursor:string|undefined;
+  for(;;){
+    const params=new URLSearchParams({...filters,pageLimit:"100"});
+    if(cursor)params.set("cursor",cursor);
+    const page=await json(await fetch(`${root}/${path}?${params}`),parse);
+    items.push(...page.items);
+    if(!page.nextCursor)return items;
+    if(page.items.length===0||seen.has(page.nextCursor))throw new Error(`Invalid ${path} page cursor`);
+    seen.add(page.nextCursor);
+    cursor=page.nextCursor;
+  }
+}
+
+const MissionPageSchema=z.object({items:MissionEnvelopeSchema.array(),nextCursor:z.string().optional()});
+const JobPageSchema=z.object({items:EvolutionJobSchema.array(),nextCursor:z.string().optional()});
+
 export class MissionRevisionConflictError extends Error{
   readonly code="MISSION_REVISION_CONFLICT";
   readonly missionId:string;
@@ -52,12 +75,11 @@ export function createHttpProductionPorts(apiUrl:string):ProductionRuntimePorts{
     missions:{
       initialize:async()=>undefined,
       list:async()=>{
-        const res=await fetch(`${root}/missions`);
-        const envelopes=await json(res,(value)=>MissionEnvelopeSchema.array().parse(Array.isArray(value)?value:(value as {items?:unknown}).items??[]));
+        const envelopes=await listPages(root,"missions",MissionPageSchema.parse);
         const remoteIds=new Set(envelopes.map((item)=>item.missionId));
         for(const item of envelopes)missionRevisions.set(item.missionId,item.revision);
         for(const id of [...missionRevisions.keys()])if(!remoteIds.has(id))missionRevisions.delete(id);
-        return envelopes.map((item)=>item.payload);
+        return envelopes.sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)).map((item)=>item.payload);
       },
       get:async(id)=>{
         const res=await fetch(`${root}/missions/${encodeURIComponent(id)}`);
@@ -98,9 +120,8 @@ export function createHttpProductionPorts(apiUrl:string):ProductionRuntimePorts{
     },
     jobs:{
       list:async(missionId)=>{
-        const query=missionId?`?missionId=${encodeURIComponent(missionId)}`:"";
-        const res=await fetch(`${root}/jobs${query}`);
-        return json(res,(value)=>EvolutionJobSchema.array().parse(Array.isArray(value)?value:(value as {items?:unknown}).items??[]));
+        const jobs=await listPages(root,"jobs",JobPageSchema.parse,missionId?{missionId}:{});
+        return jobs.sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt));
       },
       get:async(id)=>{const res=await fetch(`${root}/jobs/${encodeURIComponent(id)}`);if(res.status===404)return undefined;return json(res,EvolutionJobSchema.parse);},
       put:async(job)=>{const res=await fetch(`${root}/jobs/${encodeURIComponent(job.id)}`,{method:"PUT",headers:headers(),body:JSON.stringify(EvolutionJobSchema.parse(job))});await expectOk(res,"Job save failed");},

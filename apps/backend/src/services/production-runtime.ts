@@ -83,6 +83,46 @@ function createRestClient(){
   return {request};
 }
 
+async function readRowsByIdPage(
+  request:ReturnType<typeof createRestClient>["request"],
+  table:"missions"|"jobs",
+  filter="",
+  cursor?:string,
+  limit=500,
+){
+  const path=`${table}?select=*&order=id.asc&limit=${limit}${filter}`
+    +(cursor?`&id=gt.${encodeURIComponent(cursor)}`:"");
+  const page=await request(path);
+  if(!Array.isArray(page))throw new Error(`${table} list response is not an array`);
+  if(page.length===0)return {rows:[] as JsonRecord[],nextCursor:undefined};
+  const last=page[page.length-1] as JsonRecord;
+  if(typeof last?.id!=="string"||!last.id||last.id===cursor){
+    throw new Error(`${table} list cursor is invalid`);
+  }
+  return {rows:page as JsonRecord[],nextCursor:last.id};
+}
+
+async function listAllRowsById(
+  request:ReturnType<typeof createRestClient>["request"],
+  table:"missions"|"jobs",
+  filter="",
+){
+  const rows:JsonRecord[]=[];
+  let cursor:string|undefined;
+  // A server-side row cap can be lower than our requested limit. Read until an
+  // empty page so a short page never looks like the end of the collection.
+  for(;;){
+    const page=await readRowsByIdPage(request,table,filter,cursor);
+    if(!page.nextCursor)return rows;
+    rows.push(...page.rows);
+    cursor=page.nextCursor;
+  }
+}
+
+function newestFirst<T extends {updatedAt:string}>(rows:T[]){
+  return rows.sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt));
+}
+
 export class JobStateConflictError extends Error{
   readonly code="JOB_STATE_CONFLICT";
   readonly jobId:string;
@@ -227,8 +267,21 @@ export async function bindServerJobWorkflowRun(
 
 export async function listServerMissionEnvelopes(){
   const {request}=createRestClient();
-  const rows=await request("missions?select=*&order=updated_at.desc") as JsonRecord[];
-  return (rows??[]).map(rowMissionEnvelope);
+  const rows=await listAllRowsById(request,"missions");
+  return newestFirst(rows.map(rowMissionEnvelope));
+}
+
+export async function listServerMissionEnvelopePage(cursor?:string,limit=100){
+  const {request}=createRestClient();
+  const page=await readRowsByIdPage(request,"missions","",cursor,limit);
+  return {items:page.rows.map(rowMissionEnvelope),nextCursor:page.nextCursor};
+}
+
+export async function listServerJobPage(missionId?:string,cursor?:string,limit=100){
+  const {request}=createRestClient();
+  const filter=missionId?"&mission_id=eq."+encodeURIComponent(missionId):"";
+  const page=await readRowsByIdPage(request,"jobs",filter,cursor,limit);
+  return {items:page.rows.map(rowJob),nextCursor:page.nextCursor};
 }
 
 export async function getServerMissionEnvelope(id:string){
@@ -394,8 +447,8 @@ export function getServerProductionRuntime():ServerControlRuntime{
     missions:{
       initialize:async()=>undefined,
       list:async()=>{
-        const rows=await request("missions?select=*&order=updated_at.desc") as JsonRecord[];
-        const envelopes=(rows??[]).map(rowMissionEnvelope);
+        const rows=await listAllRowsById(request,"missions");
+        const envelopes=newestFirst(rows.map(rowMissionEnvelope));
         const remoteIds=new Set(envelopes.map((envelope)=>envelope.missionId));
         for(const envelope of envelopes)missionRevisions.set(envelope.missionId,envelope.revision);
         for(const id of [...missionRevisions.keys()])if(!remoteIds.has(id))missionRevisions.delete(id);
@@ -422,8 +475,8 @@ export function getServerProductionRuntime():ServerControlRuntime{
     jobs:{
       list:async(missionId)=>{
         const filter=missionId?"&mission_id=eq."+encodeURIComponent(missionId):"";
-        const rows=await request("jobs?select=*&order=updated_at.desc"+filter) as JsonRecord[];
-        const jobs=(rows??[]).map(rowJob);
+        const rows=await listAllRowsById(request,"jobs",filter);
+        const jobs=newestFirst(rows.map(rowJob));
         for(const job of jobs)jobGenerations.set(job.id,job.generation);
         return jobs;
       },

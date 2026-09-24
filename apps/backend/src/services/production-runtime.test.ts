@@ -9,8 +9,11 @@ import {
   createServerJobIdempotentReceipt,
   getServerJobByIdempotencyKey,
   getServerProductionRuntime,
+  listServerJobPage,
   listRecentServerParseJobs,
   listServerActiveJobs,
+  listServerMissionEnvelopePage,
+  listServerMissionEnvelopes,
   ActiveJobQueryError,
   JobStateConflictError,
   MissionRevisionConflictError,
@@ -79,14 +82,76 @@ describe("server Mission revision CAS",()=>{
     expect(fetch).toHaveBeenCalledTimes(6);
   });
 
+  it("reads every Mission and Job page even when a page is shorter than the requested limit",async()=>{
+    const missionA={...demoProject,id:"mission-a",updatedAt:at};
+    const missionB={...demoProject,id:"mission-b",updatedAt:"2026-09-23T00:01:00.000Z"};
+    const jobA=EvolutionJobSchema.parse({...baseJob,id:"job-a",missionId:"mission/a",updatedAt:at});
+    const jobB=EvolutionJobSchema.parse({
+      ...baseJob,id:"job-b",missionId:"mission/a",updatedAt:"2026-09-23T00:02:00.000Z",
+    });
+    const paths:string[]=[];
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
+      const url=new URL(String(input));
+      paths.push(url.pathname+url.search);
+      expect(url.searchParams.get("limit")).toBe("500");
+      expect(url.searchParams.get("order")).toBe("id.asc");
+      const cursor=url.searchParams.get("id");
+      if(url.pathname.endsWith("/missions")){
+        const rows=cursor==="gt.mission-a"?[missionRow(2,missionB)]
+          :cursor==="gt.mission-b"?[]:[missionRow(1,missionA)];
+        return new Response(JSON.stringify(rows),{status:200});
+      }
+      if(url.pathname.endsWith("/jobs")){
+        expect(url.searchParams.get("mission_id")).toBe("eq.mission/a");
+        const rows=cursor==="gt.job-a"?[jobRow(jobB)]
+          :cursor==="gt.job-b"?[]:[jobRow(jobA)];
+        return new Response(JSON.stringify(rows),{status:200});
+      }
+      throw new Error("unexpected request "+url);
+    }));
+
+    expect((await listServerMissionEnvelopes()).map((item)=>item.missionId))
+      .toEqual(["mission-b","mission-a"]);
+    const runtime=getServerProductionRuntime();
+    expect((await runtime.missions.list()).map((item)=>item.id))
+      .toEqual(["mission-b","mission-a"]);
+    expect((await runtime.jobs.list("mission/a")).map((item)=>item.id))
+      .toEqual(["job-b","job-a"]);
+    expect(paths).toHaveLength(9);
+    expect(paths.filter((path)=>path.includes("id=gt."))).toHaveLength(6);
+  });
+
+  it("serves a bounded cursor page for HTTP Mission and Job readers",async()=>{
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
+      const url=new URL(String(input));
+      expect(url.searchParams.get("limit")).toBe("25");
+      if(url.pathname.endsWith("/missions")){
+        expect(url.searchParams.get("id")).toBe("gt.mission-a");
+        return new Response(JSON.stringify([missionRow(2,{...demoProject,id:"mission-b"})]),{status:200});
+      }
+      expect(url.pathname.endsWith("/jobs")).toBe(true);
+      expect(url.searchParams.get("mission_id")).toBe("eq.mission/a");
+      expect(url.searchParams.get("id")).toBe("gt.job-a");
+      return new Response(JSON.stringify([jobRow(EvolutionJobSchema.parse({
+        ...baseJob,id:"job-b",missionId:"mission/a",
+      }))]),{status:200});
+    }));
+    expect(await listServerMissionEnvelopePage("mission-a",25)).toMatchObject({
+      items:[{missionId:"mission-b"}],nextCursor:"mission-b",
+    });
+    expect(await listServerJobPage("mission/a","job-a",25)).toMatchObject({
+      items:[{id:"job-b"}],nextCursor:"job-b",
+    });
+  });
+
   it("carries the revision read by a worker through sequential CAS writes and delete",async()=>{
     const expectedWrites:number[]=[];
     const expectedDeletes:number[]=[];
     let currentRevision=3;
     vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
       const url=String(input);
-      if(url.includes("/rest/v1/missions?select=*&order=updated_at.desc")){
-        return new Response(JSON.stringify([missionRow(currentRevision)]),{status:200});
+      if(url.includes("/rest/v1/missions?select=*&order=id.asc")){
+        return new Response(JSON.stringify(url.includes("&id=gt.")?[]:[missionRow(currentRevision)]),{status:200});
       }
       if(url.endsWith("/rest/v1/rpc/compare_and_swap_mission")){
         const body=JSON.parse(String(init?.body??"{}")) as Record<string,unknown>;
@@ -124,8 +189,8 @@ describe("server Mission revision CAS",()=>{
     const attempted:number[]=[];
     vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
       const url=String(input);
-      if(url.includes("/rest/v1/missions?select=*&order=updated_at.desc")){
-        return new Response(JSON.stringify([missionRow(5)]),{status:200});
+      if(url.includes("/rest/v1/missions?select=*&order=id.asc")){
+        return new Response(JSON.stringify(url.includes("&id=gt.")?[]:[missionRow(5)]),{status:200});
       }
       if(url.endsWith("/rest/v1/rpc/compare_and_swap_mission")){
         const body=JSON.parse(String(init?.body??"{}")) as Record<string,unknown>;
@@ -262,8 +327,8 @@ describe("server Mission revision CAS",()=>{
   it("rejects a stale server worker instead of overwriting the current Mission",async()=>{
     vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
       const url=String(input);
-      if(url.includes("/rest/v1/missions?select=*&order=updated_at.desc")){
-        return new Response(JSON.stringify([missionRow(6)]),{status:200});
+      if(url.includes("/rest/v1/missions?select=*&order=id.asc")){
+        return new Response(JSON.stringify(url.includes("&id=gt.")?[]:[missionRow(6)]),{status:200});
       }
       if(url.endsWith("/rest/v1/rpc/compare_and_swap_mission")){
         const body=JSON.parse(String(init?.body??"{}")) as Record<string,unknown>;
