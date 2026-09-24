@@ -50,6 +50,7 @@ export async function waitForServerParseJob(jobId:string,signal?:AbortSignal){
     if(signal?.aborted)throw signal.reason??new DOMException("Aborted","AbortError");
     const status=await getServerParseStatus(jobId);
     if(status.job.status==="completed"&&status.artifact)return status.artifact;
+    if(status.job.status==="completed")throw new Error(status.resultIssue??"Parse 结果 Artifact 缺失");
     if(status.job.status==="failed"||status.job.status==="cancelled"){
       throw new Error(status.job.error??"Server Parse 失败");
     }

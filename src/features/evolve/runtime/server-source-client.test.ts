@@ -1,9 +1,11 @@
 import {afterEach,describe,expect,it,vi} from "vitest";
+import {EvolutionJobSchema} from "@evolution/contracts";
 import {
   ServerParseUnavailableError,
   cancelServerParseJob,
   listServerParseJobs,
   startServerParseFile,
+  waitForServerParseJob,
 } from "./server-source-client";
 
 describe("server source client degraded fallback classification",()=>{
@@ -57,5 +59,18 @@ describe("server source client degraded fallback classification",()=>{
       ...receipt,workflow:{...receipt.workflow,cancelIssued:"yes"},
     }),{status:200})));
     await expect(cancelServerParseJob("parse-1")).rejects.toThrow();
+  });
+
+  it("reports a completed Job's missing result immediately",async()=>{
+    const at="2026-09-24T00:00:00.000Z";
+    const job=EvolutionJobSchema.parse({
+      schemaVersion:"job-v1",id:"parse-1",type:"parse",status:"completed",label:"Parse",
+      idempotencyKey:"parse-key",generation:1,attempts:1,priority:80,
+      createdAt:at,updatedAt:at,finishedAt:at,
+    });
+    const fetch=vi.fn(async()=>new Response(JSON.stringify({job,resultIssue:"Parse 结果 Artifact 缺失"}),{status:200}));
+    vi.stubGlobal("fetch",fetch);
+    await expect(waitForServerParseJob(job.id)).rejects.toThrow("Parse 结果 Artifact 缺失");
+    expect(fetch).toHaveBeenCalledOnce();
   });
 });
