@@ -151,5 +151,6 @@ The following external configuration or product-scope decisions remain deferred 
 | Evidence signing and Vault | Signing/Vault readiness depends on server-only key material. | A production signed Evidence append, verification, export, and key rotation rehearsal. |
 | Outcome telemetry | External business metrics require source definitions and credentials. | Stable/Candidate samples from a real source bound to the exact deployment. |
 | Supabase Storage ACL and retention contention | Owner-managed `storage.objects` grants and two-connection advisory-lock behavior are not fully evidenced. | Platform-supported ACL inspection/change and a concurrent PostgreSQL integration run. |
+| Local development backend credentials | The localhost UI renders, but local passive readiness reports `secureCredential=false` and `serverAi=false`; the browser smoke sees two `/api/evolution/parse-jobs` HTTP 503 responses. Production has separately passed active data-plane health. | Configure server-only Supabase and AI credentials for the chosen local development environment, then rerun `scripts/ui-smoke.mjs` and an authenticated local Parse flow. |
 
 Do not interpret the passive public readiness endpoint or a successful deployment as proof of these active capabilities.
