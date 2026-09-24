@@ -74,8 +74,11 @@ describe("organization capability Vercel Gateway embeddings",()=>{
         expect(String(body.p_query_embedding)).toMatch(/^\[1,0,0,/);
         return new Response(JSON.stringify([{id:row.id,semantic_score:0.99}]),{status:200,headers:{"Content-Type":"application/json"}});
       }
-      if(url.startsWith("https://supabase.test/rest/v1/organization_capabilities?select=*&id=in.")){
-        return new Response(JSON.stringify([row]),{status:200,headers:{"Content-Type":"application/json"}});
+      if(url.startsWith("https://supabase.test/rest/v1/organization_capabilities?select=*")&&url.includes("id=in.")){
+        const cursor=new URL(url).searchParams.getAll("id").find((value)=>value.startsWith("gt."))?.slice(3);
+        return new Response(JSON.stringify(!cursor||row.id>cursor?[row]:[]),{
+          status:200,headers:{"Content-Type":"application/json"},
+        });
       }
       throw new Error("unexpected "+url);
     }));

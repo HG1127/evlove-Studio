@@ -6,6 +6,7 @@ import {
   capabilityRecordReadableByActor,
   getOrganizationCapabilityHealth,
   organizationCapabilityKey,
+  probeOrganizationCapabilitySearchPage,
   searchOrganizationCapabilities,
   syncMissionCapabilities,
   updateOrganizationCapabilityAccess,
@@ -72,6 +73,16 @@ function dbRow(input:{
     created_at:input.createdAt??"2026-09-21T00:00:00.000Z",
     updated_at:input.updatedAt??"2026-09-21T00:01:00.000Z",
   };
+}
+
+function capabilityPage(input:RequestInfo|URL,rows:Array<ReturnType<typeof dbRow>>,serverCap=Number.POSITIVE_INFINITY){
+  const query=new URL(String(input)).searchParams;
+  const cursor=query.getAll("id").find((value)=>value.startsWith("gt."))?.slice(3);
+  const limit=Number(query.get("limit")??500);
+  const page=rows.filter((row)=>!cursor||row.id>cursor)
+    .sort((a,b)=>a.id.localeCompare(b.id))
+    .slice(0,Math.min(limit,serverCap));
+  return new Response(JSON.stringify(page),{status:200,headers:{"Content-Type":"application/json"}});
 }
 
 describe("organization capability service",()=>{
@@ -161,12 +172,60 @@ describe("organization capability service",()=>{
       dbRow({missionId:"mission-1",lesson:first,updatedAt:"2026-09-21T00:02:00.000Z"}),
       dbRow({missionId:"mission-2",lesson:second,updatedAt:"2026-09-21T00:03:00.000Z"}),
     ];
-    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(rows),{status:200,headers:{"Content-Type":"application/json"}})));
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>capabilityPage(input,rows)));
     const result=await searchOrganizationCapabilities({q:"rollout guard",limit:10,reusableOnly:true});
     expect(result.vectorSearch).toBe(false);
     expect(result.hits).toHaveLength(1);
     expect(result.hits[0]?.replicationEvidence.map((item)=>item.missionId).sort()).toEqual(["mission-1","mission-2"]);
     expect(result.hits[0]?.score).toBeGreaterThan(0);
+  });
+
+  it("finds a relevant older capability across short server-capped pages",async()=>{
+    process.env.SUPABASE_URL="https://supabase.test";
+    process.env.SUPABASE_PUBLISHABLE_KEY="anon-test-key-1234567890";
+    process.env.EVOLUTION_WORKSPACE_ID="workspace-test";
+    const rows=[
+      dbRow({missionId:"mission-a",lesson:lesson({id:"a",title:"Parser note"})}),
+      dbRow({missionId:"mission-b",lesson:lesson({id:"b",title:"Cost note"})}),
+      dbRow({missionId:"mission-c",lesson:lesson({id:"c",title:"Unique mitigation"})}),
+    ];
+    const fetchMock=vi.fn(async(input:RequestInfo|URL)=>capabilityPage(input,rows,1));
+    vi.stubGlobal("fetch",fetchMock);
+    const result=await searchOrganizationCapabilities({q:"unique mitigation",limit:10,reusableOnly:false});
+    expect(result.totalRows).toBe(3);
+    expect(result.hits[0]?.representative.lesson.id).toBe("c");
+    expect(fetchMock.mock.calls.map(([input])=>new URL(String(input)).searchParams.getAll("id")))
+      .toEqual([[],["gt.mission-a-a"],["gt.mission-b-b"],["gt.mission-c-c"]]);
+  });
+
+  it("rejects a replayed search page instead of silently ranking a partial registry",async()=>{
+    process.env.SUPABASE_URL="https://supabase.test";
+    process.env.SUPABASE_PUBLISHABLE_KEY="anon-test-key-1234567890";
+    process.env.EVOLUTION_WORKSPACE_ID="workspace-test";
+    const row=dbRow({missionId:"mission-a",lesson:lesson({id:"a"})});
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify([row]),{status:200})));
+    await expect(searchOrganizationCapabilities({q:"rollout",limit:10,reusableOnly:false}))
+      .rejects.toThrow(/repeated or regressed an id/);
+  });
+
+  it("probes the bounded Capability Registry cursor and combined id filters read-only",async()=>{
+    process.env.SUPABASE_URL="https://supabase.test";
+    process.env.SUPABASE_PUBLISHABLE_KEY="anon-test-key-1234567890";
+    process.env.EVOLUTION_WORKSPACE_ID="workspace-test";
+    const fetchMock=vi.fn(async(input:RequestInfo|URL)=>{
+      expect(String(input)).toContain("/organization_capabilities?");
+      return new Response("[]",{status:200});
+    });
+    vi.stubGlobal("fetch",fetchMock);
+    await expect(probeOrganizationCapabilitySearchPage()).resolves.toBe(true);
+    const query=new URL(String(fetchMock.mock.calls[0][0])).searchParams;
+    expect(query.get("select")).toBe("id");
+    expect(query.get("workspace_id")).toBe("eq.workspace-test");
+    expect(query.getAll("id")).toEqual([
+      "in.(health-probe-no-such-capability)","gt.health-probe-no-such-capability",
+    ]);
+    expect(query.get("order")).toBe("id.asc");
+    expect(query.get("limit")).toBe("1");
   });
 
   it("enforces workspace/private/restricted access semantics deterministically",()=>{
@@ -211,7 +270,7 @@ describe("organization capability service",()=>{
     vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
       const url=String(input);
       expect(url).toContain("organization_capabilities?select=*");
-      return new Response(JSON.stringify(rows),{status:200,headers:{"Content-Type":"application/json"}});
+      return capabilityPage(input,rows);
     }));
     const viewer=await searchOrganizationCapabilities(
       {q:"rollout guard",limit:10,reusableOnly:false},
@@ -312,8 +371,8 @@ describe("organization capability service",()=>{
           {id:"mission-2-lesson-b",semantic_score:0.1},
         ]),{status:200,headers:{"Content-Type":"application/json"}});
       }
-      if(url.startsWith("https://supabase.test/rest/v1/organization_capabilities?select=*&id=in.")){
-        return new Response(JSON.stringify(rows),{status:200,headers:{"Content-Type":"application/json"}});
+      if(url.startsWith("https://supabase.test/rest/v1/organization_capabilities?select=*")&&url.includes("id=in.")){
+        return capabilityPage(input,rows,1);
       }
       throw new Error("unexpected URL "+url);
     });
@@ -339,7 +398,7 @@ describe("organization capability service",()=>{
         return new Response(JSON.stringify({data:[{index:0,embedding:[1,0]}]}),{status:200,headers:{"Content-Type":"application/json"}});
       }
       if(url.startsWith("https://supabase.test/rest/v1/organization_capabilities?select=*")){
-        return new Response(JSON.stringify(rows),{status:200,headers:{"Content-Type":"application/json"}});
+        return capabilityPage(input,rows);
       }
       throw new Error("unexpected "+url);
     });
@@ -361,7 +420,7 @@ describe("organization capability service",()=>{
     vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
       const url=String(input);
       if(url.startsWith("https://supabase.test/rest/v1/organization_capabilities")){
-        return new Response(JSON.stringify(rows),{status:200,headers:{"Content-Type":"application/json"}});
+        return capabilityPage(input,rows);
       }
       if(url==="https://embed.test/v1/embeddings")return new Response("down",{status:503});
       throw new Error("unexpected "+url);

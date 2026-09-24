@@ -224,6 +224,54 @@ function restClient(){
   return {request};
 }
 
+async function readCapabilitySearchRows(
+  request:(path:string)=>Promise<unknown>,
+  path:string,
+){
+  const pageSize=500;
+  const maxRows=20_000;
+  const rows:JsonRecord[]=[];
+  let cursor:string|undefined;
+  while(rows.length<maxRows){
+    const page=await request(path+"&order=id.asc&limit="+Math.min(pageSize,maxRows-rows.length)
+      +(cursor?"&id=gt."+encodeURIComponent(cursor):""));
+    if(!Array.isArray(page))throw new Error("Organization Capability search page is not an array");
+    if(page.length===0)return rows;
+    if(page.length>Math.min(pageSize,maxRows-rows.length)){
+      throw new Error("Organization Capability search page exceeds the requested limit");
+    }
+    for(const raw of page){
+      if(!raw||typeof raw!=="object"||Array.isArray(raw)){
+        throw new Error("Organization Capability search row is invalid");
+      }
+      const row=raw as JsonRecord;
+      const id=row.id;
+      if(typeof id!=="string"||!id||cursor&&id<=cursor){
+        throw new Error("Organization Capability search page repeated or regressed an id");
+      }
+      cursor=id;
+      rows.push(row);
+    }
+  }
+  const extra=await request(path+"&order=id.asc&limit=1&id=gt."+encodeURIComponent(cursor!));
+  if(!Array.isArray(extra))throw new Error("Organization Capability search overflow page is not an array");
+  if(extra.length)throw new Error("Organization Capability search exceeds the maximum supported row count of "+maxRows);
+  return rows;
+}
+
+export async function probeOrganizationCapabilitySearchPage(){
+  const workspaceId=getEvolutionWorkspaceId();
+  if(!workspaceId)throw new Error("EVOLUTION_WORKSPACE_ID is required");
+  const {request}=restClient();
+  const rows=await request(
+    "organization_capabilities?select=id&workspace_id=eq."+encodeURIComponent(workspaceId)
+    +"&archived=eq.false&id=in.(health-probe-no-such-capability)"
+    +"&order=id.asc&limit=1&id=gt.health-probe-no-such-capability",
+  );
+  if(!Array.isArray(rows))throw new Error("Organization Capability health page is not an array");
+  return true;
+}
+
 export async function getOrganizationCapabilityHealth(){
   const checkedAt=new Date().toISOString();
   const workspaceId=getEvolutionWorkspaceId();
@@ -470,9 +518,11 @@ export async function searchOrganizationCapabilities(
         }
         const ids=[...semanticById.keys()];
         if(ids.length){
-          rows=await request(
-            "organization_capabilities?select=*&id=in.("+ids.map(encodeURIComponent).join(",")+")&archived=eq.false&limit=500",
-          ) as JsonRecord[];
+          rows=await readCapabilitySearchRows(
+            request,
+            "organization_capabilities?select=*&workspace_id=eq."+encodeURIComponent(workspaceId)
+            +"&id=in.("+ids.map(encodeURIComponent).join(",")+")&archived=eq.false",
+          );
           vectorSearch=true;
         }
       }
@@ -483,13 +533,17 @@ export async function searchOrganizationCapabilities(
     }
   }
   if(!vectorSearch){
-    rows=await request(
+    rows=await readCapabilitySearchRows(
+      request,
       "organization_capabilities?select=*&workspace_id=eq."+encodeURIComponent(workspaceId)
-      +"&archived=eq.false"+accessQueryFilter(actor)+"&order=updated_at.desc&limit=500",
-    ) as JsonRecord[];
+      +"&archived=eq.false"+accessQueryFilter(actor),
+    );
   }
   const rawById=new Map((rows??[]).map((row)=>[String(row.id),row]));
   const records=(rows??[]).map(rowRecord).filter((record)=>{
+    if(record.workspaceId!==workspaceId){
+      throw new Error("Organization Capability search row does not match the requested workspace");
+    }
     if(!capabilityRecordReadableByActor(record,actor))return false;
     if(query.reusableOnly&&!record.lesson.reusable)return false;
     if(query.statuses?.length&&!query.statuses.includes(record.lesson.status))return false;
