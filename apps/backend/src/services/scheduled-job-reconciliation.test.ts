@@ -1,6 +1,6 @@
 // @vitest-environment node
 import {describe,expect,it} from "vitest";
-import {scheduledReconciliationAuthorized} from "./scheduled-job-reconciliation";
+import {scheduledReconciliationAuthorized,scheduledReconciliationFailureDiagnostic} from "./scheduled-job-reconciliation";
 
 describe("scheduled Job reconciliation authorization",()=>{
   const secret="a-long-cron-secret";
@@ -15,5 +15,14 @@ describe("scheduled Job reconciliation authorization",()=>{
   it("fails closed when the secret is missing or too short",()=>{
     expect(scheduledReconciliationAuthorized("Bearer abc",undefined)).toBe(false);
     expect(scheduledReconciliationAuthorized("Bearer abc","abc")).toBe(false);
+  });
+
+  it("logs only classified upstream failure fields",()=>{
+    expect(scheduledReconciliationFailureDiagnostic({
+      data:{reason:"credential-rejected",upstreamStatus:401,token:"private-token"},
+      message:"private database detail",
+    })).toEqual({reason:"credential-rejected",upstreamStatus:401});
+    expect(scheduledReconciliationFailureDiagnostic({data:{reason:"private-token",upstreamStatus:999}}))
+      .toEqual({reason:"unclassified"});
   });
 });

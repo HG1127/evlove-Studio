@@ -1,6 +1,7 @@
 import {createError,defineEventHandler,getHeader} from "nitro/h3";
 import {
   runScheduledJobReconciliation,
+  scheduledReconciliationFailureDiagnostic,
   scheduledReconciliationAuthorized,
 } from "../../../../src/services/scheduled-job-reconciliation";
 import {cleanupArtifactBlobs} from "../../../../src/services/artifact-blob-cleanup";
@@ -14,7 +15,12 @@ export default defineEventHandler(async(event)=>{
   if(!scheduledReconciliationAuthorized(getHeader(event,"authorization"),secret)){
     throw createError({statusCode:401,statusMessage:"Unauthorized"});
   }
-  const jobs=await runScheduledJobReconciliation();
+  let jobs:Awaited<ReturnType<typeof runScheduledJobReconciliation>>;
+  try{jobs=await runScheduledJobReconciliation();}
+  catch(error){
+    console.error("Scheduled Job reconciliation failed",scheduledReconciliationFailureDiagnostic(error));
+    throw error;
+  }
   let artifactBlobs:unknown={status:"unavailable",reason:"Server-only Supabase secret is missing"};
   if(serverSupabaseSecureConfigured()){
     try{artifactBlobs=await cleanupArtifactBlobs({limit:50,minAgeSeconds:900,dryRun:false});}
