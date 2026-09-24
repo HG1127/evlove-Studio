@@ -11,6 +11,7 @@ import {
 import {getServerArtifactStore} from "../../../src/services/artifact-runtime";
 import {
   bindServerJobWorkflowRun,
+  getServerJobByIdempotencyKey,
   getServerProductionRuntime,
   isBenignJobBookkeepingConflict,
   JobStateConflictError,
@@ -55,7 +56,10 @@ export default defineEventHandler(async(event)=>{
   const requestedAt=new Date().toISOString();
   const runtime=getServerProductionRuntime();
   const artifacts=getServerArtifactStore();
-  const existing=(await runtime.jobs.list()).find((job)=>job.type==="parse"&&job.idempotencyKey===idempotencyKey);
+  const existing=await getServerJobByIdempotencyKey(idempotencyKey);
+  if(existing&&existing.type!=="parse"){
+    throw createError({statusCode:409,statusMessage:"Parse idempotency key belongs to another Job type"});
+  }
   if(existing&&["queued","running","waiting"].includes(existing.status)){
     return SourceParseStartResponseSchema.parse({
       jobId:existing.id,

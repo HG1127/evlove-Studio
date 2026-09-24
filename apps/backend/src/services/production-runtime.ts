@@ -254,6 +254,12 @@ export async function listServerActiveJobs(limit=100,missionId?:string){
     .slice(0,bounded);
 }
 
+export async function getServerJobByIdempotencyKey(idempotencyKey:string){
+  const {request}=createRestClient();
+  const rows=await request("jobs?select=*&idempotency_key=eq."+encodeURIComponent(idempotencyKey)+"&limit=1") as JsonRecord[];
+  return rows?.[0]?rowJob(rows[0]):undefined;
+}
+
 export async function createServerJobIdempotent(jobInput:EvolutionJob){
   const job=EvolutionJobSchema.parse(jobInput);
   const {request}=createRestClient();

@@ -6,6 +6,7 @@ import {
   bindServerJobWorkflowRun,
   compareAndSwapServerMissionEnvelopeWithEvent,
   createServerJobIdempotent,
+  getServerJobByIdempotencyKey,
   getServerProductionRuntime,
   listServerActiveJobs,
   JobStateConflictError,
@@ -336,5 +337,15 @@ describe("server Mission revision CAS",()=>{
     }));
     expect((await listServerActiveJobs(2)).map((job)=>job.id)).toEqual(["parse-1","control-1"]);
     expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("looks up a Parse retry by its indexed idempotency key",async()=>{
+    const parse=EvolutionJobSchema.parse({...baseJob,id:"parse-1",type:"parse",idempotencyKey:"parse:a/b c"});
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
+      expect(String(input)).toContain("idempotency_key=eq.parse%3Aa%2Fb%20c&limit=1");
+      return new Response(JSON.stringify([jobRow(parse)]),{status:200});
+    }));
+    expect(await getServerJobByIdempotencyKey(parse.idempotencyKey)).toEqual(parse);
+    expect(fetch).toHaveBeenCalledOnce();
   });
 });
