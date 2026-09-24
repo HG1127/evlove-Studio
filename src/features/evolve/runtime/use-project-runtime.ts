@@ -2116,8 +2116,10 @@ export function useProjectRuntime(initialProject: EvolveProject) {
         const started = await startServerEvolutionWorkflow(projectId,{
           idempotencyKey:`autopilot:${cur().updatedAt}`,
         });
-        setStatus({ busy: false, message: "Durable Workflow 已接管自主进化，关闭浏览器后仍会继续执行" });
-        pushActivity(`Server Workflow 已启动 · runId=${started.runId}`, undefined, projectId);
+        setStatus({ busy: false, message: started.reused
+          ? "已连接到现有 Durable Workflow；请查看当前执行状态"
+          : "Durable Workflow 已接管自主进化，关闭浏览器后仍会继续执行" });
+        pushActivity(`Server Workflow ${started.reused?"已复用":"已启动"} · runId=${started.runId}`, undefined, projectId);
         return;
       } catch (error) {
         if(requiresRemoteMaterialization()){
