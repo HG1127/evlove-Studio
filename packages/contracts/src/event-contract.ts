@@ -4,7 +4,7 @@ import { PRODUCTION_SCHEMA_VERSIONS } from "./production-contracts";
 export const EvolutionEventTypeSchema = z.enum([
   "MissionCreated","MissionUpdated","ActionPlanned","ActionStarted","ActionCompleted","ActionFailed",
   "JobQueued","JobStarted","JobProgress","JobCompleted","JobFailed","CheckpointCreated",
-  "ArtifactUploaded","ArtifactParsed","CandidateCreated","ValidationCompleted","ReleaseChanged","LessonCreated","AttentionRequired",
+  "ArtifactUploaded","ArtifactRegistered","ArtifactParsed","CandidateCreated","ValidationCompleted","CheckpointAccepted","CheckpointRejected","ValidationPassed","ValidationFailed","ValidationUnverified","JobUpdated","ReleaseChanged","LessonCreated","AttentionRequired",
 ]);
 export type EvolutionEventType = z.infer<typeof EvolutionEventTypeSchema>;
 

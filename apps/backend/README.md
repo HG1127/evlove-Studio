@@ -20,6 +20,58 @@ Current release responsibilities are implemented through backend services rather
 
 On the current Vercel Hobby plan, the truthful production path is `Preview Gate → Promote → Production Health → Rollback`. The 5/20/50 Canary stages remain available only to providers that can actually supply progressive traffic evidence. Vercel write actions require an explicit server-side `VERCEL_RELEASE_TOKEN`; OIDC alone is intentionally insufficient.
 
+## Artifact Validation API
+
+`POST /api/evolution/artifacts/register` stores an Artifact and binds its Mission, optional Job, kind, content type, size, and server-computed SHA-256 in Supabase. Artifact IDs are immutable: reusing an ID with different bytes or another Mission/Job/kind is rejected.
+The legacy JSON endpoint `POST /api/evolution/artifacts` delegates to the same registration path and accepts the same bounded request contract. `/api/evolution/harness-run` accepts a strict `missionId` and optional `jobId` request for context preparation.
+The legacy JSON `GET /api/evolution/artifacts?id=...` returns only textual content. Binary clients use `GET /api/evolution/artifacts/:id` to preserve exact bytes.
+
+`POST /api/evolution/validation` accepts a versioned Zod request:
+
+```json
+{
+  "missionId": "mission-id",
+  "artifactId": "artifact-id",
+  "artifactSha256": "optional-exact-sha256",
+  "checkpointId": "optional-checkpoint-id",
+  "idempotencyKey": "client-retry-key",
+  "checks": {
+    "expectedSha256": "sha256-to-assert",
+    "minBytes": 1,
+    "maxBytes": 100000,
+    "containsText": "required text"
+  }
+}
+```
+
+At least one supported executable check is required to produce `passed`; failed integrity or assertion checks produce `failed`. Missing checks, unbound legacy Artifacts, and unsupported text decoding produce `unverified`. Results include the exact stored Artifact SHA-256 and persist in append-only EvolutionEvents. `GET /api/evolution/validation/:id` reads that durable record. Repeating a POST with the same idempotency key and request returns the same record; using that key for a different request returns `409`.
+
+Checkpoint validation takes `missionId`, `checkpointId`, `artifactId`, and a persisted `validationId`; the API checks all four bindings before writing acceptance/rejection evidence. A client-supplied `validationPassed` boolean is not accepted as validation evidence.
+
+## Job, Checkpoint, and Harness lifecycle
+
+`POST /api/evolution/jobs` accepts a caller supplied `idempotencyKey`, optional `missionId`, `type`, `label`, optional `priority`, `inputRef`, and `metadata`. The server assigns the Job id and initial `queued` state. The database returns the same Job on an identical retry and returns `409` if that key is reused with different creation data. Job creation and its `JobQueued` Event commit in one transaction.
+Job creation metadata is limited to 32 KiB. JSON Artifact registration is limited to 5 MiB of UTF-8 content; larger binary Artifacts need the dedicated private Storage upload path.
+The compatibility binary `PUT /api/evolution/artifacts/:id` is bounded to 20 MiB per request and validates its ID and content type before writing. Its storage object is retained when a metadata write fails so reconciliation can recover without deleting previously accepted bytes.
+
+`POST /api/evolution/jobs/:id/transition` accepts `status` and optional `detail`. Queued Jobs can start, fail, or cancel; running Jobs can wait or finish; waiting Jobs can resume, fail, or cancel. A terminal Job cannot be reopened. The database checks generation and the previously observed state timestamp, then commits the state and Event together.
+Workflow Job Store writes and generation bound cancellation also commit their state and authoritative Event in one database transaction.
+
+`POST /api/evolution/checkpoints` accepts `missionId`, `round`, and `completedPhase`. It uses the Mission revision to prevent lost updates, and commits the checkpoint with its `CheckpointCreated` Event. The response includes the persisted `checkpointId` for validation; acceptance checks that this remains the current Mission checkpoint. Concurrent edits return `409`; an identical retry returns the stored checkpoint.
+
+`POST /api/evolution/harness-execute` is a compatibility entry point for the durable Mission Workflow started by `/api/evolution/start`. It returns `controlJobId` and `runId`; it no longer reports a request scoped `running` result. `/api/evolution/harness-run` remains a context preparation endpoint.
+
+`POST /api/evolution/artifacts/reconcile` accepts `missionId` and `artifactId`. It re-reads durable Artifact metadata and bytes, checks Mission binding, SHA-256, and size, then idempotently completes the registration Event and Evidence writes. This recovers a registration whose blob upload succeeded but whose audit write failed.
+The legacy `POST /api/evolution/evidence` accepts the same restricted request and cannot create a caller asserted validation result.
+
+`POST /api/evolution/jobs/reconcile` inspects at most 100 aged, active Workflow Jobs. It accepts optional `missionId`, `minAgeSeconds` (default 600), `limit` (default 100), and `repair` (default false). It reports unbound or missing runs, terminal Workflow runs with nonterminal Jobs, and stale heartbeats. With `repair: true`, it closes Jobs whose run is unbound or confirmed missing, failed, or cancelled. A completed Mission Workflow can settle a running Job only when its persisted return value passes the Workflow result contract and matches the exact Mission and Control Job IDs. Missing, mismatched, or nonterminal results remain visible for investigation.
+The Job cancellation endpoint also preserves that distinction: if the Workflow has completed but its Job has not settled, it returns `409` with the unresolved Job and run instead of marking the Job successful.
+
+Vercel Cron invokes `GET /api/evolution/jobs/reconcile-scheduled` daily at 18:00 UTC. It uses a bounded scan of 50 Jobs aged at least 15 minutes and repairs only the same confirmed failures as the operator endpoint. Set a 16+ character `CRON_SECRET` in Vercel Production; the endpoint rejects missing configuration and requests without the matching bearer token. Cron activation requires a production deployment.
+
+V1 retention is conservative: EvolutionEvents, signed Evidence Ledger entries, and accepted Artifact bytes/metadata are retained without automated deletion so the exact accepted Artifact and its audit chain remain verifiable. The scheduled reconciler only updates Job state and Events; it does not delete Mission or Artifact data. A finite retention/archive policy requires an explicit architecture decision and an export/identity-preserving migration.
+Explicit Artifact deletion refuses Mission-bound objects and objects referenced by immutable Evidence. Unbound scratch objects without Evidence references can still be removed by the compatibility API.
+
 ## Git Webhook Mission Binding
 
 GitHub webhooks are not trusted by HMAC + repository allowlist alone. Only the canonical accepted branch `evolve/<mission>/<candidate>` can be correlated to a Mission Event, and the server then reloads the Mission and requires the same connected repository, Gate F accepted Search Champion, and the already persisted Accepted Git writeback repository / branch / exact commit. `pull_request` events additionally bind to the persisted PR number when one exists. A same-name branch created outside the accepted writeback path is therefore not sufficient to create Mission audit events.

@@ -13,6 +13,9 @@ export default defineEventHandler(async(event)=>{
   const mission=job.missionId?await runtime.missions.get(job.missionId):undefined;
   try{
     const result=await cancelServerJobWithWorkflow(runtime,job,mission);
+    if(result.requiresReconciliation){
+      throw createError({statusCode:409,statusMessage:"Workflow completed but Job outcome is unresolved",data:{jobId:id,status:result.job.status,workflow:result.workflow}});
+    }
     return {ok:true,jobId:id,status:result.job.status,workflow:result.workflow};
   }catch(error){
     if(error instanceof JobStateConflictError){
@@ -22,6 +25,7 @@ export default defineEventHandler(async(event)=>{
         data:{code:error.code,jobId:error.jobId,reason:error.reason,current:error.current},
       });
     }
+    if(error&&typeof error==="object"&&"statusCode" in error)throw error;
     throw createError({
       statusCode:502,
       statusMessage:"Workflow cancel failed",

@@ -18,6 +18,12 @@ export const EvolutionWorkflowStartRequestSchema = z.object({
 });
 export type EvolutionWorkflowStartRequest = z.infer<typeof EvolutionWorkflowStartRequestSchema>;
 
+export const HarnessPrepareRequestSchema=z.object({
+  missionId:z.string().min(1).max(200),
+  jobId:z.string().min(1).max(200).optional(),
+}).strict();
+export type HarnessPrepareRequest=z.infer<typeof HarnessPrepareRequestSchema>;
+
 export const EvolutionWorkflowRunInputSchema = z.object({
   missionId: z.string().min(1),
   controlJobId: z.string().min(1),
@@ -122,6 +128,7 @@ export const EvolutionBackendHealthSchema=z.object({
     credentialMode:z.enum(["secret","publishable","missing"]).default("missing"),
     database:z.boolean(),
     storage:z.boolean(),
+    artifactCleanup:z.boolean().default(false),
     tables:z.object({
       missions:z.boolean(),
       jobs:z.boolean(),

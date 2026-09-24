@@ -1,5 +1,5 @@
 import {createHash,createHmac,timingSafeEqual} from "node:crypto";
-import {createError,defineEventHandler,getHeader,readRawBody} from "nitro/h3";
+import {assertBodySize,createError,defineEventHandler,getHeader,readRawBody} from "nitro/h3";
 import {GitWebhookReceiptSchema} from "@evolution/contracts";
 import {getServerGitHubConfig} from "../../../src/server-env";
 import {buildGitWebhookEvent,parseGitWebhookContext} from "../../../src/services/git-webhook";
@@ -10,10 +10,13 @@ function safeEqual(a:string,b:string){
   return left.length===right.length&&timingSafeEqual(left,right);
 }
 
+const MAX_GIT_WEBHOOK_BYTES=25*1024*1024;
+
 export default defineEventHandler(async(event)=>{
   const config=getServerGitHubConfig();
   if(!config.webhookSecret)throw createError({statusCode:503,statusMessage:"GitHub webhook secret is not configured"});
   if(!config.repoAllowlist.length)throw createError({statusCode:503,statusMessage:"GitHub repository allowlist is not configured"});
+  assertBodySize(event,MAX_GIT_WEBHOOK_BYTES);
   const raw=await readRawBody(event,"utf8")??"";
   const signature=getHeader(event,"x-hub-signature-256")??"";
   const expected="sha256="+createHmac("sha256",config.webhookSecret).update(raw).digest("hex");

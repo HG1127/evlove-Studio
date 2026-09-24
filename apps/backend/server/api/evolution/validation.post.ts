@@ -1,0 +1,38 @@
+import {createError,defineEventHandler,readBody} from "nitro/h3";
+import {ValidationRequestSchema} from "@evolution/contracts";
+import {getServerProductionRuntime} from "../../../src/services/production-runtime";
+import {registerArtifactEvidence} from "../../../src/services/evidence-runtime";
+import {ValidationIdempotencyConflictError,validateArtifact} from "../../../src/services/validation-runtime";
+import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
+
+export default defineEventHandler(async(event)=>{
+  await requireGovernedEvolutionPermission(event,"mission.execute");
+  const parsed=ValidationRequestSchema.safeParse(await readBody(event));
+  if(!parsed.success)throw createError({statusCode:400,statusMessage:"Invalid validation request",data:parsed.error.flatten()});
+  const body=parsed.data;
+  const runtime=getServerProductionRuntime();
+  let validation;
+  try{
+    validation=await validateArtifact(runtime,body);
+  }catch(error){
+    if(error instanceof ValidationIdempotencyConflictError)throw createError({statusCode:409,statusMessage:error.message});
+    throw error;
+  }
+
+  const evidence=await registerArtifactEvidence({
+    missionId:body.missionId,
+    artifactId:body.artifactId,
+    jobId:body.jobId,
+    checkpointId:body.checkpointId,
+    kind:"validation",
+    payload:{
+      validationId:validation.id,
+      status:validation.status,
+      artifactSha256:validation.artifactSha256,
+    },
+  });
+  return {
+    validation,
+    evidence,
+  };
+});

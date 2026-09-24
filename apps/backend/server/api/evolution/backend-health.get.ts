@@ -28,6 +28,7 @@ export default defineEventHandler(async(event)=>{
     credentialMode:serverSupabaseCredentialMode(),
     database:false,
     storage:false,
+    artifactCleanup:false,
     tables:{missions:false,jobs:false,events:false,artifacts:false},
     message:"Server Supabase Data Plane 未配置",
   };
@@ -40,6 +41,7 @@ export default defineEventHandler(async(event)=>{
         credentialMode:serverSupabaseCredentialMode(),
         database:health.database,
         storage:health.storage,
+        artifactCleanup:health.artifactCleanup,
         tables:health.tables,
         message:health.message,
       };
@@ -50,6 +52,7 @@ export default defineEventHandler(async(event)=>{
         credentialMode:serverSupabaseCredentialMode(),
         database:false,
         storage:false,
+        artifactCleanup:false,
         tables:{missions:false,jobs:false,events:false,artifacts:false},
         message:`Server Data Plane 健康检查失败：${error instanceof Error?error.message:String(error)}`,
       };

@@ -21,3 +21,4 @@ export * from "./sandbox-contract";
 export * from "./release-contract";
 export * from "./source-ingest-contract";
 export * from "./artifact-render-contract";
+export * from "./artifact-contract";

@@ -1,13 +1,17 @@
 // @vitest-environment node
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
 import {demoProject} from "../../../../src/features/evolve/data/mock-project";
-import {EvolutionJobSchema,type EvolutionJob} from "@evolution/contracts";
+import {createEvolutionEvent,EvolutionJobSchema,missionEnvelope,type EvolutionJob} from "@evolution/contracts";
 import {
   bindServerJobWorkflowRun,
+  compareAndSwapServerMissionEnvelopeWithEvent,
+  createServerJobIdempotent,
   getServerProductionRuntime,
+  listServerActiveJobs,
   JobStateConflictError,
   MissionRevisionConflictError,
   resetServerProductionRuntime,
+  transitionServerJobWithEvent,
 } from "./production-runtime";
 
 const originalEnv={...process.env};
@@ -138,13 +142,14 @@ describe("server Mission revision CAS",()=>{
     expect(attempted).toEqual([5,5]);
   });
 
-  it("uses the monotonic Job RPC and rejects terminal-state regression",async()=>{
+  it("uses the atomic monotonic Job and Event RPC and rejects terminal-state regression",async()=>{
     let call=0;
     vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
       const url=String(input);
-      if(url.endsWith("/rest/v1/rpc/put_evolution_job_monotonic")){
-        const body=JSON.parse(String(init?.body??"{}")) as {p_job:EvolutionJob};
+      if(url.endsWith("/rest/v1/rpc/put_evolution_job_with_event")){
+        const body=JSON.parse(String(init?.body??"{}")) as {p_job:EvolutionJob;p_event:{jobId:string}};
         expect(body.p_job.generation).toBe(3);
+        expect(body.p_event.jobId).toBe(baseJob.id);
         call+=1;
         if(call===1){
           return new Response(JSON.stringify([{
@@ -178,7 +183,7 @@ describe("server Mission revision CAS",()=>{
       if(url.includes("/rest/v1/jobs?id=eq.job-monotonic&select=*&limit=1")){
         return new Response(JSON.stringify([jobRow(baseJob)]),{status:200});
       }
-      if(url.endsWith("/rest/v1/rpc/cancel_evolution_job_generation")){
+      if(url.endsWith("/rest/v1/rpc/cancel_evolution_job_generation_with_event")){
         const body=JSON.parse(String(init?.body??"{}")) as Record<string,unknown>;
         expect(body.p_expected_generation).toBe(3);
         cancelCall+=1;
@@ -261,5 +266,61 @@ describe("server Mission revision CAS",()=>{
         expectedRevision:6,
         currentRevision:7,
       } satisfies Partial<MissionRevisionConflictError>);
+  });
+
+  it("creates a Job through the idempotent database RPC",async()=>{
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
+      expect(String(input)).toContain("/rpc/create_evolution_job_idempotent");
+      const body=JSON.parse(String(init?.body)) as {p_job:EvolutionJob};
+      expect(body.p_job.idempotencyKey).toBe(baseJob.idempotencyKey);
+      return new Response(JSON.stringify([{applied:true,reason:"created",job:jobRow(body.p_job)}]),{status:200});
+    }));
+    expect(await createServerJobIdempotent(baseJob)).toEqual(baseJob);
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it("sends the Job state and Event in one atomic RPC request",async()=>{
+    const event=createEvolutionEvent({id:"event-1",missionId:demoProject.id,jobId:baseJob.id,
+      type:"JobCompleted",source:"test",payload:{from:"running",to:"completed",priorUpdatedAt:at}});
+    const finished=EvolutionJobSchema.parse({...baseJob,status:"completed",finishedAt:at});
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
+      expect(String(input)).toContain("/rpc/transition_evolution_job_with_event");
+      const body=JSON.parse(String(init?.body)) as Record<string,unknown>;
+      expect(body).toMatchObject({p_id:baseJob.id,p_expected_generation:3,p_event:event,p_job:finished});
+      return new Response(JSON.stringify([{applied:true,reason:"transitioned",job:jobRow(finished)}]),{status:200});
+    }));
+    expect(await transitionServerJobWithEvent(finished,event)).toEqual(finished);
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it("sends Checkpoint mutation and Event in one revision guarded RPC",async()=>{
+    const envelope=missionEnvelope(demoProject,4);
+    const event=createEvolutionEvent({id:"checkpoint-1",missionId:demoProject.id,checkpointId:"checkpoint-1",
+      type:"CheckpointCreated",source:"test",payload:{round:1}});
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
+      expect(String(input)).toContain("/rpc/compare_and_swap_mission_with_event");
+      const body=JSON.parse(String(init?.body)) as Record<string,unknown>;
+      expect(body).toMatchObject({p_id:demoProject.id,p_expected_revision:4,p_event:event});
+      return new Response(JSON.stringify([{
+        applied:true,current_revision:5,mission:missionRow(5,demoProject),
+      }]),{status:200});
+    }));
+    expect((await compareAndSwapServerMissionEnvelopeWithEvent(envelope,event)).revision).toBe(5);
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it("scans active Workflow-backed Jobs without unrelated Job starvation",async()=>{
+    const parse=EvolutionJobSchema.parse({...baseJob,id:"parse-1",type:"parse",idempotencyKey:"parse-1",updatedAt:"2026-09-23T00:01:00.000Z"});
+    const control=EvolutionJobSchema.parse({...baseJob,id:"control-1",idempotencyKey:"workflow-control:control-1",updatedAt:"2026-09-23T00:02:00.000Z"});
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
+      const url=String(input);
+      if(url.includes("type=eq.parse"))return new Response(JSON.stringify([jobRow(parse)]),{status:200});
+      if(url.includes("type=eq.campaign&idempotency_key=like.workflow-control*")){
+        return new Response(JSON.stringify([jobRow(control)]),{status:200});
+      }
+      return new Response("unexpected query",{status:500});
+    }));
+    expect((await listServerActiveJobs(2)).map((job)=>job.id)).toEqual(["parse-1","control-1"]);
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 });

@@ -55,7 +55,7 @@ describe("server Job + Workflow cancellation",()=>{
     expect(state.events[0]).toMatchObject({type:"JobProgress",source:"workflow-cancel"});
   });
 
-  it("does not rewrite a completed Workflow as cancelled",async()=>{
+  it("does not infer a completed Job from a completed Workflow",async()=>{
     const state=runtimeFor(makeJob());
     const result=await cancelServerJobWithWorkflow(
       state.runtime,state.job,undefined,
@@ -65,7 +65,37 @@ describe("server Job + Workflow cancellation",()=>{
       }),
     );
     expect(state.cancel).not.toHaveBeenCalled();
-    expect(state.put).toHaveBeenCalledWith(expect.objectContaining({status:"completed"}));
+    expect(state.put).not.toHaveBeenCalled();
+    expect(result.job.status).toBe("running");
+    expect(result.requiresReconciliation).toBe(true);
+  });
+
+  it("settles a failed Workflow as failed instead of cancelling it",async()=>{
+    const state=runtimeFor(makeJob());
+    const result=await cancelServerJobWithWorkflow(
+      state.runtime,state.job,undefined,
+      async()=>({
+        runId:"run-failed",bound:true,exists:true,statusBefore:"failed" as const,statusAfter:"failed" as const,
+        cancelIssued:false,reason:"workflow-run-terminal" as const,
+      }),
+    );
+    expect(state.cancel).not.toHaveBeenCalled();
+    expect(state.put).toHaveBeenCalledWith(expect.objectContaining({status:"failed"}));
+    expect(result.job.status).toBe("failed");
+    expect(result.requiresReconciliation).toBe(false);
+  });
+
+  it("keeps an already terminal Job immutable when a late Workflow status differs",async()=>{
+    const state=runtimeFor(makeJob("completed"));
+    const result=await cancelServerJobWithWorkflow(
+      state.runtime,state.job,undefined,
+      async()=>({
+        runId:"run-late",bound:true,exists:true,statusBefore:"failed" as const,statusAfter:"failed" as const,
+        cancelIssued:false,reason:"workflow-run-terminal" as const,
+      }),
+    );
+    expect(state.put).not.toHaveBeenCalled();
+    expect(state.cancel).not.toHaveBeenCalled();
     expect(result.job.status).toBe("completed");
   });
 

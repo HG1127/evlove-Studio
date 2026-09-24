@@ -22,6 +22,8 @@ function routeFiles(dir:string,prefix=""):Array<{relative:string;source:string}>
 const routes=routeFiles(routeRoot);
 const publicRoutes=new Set(["public-readiness.get.ts","build-info.get.ts"]);
 const webhookRoutes=new Set(["git-webhook.post.ts","connector-webhook/[id].post.ts"]);
+const scheduledRoute="jobs/reconcile-scheduled.get.ts";
+const registrationAlias="artifacts.post.ts";
 const readOnlyPosts=new Set(["evidence-ledger-export-verify.post.ts","target-observe.post.ts"]);
 const dynamicPermissionRoutes=new Set(["connector-action.post.ts","git-action.post.ts"]);
 
@@ -43,6 +45,7 @@ describe("Evolution API route security invariants",()=>{
     const middleware=fs.readFileSync(middlewarePath,"utf8");
     expect(middleware).toContain('path==="/api/evolution/public-readiness"');
     expect(middleware).toContain('path==="/api/evolution/build-info"');
+    expect(middleware).toContain('path==="/api/evolution/jobs/reconcile-scheduled"');
     expect(middleware).toContain('path==="/api/evolution/git-webhook"');
     expect(middleware).toContain('/^\\/api\\/evolution\\/connector-webhook\\/[^/]+$/');
     expect(middleware).not.toContain('endsWith("/public-readiness")');
@@ -57,6 +60,20 @@ describe("Evolution API route security invariants",()=>{
         continue;
       }
       if(webhookRoutes.has(route.relative))continue;
+      if(route.relative===registrationAlias){
+        expect(route.source).toContain('registerArtifact from "./artifacts/register.post"');
+        expect(route.source).toContain("registerArtifact(event)");
+        const registration=routes.find((item)=>item.relative==="artifacts/register.post.ts");
+        expect(registration).toBeTruthy();
+        expect(declaredPermission(registration!)).toBe("mission.write");
+        continue;
+      }
+      if(route.relative===scheduledRoute){
+        expect(route.source).toContain("process.env.CRON_SECRET");
+        expect(route.source).toContain('scheduledReconciliationAuthorized(getHeader(event,"authorization"),secret)');
+        expect(declaredPermission(route)).toBeUndefined();
+        continue;
+      }
       expect(declaredPermission(route),route.relative).toBeTruthy();
     }
   });
@@ -78,9 +95,20 @@ describe("Evolution API route security invariants",()=>{
     }
   });
 
+  it("bounds raw request bodies before reading binary uploads and signed webhooks",()=>{
+    for(const relative of ["artifacts/[id].put.ts",...webhookRoutes]){
+      const route=routes.find((item)=>item.relative===relative);
+      expect(route,relative).toBeTruthy();
+      const guard=route!.source.indexOf("assertBodySize(event,");
+      const read=route!.source.indexOf("readRawBody(event,");
+      expect(guard,relative).toBeGreaterThanOrEqual(0);
+      expect(read,relative).toBeGreaterThan(guard);
+    }
+  });
+
   it("does not authorize state-changing routes with reader-only permission",()=>{
     for(const route of routes){
-      if(publicRoutes.has(route.relative)||webhookRoutes.has(route.relative)||readOnlyPosts.has(route.relative))continue;
+      if(publicRoutes.has(route.relative)||webhookRoutes.has(route.relative)||readOnlyPosts.has(route.relative)||route.relative===registrationAlias)continue;
       const method=route.relative.match(/\.(get|post|put|patch|delete)\.ts$/)?.[1];
       if(method==="get")continue;
       expect(declaredPermission(route),route.relative).toBeTruthy();

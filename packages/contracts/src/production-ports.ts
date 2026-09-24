@@ -1,6 +1,7 @@
 import type { EvolveProject } from "./evolve-schemas";
 import type { EvolutionEvent, EventStorePort } from "./event-contract";
 import type { EvolutionJob, JobStorePort } from "./job-contract";
+import type {ArtifactBinding,ArtifactMetadata} from "./artifact-contract";
 
 export interface MissionStorePort {
   initialize(): Promise<void>;
@@ -12,8 +13,9 @@ export interface MissionStorePort {
 }
 
 export interface ArtifactStorePort {
-  put(id:string,blob:Blob):Promise<void>;
+  put(id:string,blob:Blob,binding?:ArtifactBinding):Promise<void>;
   get(id:string):Promise<Blob|undefined>;
+  getMetadata?(id:string):Promise<ArtifactMetadata|undefined>;
   delete(id:string):Promise<void>;
 }
 

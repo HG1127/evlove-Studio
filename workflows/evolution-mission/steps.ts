@@ -29,6 +29,7 @@ import { renderAcceptedProjectArtifacts } from "../../apps/backend/src/services/
 import { lockGitTargetSnapshot,materializeLockedGitTargetSource } from "../../apps/backend/src/services/git-target-source";
 import { lockConnectorTargetSnapshot,materializeLockedConnectorTargetSource } from "../../apps/backend/src/services/connector-target-source";
 import { serverAiConfigured } from "../../apps/backend/src/server-env";
+import {planWorkflowResultFinalization} from "../../apps/backend/src/services/workflow-result-finalization";
 
 function controlJob(input:EvolutionWorkflowRunInput,args:{
   status:"queued"|"running"|"waiting"|"completed"|"failed";
@@ -1356,6 +1357,24 @@ export async function executeServerControlStep(
       ?"该动作的 Server Step 已完成，但服务器 AI 尚未配置。"
       :"Server 已支持确定性 Roundtrip 复验；该 Mission 的剩余证据仍需 AI / Runner / 视觉或人工能力。",
   })};
+}
+
+export async function finalizeWorkflowResultStep(input:EvolutionWorkflowRunInput,result:EvolutionWorkflowResult){
+  "use step";
+  const runtime=getServerProductionRuntime();
+  const now=new Date().toISOString();
+  const current=await runtime.jobs.get(input.controlJobId);
+  const settlement=planWorkflowResultFinalization(current,result,now);
+  if(settlement.write&&settlement.job)await runtime.jobs.put(settlement.job);
+  await runtime.events.append(createEvolutionEvent({
+    id:`evt-${input.controlJobId}-finalized`,
+    missionId:input.missionId,
+    jobId:input.controlJobId,
+    type:settlement.eventType,
+    source:"vercel-workflow-finalizer",
+    payload:{status:result.status,jobStatus:settlement.job?.status,iterations:result.iterations,checkpointId:result.checkpointId,reason:result.reason},
+  }));
+  return result;
 }
 
 export async function failLoopGuardStep(input:EvolutionWorkflowRunInput,iterations:number):Promise<EvolutionWorkflowResult>{

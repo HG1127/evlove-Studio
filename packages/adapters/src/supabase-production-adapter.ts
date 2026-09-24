@@ -2,6 +2,8 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import {
   EvolutionEventSchema,
   EvolutionJobSchema,
+  ArtifactMetadataSchema,
+  ArtifactBindingSchema,
   MissionEnvelopeSchema,
   PRODUCTION_SCHEMA_VERSIONS,
   SupabaseBackendConfigSchema,
@@ -19,6 +21,7 @@ export type SupabaseBackendHealth = {
   configured: true;
   database: boolean;
   storage: boolean;
+  artifactCleanup: boolean;
   tables: { missions: boolean; jobs: boolean; events: boolean; artifacts: boolean };
   checkedAt: string;
   message: string;
@@ -141,8 +144,8 @@ export function supabaseRowToEvent(row: JsonRecord): EvolutionEvent {
   });
 }
 
-function objectPath(id: string) {
-  return `artifacts/${encodeURIComponent(id)}`;
+function objectPath(id: string,digest:string) {
+  return `artifacts/${encodeURIComponent(id)}/${digest}/${crypto.randomUUID()}`;
 }
 
 async function blobSha256(blob: Blob) {
@@ -222,28 +225,62 @@ export function createSupabaseProductionPorts(
       },
     },
     artifacts: {
-      put: async (id, blob) => {
-        const path = objectPath(id);
-        const { error: uploadError } = await client.storage.from(config.artifactBucket).upload(path, blob, {
+      put: async (id, blob, binding) => {
+        const safeBinding=ArtifactBindingSchema.parse(binding??{});
+        const digest=await blobSha256(blob);
+        const {data:existing,error:existingError}=await client.from("artifacts").select("*").eq("id",id).maybeSingle();
+        throwIfError(existingError,"Supabase artifact metadata get before upload");
+        if(existing&&!existing.sha256)throw new Error(`Artifact id ${id} has no verified SHA-256 and cannot be overwritten`);
+        if(existing?.sha256&&existing.sha256!==digest){
+          throw new Error(`Artifact id ${id} is immutable; content hash differs from its registered SHA-256`);
+        }
+        const mimeType=blob.type||"application/octet-stream";
+        if(existing?.mime_type&&existing.mime_type!==mimeType){
+          throw new Error(`Artifact id ${id} is already registered with another content type`);
+        }
+        if(existing?.mission_id&&safeBinding.missionId&&existing.mission_id!==safeBinding.missionId){
+          throw new Error(`Artifact id ${id} is already bound to another Mission`);
+        }
+        const existingMetadata=existing?.metadata&&typeof existing.metadata==="object"?existing.metadata as JsonRecord:{};
+        if(existingMetadata.jobId&&safeBinding.jobId&&existingMetadata.jobId!==safeBinding.jobId){
+          throw new Error(`Artifact id ${id} is already bound to another Job`);
+        }
+        if(existingMetadata.kind&&safeBinding.kind&&existingMetadata.kind!==safeBinding.kind){
+          throw new Error(`Artifact id ${id} is already registered with another kind`);
+        }
+        const path=existing?.object_path?String(existing.object_path):objectPath(id,digest);
+        const bucket=existing?.bucket?String(existing.bucket):config.artifactBucket;
+        const { error: uploadError } = await client.storage.from(bucket).upload(path, blob, {
           upsert: true,
-          contentType: blob.type || "application/octet-stream",
+          contentType: mimeType,
         });
         throwIfError(uploadError, "Supabase artifact upload");
+        const updatedAt=new Date().toISOString();
         const metadata = {
           id,
           schema_version: PRODUCTION_SCHEMA_VERSIONS.artifact,
-          bucket: config.artifactBucket,
+          mission_id:safeBinding.missionId??existing?.mission_id??null,
+          bucket,
           object_path: path,
-          mime_type: blob.type || "application/octet-stream",
+          mime_type: mimeType,
           size_bytes: blob.size,
-          sha256: await blobSha256(blob),
-          updated_at: new Date().toISOString(),
+          sha256: digest,
+          metadata:{...existingMetadata,...(safeBinding.jobId?{jobId:safeBinding.jobId}:{}),...(safeBinding.kind?{kind:safeBinding.kind}:{})},
+          created_at:existing?.created_at??updatedAt,
+          updated_at: updatedAt,
         };
-        const { error } = await client.from("artifacts").upsert(metadata, { onConflict: "id" });
+        // A newly created path is never reused. Existing rows are updated only if the
+        // row still points to the path read above; a concurrent delete cannot revive it.
+        const {data:saved,error}=existing
+          ? await client.from("artifacts").update(metadata)
+              .eq("id",id).eq("object_path",path).select("id").maybeSingle()
+          : await client.from("artifacts").insert(metadata);
         if (error) {
-          await client.storage.from(config.artifactBucket).remove([path]).catch(() => undefined);
+          // The object path may already belong to an accepted Artifact. Leave it available
+          // for reconciliation instead of deleting verified bytes after a metadata failure.
           throwIfError(error, "Supabase artifact metadata save");
         }
+        if(existing&&!saved)throw new Error(`Artifact id ${id} changed during upload; retry registration`);
       },
       get: async (id) => {
         const { data: metadata, error: metadataError } = await client.from("artifacts").select("bucket,object_path").eq("id", id).maybeSingle();
@@ -253,23 +290,47 @@ export function createSupabaseProductionPorts(
         throwIfError(error, "Supabase artifact download");
         return data ?? undefined;
       },
+      getMetadata:async(id)=>{
+        const {data,error}=await client.from("artifacts").select("*").eq("id",id).maybeSingle();
+        throwIfError(error,"Supabase artifact metadata get");
+        if(!data)return undefined;
+        const row=data as JsonRecord;
+        const extra=row.metadata&&typeof row.metadata==="object"?row.metadata as JsonRecord:{};
+        return ArtifactMetadataSchema.parse({
+          id:row.id,schemaVersion:row.schema_version,missionId:row.mission_id??undefined,
+          jobId:extra.jobId,kind:extra.kind,bucket:row.bucket,objectPath:row.object_path,
+          mimeType:row.mime_type,sizeBytes:Number(row.size_bytes),sha256:row.sha256,
+          createdAt:row.created_at,updatedAt:row.updated_at,
+        });
+      },
       delete: async (id) => {
-        const { data: metadata, error: metadataError } = await client.from("artifacts").select("bucket,object_path").eq("id", id).maybeSingle();
+        const { data: metadata, error: metadataError } = await client.from("artifacts").select("bucket,object_path,mission_id").eq("id", id).maybeSingle();
         throwIfError(metadataError, "Supabase artifact metadata get");
         if (metadata) {
+          if(metadata.mission_id)throw new Error(`Artifact ${id} is Mission-bound and cannot be deleted`);
+          const {data:references,error:referenceError}=await client.from("evidence_ledger")
+            .select("id").contains("artifact_refs",[id]).limit(1);
+          throwIfError(referenceError,"Supabase artifact evidence reference check");
+          if(references?.length)throw new Error(`Artifact ${id} is referenced by immutable Evidence and cannot be deleted`);
+          // Delete metadata first so the database retention trigger can veto removal
+          // while the blob is still intact. A storage failure leaves a scratch orphan.
+          const {data:deleted,error:deleteError}=await client.from("artifacts").delete()
+            .eq("id",id).eq("object_path",String(metadata.object_path)).select("id").maybeSingle();
+          throwIfError(deleteError,"Supabase artifact metadata delete");
+          if(!deleted)return;
           const { error: removeError } = await client.storage.from(String(metadata.bucket)).remove([String(metadata.object_path)]);
           throwIfError(removeError, "Supabase artifact delete");
         }
-        const { error } = await client.from("artifacts").delete().eq("id", id);
-        throwIfError(error, "Supabase artifact metadata delete");
       },
     },
   };
 }
 
-export async function checkSupabaseBackendHealth(configInput: SupabaseBackendConfig): Promise<SupabaseBackendHealth> {
+export async function checkSupabaseBackendHealth(
+  configInput: SupabaseBackendConfig,suppliedClient?:SupabaseClient,
+): Promise<SupabaseBackendHealth> {
   const config = SupabaseBackendConfigSchema.parse(configInput);
-  const client = createSupabaseBackendClient(config);
+  const client = suppliedClient??createSupabaseBackendClient(config);
   const tables = { missions: false, jobs: false, events: false, artifacts: false };
 
   for (const table of Object.keys(tables) as Array<keyof typeof tables>) {
@@ -279,15 +340,19 @@ export async function checkSupabaseBackendHealth(configInput: SupabaseBackendCon
 
   const { error: storageError } = await client.storage.from(config.artifactBucket).list("", { limit: 1 });
   const storage = !storageError;
+  const {error:cleanupError}=await client.from("artifact_retention_tombstones")
+    .select("artifact_id,blob_deleted_at").eq("bucket",config.artifactBucket).limit(1);
+  const artifactCleanup=!cleanupError;
   const database = Object.values(tables).every(Boolean);
   return {
     configured: true,
     database,
     storage,
+    artifactCleanup,
     tables,
     checkedAt: new Date().toISOString(),
-    message: database && storage
-      ? "Supabase 数据库与 Artifact Storage 已就绪"
-      : `Supabase 尚未完全就绪：DB ${database ? "READY" : "MISSING"} · Storage ${storage ? "READY" : "MISSING"}`,
+    message: database && storage && artifactCleanup
+      ? "Supabase 数据库、Artifact Storage 与 blob 清理已就绪"
+      : `Supabase 尚未完全就绪：DB ${database ? "READY" : "MISSING"} · Storage ${storage ? "READY" : "MISSING"} · Artifact cleanup ${artifactCleanup ? "READY" : "MISSING"}`,
   };
 }

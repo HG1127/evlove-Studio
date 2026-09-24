@@ -913,6 +913,7 @@ export type CampaignCheckpointPhase = z.infer<typeof CampaignCheckpointPhaseSche
 // 轮内断点：记录「这一轮已经跑完到哪个阶段」，恢复时跳过已完成阶段，从下一步接着跑。
 // 没有它，暂停后再继续只能整轮重来——前面昂贵的 Baseline / 诊断 / 候选生成全部白跑一遍。
 export const CampaignCheckpointSchema = z.object({
+  id: z.string().min(1).optional(),
   round: z.number().int().min(0),
   /** 已完成到的阶段；恢复时从它的下一阶段继续。 */
   completedPhase: CampaignCheckpointPhaseSchema,

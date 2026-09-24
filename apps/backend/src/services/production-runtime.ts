@@ -1,4 +1,7 @@
+import {createHash} from "node:crypto";
 import {
+  createEvolutionEvent,
+  EvolveProjectSchema,
   EvolutionEventSchema,
   EvolutionJobSchema,
   MissionEnvelopeSchema,
@@ -12,9 +15,10 @@ import {
 import { getServerSupabaseConfig } from "../server-env";
 import {dataPlaneFetch} from "./data-plane-http";
 import { mirrorEvolutionEventToEvidenceLedger } from "./evidence-ledger";
+import { getServerArtifactStore } from "./artifact-runtime";
 
 type JsonRecord=Record<string,unknown>;
-export type ServerControlRuntime=Pick<ProductionRuntimePorts,"missions"|"jobs"|"events">;
+export type ServerControlRuntime=ProductionRuntimePorts;
 
 function rowMissionEnvelope(row:JsonRecord):MissionEnvelope{
   return MissionEnvelopeSchema.parse({
@@ -113,6 +117,26 @@ export class MissionRevisionConflictError extends Error{
   }
 }
 
+export async function createServerMissionEnvelope(projectInput:unknown){
+  const {request}=createRestClient();
+  const envelope=missionEnvelope(EvolveProjectSchema.parse(projectInput),0);
+  await request("missions",{
+    method:"POST",
+    headers:{Prefer:"return=representation"},
+    body:JSON.stringify({
+      id:envelope.missionId,
+      schema_version:envelope.schemaVersion,
+      revision:envelope.revision,
+      stage:envelope.payload.stage,
+      status:envelope.payload.campaign.status,
+      payload:envelope.payload,
+      created_at:envelope.createdAt,
+      updated_at:envelope.updatedAt,
+    }),
+  });
+  return envelope;
+}
+
 function revisionValue(value:unknown){
   const parsed=Number(value);
   return Number.isSafeInteger(parsed)&&parsed>=0?parsed:undefined;
@@ -125,12 +149,24 @@ function rpcJob(value:unknown){
 
 async function putServerJobMonotonic(request:ReturnType<typeof createRestClient>["request"],jobInput:EvolutionJob){
   const job=EvolutionJobSchema.parse(jobInput);
-  const rows=await request("rpc/put_evolution_job_monotonic",{
-    method:"POST",body:JSON.stringify({p_job:job}),
+  const digest=createHash("sha256").update(JSON.stringify(job)).digest("hex");
+  const event=createEvolutionEvent({
+    id:`job-state:${digest}`,missionId:job.missionId,jobId:job.id,
+    type:job.status==="queued"?"JobQueued":job.status==="completed"?"JobCompleted"
+      :job.status==="failed"?"JobFailed":"JobUpdated",
+    source:"backend-job-store",at:job.updatedAt,
+    payload:{status:job.status,generation:job.generation,progress:job.progress,error:job.error,
+      requestedJobHash:digest},
+  });
+  const rows=await request("rpc/put_evolution_job_with_event",{
+    method:"POST",body:JSON.stringify({p_job:job,p_event:event}),
   }) as Array<{applied?:unknown;reason?:unknown;job?:unknown}>;
   const result=rows?.[0];
   const current=rpcJob(result?.job);
-  if(result?.applied===true&&current)return current;
+  if(result?.applied===true&&current){
+    await mirrorEvolutionEventToEvidenceLedger(event).catch(()=>undefined);
+    return current;
+  }
   throw new JobStateConflictError(job.id,typeof result?.reason==="string"?result.reason:"unknown",current);
 }
 
@@ -140,12 +176,19 @@ async function cancelServerJobGeneration(
   expectedGeneration:number,
 ){
   const at=new Date().toISOString();
-  const rows=await request("rpc/cancel_evolution_job_generation",{
+  const rows=await request("rpc/cancel_evolution_job_generation_with_event",{
     method:"POST",body:JSON.stringify({p_id:id,p_expected_generation:expectedGeneration,p_at:at}),
   }) as Array<{applied?:unknown;reason?:unknown;job?:unknown}>;
   const result=rows?.[0];
   const current=rpcJob(result?.job);
-  if(result?.applied===true&&current)return current;
+  if(result?.applied===true&&current){
+    await mirrorEvolutionEventToEvidenceLedger(createEvolutionEvent({
+      id:`job-cancel:${id}:${expectedGeneration}`,missionId:current.missionId,jobId:id,
+      type:"JobUpdated",source:"backend-job-store",at,
+      payload:{status:"cancelled",generation:expectedGeneration},
+    })).catch(()=>undefined);
+    return current;
+  }
   if(result?.reason==="already-terminal"&&current)return current;
   throw new JobStateConflictError(id,typeof result?.reason==="string"?result.reason:"unknown",current);
 }
@@ -185,6 +228,61 @@ export async function getServerMissionEnvelope(id:string){
   return rows?.[0]?rowMissionEnvelope(rows[0]):undefined;
 }
 
+export async function getServerValidationResult(id:string){
+  const {request}=createRestClient();
+  const query="events?select=payload&payload->>validationId=eq."+encodeURIComponent(id)+"&limit=1";
+  const rows=await request(query) as Array<{payload?:unknown}>;
+  const payload=rows?.[0]?.payload;
+  if(!payload||typeof payload!=="object"||Array.isArray(payload))return undefined;
+  const validation=(payload as JsonRecord).validation;
+  return validation&&typeof validation==="object"&&!Array.isArray(validation)?validation:undefined;
+}
+
+export async function listServerActiveJobs(limit=100,missionId?:string){
+  const {request}=createRestClient();
+  const bounded=Math.max(1,Math.min(limit,100));
+  const filter=missionId?"&mission_id=eq."+encodeURIComponent(missionId):"";
+  const base="jobs?select=*&status=in.(queued,running,waiting)&order=updated_at.asc&limit="+bounded+filter;
+  const [parseRows,controlRows]=await Promise.all([
+    request(base+"&type=eq.parse") as Promise<JsonRecord[]>,
+    request(base+"&type=eq.campaign&idempotency_key=like.workflow-control*") as Promise<JsonRecord[]>,
+  ]);
+  return [...(parseRows??[]),...(controlRows??[])]
+    .map(rowJob)
+    .filter((job)=>job.type==="parse"||(job.type==="campaign"&&job.idempotencyKey.startsWith("workflow-control:")))
+    .sort((a,b)=>a.updatedAt.localeCompare(b.updatedAt))
+    .slice(0,bounded);
+}
+
+export async function createServerJobIdempotent(jobInput:EvolutionJob){
+  const job=EvolutionJobSchema.parse(jobInput);
+  const {request}=createRestClient();
+  const rows=await request("rpc/create_evolution_job_idempotent",{
+    method:"POST",body:JSON.stringify({p_job:job}),
+  }) as Array<{applied?:unknown;reason?:unknown;job?:unknown}>;
+  const result=rows?.[0];
+  const current=rpcJob(result?.job);
+  if(result?.applied===true&&current)return current;
+  throw new JobStateConflictError(job.id,typeof result?.reason==="string"?result.reason:"unknown",current);
+}
+
+export async function transitionServerJobWithEvent(
+  jobInput:EvolutionJob,eventInput:EvolutionEvent,
+){
+  const job=EvolutionJobSchema.parse(jobInput);
+  const event=EvolutionEventSchema.parse(eventInput);
+  const {request}=createRestClient();
+  const rows=await request("rpc/transition_evolution_job_with_event",{
+    method:"POST",body:JSON.stringify({
+      p_id:job.id,p_expected_generation:job.generation,p_job:job,p_event:event,
+    }),
+  }) as Array<{applied?:unknown;reason?:unknown;job?:unknown}>;
+  const result=rows?.[0];
+  const current=rpcJob(result?.job);
+  if(result?.applied===true&&current)return current;
+  throw new JobStateConflictError(job.id,typeof result?.reason==="string"?result.reason:"unknown",current);
+}
+
 export async function compareAndSwapServerMissionEnvelope(envelopeInput:MissionEnvelope){
   const envelope=MissionEnvelopeSchema.parse(envelopeInput);
   const {request}=createRestClient();
@@ -210,6 +308,26 @@ export async function compareAndSwapServerMissionEnvelope(envelopeInput:MissionE
     envelope.revision,
     revisionValue(result?.current_revision),
   );
+}
+
+export async function compareAndSwapServerMissionEnvelopeWithEvent(
+  envelopeInput:MissionEnvelope,eventInput:EvolutionEvent,
+){
+  const envelope=MissionEnvelopeSchema.parse(envelopeInput);
+  const event=EvolutionEventSchema.parse(eventInput);
+  const {request}=createRestClient();
+  const rows=await request("rpc/compare_and_swap_mission_with_event",{
+    method:"POST",body:JSON.stringify({
+      p_id:envelope.missionId,p_expected_revision:envelope.revision,p_schema_version:envelope.schemaVersion,
+      p_stage:envelope.payload.stage,p_status:envelope.payload.campaign.status,p_payload:envelope.payload,
+      p_created_at:envelope.createdAt,p_updated_at:envelope.updatedAt,p_event:event,
+    }),
+  }) as Array<{applied?:unknown;current_revision?:unknown;mission?:unknown}>;
+  const result=rows?.[0];
+  if(result?.applied===true&&result.mission&&typeof result.mission==="object"&&!Array.isArray(result.mission)){
+    return rowMissionEnvelope(result.mission as JsonRecord);
+  }
+  throw new MissionRevisionConflictError(envelope.missionId,envelope.revision,revisionValue(result?.current_revision));
 }
 
 export async function deleteServerMissionIfRevision(id:string,expectedRevision:number){
@@ -291,6 +409,7 @@ export function getServerProductionRuntime():ServerControlRuntime{
         jobGenerations.set(id,saved.generation);
       },
     },
+    artifacts:getServerArtifactStore(),
     events:{
       append:async(event)=>{
         const parsed=EvolutionEventSchema.parse(event);

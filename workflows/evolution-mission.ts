@@ -3,6 +3,7 @@ import { EvolutionWorkflowRunInputSchema, type EvolutionWorkflowResult } from "@
 import {
   executeServerControlStep,
   failLoopGuardStep,
+  finalizeWorkflowResultStep,
   initializeWorkflowControlStep,
   planMissionStep,
   prepareScheduledTriggerStep,
@@ -27,7 +28,7 @@ export async function evolutionMissionWorkflow(rawInput:unknown):Promise<Evoluti
     if(scheduledFor){
       if(scheduledSleepMs>0)await sleep(scheduledSleepMs);
       const trigger=await prepareScheduledTriggerStep(input,scheduledFor,cycle);
-      if(trigger.control==="stop")return trigger.result;
+      if(trigger.control==="stop")return finalizeWorkflowResultStep(input,trigger.result);
       targetRound=trigger.targetRound;
     }
 
@@ -41,7 +42,7 @@ export async function evolutionMissionWorkflow(rawInput:unknown):Promise<Evoluti
       if(targetRound!==undefined){
         const settlement=await settleScheduledManualRoundStep(input,targetRound,iteration);
         if(settlement.settled){
-          if("result" in settlement)return settlement.result;
+          if("result" in settlement)return finalizeWorkflowResultStep(input,settlement.result);
           scheduledFor=settlement.nextScheduledFor;
           scheduledSleepMs=settlement.sleepMs;
           cycle+=1;
@@ -52,6 +53,6 @@ export async function evolutionMissionWorkflow(rawInput:unknown):Promise<Evoluti
       if(execution.control==="continue"&&execution.sleepMs)await sleep(execution.sleepMs);
     }
     if(rearmed)continue;
-    return failLoopGuardStep(input,(cycle+1)*MAX_CONTROL_STEPS);
+    return finalizeWorkflowResultStep(input,await failLoopGuardStep(input,(cycle+1)*MAX_CONTROL_STEPS));
   }
 }

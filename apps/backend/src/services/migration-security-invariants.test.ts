@@ -70,10 +70,27 @@ describe("Supabase production security invariants",()=>{
   });
 
   it("binds Workflow run ids to exact Job generations without mutating Job state",()=>{
-    expect(tailSql).toContain("create or replace function public.bind_evolution_job_workflow_run(");
-    expect(tailSql).toContain("v_current.generation <> p_expected_generation");
-    expect(tailSql).toContain("jsonb_build_object('runid',p_run_id)");
+    expect(allSql).toContain("create or replace function public.bind_evolution_job_workflow_run(");
+    expect(allSql).toContain("v_current.generation <> p_expected_generation");
+    expect(allSql).toContain("jsonb_build_object('runid',p_run_id)");
     expect(tailSql).toContain("grant execute on function public.bind_evolution_job_workflow_run(text,integer,text,text,timestamptz) to service_role;");
+  });
+
+  it("commits Job transitions and Mission checkpoints with Events in one transaction",()=>{
+    expect(allSql).toContain("create or replace function public.create_evolution_job_idempotent(");
+    expect(allSql).toContain("alter table public.jobs add column if not exists creation_fingerprint text;");
+    expect(allSql).toContain("v_current.creation_fingerprint is distinct from v_fingerprint");
+    expect(allSql).toContain("create or replace function public.transition_evolution_job_with_event(");
+    expect(allSql).toContain("create or replace function public.put_evolution_job_with_event(");
+    expect(allSql).toContain("if not p_job ? 'outputref' and v_current.output_ref is not null then");
+    expect(allSql).toContain("create or replace function public.cancel_evolution_job_generation_with_event(");
+    expect(allSql).toContain("create or replace function public.compare_and_swap_mission_with_event(");
+    expect(allSql).toContain("'priorupdatedat'");
+    expect(allSql).toContain("insert into public.events(");
+    expect(tailSql).toContain("grant execute on function public.transition_evolution_job_with_event(text,integer,jsonb,jsonb) to service_role;");
+    expect(tailSql).toContain("grant execute on function public.put_evolution_job_with_event(jsonb,jsonb) to service_role;");
+    expect(tailSql).toContain("grant execute on function public.cancel_evolution_job_generation_with_event(text,integer,timestamptz) to service_role;");
+    expect(tailSql).toContain("grant execute on function public.compare_and_swap_mission_with_event(text,bigint,text,text,text,jsonb,timestamptz,timestamptz,jsonb) to service_role;");
   });
 
   it("removes PUBLIC execution from every externally callable SECURITY DEFINER RPC",()=>{
@@ -104,5 +121,36 @@ describe("Supabase production security invariants",()=>{
       "evolution_artifacts_anon_delete",
     ])expect(tailSql).toContain(`drop policy if exists ${policy} on storage.objects;`);
     expect(tailSql).toContain("revoke all privileges on table storage.objects from public, anon, authenticated;");
+  });
+
+  it("freezes Artifact identity and blocks deletion of Mission or Evidence-bound metadata",()=>{
+    expect(tailSql).toContain("create or replace function public.enforce_evolution_artifact_identity()");
+    expect(tailSql).toContain("create trigger evolution_artifact_identity_trigger");
+    expect(tailSql).toContain("before insert or update or delete on public.artifacts");
+    expect(tailSql).toContain("artifact_identity_immutable");
+    expect(tailSql).toContain("artifact_mission_bound");
+    expect(tailSql).toContain("artifact_evidence_referenced");
+    expect(tailSql).toContain("revoke execute on function public.enforce_evolution_artifact_identity() from public, anon, authenticated;");
+  });
+
+  it("serializes Artifact deletion with Evidence appends and retires deleted identities",()=>{
+    expect(allSql).toContain("create table if not exists public.artifact_retention_tombstones");
+    expect(tailSql).toContain("pg_advisory_xact_lock(hashtextextended('artifact-retention:' || old.id, 0))");
+    expect(allSql).toContain("pg_advisory_xact_lock(hashtextextended('artifact-retention:' || v_ref, 0))");
+    expect(allSql).toContain("create trigger evolution_evidence_artifact_retention_trigger");
+    expect(allSql).toContain("before insert on public.evidence_ledger");
+    expect(tailSql).toContain("artifact_id_retired");
+    expect(allSql).toContain("evidence_artifact_retired");
+    expect(tailSql).toContain("revoke execute on function public.lock_evolution_evidence_artifact_refs() from public, anon, authenticated;");
+  });
+
+  it("retains Artifact tombstones while allowing only service-side blob cleanup",()=>{
+    expect(tailSql).toContain("add column if not exists blob_deleted_at timestamptz");
+    expect(tailSql).toContain("artifact_retention_pending_blob_cleanup_idx");
+    expect(tailSql).toContain("'artifact-path:' || new.bucket || '/' || new.object_path");
+    expect(tailSql).toContain("'artifact-path:' || old.bucket || '/' || old.object_path");
+    expect(tailSql).toContain("artifact_path_retired");
+    expect(tailSql).toContain("grant select, update (blob_deleted_at) on table public.artifact_retention_tombstones to service_role;");
+    expect(tailSql).not.toContain("grant select, insert,update,delete on table public.artifact_retention_tombstones to service_role;");
   });
 });

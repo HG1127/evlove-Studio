@@ -21,18 +21,17 @@ export async function cancelServerJobWithWorkflow(
   const workflow=await cancelRun(job,mission);
   const workflowTerminal=workflow.statusAfter??workflow.statusBefore;
   const at=new Date().toISOString();
+  const jobAlreadyTerminal=["completed","partial","failed","cancelled"].includes(job.status);
 
-  if(workflowTerminal==="completed"||workflowTerminal==="failed"){
+  if(!jobAlreadyTerminal&&workflowTerminal==="failed"){
     await runtime.jobs.put(EvolutionJobSchema.parse({
       ...job,
-      status:workflowTerminal,
-      error:workflowTerminal==="failed"
-        ?job.error??"Workflow run failed before cancellation was applied"
-        :undefined,
+      status:"failed",
+      error:job.error??"Workflow run failed before cancellation was applied",
       finishedAt:job.finishedAt??at,
       updatedAt:at,
     }));
-  }else{
+  }else if(!jobAlreadyTerminal&&workflowTerminal!=="completed"){
     await runtime.jobs.cancel(job.id);
   }
 
@@ -51,5 +50,6 @@ export async function cancelServerJobWithWorkflow(
       },
     })).catch(()=>undefined);
   }
-  return {job:current,workflow};
+  return {job:current,workflow,requiresReconciliation:workflowTerminal==="completed"
+    &&!["completed","partial","failed","cancelled"].includes(current.status)};
 }

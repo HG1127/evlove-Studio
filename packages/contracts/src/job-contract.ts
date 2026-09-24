@@ -34,6 +34,33 @@ export const EvolutionJobSchema = z.object({
 });
 export type EvolutionJob = z.infer<typeof EvolutionJobSchema>;
 
+export const EvolutionJobCreateRequestSchema=z.object({
+  idempotencyKey:z.string().min(1).max(200),
+  missionId:z.string().min(1).optional(),
+  type:EvolutionJobTypeSchema,
+  label:z.string().min(1).max(200),
+  priority:z.number().int().min(0).max(100).default(50),
+  inputRef:z.string().min(1).optional(),
+  metadata:z.record(z.string(),z.unknown()).default({}),
+}).strict().refine((input)=>new TextEncoder().encode(JSON.stringify(input.metadata)).byteLength<=32_768,{
+  message:"Job metadata exceeds 32 KiB",path:["metadata"],
+});
+export type EvolutionJobCreateRequest=z.infer<typeof EvolutionJobCreateRequestSchema>;
+
+export const EvolutionJobTransitionRequestSchema=z.object({
+  status:EvolutionJobStatusSchema,
+  detail:z.string().max(2000).optional(),
+}).strict();
+export type EvolutionJobTransitionRequest=z.infer<typeof EvolutionJobTransitionRequestSchema>;
+
+export const JobReconcileRequestSchema=z.object({
+  missionId:z.string().min(1).optional(),
+  minAgeSeconds:z.number().int().min(60).max(86_400).default(600),
+  limit:z.number().int().min(1).max(100).default(100),
+  repair:z.boolean().default(false),
+}).strict();
+export type JobReconcileRequest=z.infer<typeof JobReconcileRequestSchema>;
+
 export interface JobStorePort {
   list(missionId?: string): Promise<EvolutionJob[]>;
   get(id: string): Promise<EvolutionJob | undefined>;
