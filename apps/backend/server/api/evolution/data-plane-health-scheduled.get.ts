@@ -1,5 +1,6 @@
 import {createError,defineEventHandler,getHeader} from "nitro/h3";
 import {getDataPlaneHealth} from "../../../src/services/data-plane-health";
+import {probeOutcomeSampleStore} from "../../../src/services/outcome-sample-store";
 import {
   getServerJobByIdempotencyKey,
   listRecentServerParseJobs,
@@ -24,6 +25,7 @@ export default defineEventHandler(async(event)=>{
   let directRestJobs=false;
   let parseRecoveryQuery=false;
   let collectionPages=false;
+  let outcomeSamples=false;
   let restFailure:ReturnType<typeof scheduledReconciliationFailureDiagnostic>|undefined;
   if(health.status==="ready"){
     try{
@@ -36,6 +38,8 @@ export default defineEventHandler(async(event)=>{
       await listServerMissionEnvelopePage(undefined,1);
       await listServerJobPage(undefined,undefined,1);
       collectionPages=true;
+      await probeOutcomeSampleStore();
+      outcomeSamples=true;
     }catch(error){
       restFailure=scheduledReconciliationFailureDiagnostic(error);
     }
@@ -50,9 +54,10 @@ export default defineEventHandler(async(event)=>{
     directRestJobs,
     parseRecoveryQuery,
     collectionPages,
+    outcomeSamples,
     ...(restFailure?{restFailure}:{}),
   });
-  if(health.status!=="ready"||!directRestJobs||!parseRecoveryQuery||!collectionPages){
+  if(health.status!=="ready"||!directRestJobs||!parseRecoveryQuery||!collectionPages||!outcomeSamples){
     throw createError({statusCode:503,statusMessage:"Scheduled data-plane health is not ready"});
   }
   return health;

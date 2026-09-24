@@ -3,10 +3,11 @@ import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
 import {mockEvent} from "nitro/h3";
 import route from "../../server/api/evolution/data-plane-health-scheduled.get";
 
-const {probe,restRead,parseRead,missionPage,jobPage}=vi.hoisted(()=>({
-  probe:vi.fn(),restRead:vi.fn(),parseRead:vi.fn(),missionPage:vi.fn(),jobPage:vi.fn(),
+const {probe,restRead,parseRead,missionPage,jobPage,outcomeRead}=vi.hoisted(()=>({
+  probe:vi.fn(),restRead:vi.fn(),parseRead:vi.fn(),missionPage:vi.fn(),jobPage:vi.fn(),outcomeRead:vi.fn(),
 }));
 vi.mock("./data-plane-health",()=>({getDataPlaneHealth:probe}));
+vi.mock("./outcome-sample-store",()=>({probeOutcomeSampleStore:outcomeRead}));
 vi.mock("./production-runtime",async(importOriginal)=>({
   ...await importOriginal<typeof import("./production-runtime")>(),
   getServerJobByIdempotencyKey:restRead,
@@ -31,6 +32,7 @@ describe("scheduled read-only data-plane health",()=>{
     parseRead.mockReset();
     missionPage.mockReset();
     jobPage.mockReset();
+    outcomeRead.mockReset();
   });
   afterEach(()=>{
     if(priorSecret===undefined)delete process.env.CRON_SECRET;
@@ -45,6 +47,7 @@ describe("scheduled read-only data-plane health",()=>{
     expect(parseRead).not.toHaveBeenCalled();
     expect(missionPage).not.toHaveBeenCalled();
     expect(jobPage).not.toHaveBeenCalled();
+    expect(outcomeRead).not.toHaveBeenCalled();
   });
 
   it("reports a real ready probe without mutating Jobs or Artifacts",async()=>{
@@ -58,9 +61,10 @@ describe("scheduled read-only data-plane health",()=>{
     expect(parseRead).toHaveBeenCalledWith(expect.objectContaining({limit:1,sessionId:"health-probe"}));
     expect(missionPage).toHaveBeenCalledWith(undefined,1);
     expect(jobPage).toHaveBeenCalledWith(undefined,undefined,1);
+    expect(outcomeRead).toHaveBeenCalledOnce();
     expect(console.info).toHaveBeenCalledWith("Scheduled data-plane health",{
       status:"ready",database:true,storage:true,artifactCleanup:true,
-      tables:health.tables,blockers:[],directRestJobs:true,parseRecoveryQuery:true,collectionPages:true,
+      tables:health.tables,blockers:[],directRestJobs:true,parseRecoveryQuery:true,collectionPages:true,outcomeSamples:true,
     });
   });
 
@@ -73,6 +77,7 @@ describe("scheduled read-only data-plane health",()=>{
     expect(parseRead).not.toHaveBeenCalled();
     expect(missionPage).not.toHaveBeenCalled();
     expect(jobPage).not.toHaveBeenCalled();
+    expect(outcomeRead).not.toHaveBeenCalled();
   });
 
   it("fails the probe when the direct REST Job query is rejected",async()=>{
@@ -108,6 +113,19 @@ describe("scheduled read-only data-plane health",()=>{
     expect(missionPage).toHaveBeenCalledWith(undefined,1);
     expect(console.info).toHaveBeenCalledWith("Scheduled data-plane health",expect.objectContaining({
       directRestJobs:true,parseRecoveryQuery:true,collectionPages:false,
+      restFailure:{reason:"request-rejected",upstreamStatus:400},
+    }));
+  });
+
+  it("fails the probe when the Outcome sample page query is rejected",async()=>{
+    probe.mockResolvedValue({status:"ready",database:true,storage:true,artifactCleanup:true,
+      tables:{missions:true,jobs:true,events:true,artifacts:true},blockers:[]});
+    outcomeRead.mockRejectedValue({data:{reason:"request-rejected",upstreamStatus:400}});
+    vi.spyOn(console,"info").mockImplementation(()=>undefined);
+    await expect(route(event("test-scheduled-health-secret"))).rejects.toMatchObject({status:503});
+    expect(outcomeRead).toHaveBeenCalledOnce();
+    expect(console.info).toHaveBeenCalledWith("Scheduled data-plane health",expect.objectContaining({
+      collectionPages:true,outcomeSamples:false,
       restFailure:{reason:"request-rejected",upstreamStatus:400},
     }));
   });

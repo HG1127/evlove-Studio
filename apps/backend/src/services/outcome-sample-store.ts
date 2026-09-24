@@ -25,11 +25,14 @@ function db(){
 }
 
 function fromRow(row:JsonRecord):OutcomeMetricSample{
+  const value=typeof row.value==="string"&&row.value.trim()
+    ?Number(row.value)
+    :row.value;
   return OutcomeMetricSampleSchema.parse({
     id:row.id,workspaceId:row.workspace_id,missionId:row.mission_id,
     candidateId:row.candidate_id??undefined,deploymentId:row.deployment_id??undefined,
     arm:row.arm,metricKey:row.metric_key,metricKind:row.metric_kind,direction:row.direction,
-    value:Number(row.value),unit:row.unit??undefined,segment:row.segment??"all",
+    value,unit:row.unit??undefined,segment:row.segment??"all",
     source:row.source,observedAt:row.observed_at,metadata:row.metadata??{},
   });
 }
@@ -59,16 +62,34 @@ export async function readOutcomeSamples(input:{missionId:string;candidateId?:st
   if(!workspaceId)throw new Error("EVOLUTION_WORKSPACE_ID is required");
   const candidate=input.candidateId?"&candidate_id=eq."+encodeURIComponent(input.candidateId):"";
   const limit=Math.max(1,Math.min(input.limit??10_000,20_000));
-  const rows=await db()(
-    "outcome_metric_samples?select=*"
+  const request=db();
+  const path="outcome_metric_samples?select=*"
     +"&workspace_id=eq."+encodeURIComponent(workspaceId)
     +"&mission_id=eq."+encodeURIComponent(input.missionId)
-    +candidate+"&order=observed_at.asc&limit="+limit,
-  ) as JsonRecord[];
-  return (rows??[]).map(fromRow);
+    +candidate+"&order=observed_at.asc,id.asc";
+  const samples:OutcomeMetricSample[]=[];
+  const seen=new Set<string>();
+  while(samples.length<limit){
+    const page=await request(path+"&limit="+Math.min(500,limit-samples.length)+"&offset="+samples.length);
+    if(!Array.isArray(page))throw new Error("Outcome sample page is not an array");
+    if(page.length===0)break;
+    if(page.length>Math.min(500,limit-samples.length))throw new Error("Outcome sample page exceeds the requested limit");
+    for(const raw of page){
+      if(!raw||typeof raw!=="object"||Array.isArray(raw))throw new Error("Outcome sample row is invalid");
+      const sample=fromRow(raw as JsonRecord);
+      if(sample.workspaceId!==workspaceId||sample.missionId!==input.missionId
+        ||input.candidateId&&sample.candidateId!==input.candidateId){
+        throw new Error("Outcome sample row does not match the requested scope");
+      }
+      if(seen.has(sample.id))throw new Error("Outcome sample page repeated an id");
+      seen.add(sample.id);
+      samples.push(sample);
+    }
+  }
+  return samples;
 }
 
 export async function probeOutcomeSampleStore(){
-  await db()("outcome_metric_samples?select=id&limit=1");
+  await db()("outcome_metric_samples?select=id&order=observed_at.asc,id.asc&limit=1&offset=0");
   return true;
 }
