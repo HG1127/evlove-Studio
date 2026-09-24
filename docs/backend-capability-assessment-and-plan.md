@@ -105,3 +105,20 @@ P0–P2 are implemented in code, and the Job lifecycle, Artifact identity, Artif
 The deployed `main` alias passed the Production Smoke workflow on 2026-09-24 at commit `88ac8f1b024ca202d5f3077b040e7ea6f126fe84`: homepage 200, matching build SHA, passive public readiness showing Supabase server credential, identity, and server AI configured, and protected backend health returning 401 to an unauthenticated request. This is configuration and HTTP perimeter evidence, not a live Supabase adapter probe. Hidden Vercel Production secrets cannot be pulled by the CLI, and the local machine cannot reach the deployment or Supabase network endpoints, so an authenticated production health request and full Mission → Artifact → Validation → Release → Outcome configured-adapter run remain outstanding. Storage's owner-managed ACL discrepancy and two-connection retention contention evidence also remain outstanding. Do not promote these items to verified based on the passive Smoke result.
 
 For each slice, follow `PROJECT_RULES.md`: contracts first, then Core/Harness behavior, adapter persistence, and route composition. Use migrations for all production schema changes. Run architecture checks and builds after architecture-affecting changes, plus focused contract/service tests and runner or browser evidence when applicable.
+
+## Production verification and deferred configuration
+
+The first manually invoked production Cron reached `/api/evolution/jobs/reconcile-scheduled` but returned HTTP 503. A subsequent read-only production Smoke confirmed that `CRON_SECRET` is present and that a request without its bearer token returns 401, locating the failure after the Cron configuration check. The server's direct REST clients also sent new `sb_secret_` keys as bearer tokens; this contradicts Supabase's new-key requirement to use `apikey`. The seven direct REST clients now share a header helper that uses `apikey` alone for `sb_*` keys and preserves bearer authentication for legacy JWT keys. Local tests, lint, architecture checks, and build passed before deployment. A second active Cron result is required before marking the live data plane healthy.
+
+The following external configuration or product-scope decisions remain deferred while backend code work continues:
+
+| Item | Current effect | Completion evidence |
+| --- | --- | --- |
+| User identity and browser actor assertion | Public production API correctly rejects unsigned browser requests; the current browser clients do not create trusted actor assertions. Multi-user login and workspace ownership remain P4. | Selected identity provider, server-signed actor integration, organization membership, and an authenticated browser flow tested on production. |
+| Production Release provider | Online release is capability-gated until a provider and its server-only credentials are configured. | A real Preview/Promote/Observe/Rollback cycle tied to the accepted Artifact. |
+| Git and external Connectors | Code paths are present, but each target needs its repository allowlist, webhook secret, manifest, and credentials. | Signed webhook and staged candidate lifecycle against a configured target. |
+| Evidence signing and Vault | Signing/Vault readiness depends on server-only key material. | A production signed Evidence append, verification, export, and key rotation rehearsal. |
+| Outcome telemetry | External business metrics require source definitions and credentials. | Stable/Candidate samples from a real source bound to the exact deployment. |
+| Supabase Storage ACL and retention contention | Owner-managed `storage.objects` grants and two-connection advisory-lock behavior are not fully evidenced. | Platform-supported ACL inspection/change and a concurrent PostgreSQL integration run. |
+
+Do not interpret the passive public readiness endpoint or a successful deployment as proof of these active capabilities.
