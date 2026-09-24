@@ -9,6 +9,7 @@ import {
   createServerJobIdempotentReceipt,
   getServerJobByIdempotencyKey,
   getServerProductionRuntime,
+  listRecentServerParseJobs,
   listServerActiveJobs,
   JobStateConflictError,
   MissionRevisionConflictError,
@@ -357,6 +358,20 @@ describe("server Mission revision CAS",()=>{
       return new Response(JSON.stringify([jobRow(parse)]),{status:200});
     }));
     expect(await getServerJobByIdempotencyKey(parse.idempotencyKey)).toEqual(parse);
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it("bounds Parse recovery to recent rows in one session",async()=>{
+    const parse=EvolutionJobSchema.parse({...baseJob,id:"parse-1",type:"parse",idempotencyKey:"parse-1"});
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
+      const url=String(input);
+      expect(url).toContain("type=eq.parse&updated_at=gte.2026-09-17T00%3A00%3A00.000Z");
+      expect(url).toContain("metadata->>sessionId=eq.session%2F1&order=created_at.desc&limit=60");
+      return new Response(JSON.stringify([jobRow(parse)]),{status:200});
+    }));
+    expect(await listRecentServerParseJobs({
+      since:"2026-09-17T00:00:00.000Z",sessionId:"session/1",limit:60,
+    })).toEqual([parse]);
     expect(fetch).toHaveBeenCalledOnce();
   });
 });

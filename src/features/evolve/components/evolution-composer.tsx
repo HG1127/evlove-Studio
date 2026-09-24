@@ -335,7 +335,8 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
         if(!blob&&record.job.status!=="completed")continue;
         const file = new File([blob??new Blob()], metadata.name, { type: metadata.mimeType, lastModified: metadata.lastModified });
         const ready = record.job.status === "completed" && Boolean(record.artifact);
-        const status: PendingFile["status"] = ready ? "ready" : record.job.status === "failed" ? "error" : "parsing";
+        const status: PendingFile["status"] = ready ? "ready"
+          : (record.resultIssue||record.job.status === "failed"||record.job.status === "cancelled") ? "error" : "parsing";
         const item: PendingFile = {
           id: `pending-${record.job.id}`,
           file,
@@ -343,11 +344,11 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
           status,
           artifactId: metadata.artifactId,
           serverJobId:record.job.id,
-          error: record.job.error,
+          error: record.resultIssue??record.job.error??(record.job.status==="cancelled"?"Parse 已取消":undefined),
         };
         recoveredFiles.push(item);
         if (record.artifact) recoveredArtifacts.push(record.artifact);
-        if (!ready && record.job.status !== "failed" && record.job.status !== "cancelled") resume.push(item);
+        if (!ready && !record.resultIssue && record.job.status !== "failed" && record.job.status !== "cancelled") resume.push(item);
       }
       if (cancelled) return;
       if (recoveredFiles.length) setFiles(recoveredFiles);

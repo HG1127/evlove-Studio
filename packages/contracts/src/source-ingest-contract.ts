@@ -28,6 +28,7 @@ export type SourceParseStartResponse=z.infer<typeof SourceParseStartResponseSche
 export const SourceParseStatusResponseSchema=z.object({
   job:EvolutionJobSchema,
   artifact:SourceArtifactSchema.optional(),
+  resultIssue:z.string().min(1).max(500).optional(),
 });
 export type SourceParseStatusResponse=z.infer<typeof SourceParseStatusResponseSchema>;
 
@@ -37,6 +38,11 @@ export const SourceParseCancelResponseSchema=z.object({
   workflow:WorkflowRunCancelResultSchema,
 });
 export type SourceParseCancelResponse=z.infer<typeof SourceParseCancelResponseSchema>;
+
+export const SourceParseListQuerySchema=z.object({
+  sessionId:z.string().trim().min(1).max(200).optional(),
+});
+export type SourceParseListQuery=z.infer<typeof SourceParseListQuerySchema>;
 
 export const SourceParseListResponseSchema=z.object({
   items:z.array(SourceParseStatusResponseSchema),

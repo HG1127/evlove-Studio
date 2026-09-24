@@ -260,6 +260,16 @@ export async function getServerJobByIdempotencyKey(idempotencyKey:string){
   return rows?.[0]?rowJob(rows[0]):undefined;
 }
 
+export async function listRecentServerParseJobs(args:{since:string;limit:number;sessionId?:string}){
+  const {request}=createRestClient();
+  const limit=Math.max(1,Math.min(args.limit,100));
+  const sessionFilter=args.sessionId
+    ?"&metadata->>sessionId=eq."+encodeURIComponent(args.sessionId):"";
+  const rows=await request("jobs?select=*&type=eq.parse&updated_at=gte."
+    +encodeURIComponent(args.since)+sessionFilter+"&order=created_at.desc&limit="+limit) as JsonRecord[];
+  return (rows??[]).map(rowJob);
+}
+
 export async function createServerJobIdempotentReceipt(jobInput:EvolutionJob){
   const job=EvolutionJobSchema.parse(jobInput);
   const {request}=createRestClient();
