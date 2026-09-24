@@ -31,10 +31,28 @@ export default defineEventHandler(async(event)=>{
       data:{jobId:job.id,message:error instanceof Error?error.message:String(error)},
     });
   }
+  if(result.requiresReconciliation){
+    throw createError({
+      statusCode:409,
+      statusMessage:"Parse Workflow completed but Job outcome is unresolved",
+      data:{jobId:job.id,status:result.job.status,workflow:result.workflow},
+    });
+  }
   if(input.deleteArtifact&&result.job.status==="cancelled"){
     const artifacts=getServerArtifactStore();
-    if(result.job.inputRef)await artifacts.delete(result.job.inputRef).catch(()=>undefined);
-    if(result.job.outputRef)await artifacts.delete(result.job.outputRef).catch(()=>undefined);
+    const refs=[...new Set([result.job.inputRef,result.job.outputRef].filter((ref):ref is string=>Boolean(ref)))];
+    const failedArtifactIds:string[]=[];
+    for(const ref of refs){
+      try{await artifacts.delete(ref);}
+      catch{failedArtifactIds.push(ref);}
+    }
+    if(failedArtifactIds.length){
+      throw createError({
+        statusCode:503,
+        statusMessage:"Parse Job 已取消，但 Artifact 删除未完成；请检查保留约束或稍后重试",
+        data:{jobId:job.id,status:result.job.status,failedArtifactIds},
+      });
+    }
   }
   return SourceParseCancelResponseSchema.parse({jobId:job.id,status:result.job.status,workflow:result.workflow});
 });

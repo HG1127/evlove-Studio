@@ -122,6 +122,8 @@ The second read-only invocation at 2026-09-24 11:40 UTC returned HTTP 200 from t
 
 The generic Job cancellation endpoint and HTTP production adapter now share a Zod-validated Workflow cancellation receipt, matching the already validated Source Parse cancellation path. A malformed server response is surfaced as a contract error rather than silently treated as a successful cancellation.
 
+Source Parse cancellation now returns 409 when a completed Workflow has no settled Job outcome, as the generic Job endpoint already did. When a cancelled Parse Job requested Artifact deletion, a failed deletion returns 503 with the affected Artifact IDs after attempting both refs. The cancellation remains durable; retrying the request can repeat cleanup, and tombstone-driven scheduled cleanup covers Storage bytes left behind after metadata removal.
+
 The first manually invoked production Cron reached `/api/evolution/jobs/reconcile-scheduled` but returned HTTP 503. A subsequent read-only production Smoke confirmed that `CRON_SECRET` is present and that a request without its bearer token returns 401, locating the failure after the Cron configuration check. The server's direct REST clients also sent new `sb_secret_` keys as bearer tokens; this contradicts Supabase's new-key requirement to use `apikey`. The seven direct REST clients now share a header helper that uses `apikey` alone for `sb_*` keys and preserves bearer authentication for legacy JWT keys. Local tests, lint, architecture checks, and build passed before deployment. A second active Cron result is required before marking the live data plane healthy.
 
 The following external configuration or product-scope decisions remain deferred while backend code work continues:
