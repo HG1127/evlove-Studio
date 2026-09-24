@@ -106,6 +106,15 @@ describe("Evolution API route security invariants",()=>{
     }
   });
 
+  it("bounds multipart Parse uploads before reading the form",()=>{
+    const route=routes.find((item)=>item.relative==="parse-start.post.ts");
+    expect(route).toBeTruthy();
+    const guard=route!.source.indexOf("assertBodySize(event,");
+    const read=route!.source.indexOf("readMultipartFormData(event)");
+    expect(guard).toBeGreaterThanOrEqual(0);
+    expect(read).toBeGreaterThan(guard);
+  });
+
   it("does not authorize state-changing routes with reader-only permission",()=>{
     for(const route of routes){
       if(publicRoutes.has(route.relative)||webhookRoutes.has(route.relative)||readOnlyPosts.has(route.relative)||route.relative===registrationAlias)continue;

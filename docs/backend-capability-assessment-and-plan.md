@@ -110,6 +110,8 @@ For each slice, follow `PROJECT_RULES.md`: contracts first, then Core/Harness be
 
 Source Parse retries now resolve their existing Job through the indexed `jobs.idempotency_key` lookup instead of reading every Job row. The database unique key remains the concurrency guard; the targeted read removes an unbounded request from every uploaded file. Durable Mission Workflow start still needs a caller-stable idempotency key for unscheduled starts so a transport retry cannot create a second Control Job/run.
 
+Parse multipart uploads now enforce a 25 MiB file limit and a 25 MiB plus 64 KiB total request limit before the form body is buffered. Streaming requests without `Content-Length` are rejected as they cross the total limit.
+
 The first manually invoked production Cron reached `/api/evolution/jobs/reconcile-scheduled` but returned HTTP 503. A subsequent read-only production Smoke confirmed that `CRON_SECRET` is present and that a request without its bearer token returns 401, locating the failure after the Cron configuration check. The server's direct REST clients also sent new `sb_secret_` keys as bearer tokens; this contradicts Supabase's new-key requirement to use `apikey`. The seven direct REST clients now share a header helper that uses `apikey` alone for `sb_*` keys and preserves bearer authentication for legacy JWT keys. Local tests, lint, architecture checks, and build passed before deployment. A second active Cron result is required before marking the live data plane healthy.
 
 The following external configuration or product-scope decisions remain deferred while backend code work continues:

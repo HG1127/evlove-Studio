@@ -1,5 +1,5 @@
 import {randomUUID} from "node:crypto";
-import {createError,defineEventHandler,readMultipartFormData} from "nitro/h3";
+import {assertBodySize,createError,defineEventHandler,readMultipartFormData} from "nitro/h3";
 import {start} from "workflow/api";
 import {
   ArtifactRoleSchema,
@@ -23,12 +23,14 @@ import {cancelWorkflowRunById} from "../../../src/services/workflow-run-control"
 import {sourceParseIdempotencyIdentity} from "../../../src/services/source-parse-identity";
 
 const MAX_FILE_BYTES=25*1024*1024;
+const MAX_MULTIPART_BYTES=MAX_FILE_BYTES+64*1024;
 
 export default defineEventHandler(async(event)=>{
   await requireGovernedEvolutionPermission(event,"mission.execute");
   if(!serverSupabaseConfigured()){
     throw createError({statusCode:503,statusMessage:"Server Parse 数据面未配置",data:{code:"SERVER_PARSE_UNAVAILABLE"}});
   }
+  assertBodySize(event,MAX_MULTIPART_BYTES);
   const parts=await readMultipartFormData(event);
   const file=parts?.find((part)=>part.name==="file"&&part.filename);
   if(!file)throw createError({statusCode:400,statusMessage:"缺少 file"});

@@ -1,6 +1,6 @@
 // @vitest-environment node
 import {describe,expect,it} from "vitest";
-import {assertBodySize,mockEvent,readRawBody} from "nitro/h3";
+import {assertBodySize,mockEvent,readMultipartFormData,readRawBody} from "nitro/h3";
 
 function streamingEvent(parts:string[]){
   const encoder=new TextEncoder();
@@ -34,5 +34,26 @@ describe("streaming request body limits",()=>{
       method:"POST",headers:{"content-length":"6"},body:"abcdef",
     }));
     expect(()=>assertBodySize(event,5)).toThrow();
+  });
+
+  it("rejects an unknown-length multipart body before it is parsed",async()=>{
+    const boundary="test-boundary";
+    const body=`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="large.txt"\r\n\r\n${"x".repeat(100)}\r\n--${boundary}--\r\n`;
+    const request=new Request("http://localhost/upload",{
+      method:"POST",
+      headers:{"content-type":`multipart/form-data; boundary=${boundary}`},
+      body:new ReadableStream<Uint8Array>({
+        start(controller){
+          const encoder=new TextEncoder();
+          controller.enqueue(encoder.encode(body.slice(0,50)));
+          controller.enqueue(encoder.encode(body.slice(50)));
+          controller.close();
+        },
+      }),
+      duplex:"half",
+    } as RequestInit & {duplex:"half"});
+    const event=mockEvent(request);
+    assertBodySize(event,80);
+    await expect(readMultipartFormData(event)).rejects.toMatchObject({status:413});
   });
 });
