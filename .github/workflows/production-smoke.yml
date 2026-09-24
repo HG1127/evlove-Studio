@@ -68,6 +68,7 @@ jobs:
             .serverAi == true
           ' /tmp/readiness.json >/dev/null; then
             echo "::error::Production backend is missing a critical configuration."
+            jq -c '{dataPlane: (.dataPlane | {configured, secureCredential, credentialMode, configValid, issueFields, urlPresent, secretPresent, publishablePresent}), security: (.security | {configured, enforced}), serverAi}' /tmp/readiness.json
             jq -r '.blockers[] | select(.severity == "error") | .code' /tmp/readiness.json
             exit 1
           fi
