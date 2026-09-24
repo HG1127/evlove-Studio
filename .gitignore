@@ -36,7 +36,7 @@ supabase/.temp/
 coverage
 playwright-report
 test-results
-artifacts
+/artifacts/
 
 # Local validation logs
 /*-build*.txt
