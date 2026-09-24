@@ -14,7 +14,9 @@ export async function getBrowser(){
   const channels=process.env.BROWSER_CHANNEL?[process.env.BROWSER_CHANNEL]:process.platform==='win32'?['msedge','chrome',undefined]:[undefined,'chrome','msedge'];
   const failures=[];
   for(const channel of channels){
-   try{return browser=await chromium.launch({headless:true,chromiumSandbox:true,timeout:10000,...(channel?{channel}:{})});}
+   // Hosted CI runners lack the setuid helper required by Chromium's process sandbox.
+   // Production keeps the sandbox on; only the dedicated Runner test step opts out.
+   try{return browser=await chromium.launch({headless:true,chromiumSandbox:process.env.RUNNER_BROWSER_CI_NO_SANDBOX!=='1',timeout:10000,...(channel?{channel}:{})});}
    catch(error){failures.push(`${channel??'chromium'}: ${error.message}`);}
   }
   throw new Error(`未找到可用浏览器。请安装 Edge/Chrome 或执行 npm run runner:install-browser。${failures.join('；')}`);
