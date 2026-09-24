@@ -78,4 +78,25 @@ describe("public readiness passive boundary",()=>{
       .toContain("SUPABASE_SERVICE_ROLE_KEY");
     expect(fetch).not.toHaveBeenCalled();
   });
+
+  it("reports a present but incomplete server credential as invalid configuration",async()=>{
+    process.env.NODE_ENV="production";
+    process.env.SUPABASE_URL="https://example.supabase.co";
+    process.env.SUPABASE_SECRET_KEY="sb_secret_";
+    process.env.EVOLUTION_WORKSPACE_ID="workspace-test";
+    process.env.EVOLUTION_IDENTITY_HMAC_SECRET="x".repeat(40);
+    process.env.EVOLUTION_AI_API_KEY="ai-key";
+    process.env.EVOLUTION_AI_MODEL="model";
+    vi.stubGlobal("fetch",vi.fn(async()=>{throw new Error("public readiness must remain passive");}));
+
+    vi.resetModules();
+    const {getPublicReadinessSnapshot}=await import("./public-readiness");
+    const snapshot=await getPublicReadinessSnapshot();
+
+    expect(snapshot.dataPlane).toMatchObject({configured:false,secureCredential:false,secretPresent:true,configValid:false,issueFields:["anonKey"]});
+    expect(snapshot.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({code:"SUPABASE_SERVER_CONFIG_INVALID",severity:"error",area:"data-plane"}),
+    ]));
+    expect(fetch).not.toHaveBeenCalled();
+  });
 });

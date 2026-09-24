@@ -44,6 +44,13 @@ function readinessBlockers(input:{
       action:"重新确认/覆盖 SUPABASE_SECRET_KEY 或 SUPABASE_SERVICE_ROLE_KEY 的 Production 值，然后重新部署；不要放到 VITE_*。",
     });
   }
+  if(input.dataPlane.urlPresent&&input.dataPlane.secretPresent&&!input.dataPlane.configValid){
+    add({
+      code:"SUPABASE_SERVER_CONFIG_INVALID",severity:"error",area:"data-plane",
+      message:`Supabase 服务端配置格式无效：${input.dataPlane.issueFields.join(", ") || "config"}。`,
+      action:"检查 Production 的 SUPABASE_URL、完整 SUPABASE_SECRET_KEY 和 Artifact bucket 名称，然后重新部署。",
+    });
+  }
   if(!input.security.workspaceId){
     add({
       code:"WORKSPACE_ID_MISSING",severity:"error",area:"security",
