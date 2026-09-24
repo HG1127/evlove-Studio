@@ -57,7 +57,7 @@ export async function getOutcomeAnalyticsHealth(){
 }
 
 export async function analyzeMissionOutcome(input:{missionId:string;candidateId:string}){
-  const samples=await readOutcomeSamples(input);
+  const samples=await readOutcomeSamples({...input,limit:20_000,requireComplete:true});
   return analyzeOutcomeSamples({
     ...input,
     samples,

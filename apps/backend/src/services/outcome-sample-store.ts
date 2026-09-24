@@ -12,6 +12,13 @@ import {supabaseRestAuthHeaders} from "./supabase-rest-auth";
 
 type JsonRecord=Record<string,unknown>;
 
+export class OutcomeSampleLimitExceededError extends Error{
+  constructor(readonly limit:number){
+    super(`Outcome analysis exceeds the ${limit} sample limit; complete evidence is required`);
+    this.name="OutcomeSampleLimitExceededError";
+  }
+}
+
 function db(){
   const config=getServerSupabaseConfig();
   const root=config.url.replace(/\/+$/,"")+"/rest/v1";
@@ -37,6 +44,18 @@ function fromRow(row:JsonRecord):OutcomeMetricSample{
   });
 }
 
+function filterValue(value:string){
+  // PostgREST requires quoted values inside a logical filter when an ID or
+  // timestamp contains punctuation that also belongs to its URL grammar.
+  return "%22"+encodeURIComponent(value.replace(/\\/g,"\\\\").replace(/"/g,'\\"'))+"%22";
+}
+
+function afterSample(sample:Pick<OutcomeMetricSample,"observedAt"|"id">){
+  const at=filterValue(sample.observedAt);
+  return "&or=(observed_at.gt."+at
+    +",and(observed_at.eq."+at+",id.gt."+filterValue(sample.id)+"))";
+}
+
 export async function insertOutcomeSamples(raw:OutcomeMetricBatchRequest){
   const input=OutcomeMetricBatchRequestSchema.parse(raw);
   const workspaceId=getEvolutionWorkspaceId();
@@ -57,7 +76,7 @@ export async function insertOutcomeSamples(raw:OutcomeMetricBatchRequest){
   });
 }
 
-export async function readOutcomeSamples(input:{missionId:string;candidateId?:string;limit?:number}){
+export async function readOutcomeSamples(input:{missionId:string;candidateId?:string;limit?:number;requireComplete?:boolean}){
   const workspaceId=getEvolutionWorkspaceId();
   if(!workspaceId)throw new Error("EVOLUTION_WORKSPACE_ID is required");
   const candidate=input.candidateId?"&candidate_id=eq."+encodeURIComponent(input.candidateId):"";
@@ -70,7 +89,8 @@ export async function readOutcomeSamples(input:{missionId:string;candidateId?:st
   const samples:OutcomeMetricSample[]=[];
   const seen=new Set<string>();
   while(samples.length<limit){
-    const page=await request(path+"&limit="+Math.min(500,limit-samples.length)+"&offset="+samples.length);
+    const page=await request(path+"&limit="+Math.min(500,limit-samples.length)
+      +(samples.length?afterSample(samples[samples.length-1]):""));
     if(!Array.isArray(page))throw new Error("Outcome sample page is not an array");
     if(page.length===0)break;
     if(page.length>Math.min(500,limit-samples.length))throw new Error("Outcome sample page exceeds the requested limit");
@@ -86,10 +106,19 @@ export async function readOutcomeSamples(input:{missionId:string;candidateId?:st
       samples.push(sample);
     }
   }
+  if(input.requireComplete&&samples.length===limit){
+    const extra=await request(path.replace("select=*","select=id")+"&limit=1"
+      +afterSample(samples[samples.length-1]));
+    if(!Array.isArray(extra))throw new Error("Outcome sample overflow probe is not an array");
+    if(extra.length)throw new OutcomeSampleLimitExceededError(limit);
+  }
   return samples;
 }
 
 export async function probeOutcomeSampleStore(){
-  await db()("outcome_metric_samples?select=id&order=observed_at.asc,id.asc&limit=1&offset=0");
+  await db()("outcome_metric_samples?select=id"
+    +"&workspace_id=eq.health-probe&mission_id=eq.health-probe"
+    +"&order=observed_at.asc,id.asc&limit=1"
+    +afterSample({observedAt:"2026-01-01T00:00:00Z",id:"health-probe"}));
   return true;
 }
