@@ -28,6 +28,7 @@ import { ingestSources, runIntakeFromArtifacts } from "../runtime/api";
 import { deleteArtifactBlob, getArtifactBlob, putArtifactBlob } from "../runtime/artifact-blob-store";
 import {
   cancelServerParseJob,
+  getServerParseCapabilities,
   listServerParseJobs,
   parseJobMetadata,
   parseServerFile,
@@ -118,6 +119,7 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const replaceRef = useRef<HTMLInputElement>(null);
   const parseSessionIdRef=useRef(composerParseSessionId());
+  const serverParseAvailableRef=useRef<boolean|undefined>(undefined);
   const autoCreatePendingRef = useRef(false);
   const parseJobsRef = useRef(new Map<string, Promise<SourceArtifact | undefined>>());
   const artifactsRef = useRef<SourceArtifact[]>([]);
@@ -247,6 +249,8 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
         const artifactId=item.artifactId??`artifact-${crypto.randomUUID()}`;
         if(serverJobId){
           parsed=await waitForServerParseJob(serverJobId);
+        }else if(serverParseAvailableRef.current===false){
+          [parsed]=await ingestSources({files:[item.file],role:item.role});
         }else{
           try{
             const started=await startServerParseFile(item.file,item.role,artifactId,parseSessionIdRef.current);
@@ -325,6 +329,9 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
+      const available=await getServerParseCapabilities().then((capabilities)=>capabilities.available).catch(()=>false);
+      serverParseAvailableRef.current=available;
+      if(!available||cancelled)return;
       const persisted = await listServerParseJobs(parseSessionIdRef.current);
       const recoveredFiles: PendingFile[] = [];
       const recoveredArtifacts: SourceArtifact[] = [];

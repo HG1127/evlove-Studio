@@ -16,7 +16,7 @@ import {
   isBenignJobBookkeepingConflict,
   JobStateConflictError,
 } from "../../../src/services/production-runtime";
-import {serverSupabaseConfigured} from "../../../src/server-env";
+import {serverSupabaseSecureConfigured} from "../../../src/server-env";
 import {sourceParseWorkflow} from "../../../../../workflows/source-parse";
 import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 import {cancelWorkflowRunById} from "../../../src/services/workflow-run-control";
@@ -27,7 +27,7 @@ const MAX_MULTIPART_BYTES=MAX_FILE_BYTES+64*1024;
 
 export default defineEventHandler(async(event)=>{
   await requireGovernedEvolutionPermission(event,"mission.execute");
-  if(!serverSupabaseConfigured()){
+  if(!serverSupabaseSecureConfigured()){
     throw createError({statusCode:503,statusMessage:"Server Parse 数据面未配置",data:{code:"SERVER_PARSE_UNAVAILABLE"}});
   }
   assertBodySize(event,MAX_MULTIPART_BYTES);

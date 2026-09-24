@@ -34,8 +34,15 @@ try{
  await page.getByRole('button',{name:'粘贴内容',exact:true}).click();
  await page.getByPlaceholder('例如：当前 System Prompt、Workflow JSON、报告模板、代码片段……').waitFor();
  await page.getByRole('button',{name:'关闭',exact:true}).click();
+ let localParse='skipped';
+ const parseCapabilityResponse=await page.request.get('http://127.0.0.1:8000/api/evolution/parse-capabilities');
+ if(parseCapabilityResponse.ok()&&(await parseCapabilityResponse.json()).available===false){
+  await page.locator('input[type="file"]').first().setInputFiles({name:'smoke-source.md',mimeType:'text/markdown',buffer:Buffer.from('A local parse smoke artifact with verifiable source text.')});
+  await page.getByText('已读取 · 后台解析完成',{exact:true}).waitFor({timeout:15000});
+  localParse='passed';
+ }
  assert.equal(errors.length,0,errors.join('\n'));
  assert.ok(rows.every(row=>row.scrollWidth<=row.width+2),JSON.stringify(rows));
- console.log(JSON.stringify({status:'PASS',rows,pageErrors:errors,failedResponses,mobilePaste:'passed'},null,2));
+ console.log(JSON.stringify({status:'PASS',rows,pageErrors:errors,failedResponses,mobilePaste:'passed',localParse},null,2));
  await context.close();
 }catch(error){console.error(JSON.stringify({errors,failedResponses,rows,body:await page?.locator('body').innerText().catch(()=>''),failure:String(error)},null,2));throw error;}finally{await closeBrowser();}

@@ -12,6 +12,7 @@ vi.mock("./security-policy",()=>({requireGovernedEvolutionPermission:vi.fn(async
 
 const originalUrl=process.env.SUPABASE_URL;
 const originalSecret=process.env.SUPABASE_SECRET_KEY;
+const originalLegacy=process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 afterEach(()=>{
   multipart.mockReset();
@@ -19,6 +20,8 @@ afterEach(()=>{
   else process.env.SUPABASE_URL=originalUrl;
   if(originalSecret===undefined)delete process.env.SUPABASE_SECRET_KEY;
   else process.env.SUPABASE_SECRET_KEY=originalSecret;
+  if(originalLegacy===undefined)delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+  else process.env.SUPABASE_SERVICE_ROLE_KEY=originalLegacy;
 });
 
 describe("Source Parse multipart boundary",()=>{
@@ -35,5 +38,16 @@ describe("Source Parse multipart boundary",()=>{
       method:"POST",body:"test",
     }));
     await expect(route(event)).rejects.toMatchObject({status:400});
+  });
+
+  it("rejects a publishable-only data plane before reading multipart bytes",async()=>{
+    process.env.SUPABASE_URL="https://example.supabase.co";
+    delete process.env.SUPABASE_SECRET_KEY;
+    delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const event=mockEvent(new Request("http://localhost/api/evolution/parse-start",{
+      method:"POST",body:"test",
+    }));
+    await expect(route(event)).rejects.toMatchObject({status:503});
+    expect(multipart).not.toHaveBeenCalled();
   });
 });
