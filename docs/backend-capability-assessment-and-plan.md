@@ -127,6 +127,7 @@ Source Parse cancellation now returns 409 when a completed Workflow has no settl
 Parse recovery listing now queries only the latest 60 Parse Jobs within seven days, optionally filtered by a bounded session ID, instead of transferring every Job row. A completed Job whose result Artifact cannot be read keeps its authoritative `completed` status; the response carries a separate `resultIssue` that distinguishes missing, unreadable, and malformed output. The browser presents that issue as an error and does not restart a completed Workflow.
 
 The single Parse status endpoint now uses the same result reader as the recovery list. If a completed Job's output is absent, unreadable, or malformed, it returns the persisted completed Job with `resultIssue`; the browser polling helper stops immediately with that issue instead of waiting five minutes for an Artifact that cannot arrive.
+Recovery listing reads at most four result blobs concurrently while retaining newest-first Job order, rather than making up to 60 serial Storage requests.
 
 The read-only production Cron also exercises the new Parse recovery REST filter with a one-row, nonexistent health session. This distinguishes a malformed PostgREST filter from a functional Parse recovery path before a user needs to resume an upload.
 
