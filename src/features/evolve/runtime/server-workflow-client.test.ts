@@ -1,7 +1,7 @@
 import {afterEach,describe,expect,it,vi} from "vitest";
 import {demoProject} from "../data/mock-project";
 import type {EvolveProject} from "../schemas";
-import {checkPublicReadiness,getServerWorkflowCapabilities,shouldUseServerAutoPilot,startServerEvolutionWorkflow} from "./server-workflow-client";
+import {checkPublicReadiness,getServerEvolutionWorkflowStatus,getServerWorkflowCapabilities,shouldUseServerAutoPilot,startServerEvolutionWorkflow} from "./server-workflow-client";
 
 const capabilities={
   available:true,
@@ -81,6 +81,15 @@ describe("server workflow routing",()=>{
     const result=await startServerEvolutionWorkflow("mission-1",{scheduledFor:"2026-09-22T01:00:00.000Z"});
     expect(result.scheduledFor).toBe("2026-09-22T01:00:00.000Z");
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("validates the durable Workflow status response",async()=>{
+    vi.stubGlobal("fetch",vi.fn(async(url:RequestInfo|URL)=>{
+      expect(String(url)).toBe("/api/evolution/status?runId=run-1");
+      return new Response(JSON.stringify({workflow:{exists:true,status:"running"},events:[]}),{status:200});
+    }));
+    expect(await getServerEvolutionWorkflowStatus({runId:" run-1 "}))
+      .toEqual({workflow:{exists:true,status:"running"},events:[]});
   });
 
   it("keeps online missions out until Release Ready is approved, then enables post-approval Durable AutoPilot",async()=>{

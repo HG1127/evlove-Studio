@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { SecurityCapabilitiesSchema, SecurityGovernanceHealthSchema } from "./security-contract";
+import {EvolutionJobSchema} from "./job-contract";
+import {EvolutionEventSchema} from "./event-contract";
 
 export const EvolutionWorkflowStatusSchema = z.enum([
   "queued",
@@ -51,6 +53,19 @@ export const EvolutionWorkflowStartResponseSchema = z.object({
   scheduledFor: z.string().optional(),
 });
 export type EvolutionWorkflowStartResponse = z.infer<typeof EvolutionWorkflowStartResponseSchema>;
+
+export const EvolutionWorkflowStatusQuerySchema=z.object({
+  runId:z.string().trim().min(1).max(500).optional(),
+  jobId:z.string().trim().min(1).max(200).optional(),
+}).refine((query)=>Boolean(query.runId||query.jobId),"需要 runId 或 jobId");
+export type EvolutionWorkflowStatusQuery=z.infer<typeof EvolutionWorkflowStatusQuerySchema>;
+
+export const EvolutionWorkflowStatusResponseSchema=z.object({
+  workflow:z.object({exists:z.boolean(),status:z.string().min(1).optional()}).optional(),
+  job:EvolutionJobSchema.optional(),
+  events:z.array(EvolutionEventSchema),
+});
+export type EvolutionWorkflowStatusResponse=z.infer<typeof EvolutionWorkflowStatusResponseSchema>;
 
 export const ServerAiRuntimeStatusSchema=z.enum(["not-checked","ready","unconfigured","unavailable","error"]);
 export const ServerAiRuntimeHealthSchema=z.object({

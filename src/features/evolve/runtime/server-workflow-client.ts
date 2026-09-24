@@ -2,6 +2,8 @@ import {
   EvolutionBackendHealthSchema,
   EvolutionWorkflowCapabilitiesSchema,
   EvolutionWorkflowStartResponseSchema,
+  EvolutionWorkflowStatusQuerySchema,
+  EvolutionWorkflowStatusResponseSchema,
   PublicReadinessSnapshotSchema,
   SandboxBrowserHealthSchema,
   SandboxHealthSchema,
@@ -61,15 +63,11 @@ export async function startServerEvolutionWorkflow(
 }
 
 export async function getServerEvolutionWorkflowStatus(input:{runId?:string;jobId?:string}){
+  const parsed=EvolutionWorkflowStatusQuerySchema.parse(input);
   const query=new URLSearchParams();
-  if(input.runId)query.set("runId",input.runId);
-  if(input.jobId)query.set("jobId",input.jobId);
-  if(!query.size)throw new Error("需要 runId 或 jobId");
-  return apiJson("/api/evolution/status?"+query.toString()) as Promise<{
-    workflow?:{exists:boolean;status?:unknown};
-    job?:unknown;
-    events?:unknown[];
-  }>;
+  if(parsed.runId)query.set("runId",parsed.runId);
+  if(parsed.jobId)query.set("jobId",parsed.jobId);
+  return EvolutionWorkflowStatusResponseSchema.parse(await apiJson("/api/evolution/status?"+query.toString()));
 }
 
 export async function checkServerSandboxHealth():Promise<SandboxHealth>{

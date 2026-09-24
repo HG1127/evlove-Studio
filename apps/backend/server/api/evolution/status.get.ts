@@ -1,17 +1,18 @@
 import { defineEventHandler, getQuery, setResponseStatus } from "nitro/h3";
 import { getRun } from "workflow/api";
+import {EvolutionWorkflowStatusQuerySchema,EvolutionWorkflowStatusResponseSchema} from "@evolution/contracts";
 import { getServerProductionRuntime } from "../../../src/services/production-runtime";
 import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 
 export default defineEventHandler(async(event)=>{
   await requireGovernedEvolutionPermission(event,"data.read");
   const query=getQuery(event);
-  const runId=typeof query.runId==="string"?query.runId:undefined;
-  const jobId=typeof query.jobId==="string"?query.jobId:undefined;
-  if(!runId&&!jobId){
+  const parsed=EvolutionWorkflowStatusQuerySchema.safeParse(query);
+  if(!parsed.success){
     setResponseStatus(event,400);
     return {error:"需要 runId 或 jobId"};
   }
+  const {runId,jobId}=parsed.data;
 
   const runtime=getServerProductionRuntime();
   const job=jobId?await runtime.jobs.get(jobId):undefined;
@@ -22,5 +23,5 @@ export default defineEventHandler(async(event)=>{
     workflow=exists?{exists:true,status:await run.status}:{exists:false};
   }
   const events=job?.missionId?await runtime.events.list(job.missionId,25):[];
-  return {workflow,job,events};
+  return EvolutionWorkflowStatusResponseSchema.parse({workflow,job,events});
 });
