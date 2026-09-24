@@ -37,6 +37,8 @@ Lifecycle changes across Artifact, Evidence, Validation, Checkpoint, and Harness
 
 **Acceptance:** missing Artifact is failed with a reason; existing Artifact without an executable check is unverified; neither API state nor checkpoint evidence says passed without a real check bound to the exact Artifact hash.
 
+The HTTP Target Runner gateway now requires an explicit external verification status, rejects a result for a different Test Case, and checks the SHA-256 of submitted HTML or ZIP bytes before accepting any non-unverified result. An external `unverified` result without an Artifact hash remains unverified in the browser instead of becoming a generic execution error. The shared legacy result schema remains compatible; the strict checks apply at the external provider boundary.
+
 ### P1 — Recoverable Artifact and validation lifecycle (implemented in code)
 
 - Added Zod request/result contracts for Artifact registration and Validation.

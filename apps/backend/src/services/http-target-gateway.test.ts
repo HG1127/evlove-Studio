@@ -1,4 +1,5 @@
 // @vitest-environment node
+import {createHash} from "node:crypto";
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
 import {getHttpTargetGatewayCapabilities,observeHttpTarget,releaseHttpTarget,runHttpTarget} from "./http-target-gateway";
 
@@ -40,6 +41,51 @@ describe("server HTTP target gateway",()=>{
       variant:null,
     });
     expect(result.verificationStatus).toBe("verified");
+  });
+
+  it("rejects a Target Run receipt for another Test Case or without an explicit status",async()=>{
+    process.env.EVOLUTION_TARGET_RUN_URL="https://runner.internal/run";
+    const input={
+      projectId:"p",connectionId:"c",
+      testCase:{id:"T1",title:"t",input:"i",expected:[],tags:[],hidden:false,criterionIds:[],executionMode:"external-runner" as const,evidenceScope:"product-behavior" as const},
+      variant:null,
+    };
+    const receipt={testCaseId:"T2",output:"wrong test",latencyMs:1,cost:0,verificationStatus:"verified",trace:[]};
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(receipt),{status:200})));
+    await expect(runHttpTarget(input)).rejects.toThrow("another Test Case");
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({
+      ...receipt,testCaseId:"T1",verificationStatus:undefined,
+    }),{status:200})));
+    await expect(runHttpTarget(input)).rejects.toThrow();
+  });
+
+  it("accepts verified evidence only for the submitted Artifact bytes",async()=>{
+    process.env.EVOLUTION_TARGET_RUN_URL="https://runner.internal/run";
+    const content="<!doctype html><title>Exact Artifact</title>";
+    const digest=createHash("sha256").update(content).digest("hex");
+    const input={
+      projectId:"p",connectionId:"c",artifact:{name:"index.html",content},
+      testCase:{id:"T1",title:"t",input:"i",expected:[],tags:[],hidden:false,criterionIds:[],executionMode:"external-runner" as const,evidenceScope:"product-behavior" as const},
+      variant:null,
+    };
+    const receipt={testCaseId:"T1",output:"observed",latencyMs:1,cost:0,verificationStatus:"verified",trace:[]};
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({...receipt,artifactHash:"wrong"}),{status:200})));
+    await expect(runHttpTarget(input)).rejects.toThrow("submitted Artifact SHA-256");
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({...receipt,artifactHash:digest}),{status:200})));
+    await expect(runHttpTarget(input)).resolves.toMatchObject({testCaseId:"T1",artifactHash:digest});
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({
+      ...receipt,verificationStatus:"unverified",artifactHash:undefined,
+    }),{status:200})));
+    await expect(runHttpTarget(input)).resolves.toMatchObject({verificationStatus:"unverified"});
+
+    const archive=Buffer.from("frozen package bytes");
+    const archiveDigest=createHash("sha256").update(archive).digest("hex");
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({
+      ...receipt,artifactHash:archiveDigest,
+    }),{status:200})));
+    await expect(runHttpTarget({
+      ...input,artifact:undefined,archiveBase64:archive.toString("base64"),
+    })).resolves.toMatchObject({artifactHash:archiveDigest});
   });
 
   it("proxies release with server-only credentials",async()=>{

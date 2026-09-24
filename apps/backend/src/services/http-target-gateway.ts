@@ -1,3 +1,5 @@
+import {createHash} from "node:crypto";
+import {z} from "zod";
 import {
   TargetProxyCapabilitiesSchema,
   TargetObserveProxyRequestSchema,
@@ -8,6 +10,12 @@ import {
   TargetRunProxyResponseSchema,
 } from "@evolution/contracts";
 import {getServerTargetProxyConfig,targetProxyCapabilities as serverCaps} from "../server-env";
+
+// Keep the shared legacy result contract compatible, but do not let its
+// verificationStatus default turn a missing provider verdict into "verified".
+const ExplicitTargetRunResponseSchema=TargetRunProxyResponseSchema.extend({
+  verificationStatus:z.enum(["verified","partial","unverified","failed"]),
+});
 
 function headers(){
   const token=getServerTargetProxyConfig().token;
@@ -39,7 +47,16 @@ export function getHttpTargetGatewayCapabilities(){
 
 export async function runHttpTarget(raw:unknown){
   const input=TargetRunProxyRequestSchema.parse(raw);
-  return TargetRunProxyResponseSchema.parse(await post(getServerTargetProxyConfig().runUrl,input,"Target Run"));
+  const result=ExplicitTargetRunResponseSchema.parse(await post(getServerTargetProxyConfig().runUrl,input,"Target Run"));
+  if(result.testCaseId!==input.testCase.id)throw new Error("Target Run result belongs to another Test Case");
+  if(result.verificationStatus!=="unverified"&&(input.artifact||input.archiveBase64)){
+    const bytes=input.archiveBase64?Buffer.from(input.archiveBase64,"base64"):Buffer.from(input.artifact!.content,"utf8");
+    const expected=createHash("sha256").update(bytes).digest("hex");
+    if(result.artifactHash?.toLowerCase()!==expected){
+      throw new Error("Target Run result does not match the submitted Artifact SHA-256");
+    }
+  }
+  return result;
 }
 
 export async function releaseHttpTarget(raw:unknown){

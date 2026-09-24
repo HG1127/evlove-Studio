@@ -48,7 +48,8 @@ export const httpTargetAdapter: TargetAdapter = {
     if (!res.ok) throw await executionError(res, "真实验证");
     const result=TargetRunResultSchema.parse(await res.json());
     if(archiveHash&&result.verificationStatus!=="unverified"&&result.artifactHash!==archiveHash)throw new Error("构建证据与实际源码包指纹不一致");
-    if(artifact?.content && result.artifactHash!==await textDigest(artifact.content)) throw new Error("执行结果与提交文件指纹不一致");
+    if(artifact?.content && result.verificationStatus!=="unverified"
+      && result.artifactHash!==await textDigest(artifact.content)) throw new Error("执行结果与提交文件指纹不一致");
     if(testCase.executionMode==="visual-review"&&result.screenshots?.length){const visual=await runVisualCase(project,testCase,variant,result.screenshots);return {...visual,screenshots:result.screenshots,artifactHash:result.artifactHash,trace:[...result.trace,...visual.trace],verificationStatus:result.verificationStatus==="failed"?"failed":"partial"};}
     return result;
   },
