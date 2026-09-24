@@ -189,6 +189,33 @@ describe("durable release orchestration",()=>{
     expect(()=>applyReleaseResultToProject({project,candidate,requestedAction:"shadow",result:bad})).toThrow(/Artifact Hash/);
   });
 
+  it("rejects extra or duplicate Artifact identities in a live Release receipt",()=>{
+    const {project,candidate}=fixture();
+    const expected={sourceArtifactId:"source",contentHash:"hash-c1"};
+    for(const artifactHashes of [
+      [expected,{sourceArtifactId:"unaccepted",contentHash:"other"}],
+      [expected,expected],
+    ]){
+      expect(()=>applyReleaseResultToProject({
+        project,candidate,requestedAction:"shadow",result:{...receipt("shadow"),artifactHashes},
+      })).toThrow(/Artifact Hash/);
+    }
+  });
+
+  it("accepts an exact multi-Artifact receipt regardless of provider ordering",()=>{
+    const {project,candidate}=fixture();
+    candidate.artifactSnapshots.push({
+      ...candidate.artifactSnapshots[0]!,id:"s2",sourceArtifactId:"source2",contentHash:"hash-c2",
+    });
+    const result={...receipt("shadow"),artifactHashes:[
+      {sourceArtifactId:"source2",contentHash:"hash-c2"},
+      {sourceArtifactId:"source",contentHash:"hash-c1"},
+    ]};
+    const settled=applyReleaseResultToProject({project,candidate,requestedAction:"shadow",result});
+    expect(settled.release.status).toBe("shadow");
+    expect(settled.release.artifactHashes).toEqual(result.artifactHashes);
+  });
+
   it("rejects a provider action mismatch instead of guessing the release state",()=>{
     const {project,candidate}=fixture();
     const mismatched={...receipt("rollback"),effectiveAction:"rollback" as const};

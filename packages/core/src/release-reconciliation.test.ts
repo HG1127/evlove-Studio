@@ -90,6 +90,21 @@ describe("release reconciliation",()=>{
     expect(result.reason).toContain("Artifact Hash");
   });
 
+  it("fails closed when HTTP Observe includes extra or duplicate Artifact identities",()=>{
+    const x=httpFixture();
+    const expected={sourceArtifactId:"source",contentHash:"hash-c1"};
+    for(const artifactHashes of [
+      [expected,{sourceArtifactId:"unaccepted",contentHash:"other"}],
+      [expected,expected],
+    ]){
+      const result=reconcileHttpReleaseObservation({
+        project:x.project,candidate:x.candidate,observation:{...httpObserved("promote"),artifactHashes},
+      });
+      expect(result.disposition).toBe("manual-check");
+      expect(result.reason).toContain("Artifact Hash");
+    }
+  });
+
   it("fails closed when HTTP Observe reports impossible traffic or stable deployment drift",()=>{
     const x=httpFixture();
     const wrongTraffic={...httpObserved("promote"),trafficPercent:20};

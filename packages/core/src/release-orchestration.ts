@@ -63,7 +63,10 @@ function hasExactArtifactHashes(candidate:Candidate,result:ReleaseAdapterResult)
   const expected=expectedReleaseArtifactHashes(candidate);
   const received=result.artifactHashes
     ??(expected.length===1&&result.artifactHash?[{sourceArtifactId:expected[0]!.sourceArtifactId,contentHash:result.artifactHash}]:[]);
-  return expected.length>0&&expected.every((item)=>received.some((receipt)=>receipt.sourceArtifactId===item.sourceArtifactId&&receipt.contentHash===item.contentHash));
+  return expected.length>0
+    &&received.length===expected.length
+    &&new Set(received.map((receipt)=>receipt.sourceArtifactId)).size===received.length
+    &&expected.every((item)=>received.some((receipt)=>receipt.sourceArtifactId===item.sourceArtifactId&&receipt.contentHash===item.contentHash));
 }
 
 export function nextDurableReleaseAction(project:EvolveProject):DurableReleaseAction|undefined{
