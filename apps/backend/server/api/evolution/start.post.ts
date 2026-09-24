@@ -18,8 +18,7 @@ import {
 } from "../../../src/services/production-runtime";
 import { evolutionMissionWorkflow } from "../../../../../workflows/evolution-mission";
 import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
-import {cancelWorkflowRunById} from "../../../src/services/workflow-run-control";
-import {workflowRunIdForJob} from "../../../src/services/workflow-run-control";
+import {cancelWorkflowRunById,workflowRunIdForJob} from "../../../src/services/workflow-run-control";
 
 export default defineEventHandler(async(event)=>{
   await requireGovernedEvolutionPermission(event,"mission.execute");
@@ -70,16 +69,16 @@ export default defineEventHandler(async(event)=>{
   let created;
   try{
     created=await createServerJobIdempotentReceipt(EvolutionJobSchema.parse({
-    schemaVersion:PRODUCTION_SCHEMA_VERSIONS.job,
-    id:controlJobId,
-    missionId:mission.id,
-    type:"campaign",
-    status:"queued",
-    label:scheduledFor?"Evolution Durable Scheduler":"Evolution Workflow Control",
-    idempotencyKey:`workflow-control:${mission.id}:${operationKey}`,
-    generation:1,attempts:0,priority:70,
-    progress:{percent:0,detail:scheduledFor?`等待 Durable Scheduler 武装至 ${scheduledFor}`:"等待 Durable Workflow 启动"},
-    createdAt:requestedAt,updatedAt:requestedAt,
+      schemaVersion:PRODUCTION_SCHEMA_VERSIONS.job,
+      id:controlJobId,
+      missionId:mission.id,
+      type:"campaign",
+      status:"queued",
+      label:scheduledFor?"Evolution Durable Scheduler":"Evolution Workflow Control",
+      idempotencyKey:`workflow-control:${mission.id}:${operationKey}`,
+      generation:1,attempts:0,priority:70,
+      progress:{percent:0,detail:scheduledFor?`等待 Durable Scheduler 武装至 ${scheduledFor}`:"等待 Durable Workflow 启动"},
+      createdAt:requestedAt,updatedAt:requestedAt,
     }));
   }catch(error){
     if(error instanceof JobStateConflictError){
