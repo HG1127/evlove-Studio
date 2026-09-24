@@ -16,6 +16,7 @@ import {
   createEvidenceLedgerExport,
   evidenceContentHash,
   listEvidenceLedgerAll,
+  probeEvidenceLedgerPage,
   verifyEvidenceLedgerExport,
 } from "./evidence-ledger";
 
@@ -60,15 +61,16 @@ function rows(count:number){
   return output;
 }
 
-function installLedger(rowsInput:Array<Record<string,unknown>>){
+function installLedger(rowsInput:Array<Record<string,unknown>>,serverCap=Number.POSITIVE_INFINITY){
   const fetchMock=vi.fn(async(input:RequestInfo|URL)=>{
     const url=new URL(String(input));
     expect(url.pathname).toContain("/rest/v1/evidence_ledger");
-    const offset=Number(url.searchParams.get("offset")??"0");
+    const cursor=Number((url.searchParams.get("sequence")??"gt.0").replace(/^gt\./,""));
     const limit=Number(url.searchParams.get("limit")??String(rowsInput.length));
+    const page=rowsInput.filter((row)=>Number(row.sequence)>cursor).slice(0,Math.min(limit,serverCap));
     const selected=url.searchParams.get("select")==="id"
-      ?rowsInput.slice(offset,offset+limit).map((row)=>({id:row.id}))
-      :rowsInput.slice(offset,offset+limit);
+      ?page.map((row)=>({id:row.id}))
+      :page;
     return new Response(JSON.stringify(selected),{
       status:200,
       headers:{"Content-Type":"application/json"},
@@ -104,12 +106,43 @@ describe("Evidence Ledger signed export/archive",()=>{
     const fetchMock=installLedger(source);
     const all=await listEvidenceLedgerAll(MISSION,{pageSize:2,maxEntries:10});
     expect(all).toHaveLength(5);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock.mock.calls.map(([input])=>new URL(String(input)).searchParams.get("sequence")))
+      .toEqual(["gt.0","gt.2","gt.4","gt.5"]);
 
     vi.unstubAllGlobals();
     installLedger(source);
     await expect(listEvidenceLedgerAll(MISSION,{pageSize:2,maxEntries:4}))
       .rejects.toThrow(/maximum supported entry count/i);
+  });
+
+  it("does not certify a valid ledger prefix when the server caps each page",async()=>{
+    const fetchMock=installLedger(rows(5),1);
+    const bundle=await createEvidenceLedgerExport(MISSION,{now:"2026-09-21T07:00:00.000Z"});
+    expect(bundle.entryCount).toBe(5);
+    expect(bundle.verification).toMatchObject({valid:true,entries:5});
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+  });
+
+  it("rejects a repeated sequence instead of looping or certifying duplicate evidence",async()=>{
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(rows(1)),{status:200})));
+    await expect(listEvidenceLedgerAll(MISSION,{pageSize:2,maxEntries:10}))
+      .rejects.toThrow(/repeated a sequence/);
+  });
+
+  it("probes a bounded sequence cursor query without reading user evidence",async()=>{
+    const fetchMock=vi.fn(async(input:RequestInfo|URL)=>{
+      expect(String(input)).toContain("/rest/v1/evidence_ledger?");
+      return new Response("[]",{status:200});
+    });
+    vi.stubGlobal("fetch",fetchMock);
+    await expect(probeEvidenceLedgerPage()).resolves.toBe(true);
+    const query=new URL(String(fetchMock.mock.calls[0][0])).searchParams;
+    expect(query.get("select")).toBe("id");
+    expect(query.get("workspace_id")).toBe("eq.workspace-test");
+    expect(query.get("mission_id")).toBe("eq.health-probe:no-such-mission");
+    expect(query.get("sequence")).toBe("gt.0");
+    expect(query.get("limit")).toBe("1");
   });
 
   it("creates a signed canonical export bundle that independently verifies",async()=>{

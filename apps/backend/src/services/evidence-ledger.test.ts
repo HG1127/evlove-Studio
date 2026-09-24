@@ -28,6 +28,15 @@ function chain(previousHash:string|undefined,contentHash:string,sequence:number,
   return createHash("sha256").update((previousHash??"GENESIS")+"|"+contentHash+"|"+sequence+"|"+id).digest("hex");
 }
 
+function stubLedgerRows(rows:Array<{sequence:number}>){
+  vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
+    const cursor=Number((new URL(String(input)).searchParams.get("sequence")??"gt.0").replace(/^gt\./,""));
+    return new Response(JSON.stringify(rows.filter((row)=>row.sequence>cursor)),{
+      status:200,headers:{"Content-Type":"application/json"},
+    });
+  }));
+}
+
 describe("immutable evidence ledger",()=>{
   beforeEach(()=>{
     for(const key of KEYS){previous.set(key,process.env[key]);delete process.env[key];}
@@ -87,7 +96,7 @@ describe("immutable evidence ledger",()=>{
       payload:base.payload,artifact_refs:base.artifactRefs,content_hash:contentHash,signature,signature_key_id:"test-key-v1",
       previous_hash:null,chain_hash:chainHash,created_at:"2026-09-21T01:00:00.000Z",
     }];
-    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(rows),{status:200,headers:{"Content-Type":"application/json"}})));
+    stubLedgerRows(rows);
     const result=await verifyEvidenceLedger("mission-1");
     expect(result).toMatchObject({valid:true,entries:1,contentHashesValid:true,signaturesValid:true,chainValid:true});
   });
@@ -126,7 +135,7 @@ describe("immutable evidence ledger",()=>{
         previous_hash:firstChain,chain_hash:chain(firstChain,secondHash,2,second.id),created_at:"2026-09-21T01:01:00.000Z",
       },
     ];
-    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(rows),{status:200,headers:{"Content-Type":"application/json"}})));
+    stubLedgerRows(rows);
     const result=await verifyEvidenceLedger("mission-1");
     expect(result).toMatchObject({valid:true,entries:2,signaturesValid:true,chainValid:true});
   });
@@ -145,7 +154,7 @@ describe("immutable evidence ledger",()=>{
       payload:{type:"ActionCompleted",tampered:true},artifact_refs:[],content_hash:contentHash,signature,signature_key_id:"test-key-v1",
       previous_hash:null,chain_hash:chain(undefined,contentHash,1,base.id),created_at:"2026-09-21T01:00:00.000Z",
     }];
-    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(rows),{status:200,headers:{"Content-Type":"application/json"}})));
+    stubLedgerRows(rows);
     const result=await verifyEvidenceLedger("mission-1");
     expect(result).toMatchObject({valid:false,contentHashesValid:false,firstBrokenEntryId:"evidence-1"});
   });

@@ -1,5 +1,6 @@
 import {createError,defineEventHandler,getHeader} from "nitro/h3";
 import {getDataPlaneHealth} from "../../../src/services/data-plane-health";
+import {probeEvidenceLedgerPage} from "../../../src/services/evidence-ledger";
 import {probeOutcomeSampleStore} from "../../../src/services/outcome-sample-store";
 import {
   getServerJobByIdempotencyKey,
@@ -26,6 +27,7 @@ export default defineEventHandler(async(event)=>{
   let parseRecoveryQuery=false;
   let collectionPages=false;
   let outcomeSamples=false;
+  let evidenceLedgerPage=false;
   let restFailure:ReturnType<typeof scheduledReconciliationFailureDiagnostic>|undefined;
   if(health.status==="ready"){
     try{
@@ -40,6 +42,8 @@ export default defineEventHandler(async(event)=>{
       collectionPages=true;
       await probeOutcomeSampleStore();
       outcomeSamples=true;
+      await probeEvidenceLedgerPage();
+      evidenceLedgerPage=true;
     }catch(error){
       restFailure=scheduledReconciliationFailureDiagnostic(error);
     }
@@ -55,9 +59,10 @@ export default defineEventHandler(async(event)=>{
     parseRecoveryQuery,
     collectionPages,
     outcomeSamples,
+    evidenceLedgerPage,
     ...(restFailure?{restFailure}:{}),
   });
-  if(health.status!=="ready"||!directRestJobs||!parseRecoveryQuery||!collectionPages||!outcomeSamples){
+  if(health.status!=="ready"||!directRestJobs||!parseRecoveryQuery||!collectionPages||!outcomeSamples||!evidenceLedgerPage){
     throw createError({statusCode:503,statusMessage:"Scheduled data-plane health is not ready"});
   }
   return health;

@@ -308,27 +308,52 @@ export async function listEvidenceLedgerAll(
   const maxEntries=Math.max(pageSize,Math.min(options?.maxEntries??EVIDENCE_EXPORT_MAX_ENTRIES,100_000));
   const {request}=restClient();
   const entries:EvidenceLedgerEntry[]=[];
+  let cursor=0;
   while(entries.length<maxEntries){
     const limit=Math.min(pageSize,maxEntries-entries.length);
     const rows=await request(
       "evidence_ledger?select=*&workspace_id=eq."+encodeURIComponent(workspaceId)
       +"&mission_id=eq."+encodeURIComponent(missionId)
+      +"&sequence=gt."+cursor
       +"&order=sequence.asc&limit="+limit
-      +"&offset="+entries.length,
-    ) as JsonRecord[];
-    const page=(rows??[]).map(rowEntry);
-    entries.push(...page);
-    if(page.length<limit)return entries;
+    );
+    if(!Array.isArray(rows))throw new Error("Evidence Ledger page is not an array");
+    if(rows.length===0)return entries;
+    if(rows.length>limit)throw new Error("Evidence Ledger page exceeds the requested limit");
+    for(const raw of rows){
+      if(!raw||typeof raw!=="object"||Array.isArray(raw))throw new Error("Evidence Ledger row is invalid");
+      const entry=rowEntry(raw as JsonRecord);
+      if(entry.workspaceId!==workspaceId||entry.missionId!==missionId){
+        throw new Error("Evidence Ledger row does not match the requested scope");
+      }
+      if(entry.sequence<=cursor)throw new Error("Evidence Ledger page repeated a sequence");
+      cursor=entry.sequence;
+      entries.push(entry);
+    }
   }
   const extra=await request(
     "evidence_ledger?select=id&workspace_id=eq."+encodeURIComponent(workspaceId)
     +"&mission_id=eq."+encodeURIComponent(missionId)
-    +"&order=sequence.asc&limit=1&offset="+entries.length,
-  ) as JsonRecord[];
-  if(extra?.length){
+    +"&sequence=gt."+cursor+"&order=sequence.asc&limit=1",
+  );
+  if(!Array.isArray(extra))throw new Error("Evidence Ledger overflow page is not an array");
+  if(extra.length){
     throw new Error("Evidence Ledger export exceeds the maximum supported entry count of "+maxEntries);
   }
   return entries;
+}
+
+export async function probeEvidenceLedgerPage(){
+  const workspaceId=getEvolutionWorkspaceId();
+  if(!workspaceId)throw new Error("EVOLUTION_WORKSPACE_ID is required");
+  const {request}=restClient();
+  const rows=await request(
+    "evidence_ledger?select=id&workspace_id=eq."+encodeURIComponent(workspaceId)
+    +"&mission_id=eq.health-probe:no-such-mission"
+    +"&sequence=gt.0&order=sequence.asc&limit=1",
+  );
+  if(!Array.isArray(rows))throw new Error("Evidence Ledger health page is not an array");
+  return true;
 }
 
 function safeSignatureEqual(a:string,b:string){

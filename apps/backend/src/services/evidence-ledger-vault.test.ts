@@ -117,9 +117,12 @@ describe("Evidence Ledger Vault signing",()=>{
       signature_key_id:"ledger-v1",previous_hash:null,
       chain_hash:chain(undefined,contentHash,1,material.id),created_at:"2026-09-21T06:00:00.000Z",
     }];
-    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(rows),{
-      status:200,headers:{"Content-Type":"application/json"},
-    })));
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
+      const cursor=Number((new URL(String(input)).searchParams.get("sequence")??"gt.0").replace(/^gt\./,""));
+      return new Response(JSON.stringify(rows.filter((row)=>row.sequence>cursor)),{
+        status:200,headers:{"Content-Type":"application/json"},
+      });
+    }));
     const verified=await verifyEvidenceLedger("mission-1");
     expect(verified).toMatchObject({valid:true,entries:1,signaturesValid:true,chainValid:true});
   });
