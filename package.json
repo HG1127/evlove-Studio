@@ -7,7 +7,7 @@
   "scripts": {
     "predev": "node scripts/ensure-runner.mjs",
     "dev": "vite",
-    "build": "tsc -b && vite build && node scripts/finalize-vercel-output.mjs",
+    "build": "tsc -b && vite build",
     "lint": "eslint . --max-warnings 0",
     "architecture:check": "eslint packages",
     "test": "vitest run",
