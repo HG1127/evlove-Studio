@@ -21,10 +21,19 @@ export default defineEventHandler(async(event)=>{
     console.error("Scheduled Job reconciliation failed",scheduledReconciliationFailureDiagnostic(error));
     throw error;
   }
-  let artifactBlobs:unknown={status:"unavailable",reason:"Server-only Supabase secret is missing"};
-  if(serverSupabaseSecureConfigured()){
-    try{artifactBlobs=await cleanupArtifactBlobs({limit:50,minAgeSeconds:900,dryRun:false});}
-    catch(error){artifactBlobs={status:"failed",reason:error instanceof Error?error.message:String(error)};}
+  if(!serverSupabaseSecureConfigured()){
+    throw createError({statusCode:503,statusMessage:"Scheduled Artifact cleanup needs a server credential"});
+  }
+  let artifactBlobs:Awaited<ReturnType<typeof cleanupArtifactBlobs>>;
+  try{artifactBlobs=await cleanupArtifactBlobs({limit:50,minAgeSeconds:900,dryRun:false});}
+  catch(error){
+    console.error("Scheduled Artifact cleanup failed",scheduledReconciliationFailureDiagnostic(error));
+    throw createError({statusCode:503,statusMessage:"Scheduled Artifact cleanup failed"});
+  }
+  const failed=artifactBlobs.results.filter((result)=>result.status==="failed").length;
+  if(failed){
+    console.error("Scheduled Artifact cleanup had failed items",{failed});
+    throw createError({statusCode:503,statusMessage:"Scheduled Artifact cleanup had failed items"});
   }
   return {jobs,artifactBlobs};
 });
