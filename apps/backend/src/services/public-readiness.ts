@@ -6,6 +6,7 @@ import {
   githubTargetConfigured,
   githubWebhookConfigured,
   serverAiConfigured,
+  scheduledReconciliationConfigured,
   serverSupabaseConfigured,
   serverSupabaseConfigDiagnostics,
   serverSupabaseSecureConfigured,
@@ -69,6 +70,13 @@ function readinessBlockers(input:{
       code:"TEMPORARY_PROTECTED_DEPLOYMENT_AUTH",severity:"warning",area:"security",
       message:"当前使用临时 Vercel Protected Deployment operator 身份，仅适合内部功能验证。",
       action:"正式上线前替换为用户身份/Passport → server-signed actor，并关闭 EVOLUTION_ALLOW_PROTECTED_DEPLOYMENT_INTERNAL_AUTH。",
+    });
+  }
+  if(!scheduledReconciliationConfigured()){
+    add({
+      code:"SCHEDULED_RECONCILIATION_SECRET_MISSING",severity:"error",area:"security",
+      message:"生产 Cron 缺少有效的 CRON_SECRET。",
+      action:"在 Vercel Production 配置至少 16 字符的 CRON_SECRET，然后重新部署。",
     });
   }
   if(!input.serverAi){
@@ -150,7 +158,7 @@ export async function getPublicReadinessSnapshot(){
     probeMode:"passive-config",
     checkedAt:new Date().toISOString(),
     blockers,
-    workflow:{durable:false},
+    workflow:{durable:false,cronConfigured:scheduledReconciliationConfigured()},
     dataPlane:{
       configured,
       secureCredential:serverSupabaseSecureConfigured(),

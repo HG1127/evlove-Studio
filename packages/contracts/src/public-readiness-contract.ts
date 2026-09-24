@@ -14,7 +14,7 @@ export const PublicReadinessSnapshotSchema=z.object({
   probeMode:z.literal("passive-config"),
   checkedAt:z.string(),
   blockers:z.array(PublicReadinessBlockerSchema).default([]),
-  workflow:z.object({durable:z.boolean()}),
+  workflow:z.object({durable:z.boolean(),cronConfigured:z.boolean()}),
   dataPlane:z.object({
     configured:z.boolean(),
     secureCredential:z.boolean(),

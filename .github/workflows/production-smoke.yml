@@ -64,6 +64,7 @@ jobs:
             (.blockers | type == "array") and
             .dataPlane.configured == true and
             .dataPlane.secureCredential == true and
+            .workflow.cronConfigured == true and
             .security.configured == true and
             .serverAi == true
           ' /tmp/readiness.json >/dev/null; then
@@ -84,6 +85,16 @@ jobs:
             exit 1
           fi
 
+      - name: Scheduled repair route requires its Cron token
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(curl --silent --show-error --output /tmp/scheduled.json --write-out '%{http_code}' "$PRODUCTION_URL/api/evolution/jobs/reconcile-scheduled")"
+          if [ "$status" != "401" ]; then
+            echo "::error::Expected unauthenticated scheduled reconciliation to remain 401, got $status."
+            exit 1
+          fi
+
       - name: Smoke summary
         shell: bash
         run: |
@@ -92,6 +103,7 @@ jobs:
             echo ""
             echo "- Main alias commit: `$EXPECTED_SHA`"
             echo "- Homepage: 200"
-            echo "- Public readiness: Supabase, server identity, and server AI configured"
+            echo "- Public readiness: Supabase, server identity, server AI, and Cron configured"
             echo "- Public backend-health: 401 as required"
+            echo "- Scheduled repair without Cron token: 401 as required"
           } >> "$GITHUB_STEP_SUMMARY"

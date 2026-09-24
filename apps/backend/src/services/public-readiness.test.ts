@@ -16,6 +16,7 @@ describe("public readiness passive boundary",()=>{
     process.env.EVOLUTION_IDENTITY_HMAC_SECRET="x".repeat(40);
     process.env.EVOLUTION_AI_API_KEY="ai-key";
     process.env.EVOLUTION_AI_MODEL="model";
+    process.env.CRON_SECRET="c".repeat(32);
     process.env.EVOLUTION_GITHUB_TOKEN="git-token";
     process.env.EVOLUTION_GITHUB_REPO_ALLOWLIST="acme/repo";
     process.env.EVOLUTION_GITHUB_WEBHOOK_SECRET="webhook";
@@ -32,6 +33,7 @@ describe("public readiness passive boundary",()=>{
     expect(snapshot.probeMode).toBe("passive-config");
     expect(snapshot.dataPlane).toMatchObject({configured:true,secureCredential:true,database:false,storage:false,coreTables:false});
     expect(snapshot.serverAi).toBe(true);
+    expect(snapshot.workflow.cronConfigured).toBe(true);
     expect(snapshot.sandbox).toBe(false);
     expect(snapshot.browser).toBe(false);
     expect(snapshot.release).toEqual({read:false,write:false});
@@ -96,6 +98,21 @@ describe("public readiness passive boundary",()=>{
     expect(snapshot.dataPlane).toMatchObject({configured:false,secureCredential:false,secretPresent:true,configValid:false,issueFields:["anonKey"]});
     expect(snapshot.blockers).toEqual(expect.arrayContaining([
       expect.objectContaining({code:"SUPABASE_SERVER_CONFIG_INVALID",severity:"error",area:"data-plane"}),
+    ]));
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("reports an incomplete Cron secret without invoking the scheduled route",async()=>{
+    process.env.CRON_SECRET="short";
+    vi.stubGlobal("fetch",vi.fn(async()=>{throw new Error("public readiness must remain passive");}));
+
+    vi.resetModules();
+    const {getPublicReadinessSnapshot}=await import("./public-readiness");
+    const snapshot=await getPublicReadinessSnapshot();
+
+    expect(snapshot.workflow.cronConfigured).toBe(false);
+    expect(snapshot.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({code:"SCHEDULED_RECONCILIATION_SECRET_MISSING",severity:"error",area:"security"}),
     ]));
     expect(fetch).not.toHaveBeenCalled();
   });

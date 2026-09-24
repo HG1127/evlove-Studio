@@ -62,6 +62,10 @@ export function serverSupabaseSecureConfigured(){
   return serverSupabaseConfigured()&&serverSupabaseCredentialMode()==="secret";
 }
 
+export function scheduledReconciliationConfigured(){
+  return (value(process.env.CRON_SECRET)?.length??0)>=16;
+}
+
 export function serverSupabaseConfigDiagnostics(){
   const url=value(process.env.SUPABASE_URL,process.env.VITE_SUPABASE_URL);
   const secret=value(process.env.SUPABASE_SECRET_KEY,process.env.SUPABASE_SERVICE_ROLE_KEY);
@@ -398,4 +402,3 @@ export function targetProxyCapabilities(){
 }
 
 export function serverAiConfigured(){return Boolean(getServerAiConfig());}
-
