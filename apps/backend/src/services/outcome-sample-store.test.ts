@@ -76,7 +76,10 @@ describe("Outcome sample store pagination",()=>{
   });
 
   it("probes the same ordered page query without reading metric values",async()=>{
-    const fetchMock=vi.fn(async(_input:RequestInfo|URL)=>new Response("[]",{status:200}));
+    const fetchMock=vi.fn(async(input:RequestInfo|URL)=>{
+      expect(String(input)).toContain("/outcome_metric_samples?");
+      return new Response("[]",{status:200});
+    });
     vi.stubGlobal("fetch",fetchMock);
     await expect(probeOutcomeSampleStore()).resolves.toBe(true);
     const url=new URL(String(fetchMock.mock.calls[0][0]));
