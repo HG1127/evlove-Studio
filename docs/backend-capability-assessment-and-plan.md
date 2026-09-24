@@ -38,6 +38,7 @@ Lifecycle changes across Artifact, Evidence, Validation, Checkpoint, and Harness
 **Acceptance:** missing Artifact is failed with a reason; existing Artifact without an executable check is unverified; neither API state nor checkpoint evidence says passed without a real check bound to the exact Artifact hash.
 
 The HTTP Target Runner gateway now requires an explicit external verification status, rejects a result for a different Test Case, and checks the SHA-256 of submitted HTML or ZIP bytes before accepting any non-unverified result. An external `unverified` result without an Artifact hash remains unverified in the browser instead of becoming a generic execution error. The shared legacy result schema remains compatible; the strict checks apply at the external provider boundary.
+Commit `e18330c` passed the local full Vitest suite (922 passed, 1 skipped), architecture check, lint, and build; its [Quality Gate](https://github.com/HG1127/evlove-Studio/actions/runs/36029461352) and [Production Smoke](https://github.com/HG1127/evlove-Studio/actions/runs/36030049183) passed. Read-only production health and reconciliation preview on 2026-09-24 at 16:50 UTC both returned HTTP 200; health remained `ready`, and preview reported zero repairs or removals. The external Target Runner is not configured in production, so its identity and hash rejection paths are covered by local contract tests rather than a live provider receipt.
 
 ### P1 — Recoverable Artifact and validation lifecycle (implemented in code)
 
