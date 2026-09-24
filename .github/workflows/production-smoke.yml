@@ -54,12 +54,23 @@ jobs:
           test "$status" = "200"
           test -s /tmp/home.html
 
-      - name: Public readiness remains readable JSON
+      - name: Critical production configuration is ready
         shell: bash
         run: |
           set -euo pipefail
           curl --fail --silent --show-error "$PRODUCTION_URL/api/evolution/public-readiness" > /tmp/readiness.json
-          jq -e '.probeMode == "passive-config" and (.blockers | type == "array") and (.security | type == "object")' /tmp/readiness.json >/dev/null
+          if ! jq -e '
+            .probeMode == "passive-config" and
+            (.blockers | type == "array") and
+            .dataPlane.configured == true and
+            .dataPlane.secureCredential == true and
+            .security.configured == true and
+            .serverAi == true
+          ' /tmp/readiness.json >/dev/null; then
+            echo "::error::Production backend is missing a critical configuration."
+            jq -r '.blockers[] | select(.severity == "error") | .code' /tmp/readiness.json
+            exit 1
+          fi
 
       - name: Protected business API stays closed on the public alias
         shell: bash
@@ -80,6 +91,6 @@ jobs:
             echo ""
             echo "- Main alias commit: `$EXPECTED_SHA`"
             echo "- Homepage: 200"
-            echo "- Public readiness: readable"
+            echo "- Public readiness: Supabase, server identity, and server AI configured"
             echo "- Public backend-health: 401 as required"
           } >> "$GITHUB_STEP_SUMMARY"
