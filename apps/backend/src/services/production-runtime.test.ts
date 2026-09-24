@@ -6,6 +6,7 @@ import {
   bindServerJobWorkflowRun,
   compareAndSwapServerMissionEnvelopeWithEvent,
   createServerJobIdempotent,
+  createServerJobIdempotentReceipt,
   getServerJobByIdempotencyKey,
   getServerProductionRuntime,
   listServerActiveJobs,
@@ -292,6 +293,16 @@ describe("server Mission revision CAS",()=>{
     }));
     expect(await createServerJobIdempotent(baseJob)).toEqual(baseJob);
     expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it("distinguishes an idempotent Workflow start replay from a new Job",async()=>{
+    const prior=EvolutionJobSchema.parse({...baseJob,id:"workflow-control-prior",outputRef:"run-prior"});
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
+      expect(String(input)).toContain("/rpc/create_evolution_job_idempotent");
+      return new Response(JSON.stringify([{applied:true,reason:"idempotent-replay",job:jobRow(prior)}]),{status:200});
+    }));
+    expect(await createServerJobIdempotentReceipt({...baseJob,id:"workflow-control-new"}))
+      .toEqual({job:prior,reused:true});
   });
 
   it("sends the Job state and Event in one atomic RPC request",async()=>{

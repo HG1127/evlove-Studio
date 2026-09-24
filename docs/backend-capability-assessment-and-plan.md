@@ -108,7 +108,7 @@ For each slice, follow `PROJECT_RULES.md`: contracts first, then Core/Harness be
 
 ## Production verification and deferred configuration
 
-Source Parse retries now resolve their existing Job through the indexed `jobs.idempotency_key` lookup instead of reading every Job row. The database unique key remains the concurrency guard; the targeted read removes an unbounded request from every uploaded file. Durable Mission Workflow start still needs a caller-stable idempotency key for unscheduled starts so a transport retry cannot create a second Control Job/run.
+Source Parse retries now resolve their existing Job through the indexed `jobs.idempotency_key` lookup instead of reading every Job row. The database unique key remains the concurrency guard; the targeted read removes an unbounded request from every uploaded file. Durable Mission Workflow start now accepts a caller operation key and creates its Control Job through the same transactional idempotent RPC. Replaying a bound key returns the prior Job/run, and an unbound in-flight replay returns 409 instead of starting a second Workflow. The browser supplies a stable key for the current Mission revision; callers that omit the optional key retain the legacy one-shot behavior. An unbound Job from a process crash still relies on reconciliation and a new operation key for recovery.
 
 Parse multipart uploads now enforce a 25 MiB file limit and a 25 MiB plus 64 KiB total request limit before the form body is buffered. Streaming requests without `Content-Length` are rejected as they cross the total limit.
 

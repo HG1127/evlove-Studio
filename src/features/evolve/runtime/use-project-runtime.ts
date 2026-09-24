@@ -2113,7 +2113,9 @@ export function useProjectRuntime(initialProject: EvolveProject) {
     };
     if (productionRuntimeMode() !== "local" && await shouldUseServerAutoPilot(cur())) {
       try {
-        const started = await startServerEvolutionWorkflow(projectId);
+        const started = await startServerEvolutionWorkflow(projectId,{
+          idempotencyKey:`autopilot:${cur().updatedAt}`,
+        });
         setStatus({ busy: false, message: "Durable Workflow 已接管自主进化，关闭浏览器后仍会继续执行" });
         pushActivity(`Server Workflow 已启动 · runId=${started.runId}`, undefined, projectId);
         return;

@@ -10,6 +10,7 @@ import {
 } from "@evolution/contracts";
 import {
   bindServerJobWorkflowRun,
+  createServerJobIdempotentReceipt,
   getServerProductionRuntime,
   isBenignJobBookkeepingConflict,
   JobStateConflictError,
@@ -18,6 +19,7 @@ import {
 import { evolutionMissionWorkflow } from "../../../../../workflows/evolution-mission";
 import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 import {cancelWorkflowRunById} from "../../../src/services/workflow-run-control";
+import {workflowRunIdForJob} from "../../../src/services/workflow-run-control";
 
 export default defineEventHandler(async(event)=>{
   await requireGovernedEvolutionPermission(event,"mission.execute");
@@ -49,6 +51,7 @@ export default defineEventHandler(async(event)=>{
           runId:schedule.durableRunId,
           status:"queued",
           scheduledFor,
+          reused:true,
         };
         return response;
       }
@@ -57,24 +60,47 @@ export default defineEventHandler(async(event)=>{
     }
   }
   const controlJobId=`workflow-control-${randomUUID()}`;
+  const operationKey=parsed.data.idempotencyKey??(scheduledFor?`scheduled:${scheduledFor}`:randomUUID());
   const input=EvolutionWorkflowRunInputSchema.parse({
     missionId:mission.id,
     controlJobId,
     requestedAt,
     ...(scheduledFor?{scheduledFor}:{}),
   });
-  await runtime.jobs.put(EvolutionJobSchema.parse({
+  let created;
+  try{
+    created=await createServerJobIdempotentReceipt(EvolutionJobSchema.parse({
     schemaVersion:PRODUCTION_SCHEMA_VERSIONS.job,
     id:controlJobId,
     missionId:mission.id,
     type:"campaign",
     status:"queued",
     label:scheduledFor?"Evolution Durable Scheduler":"Evolution Workflow Control",
-    idempotencyKey:`workflow-control:${controlJobId}`,
+    idempotencyKey:`workflow-control:${mission.id}:${operationKey}`,
     generation:1,attempts:0,priority:70,
     progress:{percent:0,detail:scheduledFor?`等待 Durable Scheduler 武装至 ${scheduledFor}`:"等待 Durable Workflow 启动"},
     createdAt:requestedAt,updatedAt:requestedAt,
-  }));
+    }));
+  }catch(error){
+    if(error instanceof JobStateConflictError){
+      setResponseStatus(event,409);
+      return {error:"Workflow 启动请求与已有 Job 冲突，请使用新的请求键重试"};
+    }
+    throw error;
+  }
+  if(created.reused){
+    const prior=created.job;
+    const priorRunId=workflowRunIdForJob(prior,mission);
+    if(!priorRunId||["failed","cancelled","partial"].includes(prior.status)){
+      setResponseStatus(event,409);
+      return {error:"相同 Workflow 请求已存在但没有可复用的活动 run，请刷新状态后重试",controlJobId:prior.id};
+    }
+    const response:EvolutionWorkflowStartResponse={
+      missionId:mission.id,controlJobId:prior.id,runId:priorRunId,
+      status:"queued",...(scheduledFor?{scheduledFor}:{}),reused:true,
+    };
+    return response;
+  }
 
   if(scheduledFor){
     mission={

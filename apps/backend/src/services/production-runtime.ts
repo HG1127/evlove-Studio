@@ -260,7 +260,7 @@ export async function getServerJobByIdempotencyKey(idempotencyKey:string){
   return rows?.[0]?rowJob(rows[0]):undefined;
 }
 
-export async function createServerJobIdempotent(jobInput:EvolutionJob){
+export async function createServerJobIdempotentReceipt(jobInput:EvolutionJob){
   const job=EvolutionJobSchema.parse(jobInput);
   const {request}=createRestClient();
   const rows=await request("rpc/create_evolution_job_idempotent",{
@@ -268,8 +268,20 @@ export async function createServerJobIdempotent(jobInput:EvolutionJob){
   }) as Array<{applied?:unknown;reason?:unknown;job?:unknown}>;
   const result=rows?.[0];
   const current=rpcJob(result?.job);
-  if(result?.applied===true&&current)return current;
+  if(result?.applied===true&&current){
+    await mirrorEvolutionEventToEvidenceLedger(createEvolutionEvent({
+      id:`job-created:${current.id}`,
+      missionId:current.missionId,jobId:current.id,
+      type:"JobQueued",source:"backend-job-lifecycle",at:current.createdAt,
+      payload:{type:current.type,label:current.label,idempotencyKey:current.idempotencyKey},
+    })).catch(()=>undefined);
+    return {job:current,reused:result.reason!=="created"};
+  }
   throw new JobStateConflictError(job.id,typeof result?.reason==="string"?result.reason:"unknown",current);
+}
+
+export async function createServerJobIdempotent(jobInput:EvolutionJob){
+  return (await createServerJobIdempotentReceipt(jobInput)).job;
 }
 
 export async function transitionServerJobWithEvent(

@@ -83,6 +83,18 @@ describe("server workflow routing",()=>{
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("passes a stable operation key through a durable Workflow start retry",async()=>{
+    const fetchMock=vi.fn(async(_url:RequestInfo|URL,init?:RequestInit)=>{
+      expect(JSON.parse(String(init?.body))).toEqual({missionId:"mission-1",idempotencyKey:"autopilot:revision-1"});
+      return new Response(JSON.stringify({
+        missionId:"mission-1",controlJobId:"job-1",runId:"run-1",status:"queued",reused:true,
+      }),{status:200});
+    });
+    vi.stubGlobal("fetch",fetchMock);
+    expect((await startServerEvolutionWorkflow("mission-1",{idempotencyKey:"autopilot:revision-1"})).reused).toBe(true);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("validates the durable Workflow status response",async()=>{
     vi.stubGlobal("fetch",vi.fn(async(url:RequestInfo|URL)=>{
       expect(String(url)).toBe("/api/evolution/status?runId=run-1");
