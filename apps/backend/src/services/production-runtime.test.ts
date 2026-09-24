@@ -11,6 +11,7 @@ import {
   getServerProductionRuntime,
   listRecentServerParseJobs,
   listServerActiveJobs,
+  ActiveJobQueryError,
   JobStateConflictError,
   MissionRevisionConflictError,
   resetServerProductionRuntime,
@@ -349,6 +350,17 @@ describe("server Mission revision CAS",()=>{
     }));
     expect((await listServerActiveJobs(2)).map((job)=>job.id)).toEqual(["parse-1","control-1"]);
     expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("attributes an active Job read failure to its filter without exposing the response",async()=>{
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>String(input).includes("type=eq.campaign")
+      ?new Response("private detail",{status:401})
+      :new Response("[]",{status:200})));
+    try{await listServerActiveJobs(2);throw new Error("expected rejection");}
+    catch(error){
+      expect(error).toBeInstanceOf(ActiveJobQueryError);
+      expect((error as ActiveJobQueryError).query).toBe("campaign");
+    }
   });
 
   it("looks up a Parse retry by its indexed idempotency key",async()=>{

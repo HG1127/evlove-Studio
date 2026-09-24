@@ -1,5 +1,6 @@
 import {timingSafeEqual} from "node:crypto";
 import {reconcileWorkflowJobs} from "./job-reconciliation";
+import {ActiveJobQueryError} from "./production-runtime";
 
 const SAFE_UPSTREAM_REASONS=new Set([
   "credential-rejected","schema-unavailable","rate-limited-or-timeout",
@@ -7,8 +8,10 @@ const SAFE_UPSTREAM_REASONS=new Set([
 ]);
 
 export function scheduledReconciliationFailureDiagnostic(error:unknown){
-  const data=error&&typeof error==="object"&&"data" in error
-    ?(error as {data?:unknown}).data:undefined;
+  const query=error instanceof ActiveJobQueryError?error.query:undefined;
+  const source=error instanceof ActiveJobQueryError?error.cause:error;
+  const data=source&&typeof source==="object"&&"data" in source
+    ?(source as {data?:unknown}).data:undefined;
   const details=data&&typeof data==="object"&&!Array.isArray(data)
     ?data as Record<string,unknown>:{};
   const reason=typeof details.reason==="string"&&SAFE_UPSTREAM_REASONS.has(details.reason)
@@ -18,7 +21,7 @@ export function scheduledReconciliationFailureDiagnostic(error:unknown){
     &&details.upstreamStatus>=100&&details.upstreamStatus<=599
     ?details.upstreamStatus:undefined;
   const service=details.service==="production-runtime"?"production-runtime":undefined;
-  return {reason,...(upstreamStatus?{upstreamStatus}:{}),...(service?{service}:{})};
+  return {reason,...(upstreamStatus?{upstreamStatus}:{}),...(service?{service}:{}),...(query?{query}:{})};
 }
 
 export function scheduledReconciliationAuthorized(header:string|undefined,secret:string|undefined){

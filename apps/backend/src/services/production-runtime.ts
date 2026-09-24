@@ -97,6 +97,15 @@ export class JobStateConflictError extends Error{
   }
 }
 
+export class ActiveJobQueryError extends Error{
+  readonly query:"parse"|"campaign";
+  constructor(query:"parse"|"campaign",cause:unknown){
+    super("Active Job query failed",{cause});
+    this.name="ActiveJobQueryError";
+    this.query=query;
+  }
+}
+
 export function isBenignJobBookkeepingConflict(error:unknown,generation:number){
   return error instanceof JobStateConflictError
     &&error.current?.generation===generation
@@ -243,9 +252,13 @@ export async function listServerActiveJobs(limit=100,missionId?:string){
   const bounded=Math.max(1,Math.min(limit,100));
   const filter=missionId?"&mission_id=eq."+encodeURIComponent(missionId):"";
   const base="jobs?select=*&status=in.(queued,running,waiting)&order=updated_at.asc&limit="+bounded+filter;
+  async function read(query:"parse"|"campaign",path:string){
+    try{return await request(path) as JsonRecord[];}
+    catch(error){throw new ActiveJobQueryError(query,error);}
+  }
   const [parseRows,controlRows]=await Promise.all([
-    request(base+"&type=eq.parse") as Promise<JsonRecord[]>,
-    request(base+"&type=eq.campaign&idempotency_key=like.workflow-control*") as Promise<JsonRecord[]>,
+    read("parse",base+"&type=eq.parse"),
+    read("campaign",base+"&type=eq.campaign&idempotency_key=like.workflow-control*"),
   ]);
   return [...(parseRows??[]),...(controlRows??[])]
     .map(rowJob)

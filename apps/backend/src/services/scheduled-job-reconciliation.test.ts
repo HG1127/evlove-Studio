@@ -1,6 +1,7 @@
 // @vitest-environment node
 import {describe,expect,it} from "vitest";
 import {scheduledReconciliationAuthorized,scheduledReconciliationFailureDiagnostic} from "./scheduled-job-reconciliation";
+import {ActiveJobQueryError} from "./production-runtime";
 
 describe("scheduled Job reconciliation authorization",()=>{
   const secret="a-long-cron-secret";
@@ -27,5 +28,8 @@ describe("scheduled Job reconciliation authorization",()=>{
     expect(scheduledReconciliationFailureDiagnostic({data:{reason:"credential-rejected",upstreamStatus:401,
       service:"production-runtime",token:"private-token"}}))
       .toEqual({reason:"credential-rejected",upstreamStatus:401,service:"production-runtime"});
+    expect(scheduledReconciliationFailureDiagnostic(new ActiveJobQueryError("campaign",{
+      data:{reason:"credential-rejected",upstreamStatus:401,service:"production-runtime",token:"private-token"},
+    }))).toEqual({reason:"credential-rejected",upstreamStatus:401,service:"production-runtime",query:"campaign"});
   });
 });
