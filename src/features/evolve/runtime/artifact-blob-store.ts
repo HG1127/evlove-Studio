@@ -121,16 +121,21 @@ export async function flushPendingArtifactSync(){
     writePending(PENDING_DELETES_KEY,pendingDeletes);
   }
   const pendingUploads=readPending(PENDING_UPLOADS_KEY);
+  const missingUploads:string[]=[];
   for(const id of [...pendingUploads]){
     const blob=await getLocalArtifactBlob(id);
     if(!blob){
-      pendingUploads.delete(id);
-      writePending(PENDING_UPLOADS_KEY,pendingUploads);
+      missingUploads.push(id);
       continue;
     }
     await remote.put(id,blob);
     pendingUploads.delete(id);
     writePending(PENDING_UPLOADS_KEY,pendingUploads);
+  }
+  if(missingUploads.length){
+    const error=new Error(`${missingUploads.length} pending Artifact upload(s) have no local bytes; restore the files before retrying sync`);
+    emitArtifactSync("pending",error);
+    throw error;
   }
   emitArtifactSync("synced");
   return artifactSyncStatus();

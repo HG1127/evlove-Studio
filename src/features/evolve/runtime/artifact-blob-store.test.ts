@@ -63,4 +63,23 @@ describe("artifact degraded sync",()=>{
     expect(recoveredDelete).toHaveBeenCalledWith("artifact-delete");
     expect(artifactSyncStatus()).toEqual({pendingUploads:0,pendingDeletes:0});
   });
+
+  it("keeps a missing local upload pending while replaying other recoverable blobs",async()=>{
+    const failedPut=vi.fn(async()=>{throw new Error("Backend temporarily unavailable");});
+    configureProductionRuntime(runtime({put:failedPut,get:async()=>undefined,delete:async()=>undefined}),"http");
+    await putArtifactBlob("missing",new Blob(["lost"]));
+    await putArtifactBlob("recoverable",new Blob(["still here"]));
+    localBlobs.delete("missing");
+
+    const recoveredPut=vi.fn(async()=>undefined);
+    configureProductionRuntime(runtime({put:recoveredPut,get:async()=>undefined,delete:async()=>undefined}),"http");
+    await expect(flushPendingArtifactSync()).rejects.toThrow("1 pending Artifact upload(s) have no local bytes");
+    expect(recoveredPut).toHaveBeenCalledWith("recoverable",expect.any(Blob));
+    expect(artifactSyncStatus()).toEqual({pendingUploads:1,pendingDeletes:0});
+
+    localBlobs.set("missing",new Blob(["restored"]));
+    await flushPendingArtifactSync();
+    expect(recoveredPut).toHaveBeenCalledWith("missing",expect.any(Blob));
+    expect(artifactSyncStatus()).toEqual({pendingUploads:0,pendingDeletes:0});
+  });
 });

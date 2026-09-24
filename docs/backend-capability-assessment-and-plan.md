@@ -48,6 +48,7 @@ Lifecycle changes across Artifact, Evidence, Validation, Checkpoint, and Harness
 
 Artifact reconciliation now validates stored bytes and metadata before replaying deterministic Event and Evidence writes. Validation POST retries its persisted Event result and deterministic Evidence record using the same idempotency key. Focused tests cover validation and Artifact repair behavior.
 The legacy JSON Artifact POST now delegates to the bounded registration route, so it cannot bypass the same immutable ID and metadata checks.
+Browser-to-backend Artifact synchronization now keeps an upload pending if its local bytes disappear before replay, reports a visible synchronization error, and continues replaying other available blobs. The pending record can complete after the bytes are restored. This prevents an evicted local cache entry from being silently treated as a successful remote upload; the user still has to restore or re-add bytes that are genuinely lost.
 
 **Acceptance:** a restarted function can retrieve validation; metadata/hash drift is rejected; only a passed check over the stored hash can accept a checkpoint. Registration audit failures can be repaired using the stored Artifact; validation audit failures can be retried with the same idempotency key.
 
