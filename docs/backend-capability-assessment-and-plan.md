@@ -126,7 +126,11 @@ Source Parse cancellation now returns 409 when a completed Workflow has no settl
 
 Parse recovery listing now queries only the latest 60 Parse Jobs within seven days, optionally filtered by a bounded session ID, instead of transferring every Job row. A completed Job whose result Artifact cannot be read keeps its authoritative `completed` status; the response carries a separate `resultIssue` that distinguishes missing, unreadable, and malformed output. The browser presents that issue as an error and does not restart a completed Workflow.
 
-The read-only production Cron now also exercises the new Parse recovery REST filter with a one-row, nonexistent health session. This will distinguish a malformed PostgREST filter from a functional Parse recovery path before a user needs to resume an upload; its active production result is pending the next deployment.
+The read-only production Cron also exercises the new Parse recovery REST filter with a one-row, nonexistent health session. This distinguishes a malformed PostgREST filter from a functional Parse recovery path before a user needs to resume an upload.
+
+The read-only invocation at 2026-09-24 12:13 UTC returned HTTP 200 from Production with `parseRecoveryQuery=true`, `directRestJobs=true`, all four core tables, Storage, and the cleanup migration ready. The session-filtered Parse recovery PostgREST query is now actively verified against the production database without reading a user session or modifying data.
+
+Parse multipart upload metadata now has a shared Zod boundary for filename, MIME type, Artifact ID, session ID, file timestamp, and role. An invalid role returns HTTP 400 instead of silently becoming a `target` Artifact; oversized identifiers and malformed timestamps are rejected before Job or Artifact writes.
 
 The first manually invoked production Cron reached `/api/evolution/jobs/reconcile-scheduled` but returned HTTP 503. A subsequent read-only production Smoke confirmed that `CRON_SECRET` is present and that a request without its bearer token returns 401, locating the failure after the Cron configuration check. The server's direct REST clients also sent new `sb_secret_` keys as bearer tokens; this contradicts Supabase's new-key requirement to use `apikey`. The seven direct REST clients now share a header helper that uses `apikey` alone for `sb_*` keys and preserves bearer authentication for legacy JWT keys. Local tests, lint, architecture checks, and build passed before deployment. A second active Cron result is required before marking the live data plane healthy.
 

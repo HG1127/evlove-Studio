@@ -2,10 +2,10 @@ import {randomUUID} from "node:crypto";
 import {assertBodySize,createError,defineEventHandler,readMultipartFormData} from "nitro/h3";
 import {start} from "workflow/api";
 import {
-  ArtifactRoleSchema,
   EvolutionJobSchema,
   PRODUCTION_SCHEMA_VERSIONS,
   SourceParseStartResponseSchema,
+  SourceParseUploadMetadataSchema,
   SourceParseWorkflowInputSchema,
 } from "@evolution/contracts";
 import {getServerArtifactStore} from "../../../src/services/artifact-runtime";
@@ -34,18 +34,23 @@ export default defineEventHandler(async(event)=>{
   const parts=await readMultipartFormData(event);
   const file=parts?.find((part)=>part.name==="file"&&part.filename);
   if(!file)throw createError({statusCode:400,statusMessage:"缺少 file"});
-  const fileName=file.filename;
-  if(!fileName)throw createError({statusCode:400,statusMessage:"上传文件缺少 filename"});
   if(file.data.byteLength>MAX_FILE_BYTES)throw createError({statusCode:413,statusMessage:"单文件不能超过 25MB"});
   const rolePart=parts?.find((part)=>part.name==="role");
-  const role=ArtifactRoleSchema.catch("target").parse(rolePart?new TextDecoder().decode(rolePart.data):"target");
   const sessionPart=parts?.find((part)=>part.name==="sessionId");
-  const sessionId=(sessionPart?new TextDecoder().decode(sessionPart.data):"").trim()||undefined;
   const artifactIdPart=parts?.find((part)=>part.name==="artifactId");
-  const artifactId=(artifactIdPart?new TextDecoder().decode(artifactIdPart.data):"").trim()||`artifact-${randomUUID()}`;
   const lastModifiedPart=parts?.find((part)=>part.name==="lastModified");
-  const lastModified=Number(lastModifiedPart?new TextDecoder().decode(lastModifiedPart.data):0)||Date.now();
-  const mimeType=file.type||"application/octet-stream";
+  const metadata=SourceParseUploadMetadataSchema.safeParse({
+    name:file.filename,
+    mimeType:file.type||"application/octet-stream",
+    role:rolePart?new TextDecoder().decode(rolePart.data):"target",
+    sessionId:(sessionPart?new TextDecoder().decode(sessionPart.data):"").trim()||undefined,
+    artifactId:(artifactIdPart?new TextDecoder().decode(artifactIdPart.data):"").trim()||`artifact-${randomUUID()}`,
+    lastModified:lastModifiedPart?Number(new TextDecoder().decode(lastModifiedPart.data)):Date.now(),
+  });
+  if(!metadata.success){
+    throw createError({statusCode:400,statusMessage:"Invalid Parse upload metadata",data:metadata.error.flatten()});
+  }
+  const {name:fileName,mimeType,role,sessionId,artifactId,lastModified}=metadata.data;
   const bytes=Uint8Array.from(file.data);
   const {idempotencyKey,contentSha256}=sourceParseIdempotencyIdentity({
     artifactId,

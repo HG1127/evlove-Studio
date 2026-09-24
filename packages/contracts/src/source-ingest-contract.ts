@@ -2,6 +2,17 @@ import {z} from "zod";
 import {ArtifactRoleSchema,SourceArtifactSchema} from "./evolve-schemas";
 import {EvolutionJobSchema,EvolutionJobStatusSchema} from "./job-contract";
 import {WorkflowRunCancelResultSchema} from "./workflow-contract";
+import {ArtifactIdSchema} from "./artifact-contract";
+
+export const SourceParseUploadMetadataSchema=z.object({
+  name:z.string().min(1).max(255).refine((name)=>Boolean(name.trim())),
+  mimeType:z.string().min(1).max(200).refine((mimeType)=>Boolean(mimeType.trim())),
+  role:ArtifactRoleSchema,
+  sessionId:z.string().trim().min(1).max(200).optional(),
+  artifactId:ArtifactIdSchema,
+  lastModified:z.number().int().min(0).max(8_640_000_000_000_000),
+}).strict();
+export type SourceParseUploadMetadata=z.infer<typeof SourceParseUploadMetadataSchema>;
 
 export const SourceParseWorkflowInputSchema=z.object({
   jobId:z.string().min(1),
