@@ -132,6 +132,8 @@ The read-only invocation at 2026-09-24 12:13 UTC returned HTTP 200 from Producti
 
 Parse multipart upload metadata now has a shared Zod boundary for filename, MIME type, Artifact ID, session ID, file timestamp, and role. An invalid role returns HTTP 400 instead of silently becoming a `target` Artifact; oversized identifiers and malformed timestamps are rejected before Job or Artifact writes.
 
+A third daily `CRON_SECRET`-protected route, `/api/evolution/jobs/reconcile-preview-scheduled`, runs the same bounded Job scan with `repair=false` and Artifact tombstone scan with `dryRun=true`. Its safe log reports counts only. This lets production exercise the maintenance read path without changing Job state or deleting blobs; the mutating Cron still requires separate active verification. The preview route is scheduled for 18:10 UTC and can be manually invoked read-only.
+
 The first manually invoked production Cron reached `/api/evolution/jobs/reconcile-scheduled` but returned HTTP 503. A subsequent read-only production Smoke confirmed that `CRON_SECRET` is present and that a request without its bearer token returns 401, locating the failure after the Cron configuration check. The server's direct REST clients also sent new `sb_secret_` keys as bearer tokens; this contradicts Supabase's new-key requirement to use `apikey`. The seven direct REST clients now share a header helper that uses `apikey` alone for `sb_*` keys and preserves bearer authentication for legacy JWT keys. Local tests, lint, architecture checks, and build passed before deployment. A second active Cron result is required before marking the live data plane healthy.
 
 The following external configuration or product-scope decisions remain deferred while backend code work continues:

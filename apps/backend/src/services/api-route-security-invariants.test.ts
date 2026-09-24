@@ -22,7 +22,11 @@ function routeFiles(dir:string,prefix=""):Array<{relative:string;source:string}>
 const routes=routeFiles(routeRoot);
 const publicRoutes=new Set(["public-readiness.get.ts","build-info.get.ts"]);
 const webhookRoutes=new Set(["git-webhook.post.ts","connector-webhook/[id].post.ts"]);
-const scheduledRoutes=new Set(["jobs/reconcile-scheduled.get.ts","data-plane-health-scheduled.get.ts"]);
+const scheduledRoutes=new Set([
+  "jobs/reconcile-scheduled.get.ts",
+  "jobs/reconcile-preview-scheduled.get.ts",
+  "data-plane-health-scheduled.get.ts",
+]);
 const registrationAlias="artifacts.post.ts";
 const readOnlyPosts=new Set(["evidence-ledger-export-verify.post.ts","target-observe.post.ts"]);
 const dynamicPermissionRoutes=new Set(["connector-action.post.ts","git-action.post.ts"]);
@@ -46,6 +50,7 @@ describe("Evolution API route security invariants",()=>{
     expect(middleware).toContain('path==="/api/evolution/public-readiness"');
     expect(middleware).toContain('path==="/api/evolution/build-info"');
     expect(middleware).toContain('path==="/api/evolution/jobs/reconcile-scheduled"');
+    expect(middleware).toContain('path==="/api/evolution/jobs/reconcile-preview-scheduled"');
     expect(middleware).toContain('path==="/api/evolution/data-plane-health-scheduled"');
     expect(middleware).toContain('path==="/api/evolution/git-webhook"');
     expect(middleware).toContain('/^\\/api\\/evolution\\/connector-webhook\\/[^/]+$/');

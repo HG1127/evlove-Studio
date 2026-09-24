@@ -8,6 +8,10 @@
     {
       "path": "/api/evolution/data-plane-health-scheduled",
       "schedule": "5 18 * * *"
+    },
+    {
+      "path": "/api/evolution/jobs/reconcile-preview-scheduled",
+      "schedule": "10 18 * * *"
     }
   ]
 }
