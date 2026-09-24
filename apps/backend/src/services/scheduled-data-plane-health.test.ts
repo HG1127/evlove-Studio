@@ -3,8 +3,12 @@ import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
 import {mockEvent} from "nitro/h3";
 import route from "../../server/api/evolution/data-plane-health-scheduled.get";
 
-const {probe}=vi.hoisted(()=>({probe:vi.fn()}));
+const {probe,restRead}=vi.hoisted(()=>({probe:vi.fn(),restRead:vi.fn()}));
 vi.mock("./data-plane-health",()=>({getDataPlaneHealth:probe}));
+vi.mock("./production-runtime",async(importOriginal)=>({
+  ...await importOriginal<typeof import("./production-runtime")>(),
+  getServerJobByIdempotencyKey:restRead,
+}));
 
 const priorSecret=process.env.CRON_SECRET;
 
@@ -18,6 +22,7 @@ describe("scheduled read-only data-plane health",()=>{
   beforeEach(()=>{
     process.env.CRON_SECRET="test-scheduled-health-secret";
     probe.mockReset();
+    restRead.mockReset();
   });
   afterEach(()=>{
     if(priorSecret===undefined)delete process.env.CRON_SECRET;
@@ -28,6 +33,7 @@ describe("scheduled read-only data-plane health",()=>{
   it("rejects requests without the Cron bearer secret before probing",async()=>{
     await expect(route(event())).rejects.toMatchObject({status:401});
     expect(probe).not.toHaveBeenCalled();
+    expect(restRead).not.toHaveBeenCalled();
   });
 
   it("reports a real ready probe without mutating Jobs or Artifacts",async()=>{
@@ -37,9 +43,10 @@ describe("scheduled read-only data-plane health",()=>{
     vi.spyOn(console,"info").mockImplementation(()=>undefined);
     expect(await route(event("test-scheduled-health-secret"))).toEqual(health);
     expect(probe).toHaveBeenCalledOnce();
+    expect(restRead).toHaveBeenCalledWith("health-probe:no-such-job");
     expect(console.info).toHaveBeenCalledWith("Scheduled data-plane health",{
       status:"ready",database:true,storage:true,artifactCleanup:true,
-      tables:health.tables,blockers:[],
+      tables:health.tables,blockers:[],directRestJobs:true,
     });
   });
 
@@ -48,5 +55,17 @@ describe("scheduled read-only data-plane health",()=>{
       tables:{missions:false,jobs:false,events:false,artifacts:false},blockers:["Database tables not ready"]});
     vi.spyOn(console,"info").mockImplementation(()=>undefined);
     await expect(route(event("test-scheduled-health-secret"))).rejects.toMatchObject({status:503});
+    expect(restRead).not.toHaveBeenCalled();
+  });
+
+  it("fails the probe when the direct REST Job query is rejected",async()=>{
+    probe.mockResolvedValue({status:"ready",database:true,storage:true,artifactCleanup:true,
+      tables:{missions:true,jobs:true,events:true,artifacts:true},blockers:[]});
+    restRead.mockRejectedValue({data:{reason:"credential-rejected",upstreamStatus:401,token:"private"}});
+    vi.spyOn(console,"info").mockImplementation(()=>undefined);
+    await expect(route(event("test-scheduled-health-secret"))).rejects.toMatchObject({status:503});
+    expect(console.info).toHaveBeenCalledWith("Scheduled data-plane health",expect.objectContaining({
+      directRestJobs:false,restFailure:{reason:"credential-rejected",upstreamStatus:401},
+    }));
   });
 });
