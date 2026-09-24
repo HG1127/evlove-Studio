@@ -117,8 +117,41 @@ describe("server Connector Target execution",()=>{
     expect(runs[0]?.output).toContain("UNVERIFIED");
   });
 
+  it("keeps missing or malformed Connector validation verdicts unverified",async()=>{
+    for(const run of [
+      {testCaseId:"T1",output:"ok"},
+      {testCaseId:"T1",output:"ok",verificationStatus:"unknown"},
+      {testCaseId:"T1",output:"ok",verificationStatus:"verified",latencyMs:-1},
+    ]){
+      const execute=vi.fn(async(input:ConnectorActionRequest)=>response(input,{output:{runs:[run]}}));
+      const runs=await runServerConnectorTargetBatch(project(),cases,undefined,execute);
+      expect(runs[0]).toMatchObject({testCaseId:"T1",verificationStatus:"unverified",latencyMs:0,cost:0});
+      expect(runs[0]?.output).toContain("UNVERIFIED");
+    }
+  });
+
+  it("does not accept duplicate Connector results for the same Test Case",async()=>{
+    const run={testCaseId:"T1",output:"ok",verificationStatus:"verified"};
+    const execute=vi.fn(async(input:ConnectorActionRequest)=>response(input,{output:{runs:[run,run]}}));
+    const runs=await runServerConnectorTargetBatch(project(),cases,undefined,execute);
+    expect(runs[0]?.verificationStatus).toBe("unverified");
+    expect(runs[0]?.output).toContain("重复结果");
+  });
+
   it("fails closed if validate observes another version",async()=>{
     const execute=vi.fn(async(input:ConnectorActionRequest)=>response(input,{versionRef:"v999"}));
     await expect(runServerConnectorTargetBatch(project(),cases,undefined,execute)).rejects.toThrow(/version drifted/);
+  });
+
+  it("fails closed if validate omits the exact version receipt",async()=>{
+    const execute=vi.fn(async(input:ConnectorActionRequest)=>response(input,{versionRef:undefined}));
+    await expect(runServerConnectorTargetBatch(project(),cases,undefined,execute)).rejects.toThrow(/version drifted: missing/);
+  });
+
+  it("keeps a failed Connector validation unverified without requiring a version receipt",async()=>{
+    const execute=vi.fn(async(input:ConnectorActionRequest)=>response(input,{ok:false,versionRef:undefined,note:"unavailable"}));
+    const runs=await runServerConnectorTargetBatch(project(),cases,undefined,execute);
+    expect(runs[0]).toMatchObject({verificationStatus:"unverified",latencyMs:0,cost:0});
+    expect(runs[0]?.output).toContain("unavailable");
   });
 });

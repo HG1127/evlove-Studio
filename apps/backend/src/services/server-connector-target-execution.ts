@@ -1,4 +1,5 @@
 import {createHash} from "node:crypto";
+import {z} from "zod";
 import {
   type Candidate,
   type ConnectorActionRequest,
@@ -13,6 +14,15 @@ import {serverConnectorTargetEnabled} from "./connector-target-source";
 
 type ConnectorExecutor=(input:ConnectorActionRequest)=>Promise<ConnectorActionResponse>;
 type IsolationAssert=(connectorId:string)=>unknown;
+
+const ConnectorValidationRunSchema=z.object({
+  testCaseId:z.string().min(1),
+  output:z.unknown().optional(),
+  latencyMs:z.number().finite().nonnegative().optional(),
+  cost:z.number().finite().nonnegative().optional(),
+  verificationStatus:z.enum(["verified","partial","unverified","failed"]),
+  artifactHash:z.string().min(1).optional(),
+});
 
 function unavailable(testCase:TestCase,detail:string):TargetRunResult{
   return{
@@ -149,34 +159,38 @@ function normalizeValidationRuns(
   testCases:TestCase[],
   expectedVersionRef:string,
 ){
-  if(response.versionRef&&response.versionRef!==expectedVersionRef){
-    throw new Error(`Connector validate version drifted: ${response.versionRef} != expected ${expectedVersionRef}`);
+  if(!response.ok)return testCases.map((testCase)=>unavailable(testCase,response.note||"Connector validate returned ok=false"));
+  if(response.versionRef!==expectedVersionRef){
+    throw new Error(`Connector validate version drifted: ${response.versionRef??"missing"} != expected ${expectedVersionRef}`);
   }
   const rawRuns=response.output&&Array.isArray(response.output.runs)
     ?response.output.runs
     :[];
-  const byId=new Map<string,Record<string,unknown>>();
+  const byId=new Map<string,{count:number;first:unknown}>();
   for(const item of rawRuns){
     if(!item||typeof item!=="object")continue;
     const id=(item as Record<string,unknown>).testCaseId;
-    if(typeof id==="string")byId.set(id,item as Record<string,unknown>);
+    if(typeof id==="string"){
+      const previous=byId.get(id);
+      byId.set(id,previous?{count:previous.count+1,first:previous.first}:{count:1,first:item});
+    }
   }
   return testCases.map((testCase):TargetRunResult=>{
-    if(!response.ok)return unavailable(testCase,response.note||"Connector validate returned ok=false");
-    const raw=byId.get(testCase.id);
-    if(!raw)return unavailable(testCase,`Connector validate 没有返回 TestCase ${testCase.id} 的结果。`);
-    const status=["verified","partial","unverified","failed"].includes(String(raw.verificationStatus))
-      ?raw.verificationStatus as TargetRunResult["verificationStatus"]
-      :"partial";
-    const latency=typeof raw.latencyMs==="number"&&Number.isFinite(raw.latencyMs)?Math.max(0,raw.latencyMs):0;
-    const cost=typeof raw.cost==="number"&&Number.isFinite(raw.cost)?Math.max(0,raw.cost):0;
+    const entry=byId.get(testCase.id);
+    if(entry?.count!==1)return unavailable(testCase,entry
+      ?`Connector validate 对 TestCase ${testCase.id} 返回了重复结果。`
+      :`Connector validate 没有返回 TestCase ${testCase.id} 的结果。`);
+    const parsed=ConnectorValidationRunSchema.safeParse(entry.first);
+    if(!parsed.success)return unavailable(testCase,`Connector validate 对 TestCase ${testCase.id} 缺少有效的验证状态或结果字段。`);
+    const raw=parsed.data;
+    const status=raw.verificationStatus;
     return{
       testCaseId:testCase.id,
       output:outputText(raw.output),
-      latencyMs:latency,
-      cost,
+      latencyMs:raw.latencyMs??0,
+      cost:raw.cost??0,
       verificationStatus:status,
-      artifactHash:typeof raw.artifactHash==="string"?raw.artifactHash:undefined,
+      artifactHash:raw.artifactHash,
       trace:[{
         id:`connector-validate-${testCase.id}-${response.observedAt}`,
         stage:"connector-validate",
