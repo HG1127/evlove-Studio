@@ -3,6 +3,7 @@ import path from 'node:path';
 import {getBrowser,closeBrowser} from '../runner-gateway/browser-runner.mjs';
 const output=process.argv[2];
 assert.ok(output,'截图输出目录必填');
+const baseUrl=process.env.UI_SMOKE_BASE_URL??'http://127.0.0.1:8000';
 console.log('启动 UI 检查浏览器…');
 const browser=await getBrowser();
 console.log('浏览器已启动');
@@ -19,7 +20,7 @@ try{
  page.on('response',response=>{if(response.status()>=400)failedResponses.push({path:new URL(response.url()).pathname,status:response.status()});});
  for(const [name,route,title] of [['home','/','工作台'],['projects','/projects','进化任务'],['project','/projects/demo',''],['settings','/settings',''],['outputs','/outputs',''],['templates','/templates','']]){
   console.log(`检查 ${name}`);
-  await page.goto(`http://127.0.0.1:8000/#${route}`);
+  await page.goto(`${baseUrl}/#${route}`);
   await page.locator('.studio-main').waitFor();
   if(title)await page.getByRole('heading',{name:title,exact:true}).waitFor();
   await page.waitForFunction(()=>document.querySelector('main')?.innerText.trim().length>30);
@@ -27,7 +28,7 @@ try{
   rows.push({name,...await page.evaluate(()=>({width:innerWidth,scrollWidth:document.documentElement.scrollWidth,content:document.querySelector('main').innerText.slice(0,100)}))});
  }
  await page.setViewportSize({width:390,height:844});
- await page.goto('http://127.0.0.1:8000/#/');
+ await page.goto(`${baseUrl}/#/`);
  await page.getByRole('heading',{name:'工作台',exact:true}).waitFor();
  await page.screenshot({path:path.join(output,'ui-home-mobile.png'),fullPage:true});
  rows.push({name:'home-mobile',...await page.evaluate(()=>({width:innerWidth,scrollWidth:document.documentElement.scrollWidth}))});
@@ -35,7 +36,7 @@ try{
  await page.getByPlaceholder('例如：当前 System Prompt、Workflow JSON、报告模板、代码片段……').waitFor();
  await page.getByRole('button',{name:'关闭',exact:true}).click();
  let localParse='skipped';
- const parseCapabilityResponse=await page.request.get('http://127.0.0.1:8000/api/evolution/parse-capabilities');
+ const parseCapabilityResponse=await page.request.get(`${baseUrl}/api/evolution/parse-capabilities`);
  if(parseCapabilityResponse.ok()&&(await parseCapabilityResponse.json()).available===false){
   await page.locator('input[type="file"]').first().setInputFiles({name:'smoke-source.md',mimeType:'text/markdown',buffer:Buffer.from('A local parse smoke artifact with verifiable source text.')});
   await page.getByText('已读取 · 后台解析完成',{exact:true}).waitFor({timeout:15000});

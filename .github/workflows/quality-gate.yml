@@ -59,3 +59,23 @@ jobs:
         env:
           RUNNER_BROWSER_CI_NO_SANDBOX: "1"
         run: pnpm runner:test
+
+      - name: Local UI smoke
+        env:
+          RUNNER_BROWSER_CI_NO_SANDBOX: "1"
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/evolution-ui-smoke
+          pnpm dev > /tmp/evolution-dev.log 2>&1 &
+          dev_pid=$!
+          trap 'kill "$dev_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent --show-error http://127.0.0.1:8000/ >/dev/null 2>&1; then
+              node scripts/ui-smoke.mjs /tmp/evolution-ui-smoke
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/evolution-dev.log
+          echo "::error::Local UI server did not become ready on port 8000."
+          exit 1
