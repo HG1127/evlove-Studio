@@ -67,6 +67,20 @@ export const EvolutionWorkflowStatusResponseSchema=z.object({
 });
 export type EvolutionWorkflowStatusResponse=z.infer<typeof EvolutionWorkflowStatusResponseSchema>;
 
+export const WorkflowRunCancelResultSchema=z.object({
+  runId:z.string().optional(),
+  bound:z.boolean(),
+  exists:z.boolean().optional(),
+  statusBefore:z.enum(["pending","running","completed","failed","cancelled"]).optional(),
+  statusAfter:z.enum(["pending","running","completed","failed","cancelled"]).optional(),
+  cancelIssued:z.boolean(),
+  reason:z.enum([
+    "workflow-run-unbound","workflow-run-missing","workflow-run-cancelled",
+    "workflow-run-terminal","workflow-run-raced-terminal",
+  ]),
+});
+export type WorkflowRunCancelResultDto=z.infer<typeof WorkflowRunCancelResultSchema>;
+
 export const ServerAiRuntimeStatusSchema=z.enum(["not-checked","ready","unconfigured","unavailable","error"]);
 export const ServerAiRuntimeHealthSchema=z.object({
   checkedAt:z.string(),

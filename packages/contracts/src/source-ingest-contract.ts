@@ -1,6 +1,7 @@
 import {z} from "zod";
 import {ArtifactRoleSchema,SourceArtifactSchema} from "./evolve-schemas";
-import {EvolutionJobSchema} from "./job-contract";
+import {EvolutionJobSchema,EvolutionJobStatusSchema} from "./job-contract";
+import {WorkflowRunCancelResultSchema} from "./workflow-contract";
 
 export const SourceParseWorkflowInputSchema=z.object({
   jobId:z.string().min(1),
@@ -29,6 +30,13 @@ export const SourceParseStatusResponseSchema=z.object({
   artifact:SourceArtifactSchema.optional(),
 });
 export type SourceParseStatusResponse=z.infer<typeof SourceParseStatusResponseSchema>;
+
+export const SourceParseCancelResponseSchema=z.object({
+  jobId:z.string().min(1),
+  status:EvolutionJobStatusSchema,
+  workflow:WorkflowRunCancelResultSchema,
+});
+export type SourceParseCancelResponse=z.infer<typeof SourceParseCancelResponseSchema>;
 
 export const SourceParseListResponseSchema=z.object({
   items:z.array(SourceParseStatusResponseSchema),

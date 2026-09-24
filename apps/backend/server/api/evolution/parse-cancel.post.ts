@@ -1,5 +1,6 @@
 import {createError,defineEventHandler,readBody} from "nitro/h3";
 import {z} from "zod";
+import {SourceParseCancelResponseSchema} from "@evolution/contracts";
 import {getServerArtifactStore} from "../../../src/services/artifact-runtime";
 import {getServerProductionRuntime,JobStateConflictError} from "../../../src/services/production-runtime";
 import {cancelServerJobWithWorkflow} from "../../../src/services/job-workflow-cancel";
@@ -35,5 +36,5 @@ export default defineEventHandler(async(event)=>{
     if(result.job.inputRef)await artifacts.delete(result.job.inputRef).catch(()=>undefined);
     if(result.job.outputRef)await artifacts.delete(result.job.outputRef).catch(()=>undefined);
   }
-  return {jobId:job.id,status:result.job.status,workflow:result.workflow};
+  return SourceParseCancelResponseSchema.parse({jobId:job.id,status:result.job.status,workflow:result.workflow});
 });

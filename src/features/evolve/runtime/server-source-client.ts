@@ -1,5 +1,6 @@
 import {
   SourceParseCapabilitiesSchema,
+  SourceParseCancelResponseSchema,
   SourceParseListResponseSchema,
   SourceParseStartResponseSchema,
   SourceParseStatusResponseSchema,
@@ -63,11 +64,11 @@ export async function listServerParseJobs(sessionId?:string){
 }
 
 export async function cancelServerParseJob(jobId:string,deleteArtifact=true){
-  return json("/api/evolution/parse-cancel",{
+  return SourceParseCancelResponseSchema.parse(await json("/api/evolution/parse-cancel",{
     method:"POST",
     headers:{"Content-Type":"application/json"},
     body:JSON.stringify({jobId,deleteArtifact}),
-  }) as Promise<{jobId:string;status:EvolutionJob["status"]}>;
+  }));
 }
 
 export function parseJobMetadata(job:EvolutionJob){
