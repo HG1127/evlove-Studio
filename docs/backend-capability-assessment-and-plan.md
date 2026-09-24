@@ -147,6 +147,8 @@ Mission and Job collection reads now walk PostgREST by primary-key cursor in bou
 
 Commit `a46f2e9` passed local lint, architecture check, build, and the full Vitest suite (917 passed, 1 skipped); the [Quality Gate](https://github.com/HG1127/evlove-Studio/actions/runs/36015837846) and [Production Smoke](https://github.com/HG1127/evlove-Studio/actions/runs/36016485274) also passed. Read-only production invocations on 2026-09-24 at 14:57 UTC returned HTTP 200: data-plane health reported `ready` with all four tables, Storage, direct REST Job lookup, and Parse recovery query ready; reconciliation preview reported zero inspected Jobs and tombstones, zero repairs, and zero blob removals. The read-only health route now includes one-row Mission and Job page probes, so future production invocations verify the new PostgREST cursor query without touching user state.
 
+Commit `6e7cfbe` passed local lint, architecture check, build, and the full Vitest suite (918 passed, 1 skipped); its [Quality Gate](https://github.com/HG1127/evlove-Studio/actions/runs/36017372731) and [Production Smoke](https://github.com/HG1127/evlove-Studio/actions/runs/36018027879) passed. At 2026-09-24 15:09 UTC, the read-only production health invocation returned HTTP 200 and logged `collectionPages: true` alongside `status: ready`, `directRestJobs: true`, and `parseRecoveryQuery: true`. This verifies both one-row pagination queries against the configured production Supabase database; a production collection larger than one page is still unexercised.
+
 The following external configuration or product-scope decisions remain deferred while backend code work continues:
 
 | Item | Current effect | Completion evidence |
