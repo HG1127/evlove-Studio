@@ -112,6 +112,10 @@ Source Parse retries now resolve their existing Job through the indexed `jobs.id
 
 Parse multipart uploads now enforce a 25 MiB file limit and a 25 MiB plus 64 KiB total request limit before the form body is buffered. Streaming requests without `Content-Length` are rejected as they cross the total limit.
 
+All Evolution API mutations now have a 32 MiB middleware request ceiling before body parsing, including JSON routes that previously depended only on post-parse Zod validation. Binary uploads, Parse multipart uploads, and signed webhooks retain their tighter route-specific limits.
+
+A second `CRON_SECRET`-protected daily route, `/api/evolution/data-plane-health-scheduled`, performs only the existing read-only Supabase table, Storage, and Artifact cleanup migration checks. It logs only status flags and blocker labels and returns 503 when the data plane is not ready. It is scheduled at 18:05 UTC in `vercel.json` so the Vercel Cron CLI can trigger an active production probe without running Job repair or deleting Artifact bytes. Production results remain pending until that deployment is active and the route is invoked.
+
 The first manually invoked production Cron reached `/api/evolution/jobs/reconcile-scheduled` but returned HTTP 503. A subsequent read-only production Smoke confirmed that `CRON_SECRET` is present and that a request without its bearer token returns 401, locating the failure after the Cron configuration check. The server's direct REST clients also sent new `sb_secret_` keys as bearer tokens; this contradicts Supabase's new-key requirement to use `apikey`. The seven direct REST clients now share a header helper that uses `apikey` alone for `sb_*` keys and preserves bearer authentication for legacy JWT keys. Local tests, lint, architecture checks, and build passed before deployment. A second active Cron result is required before marking the live data plane healthy.
 
 The following external configuration or product-scope decisions remain deferred while backend code work continues:

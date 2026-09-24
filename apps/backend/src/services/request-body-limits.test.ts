@@ -1,6 +1,7 @@
 // @vitest-environment node
 import {describe,expect,it} from "vitest";
 import {assertBodySize,mockEvent,readMultipartFormData,readRawBody} from "nitro/h3";
+import evolutionSecurity from "../../server/middleware/evolution-security";
 
 function streamingEvent(parts:string[]){
   const encoder=new TextEncoder();
@@ -55,5 +56,14 @@ describe("streaming request body limits",()=>{
     const event=mockEvent(request);
     assertBodySize(event,80);
     await expect(readMultipartFormData(event)).rejects.toMatchObject({status:413});
+  });
+
+  it("rejects oversized Evolution API requests at the middleware boundary",async()=>{
+    const event=mockEvent(new Request("http://localhost/api/evolution/git-webhook",{
+      method:"POST",
+      headers:{"content-length":String(33*1024*1024)},
+      body:"x",
+    }));
+    await expect(async()=>evolutionSecurity(event)).rejects.toMatchObject({status:413});
   });
 });
