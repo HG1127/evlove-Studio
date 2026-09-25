@@ -18,6 +18,7 @@ import {supabaseRestAuthHeaders} from "./supabase-rest-auth";
 import { mirrorEvolutionEventToEvidenceLedger } from "./evidence-ledger";
 import {probeServerEventPage as probeEventPage,readServerEventRows} from "./event-pages";
 import {probeActiveJobPage,readActiveJobRows} from "./active-job-pages";
+import {readRecentParseJobRows} from "./parse-job-pages";
 import { getServerArtifactStore } from "./artifact-runtime";
 
 type JsonRecord=Record<string,unknown>;
@@ -329,14 +330,12 @@ export async function getServerJobByIdempotencyKey(idempotencyKey:string){
   return rows?.[0]?rowJob(rows[0]):undefined;
 }
 
-export async function listRecentServerParseJobs(args:{since:string;limit:number;sessionId?:string}){
+export async function listRecentServerParseJobs(args:{
+  since:string;limit:number;sessionId?:string;after?:{createdAt:string;id:string};
+}){
   const {request}=createRestClient();
-  const limit=Math.max(1,Math.min(args.limit,100));
-  const sessionFilter=args.sessionId
-    ?"&metadata->>sessionId=eq."+encodeURIComponent(args.sessionId):"";
-  const rows=await request("jobs?select=*&type=eq.parse&updated_at=gte."
-    +encodeURIComponent(args.since)+sessionFilter+"&order=created_at.desc&limit="+limit) as JsonRecord[];
-  return (rows??[]).map(rowJob);
+  const rows=await readRecentParseJobRows(request,args);
+  return rows.map(rowJob);
 }
 
 export async function createServerJobIdempotentReceipt(jobInput:EvolutionJob){

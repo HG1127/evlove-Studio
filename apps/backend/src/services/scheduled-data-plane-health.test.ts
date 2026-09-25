@@ -72,6 +72,10 @@ describe("scheduled read-only data-plane health",()=>{
     expect(probe).toHaveBeenCalledOnce();
     expect(restRead).toHaveBeenCalledWith("health-probe:no-such-job");
     expect(parseRead).toHaveBeenCalledWith(expect.objectContaining({limit:1,sessionId:"health-probe"}));
+    expect(parseRead).toHaveBeenCalledTimes(2);
+    expect(parseRead).toHaveBeenCalledWith(expect.objectContaining({
+      after:{createdAt:"2026-01-01T00:00:00Z",id:"health-probe-no-such-job"},
+    }));
     expect(activeJobPage).toHaveBeenCalledOnce();
     expect(missionPage).toHaveBeenCalledWith(undefined,1);
     expect(jobPage).toHaveBeenCalledWith(undefined,undefined,1);

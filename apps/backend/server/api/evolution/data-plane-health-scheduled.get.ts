@@ -42,6 +42,10 @@ export default defineEventHandler(async(event)=>{
       await listRecentServerParseJobs({
         since:new Date(Date.now()-3_600_000).toISOString(),limit:1,sessionId:"health-probe",
       });
+      await listRecentServerParseJobs({
+        since:new Date(Date.now()-3_600_000).toISOString(),limit:1,sessionId:"health-probe",
+        after:{createdAt:"2026-01-01T00:00:00Z",id:"health-probe-no-such-job"},
+      });
       parseRecoveryQuery=true;
       await probeServerActiveJobPage();
       activeJobPage=true;

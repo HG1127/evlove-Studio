@@ -488,16 +488,39 @@ describe("server Mission revision CAS",()=>{
   });
 
   it("bounds Parse recovery to recent rows in one session",async()=>{
-    const parse=EvolutionJobSchema.parse({...baseJob,id:"parse-1",type:"parse",idempotencyKey:"parse-1"});
+    const parse=EvolutionJobSchema.parse({...baseJob,id:"parse-1",type:"parse",idempotencyKey:"parse-1",
+      metadata:{sessionId:"session/1"}});
     vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
-      const url=String(input);
-      expect(url).toContain("type=eq.parse&updated_at=gte.2026-09-17T00%3A00%3A00.000Z");
-      expect(url).toContain("metadata->>sessionId=eq.session%2F1&order=created_at.desc&limit=60");
-      return new Response(JSON.stringify([jobRow(parse)]),{status:200});
+      const url=new URL(String(input));
+      expect(url.searchParams.get("type")).toBe("eq.parse");
+      expect(url.searchParams.get("updated_at")).toBe('gte."2026-09-17T00:00:00.000Z"');
+      expect(url.searchParams.get("metadata->>sessionId")).toBe('eq."session/1"');
+      expect(url.searchParams.get("order")).toBe("created_at.desc,id.desc");
+      return new Response(JSON.stringify(url.searchParams.has("or")?[]:[jobRow(parse)]),{status:200});
     }));
     expect(await listRecentServerParseJobs({
       since:"2026-09-17T00:00:00.000Z",sessionId:"session/1",limit:60,
     })).toEqual([parse]);
-    expect(fetch).toHaveBeenCalledOnce();
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("fills Parse recovery across one-row server pages without losing timestamp ties",async()=>{
+    const jobs=["parse-c","parse-b","parse-a"].map((id)=>EvolutionJobSchema.parse({
+      ...baseJob,id,type:"parse",idempotencyKey:id,metadata:{sessionId:"session-1"},
+    }));
+    const paths:URL[]=[];
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
+      const url=new URL(String(input));
+      paths.push(url);
+      const cursor=url.searchParams.get("or");
+      const next=cursor?.includes('id.lt."parse-a"')?undefined
+        :cursor?.includes('id.lt."parse-b"')?jobs[2]
+          :cursor?.includes('id.lt."parse-c"')?jobs[1]:jobs[0];
+      return new Response(JSON.stringify(next?[jobRow(next)]:[]),{status:200});
+    }));
+    expect((await listRecentServerParseJobs({since:at,sessionId:"session-1",limit:4}))
+      .map((job)=>job.id)).toEqual(["parse-c","parse-b","parse-a"]);
+    expect(paths).toHaveLength(4);
+    expect(paths[1].searchParams.get("or")).toContain('id.lt."parse-c"');
   });
 });
