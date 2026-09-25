@@ -82,6 +82,27 @@ describe("server Mission revision CAS",()=>{
     expect(fetch).toHaveBeenCalledTimes(6);
   });
 
+  it("fills Event list requests across short Supabase pages",async()=>{
+    const ids=["event-z","event-y"];
+    const paths:URL[]=[];
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
+      const url=new URL(String(input));
+      paths.push(url);
+      expect(url.pathname).toMatch(/\/events$/);
+      expect(url.searchParams.get("mission_id")).toBe('eq."mission/a"');
+      const id=ids[paths.length-1];
+      return new Response(JSON.stringify(id?[{
+        id,mission_id:"mission/a",schema_version:"event-v1",type:"MissionUpdated",
+        source:"test",payload:{},at,
+      }]:[]),{status:200});
+    }));
+    const events=await getServerProductionRuntime().events.list("mission/a",3);
+    expect(events.map((event)=>event.id)).toEqual(ids);
+    expect(paths).toHaveLength(3);
+    expect(paths[1].searchParams.get("or")).toContain('id.lt."event-z"');
+    expect(paths[2].searchParams.get("or")).toContain('id.lt."event-y"');
+  });
+
   it("reads every Mission and Job page even when a page is shorter than the requested limit",async()=>{
     const missionA={...demoProject,id:"mission-a",updatedAt:at};
     const missionB={...demoProject,id:"mission-b",updatedAt:"2026-09-23T00:01:00.000Z"};

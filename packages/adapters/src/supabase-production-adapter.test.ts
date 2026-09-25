@@ -34,6 +34,40 @@ describe("supabase production adapter contracts", () => {
     expect(health.artifactCleanup).toBe(false);
     expect(health.message).toContain("Artifact cleanup MISSING");
   });
+
+  it("fills Event lists across short SDK pages",async()=>{
+    const pages=["event-z","event-y",undefined];
+    const queries:Array<{orders:string[];limit?:number;missionId?:string;or?:string}>=[];
+    const from=vi.fn(()=>{
+      const state:{orders:string[];limit?:number;missionId?:string;or?:string}={orders:[]};
+      queries.push(state);
+      return {
+        select(){return this;},
+        order(field:string){state.orders.push(field);return this;},
+        limit(value:number){state.limit=value;return this;},
+        eq(_field:string,value:string){state.missionId=value;return this;},
+        or(value:string){state.or=value;return this;},
+        then(resolve:(value:{data:Record<string,unknown>[];error:null})=>unknown){
+          const id=pages[queries.length-1];
+          const data=id?[{
+            id,mission_id:"mission-1",schema_version:"event-v1",type:"MissionUpdated",
+            source:"test",payload:{},at,
+          }]:[];
+          return Promise.resolve({data,error:null}).then(resolve);
+        },
+      };
+    });
+    const client={from} as unknown as SupabaseClient;
+    const ports=createSupabaseProductionPorts({url:"https://example.supabase.co",
+      anonKey:"sb_secret_test_fixture_0000000000000000",artifactBucket:"evolution-artifacts"},client);
+    expect((await ports.events.list("mission-1",3)).map((event)=>event.id))
+      .toEqual(["event-z","event-y"]);
+    expect(queries).toHaveLength(3);
+    expect(queries.every((query)=>query.orders.join(",")==="at,id"
+      &&query.missionId==="mission-1")).toBe(true);
+    expect(queries[1].or).toContain('id.lt."event-z"');
+    expect(queries[2].or).toContain('id.lt."event-y"');
+  });
   function artifactDeletionPorts(missionId:string|null,references:Array<{id:string}>){
     const remove=vi.fn(async()=>({error:null}));
     const deleteResult=vi.fn(async():Promise<{data:{id:string}|null;error:{message:string}|null}>=>({data:{id:"a1"},error:null}));

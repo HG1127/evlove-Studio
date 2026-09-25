@@ -16,6 +16,7 @@ import { getServerSupabaseConfig } from "../server-env";
 import {dataPlaneFetch} from "./data-plane-http";
 import {supabaseRestAuthHeaders} from "./supabase-rest-auth";
 import { mirrorEvolutionEventToEvidenceLedger } from "./evidence-ledger";
+import {probeServerEventPage as probeEventPage,readServerEventRows} from "./event-pages";
 import { getServerArtifactStore } from "./artifact-runtime";
 
 type JsonRecord=Record<string,unknown>;
@@ -512,13 +513,15 @@ export function getServerProductionRuntime():ServerControlRuntime{
         await mirrorEvolutionEventToEvidenceLedger(parsed).catch(()=>undefined);
       },
       list:async(missionId,limit=200)=>{
-        const filter=missionId?"&mission_id=eq."+encodeURIComponent(missionId):"";
-        const bounded=Math.max(1,Math.min(limit,1000));
-        const rows=await request("events?select=*&order=at.desc&limit="+bounded+filter) as JsonRecord[];
-        return (rows??[]).map(rowEvent);
+        const rows=await readServerEventRows(request,missionId,limit);
+        return rows.map(rowEvent);
       },
     },
   };
+}
+
+export async function probeServerEventPage(){
+  return probeEventPage(createRestClient().request);
 }
 
 export function resetServerProductionRuntime(){

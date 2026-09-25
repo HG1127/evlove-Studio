@@ -158,6 +158,40 @@ function throwIfError(error: { message: string } | null, context: string) {
   if (error) throw new Error(`${context}: ${error.message}`);
 }
 
+function logicalFilterValue(value:string){
+  return '"'+value.replace(/\\/g,"\\\\").replace(/"/g,'\\"')+'"';
+}
+
+async function listSupabaseEventPages(client:SupabaseClient,missionId:string|undefined,requestedLimit:number){
+  const limit=Math.max(1,Math.min(requestedLimit,1000));
+  const events:EvolutionEvent[]=[];
+  const seen=new Set<string>();
+  let cursor:Pick<EvolutionEvent,"at"|"id">|undefined;
+  while(events.length<limit){
+    const pageLimit=Math.min(500,limit-events.length);
+    let query=client.from("events").select("*")
+      .order("at",{ascending:false}).order("id",{ascending:false}).limit(pageLimit);
+    if(missionId)query=query.eq("mission_id",missionId);
+    if(cursor){
+      const at=logicalFilterValue(cursor.at);
+      query=query.or(`at.lt.${at},and(at.eq.${at},id.lt.${logicalFilterValue(cursor.id)})`);
+    }
+    const {data,error}=await query;
+    throwIfError(error,"Supabase events list");
+    if(!data?.length)break;
+    if(data.length>pageLimit)throw new Error("Supabase Event page exceeds the requested limit");
+    for(const row of data){
+      const event=supabaseRowToEvent(row as JsonRecord);
+      if(missionId&&event.missionId!==missionId)throw new Error("Supabase Event row does not match the requested Mission");
+      if(seen.has(event.id)||cursor?.id===event.id)throw new Error("Supabase Event page repeated an id");
+      seen.add(event.id);
+      events.push(event);
+      cursor={at:event.at,id:event.id};
+    }
+  }
+  return events;
+}
+
 export function createSupabaseProductionPorts(
   configInput: SupabaseBackendConfig,
   suppliedClient?: SupabaseClient,
@@ -216,13 +250,7 @@ export function createSupabaseProductionPorts(
         const { error } = await client.from("events").upsert(eventToSupabaseRow(event), { onConflict: "id", ignoreDuplicates: true });
         throwIfError(error, "Supabase event append");
       },
-      list: async (missionId, limit = 200) => {
-        let query = client.from("events").select("*").order("at", { ascending: false }).limit(limit);
-        if (missionId) query = query.eq("mission_id", missionId);
-        const { data, error } = await query;
-        throwIfError(error, "Supabase events list");
-        return (data ?? []).map((row) => supabaseRowToEvent(row as JsonRecord));
-      },
+      list: async (missionId, limit = 200) => listSupabaseEventPages(client,missionId,limit),
     },
     artifacts: {
       put: async (id, blob, binding) => {
