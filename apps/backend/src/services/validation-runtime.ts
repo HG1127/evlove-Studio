@@ -8,6 +8,7 @@ import {
 } from "@evolution/contracts";
 import {EventEvidenceIdentityConflictError,mirrorEvolutionEventToEvidenceLedger} from "./evidence-ledger";
 import {EventEvidenceMirrorError,EventIdempotencyConflictError} from "./event-persistence";
+import {registerArtifactEvidence} from "./evidence-runtime";
 import {getServerValidationRecord,getServerValidationResult} from "./production-runtime";
 
 function sha256(bytes:ArrayBuffer){
@@ -21,6 +22,13 @@ function fingerprint(value:unknown){
 export class ValidationIdempotencyConflictError extends Error{
   readonly code="VALIDATION_IDEMPOTENCY_CONFLICT";
   constructor(){super("Validation idempotency key was already used with a different request");this.name="ValidationIdempotencyConflictError";}
+}
+
+export class ValidationEvidenceAppendError extends Error{
+  constructor(readonly validationId:string,cause:unknown){
+    super(`Validation ${validationId} persisted but its Evidence append failed`,{cause});
+    this.name="ValidationEvidenceAppendError";
+  }
 }
 
 async function jobBelongsToMission(runtime:ProductionRuntimePorts,jobId:string,missionId:string){
@@ -40,6 +48,26 @@ async function getMatchingValidation(id:string,requestFingerprint:string,complet
     }
   }
   return record.result;
+}
+
+export async function reconcileValidationEvidence(id:string){
+  const record=await getServerValidationRecord(id);
+  if(!record)return undefined;
+  try{await mirrorEvolutionEventToEvidenceLedger(record.event);}
+  catch(error){
+    if(error instanceof EventEvidenceIdentityConflictError)throw error;
+    throw new EventEvidenceMirrorError(record.event.id,error);
+  }
+  const validation=record.result;
+  let evidence;
+  try{
+    evidence=await registerArtifactEvidence({
+      missionId:validation.missionId,artifactId:validation.artifactId,
+      jobId:validation.jobId,checkpointId:validation.checkpointId,kind:"validation",
+      payload:{validationId:validation.id,status:validation.status,artifactSha256:validation.artifactSha256},
+    });
+  }catch(error){throw new ValidationEvidenceAppendError(id,error);}
+  return {validation,evidence};
 }
 
 export async function validateArtifact(runtime:ProductionRuntimePorts,input:unknown){

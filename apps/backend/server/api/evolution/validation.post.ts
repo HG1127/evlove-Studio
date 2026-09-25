@@ -24,23 +24,30 @@ export default defineEventHandler(async(event)=>{
     if(error instanceof EventEvidenceMirrorError){
       throw createError({statusCode:503,statusMessage:body.idempotencyKey
         ?"Validation Event persisted; Evidence mirror failed. Retry with the same idempotency key."
-        :"Validation Event persisted; Evidence mirror failed. Run Event Evidence reconciliation."});
+        :"Validation Event persisted; Evidence mirror failed. Reconcile the Validation ID.",
+      data:{validationId:error.eventId.replace(/^validation-result:/,"")}});
     }
     throw error;
   }
 
-  const evidence=await registerArtifactEvidence({
-    missionId:body.missionId,
-    artifactId:body.artifactId,
-    jobId:validation.jobId,
-    checkpointId:validation.checkpointId,
-    kind:"validation",
-    payload:{
-      validationId:validation.id,
-      status:validation.status,
-      artifactSha256:validation.artifactSha256,
-    },
-  });
+  let evidence;
+  try{
+    evidence=await registerArtifactEvidence({
+      missionId:validation.missionId,
+      artifactId:validation.artifactId,
+      jobId:validation.jobId,
+      checkpointId:validation.checkpointId,
+      kind:"validation",
+      payload:{
+        validationId:validation.id,
+        status:validation.status,
+        artifactSha256:validation.artifactSha256,
+      },
+    });
+  }catch{
+    throw createError({statusCode:503,statusMessage:"Validation persisted; Evidence append failed. Reconcile the Validation ID.",
+      data:{validationId:validation.id}});
+  }
   return {
     validation,
     evidence,

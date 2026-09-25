@@ -3,8 +3,9 @@ import {beforeEach,describe,expect,it,vi} from "vitest";
 import type {EvolutionEvent,ProductionRuntimePorts} from "@evolution/contracts";
 import {EventEvidenceMirrorError,EventIdempotencyConflictError} from "./event-persistence";
 
-const {records,readRecord,mirror}=vi.hoisted(()=>({
+const {records,readRecord,mirror,appendValidationEvidence}=vi.hoisted(()=>({
   records:new Map<string,{event:EvolutionEvent;result:unknown}>(),readRecord:vi.fn(),mirror:vi.fn(),
+  appendValidationEvidence:vi.fn(),
 }));
 vi.mock("./production-runtime",()=>({
   getServerValidationRecord:readRecord,
@@ -14,8 +15,12 @@ vi.mock("./evidence-ledger",async(importOriginal)=>({
   ...await importOriginal<typeof import("./evidence-ledger")>(),
   mirrorEvolutionEventToEvidenceLedger:mirror,
 }));
+vi.mock("./evidence-runtime",()=>({registerArtifactEvidence:appendValidationEvidence}));
 
-import {canAcceptCheckpoint,getValidation,ValidationIdempotencyConflictError,validateArtifact} from "./validation-runtime";
+import {
+  canAcceptCheckpoint,getValidation,reconcileValidationEvidence,ValidationEvidenceAppendError,
+  ValidationIdempotencyConflictError,validateArtifact,
+} from "./validation-runtime";
 
 const text="the exact accepted artifact";
 const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(text));
@@ -51,6 +56,8 @@ describe("durable Artifact validation",()=>{
     readRecord.mockImplementation(async(id:string)=>records.get(id));
     mirror.mockReset();
     mirror.mockResolvedValue(undefined);
+    appendValidationEvidence.mockReset();
+    appendValidationEvidence.mockResolvedValue({id:"validation-evidence-1"});
   });
 
   it("passes only explicit checks bound to the stored Mission and exact Artifact hash",async()=>{
@@ -174,5 +181,43 @@ describe("durable Artifact validation",()=>{
     target.production.events.append=vi.fn(async()=>{throw new EventIdempotencyConflictError(`validation-result:${first.id}`);});
     await expect(validateArtifact(target.production,{...input,checks:{minBytes:2}}))
       .rejects.toBeInstanceOf(ValidationIdempotencyConflictError);
+  });
+
+  it("reconciles signed Evidence for a persisted validation without an idempotency key",async()=>{
+    const target=runtime();
+    const validation=await validateArtifact(target.production,{
+      missionId:"mission-1",artifactId:"artifact-1",checks:{expectedSha256:sha256},
+    });
+    const result=await reconcileValidationEvidence(validation.id);
+    expect(result).toEqual({validation,evidence:{id:"validation-evidence-1"}});
+    expect(mirror).toHaveBeenCalledWith(records.get(validation.id)?.event);
+    expect(appendValidationEvidence).toHaveBeenCalledWith({
+      missionId:"mission-1",artifactId:"artifact-1",jobId:"job-1",checkpointId:undefined,
+      kind:"validation",payload:{validationId:validation.id,status:"passed",artifactSha256:sha256},
+    });
+    await expect(reconcileValidationEvidence(validation.id)).resolves.toEqual(result);
+    expect(appendValidationEvidence).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not append Evidence for a missing Validation or failed Event mirror",async()=>{
+    await expect(reconcileValidationEvidence("validation:missing")).resolves.toBeUndefined();
+    expect(appendValidationEvidence).not.toHaveBeenCalled();
+    const validation=await validateArtifact(runtime().production,{
+      missionId:"mission-1",artifactId:"artifact-1",checks:{minBytes:1},
+    });
+    mirror.mockRejectedValueOnce(new Error("ledger unavailable"));
+    await expect(reconcileValidationEvidence(validation.id)).rejects.toBeInstanceOf(EventEvidenceMirrorError);
+    expect(appendValidationEvidence).not.toHaveBeenCalled();
+  });
+
+  it("retries a failed Validation Evidence append against the same persisted Event",async()=>{
+    const validation=await validateArtifact(runtime().production,{
+      missionId:"mission-1",artifactId:"artifact-1",checks:{minBytes:1},
+    });
+    appendValidationEvidence.mockRejectedValueOnce(new Error("ledger unavailable"));
+    await expect(reconcileValidationEvidence(validation.id)).rejects.toBeInstanceOf(ValidationEvidenceAppendError);
+    await expect(reconcileValidationEvidence(validation.id)).resolves.toMatchObject({validation});
+    expect(records.size).toBe(1);
+    expect(appendValidationEvidence).toHaveBeenCalledTimes(2);
   });
 });
