@@ -140,6 +140,16 @@ export function evidenceContentHash(args:Parameters<typeof contentMaterial>[0]){
   return sha256(canonicalEvidenceJson(contentMaterial(args)));
 }
 
+function storedEvidenceContentHash(entry:EvidenceLedgerEntry){
+  return evidenceContentHash({
+    id:entry.id,workspaceId:entry.workspaceId,missionId:entry.missionId,
+    kind:entry.kind,source:entry.source,actor:entry.actor,
+    eventId:entry.eventId,jobId:entry.jobId,checkpointId:entry.checkpointId,
+    modelRef:entry.modelRef,promptVersion:entry.promptVersion,testVersion:entry.testVersion,
+    decision:entry.decision,payload:entry.payload,artifactRefs:entry.artifactRefs,
+  });
+}
+
 function rowEntry(row:JsonRecord):EvidenceLedgerEntry{
   return EvidenceLedgerEntrySchema.parse({
     id:row.id,
@@ -293,7 +303,9 @@ export async function appendEvidenceLedger(raw:EvidenceLedgerAppendRequest){
   const entry=rowEntry(rows[0]);
   const verificationKey=entry.signatureKeyId?signing.verificationKeys[entry.signatureKeyId]:undefined;
   if(entry.id!==id||entry.workspaceId!==workspaceId||entry.missionId!==input.missionId
-    ||entry.contentHash!==contentHash||!verificationKey||!entry.signature
+    ||entry.contentHash!==contentHash||storedEvidenceContentHash(entry)!==contentHash
+    ||entry.chainHash!==chainHash(entry.previousHash,entry.contentHash,entry.sequence,entry.id)
+    ||!verificationKey||!entry.signature
     ||!safeSignatureEqual(signatureFor(entry.contentHash,verificationKey),entry.signature)){
     throw new Error("Evidence Ledger append returned conflicting identity or invalid signature");
   }
@@ -615,11 +627,10 @@ function artifactRefsFromEvent(event:EvolutionEvent){
   return [...refs];
 }
 
-export async function mirrorEvolutionEventToEvidenceLedger(event:EvolutionEvent){
-  if(!evidenceLedgerConfigured()||!event.missionId)return undefined;
-  const input={
+function eventEvidenceInput(event:EvolutionEvent){
+  return {
     id:"event-ledger-"+event.id,
-    missionId:event.missionId,
+    missionId:event.missionId??"",
     kind:"event",
     source:event.source,
     actor:"evolution-runtime",
@@ -630,23 +641,44 @@ export async function mirrorEvolutionEventToEvidenceLedger(event:EvolutionEvent)
     payload:{type:event.type,causationId:event.causationId,correlationId:event.correlationId,...event.payload},
     artifactRefs:artifactRefsFromEvent(event),
   };
+}
+
+export async function createEventEvidenceVerifier(){
+  const workspaceId=getEvolutionWorkspaceId();
+  const signing=await resolveEvidenceSigningConfig();
+  if(!workspaceId||!signing)throw new Error("Event Evidence verification is not configured");
+  return (event:EvolutionEvent,raw:unknown)=>{
+    if(!event.missionId)return false;
+    const parsed=EvidenceLedgerEntrySchema.safeParse(raw);
+    if(!parsed.success)return false;
+    const existing=parsed.data;
+    const input=eventEvidenceInput(event);
+    const expectedHash=evidenceContentHash({...input,workspaceId});
+    const verificationKey=existing.signatureKeyId
+      ?signing.verificationKeys[existing.signatureKeyId]
+      :undefined;
+    return existing.id===input.id&&existing.workspaceId===workspaceId
+      &&existing.missionId===event.missionId&&existing.eventId===event.id
+      &&existing.contentHash===expectedHash&&storedEvidenceContentHash(existing)===existing.contentHash
+      &&existing.chainHash===chainHash(existing.previousHash,existing.contentHash,existing.sequence,existing.id)
+      &&Boolean(verificationKey&&existing.signature
+        &&safeSignatureEqual(signatureFor(existing.contentHash,verificationKey),existing.signature));
+  };
+}
+
+export async function mirrorEvolutionEventToEvidenceLedger(event:EvolutionEvent){
+  if(!evidenceLedgerConfigured()||!event.missionId)return undefined;
+  const input=eventEvidenceInput(event);
   try{return await appendEvidenceLedger(input);}
   catch(error){
     let existing:EvidenceLedgerEntry|undefined;
     try{existing=await getEvidenceLedgerEntryById(input.id);}
     catch{throw error;}
     if(!existing)throw error;
-    const workspaceId=getEvolutionWorkspaceId();
-    const expectedHash=evidenceContentHash({...input,workspaceId:workspaceId??""});
-    const signing=await resolveEvidenceSigningConfig();
-    const verificationKey=existing.signatureKeyId
-      ?signing?.verificationKeys[existing.signatureKeyId]
-      :undefined;
-    const signatureValid=Boolean(verificationKey&&existing.signature
-      &&safeSignatureEqual(signatureFor(existing.contentHash,verificationKey),existing.signature));
-    if(existing.workspaceId!==workspaceId||existing.missionId!==event.missionId
-      ||existing.eventId!==event.id||existing.contentHash!==expectedHash
-      ||!signatureValid){
+    let verify:Awaited<ReturnType<typeof createEventEvidenceVerifier>>;
+    try{verify=await createEventEvidenceVerifier();}
+    catch{throw error;}
+    if(!verify(event,existing)){
       throw new EventEvidenceIdentityConflictError(event.id,error);
     }
     return existing;

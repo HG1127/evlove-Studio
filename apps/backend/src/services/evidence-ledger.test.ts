@@ -5,6 +5,7 @@ import {createEvolutionEvent} from "@evolution/contracts";
 import {
   appendEvidenceLedger,
   canonicalEvidenceJson,
+  createEventEvidenceVerifier,
   evidenceContentHash,
   EventEvidenceIdentityConflictError,
   getEvidenceLedgerHealth,
@@ -101,6 +102,25 @@ describe("immutable evidence ledger",()=>{
     })).rejects.toThrow("invalid signature");
   });
 
+  it("rejects an append receipt whose stored payload disagrees with its signed hash",async()=>{
+    configure();
+    vi.stubGlobal("fetch",vi.fn(async(_input:RequestInfo|URL,init?:RequestInit)=>{
+      const body=JSON.parse(String(init?.body)) as Record<string,unknown>;
+      const id=String(body.p_id);
+      const contentHash=String(body.p_content_hash);
+      return new Response(JSON.stringify([{
+        id,workspace_id:"workspace-test",mission_id:"mission-1",sequence:1,
+        kind:"decision",source:"test",actor:"tester",payload:{tampered:true},artifact_refs:[],
+        content_hash:contentHash,signature:body.p_signature,signature_key_id:"test-key-v1",
+        chain_hash:chain(undefined,contentHash,1,id),created_at:"2026-09-25T00:00:00.000Z",
+      }]),{status:200});
+    }));
+    await expect(appendEvidenceLedger({
+      id:"tampered-1",missionId:"mission-1",kind:"decision",source:"test",actor:"tester",
+      payload:{},artifactRefs:[],
+    })).rejects.toThrow("conflicting identity");
+  });
+
   it("accepts a previously committed matching Event mirror after a lost append response",async()=>{
     configure();
     const event=createEvolutionEvent({
@@ -131,9 +151,16 @@ describe("immutable evidence ledger",()=>{
       if(url.pathname.endsWith("/rpc/append_evidence_ledger"))return new Response("duplicate",{status:409});
       return new Response(JSON.stringify([existing]),{status:200});
     }));
-    expect(await mirrorEvolutionEventToEvidenceLedger(event)).toMatchObject({
+    const mirrored=await mirrorEvolutionEventToEvidenceLedger(event);
+    expect(mirrored).toMatchObject({
       id:material.id,contentHash,signatureKeyId:"test-key-v1",
     });
+    if(!mirrored)throw new Error("Expected a signed Event mirror");
+    const verify=await createEventEvidenceVerifier();
+    expect(verify(event,mirrored)).toBe(true);
+    expect(verify(event,{...mirrored,payload:{different:true}})).toBe(false);
+    expect(verify(event,{...mirrored,chainHash:"f".repeat(64)})).toBe(false);
+    expect(verify(event,{...mirrored,signature:"f".repeat(64)})).toBe(false);
     expect(paths).toHaveLength(2);
     expect(paths[1]).toContain("id=eq.%22event-ledger-evt-retry%22");
   });

@@ -14,6 +14,7 @@ function dependencies(overrides:Partial<EventEvidenceReconcileDependencies>={}):
     list:vi.fn(async()=>({events:[scoped,unscoped],nextCursor:unscoped.id})),
     lookup:vi.fn(async()=>undefined),
     mirror:vi.fn(async()=>({id:"event-ledger-evt-a"})),
+    verifier:vi.fn(async()=>vi.fn(()=>true)),
     configured:()=>true,
     ...overrides,
   };
@@ -39,7 +40,7 @@ describe("Event Evidence reconciliation",()=>{
     expect(deps.list).toHaveBeenCalledWith({missionId:"mission-1",afterId:"evt-0",limit:2});
   });
 
-  it("checks an existing mirror in repair mode and reports it as present",async()=>{
+  it("verifies an existing mirror read-only and avoids redundant repair",async()=>{
     const deps=dependencies({lookup:vi.fn(async()=>({id:"event-ledger-evt-a"}))});
     const preview=await reconcileEventEvidence({limit:2},deps);
     expect(preview.results[0]).toEqual({eventId:"evt-a",status:"present"});
@@ -47,7 +48,21 @@ describe("Event Evidence reconciliation",()=>{
     const repaired=await reconcileEventEvidence({limit:2,repair:true},deps);
     expect(repaired).toMatchObject({repaired:0,conflicts:0,failed:0});
     expect(repaired.results[0]).toEqual({eventId:"evt-a",status:"present"});
-    expect(deps.mirror).toHaveBeenCalledWith(scoped);
+    expect(deps.mirror).not.toHaveBeenCalled();
+    expect(deps.verifier).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports a signed-content conflict in preview without attempting repair",async()=>{
+    const deps=dependencies({
+      lookup:vi.fn(async()=>({id:"event-ledger-evt-a"})),
+      verifier:vi.fn(async()=>vi.fn(()=>false)),
+    });
+    const preview=await reconcileEventEvidence({limit:2},deps);
+    expect(preview).toMatchObject({conflicts:1,repaired:0,failed:0});
+    expect(preview.results[0]).toEqual({eventId:"evt-a",status:"conflict"});
+    const repair=await reconcileEventEvidence({limit:2,repair:true},deps);
+    expect(repair).toMatchObject({conflicts:1,repaired:0});
+    expect(deps.mirror).not.toHaveBeenCalled();
   });
 
   it("surfaces a failed Ledger lookup without attempting a write",async()=>{

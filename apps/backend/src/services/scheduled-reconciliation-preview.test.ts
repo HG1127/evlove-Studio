@@ -80,4 +80,12 @@ describe("scheduled reconciliation preview",()=>{
     await expect(route(event("test-preview-cron-secret"))).rejects.toMatchObject({status:503});
     expect(eventEvidence).toHaveBeenCalledWith({limit:10,repair:false});
   });
+
+  it("marks a conflicting signed Event mirror as degraded in read-only preview",async()=>{
+    eventEvidence.mockResolvedValue({inspected:1,missing:0,repaired:0,conflicts:1,failed:0,
+      results:[{eventId:"evt-1",status:"conflict"}]});
+    vi.spyOn(console,"info").mockImplementation(()=>undefined);
+    await expect(route(event("test-preview-cron-secret"))).rejects.toMatchObject({status:503});
+    expect(eventEvidence).toHaveBeenCalledWith({limit:10,repair:false});
+  });
 });

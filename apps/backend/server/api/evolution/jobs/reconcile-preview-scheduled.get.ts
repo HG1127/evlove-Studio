@@ -47,9 +47,10 @@ export default defineEventHandler(async(event)=>{
     blobFailures:failed,
     eventsInspected:eventEvidence.inspected,
     eventMirrorsMissing:eventEvidence.missing,
+    eventMirrorConflicts:eventEvidence.conflicts,
     eventMirrorFailures:eventEvidence.failed,
   });
-  if(failed||eventEvidence.failed){
+  if(failed||eventEvidence.failed||eventEvidence.conflicts){
     throw createError({statusCode:503,statusMessage:"Scheduled reconciliation preview has failed items"});
   }
   return {jobs,artifactBlobs,eventEvidence};
