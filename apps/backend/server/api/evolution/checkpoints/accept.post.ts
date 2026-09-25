@@ -3,7 +3,7 @@ import {CheckpointAcceptRequestSchema} from "@evolution/contracts";
 import {requireGovernedEvolutionPermission} from "../../../../src/services/security-policy";
 import {canAcceptCheckpoint,getValidation} from "../../../../src/services/validation-runtime";
 import {getServerProductionRuntime} from "../../../../src/services/production-runtime";
-import {CheckpointBindingError,evaluateCheckpointValidation} from "../../../../src/services/validation-gate";
+import {CheckpointArtifactDriftError,CheckpointBindingError,evaluateCheckpointValidation} from "../../../../src/services/validation-gate";
 import {EventEvidenceIdentityConflictError} from "../../../../src/services/evidence-ledger";
 import {EventEvidenceMirrorError,EventIdempotencyConflictError} from "../../../../src/services/event-persistence";
 
@@ -22,7 +22,9 @@ export default defineEventHandler(async(event)=>{
       artifactSha256:validation.artifactSha256!,validationId:validation.id,status:"passed",
     });
   }catch(error){
-    if(error instanceof CheckpointBindingError)throw createError({statusCode:409,statusMessage:error.message});
+    if(error instanceof CheckpointBindingError||error instanceof CheckpointArtifactDriftError){
+      throw createError({statusCode:409,statusMessage:error.message});
+    }
     if(error instanceof EventIdempotencyConflictError||error instanceof EventEvidenceIdentityConflictError){
       throw createError({statusCode:409,statusMessage:"Checkpoint Event or Evidence ID already exists with different content"});
     }

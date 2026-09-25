@@ -1,3 +1,4 @@
+import {createHash} from "node:crypto";
 import {createEvolutionEvent,type EvolutionEvent,type ProductionRuntimePorts} from "@evolution/contracts";
 import {appendEvidenceLedger,canonicalEvidenceJson,EventEvidenceIdentityConflictError,mirrorEvolutionEventToEvidenceLedger} from "./evidence-ledger";
 import {EventEvidenceMirrorError,EventIdempotencyConflictError} from "./event-persistence";
@@ -13,6 +14,22 @@ export type ValidationGateResult={
 
 export class CheckpointBindingError extends Error{
   constructor(){super("Checkpoint does not match the current persisted Mission checkpoint");this.name="CheckpointBindingError";}
+}
+
+export class CheckpointArtifactDriftError extends Error{
+  constructor(){super("Checkpoint Artifact bytes or durable metadata differ from the passed Validation");this.name="CheckpointArtifactDriftError";}
+}
+
+async function assertAcceptedArtifactIdentity(runtime:ProductionRuntimePorts,input:{missionId:string;artifactId:string;artifactSha256:string}){
+  const [artifact,metadata]=await Promise.all([
+    runtime.artifacts.get(input.artifactId),runtime.artifacts.getMetadata?.(input.artifactId),
+  ]);
+  if(!artifact||!metadata||metadata.id!==input.artifactId||metadata.missionId!==input.missionId
+    ||metadata.sha256!==input.artifactSha256||metadata.sizeBytes!==artifact.size){
+    throw new CheckpointArtifactDriftError();
+  }
+  const actualHash=createHash("sha256").update(new Uint8Array(await artifact.arrayBuffer())).digest("hex");
+  if(actualHash!==input.artifactSha256)throw new CheckpointArtifactDriftError();
 }
 
 function sameCheckpointValidationEvent(a:EvolutionEvent,b:EvolutionEvent){
@@ -43,6 +60,8 @@ export async function evaluateCheckpointValidation(
   }
   const accepted=input.status==="passed"&&Boolean(input.artifactSha256);
   const reason=accepted?"validation passed":"validation not accepted";
+
+  if(accepted)await assertAcceptedArtifactIdentity(runtime,input);
 
   await appendCheckpointValidationEvent(runtime,createEvolutionEvent({
     id:`checkpoint-validation:${input.validationId}`,
