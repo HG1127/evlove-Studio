@@ -3,9 +3,9 @@ import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
 import {mockEvent} from "nitro/h3";
 import route from "../../server/api/evolution/data-plane-health-scheduled.get";
 
-const {probe,restRead,parseRead,activeJobPage,missionPage,jobPage,eventPage,eventReadback,outcomeRead,evidenceRead,capabilityRead}=vi.hoisted(()=>({
+const {probe,restRead,parseRead,activeJobPage,missionPage,jobPage,eventPage,eventReadback,evidencePage,outcomeRead,evidenceRead,capabilityRead}=vi.hoisted(()=>({
   probe:vi.fn(),restRead:vi.fn(),parseRead:vi.fn(),missionPage:vi.fn(),jobPage:vi.fn(),
-  activeJobPage:vi.fn(),eventPage:vi.fn(),eventReadback:vi.fn(),outcomeRead:vi.fn(),evidenceRead:vi.fn(),capabilityRead:vi.fn(),
+  activeJobPage:vi.fn(),eventPage:vi.fn(),eventReadback:vi.fn(),evidencePage:vi.fn(),outcomeRead:vi.fn(),evidenceRead:vi.fn(),capabilityRead:vi.fn(),
 }));
 vi.mock("./data-plane-health",()=>({getDataPlaneHealth:probe}));
 vi.mock("./outcome-sample-store",()=>({probeOutcomeSampleStore:outcomeRead}));
@@ -20,6 +20,7 @@ vi.mock("./production-runtime",async(importOriginal)=>({
   listServerJobPage:jobPage,
   probeServerEventPage:eventPage,
   probeServerEventIdentityReadback:eventReadback,
+  probeServerEventEvidencePage:evidencePage,
 }));
 
 const priorSecret=process.env.CRON_SECRET;
@@ -41,6 +42,7 @@ describe("scheduled read-only data-plane health",()=>{
     jobPage.mockReset();
     eventPage.mockReset();
     eventReadback.mockReset();
+    evidencePage.mockReset();
     outcomeRead.mockReset();
     evidenceRead.mockReset();
     capabilityRead.mockReset();
@@ -61,6 +63,7 @@ describe("scheduled read-only data-plane health",()=>{
     expect(jobPage).not.toHaveBeenCalled();
     expect(eventPage).not.toHaveBeenCalled();
     expect(eventReadback).not.toHaveBeenCalled();
+    expect(evidencePage).not.toHaveBeenCalled();
     expect(outcomeRead).not.toHaveBeenCalled();
     expect(evidenceRead).not.toHaveBeenCalled();
     expect(capabilityRead).not.toHaveBeenCalled();
@@ -84,13 +87,14 @@ describe("scheduled read-only data-plane health",()=>{
     expect(jobPage).toHaveBeenCalledWith(undefined,undefined,1);
     expect(eventPage).toHaveBeenCalledOnce();
     expect(eventReadback).toHaveBeenCalledOnce();
+    expect(evidencePage).toHaveBeenCalledOnce();
     expect(outcomeRead).toHaveBeenCalledOnce();
     expect(evidenceRead).toHaveBeenCalledOnce();
     expect(capabilityRead).toHaveBeenCalledOnce();
     expect(console.info).toHaveBeenCalledWith("Scheduled data-plane health",{
       status:"ready",database:true,storage:true,artifactCleanup:true,
       tables:health.tables,blockers:[],directRestJobs:true,parseRecoveryQuery:true,activeJobPage:true,collectionPages:true,
-      eventPage:true,eventIdentityReadback:true,outcomeSamples:true,evidenceLedgerPage:true,capabilitySearchPage:true,
+      eventPage:true,eventIdentityReadback:true,eventEvidencePage:true,outcomeSamples:true,evidenceLedgerPage:true,capabilitySearchPage:true,
     });
   });
 

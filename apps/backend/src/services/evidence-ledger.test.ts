@@ -84,6 +84,23 @@ describe("immutable evidence ledger",()=>{
     expect(String(captured?.p_content_hash)).toHaveLength(64);
   });
 
+  it("rejects a database append receipt with a forged signature",async()=>{
+    configure();
+    vi.stubGlobal("fetch",vi.fn(async(_input:RequestInfo|URL,init?:RequestInit)=>{
+      const body=JSON.parse(String(init?.body)) as Record<string,unknown>;
+      return new Response(JSON.stringify([{
+        id:body.p_id,workspace_id:"workspace-test",mission_id:"mission-1",sequence:1,
+        kind:"decision",source:"test",actor:"tester",payload:{},artifact_refs:[],
+        content_hash:body.p_content_hash,signature:"b".repeat(64),signature_key_id:"test-key-v1",
+        chain_hash:"c".repeat(64),created_at:"2026-09-25T00:00:00.000Z",
+      }]),{status:200});
+    }));
+    await expect(appendEvidenceLedger({
+      id:"forged-1",missionId:"mission-1",kind:"decision",source:"test",actor:"tester",
+      payload:{},artifactRefs:[],
+    })).rejects.toThrow("invalid signature");
+  });
+
   it("accepts a previously committed matching Event mirror after a lost append response",async()=>{
     configure();
     const event=createEvolutionEvent({

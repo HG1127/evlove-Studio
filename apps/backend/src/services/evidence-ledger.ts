@@ -290,7 +290,14 @@ export async function appendEvidenceLedger(raw:EvidenceLedgerAppendRequest){
     }),
   }) as JsonRecord[];
   if(!rows?.[0])throw new Error("Evidence Ledger append returned no row");
-  return rowEntry(rows[0]);
+  const entry=rowEntry(rows[0]);
+  const verificationKey=entry.signatureKeyId?signing.verificationKeys[entry.signatureKeyId]:undefined;
+  if(entry.id!==id||entry.workspaceId!==workspaceId||entry.missionId!==input.missionId
+    ||entry.contentHash!==contentHash||!verificationKey||!entry.signature
+    ||!safeSignatureEqual(signatureFor(entry.contentHash,verificationKey),entry.signature)){
+    throw new Error("Evidence Ledger append returned conflicting identity or invalid signature");
+  }
+  return entry;
 }
 
 export async function listEvidenceLedger(missionId:string,limit=500,afterSequence=0){

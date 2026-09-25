@@ -17,6 +17,7 @@ import {dataPlaneFetch} from "./data-plane-http";
 import {supabaseRestAuthHeaders} from "./supabase-rest-auth";
 import { mirrorEvolutionEventToEvidenceLedger } from "./evidence-ledger";
 import {appendServerEvent,probeServerEventReadback,rowEvent} from "./event-persistence";
+import {probeEventEvidencePage,readEventEvidencePage} from "./event-evidence-pages";
 import {probeServerEventPage as probeEventPage,readServerEventRows} from "./event-pages";
 import {probeActiveJobPage,readActiveJobRows} from "./active-job-pages";
 import {readRecentParseJobRows} from "./parse-job-pages";
@@ -504,6 +505,14 @@ export async function probeServerEventPage(){
 
 export async function probeServerEventIdentityReadback(){
   return probeServerEventReadback(createRestClient().request);
+}
+
+export async function listServerEventEvidencePage(args:{missionId?:string;afterId?:string;limit:number}){
+  return readEventEvidencePage(createRestClient().request,args);
+}
+
+export async function probeServerEventEvidencePage(){
+  return probeEventEvidencePage(createRestClient().request);
 }
 
 export function resetServerProductionRuntime(){

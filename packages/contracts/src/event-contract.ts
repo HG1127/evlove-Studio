@@ -16,6 +16,14 @@ export const EvolutionEventSchema = z.object({
 });
 export type EvolutionEvent = z.infer<typeof EvolutionEventSchema>;
 
+export const EventEvidenceReconcileRequestSchema=z.object({
+  missionId:z.string().min(1).optional(),
+  afterId:z.string().min(1).optional(),
+  limit:z.number().int().min(1).max(50).default(25),
+  repair:z.boolean().default(false),
+}).strict();
+export type EventEvidenceReconcileRequest=z.infer<typeof EventEvidenceReconcileRequestSchema>;
+
 export function createEvolutionEvent(input: Omit<EvolutionEvent,"schemaVersion"|"id"|"at"> & {id?:string;at?:string}) {
   return EvolutionEventSchema.parse({...input,schemaVersion:PRODUCTION_SCHEMA_VERSIONS.event,id:input.id??`evt-${crypto.randomUUID()}`,at:input.at??new Date().toISOString()});
 }

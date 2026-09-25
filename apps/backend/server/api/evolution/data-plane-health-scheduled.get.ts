@@ -11,6 +11,7 @@ import {
   probeServerActiveJobPage,
   probeServerEventPage,
   probeServerEventIdentityReadback,
+  probeServerEventEvidencePage,
 } from "../../../src/services/production-runtime";
 import {
   scheduledReconciliationAuthorized,
@@ -33,6 +34,7 @@ export default defineEventHandler(async(event)=>{
   let collectionPages=false;
   let eventPage=false;
   let eventIdentityReadback=false;
+  let eventEvidencePage=false;
   let outcomeSamples=false;
   let evidenceLedgerPage=false;
   let capabilitySearchPage=false;
@@ -58,6 +60,8 @@ export default defineEventHandler(async(event)=>{
       eventPage=true;
       await probeServerEventIdentityReadback();
       eventIdentityReadback=true;
+      await probeServerEventEvidencePage();
+      eventEvidencePage=true;
       await probeOutcomeSampleStore();
       outcomeSamples=true;
       await probeEvidenceLedgerPage();
@@ -81,12 +85,13 @@ export default defineEventHandler(async(event)=>{
     collectionPages,
     eventPage,
     eventIdentityReadback,
+    eventEvidencePage,
     outcomeSamples,
     evidenceLedgerPage,
     capabilitySearchPage,
     ...(restFailure?{restFailure}:{}),
   });
-  if(health.status!=="ready"||!directRestJobs||!parseRecoveryQuery||!activeJobPage||!collectionPages||!eventPage||!eventIdentityReadback||!outcomeSamples||!evidenceLedgerPage||!capabilitySearchPage){
+  if(health.status!=="ready"||!directRestJobs||!parseRecoveryQuery||!activeJobPage||!collectionPages||!eventPage||!eventIdentityReadback||!eventEvidencePage||!outcomeSamples||!evidenceLedgerPage||!capabilitySearchPage){
     throw createError({statusCode:503,statusMessage:"Scheduled data-plane health is not ready"});
   }
   return health;
