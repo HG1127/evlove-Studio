@@ -1,11 +1,14 @@
 // @vitest-environment node
 import {createHash,createHmac} from "node:crypto";
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
+import {createEvolutionEvent} from "@evolution/contracts";
 import {
   appendEvidenceLedger,
   canonicalEvidenceJson,
   evidenceContentHash,
+  EventEvidenceIdentityConflictError,
   getEvidenceLedgerHealth,
+  mirrorEvolutionEventToEvidenceLedger,
   verifyEvidenceLedger,
 } from "./evidence-ledger";
 
@@ -79,6 +82,87 @@ describe("immutable evidence ledger",()=>{
     });
     expect(entry).toMatchObject({id:"evidence-1",sequence:1,previousHash:undefined,signatureKeyId:"test-key-v1"});
     expect(String(captured?.p_content_hash)).toHaveLength(64);
+  });
+
+  it("accepts a previously committed matching Event mirror after a lost append response",async()=>{
+    configure();
+    const event=createEvolutionEvent({
+      id:"evt-retry",missionId:"mission-1",type:"ArtifactRegistered",source:"test",
+      payload:{artifactId:"hash-a"},at:"2026-09-25T00:00:00.000Z",
+    });
+    const material={
+      id:"event-ledger-evt-retry",workspaceId:"workspace-test",missionId:"mission-1",
+      kind:"event",source:"test",actor:"evolution-runtime",eventId:"evt-retry",
+      decision:"ArtifactRegistered",payload:{type:"ArtifactRegistered",artifactId:"hash-a"},
+      artifactRefs:["hash-a"],
+    };
+    const contentHash=evidenceContentHash(material);
+    const existing={
+      id:material.id,workspace_id:material.workspaceId,mission_id:material.missionId,
+      sequence:1,kind:material.kind,source:material.source,actor:material.actor,
+      event_id:material.eventId,job_id:null,checkpoint_id:null,model_ref:null,
+      prompt_version:null,test_version:null,decision:material.decision,
+      payload:material.payload,artifact_refs:material.artifactRefs,content_hash:contentHash,
+      signature:createHmac("sha256",process.env.EVOLUTION_EVIDENCE_SIGNING_KEY!).update(contentHash).digest("hex"),
+      signature_key_id:"test-key-v1",previous_hash:null,
+      chain_hash:chain(undefined,contentHash,1,material.id),created_at:event.at,
+    };
+    const paths:string[]=[];
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
+      const url=new URL(String(input));
+      paths.push(url.pathname+url.search);
+      if(url.pathname.endsWith("/rpc/append_evidence_ledger"))return new Response("duplicate",{status:409});
+      return new Response(JSON.stringify([existing]),{status:200});
+    }));
+    expect(await mirrorEvolutionEventToEvidenceLedger(event)).toMatchObject({
+      id:material.id,contentHash,signatureKeyId:"test-key-v1",
+    });
+    expect(paths).toHaveLength(2);
+    expect(paths[1]).toContain("id=eq.%22event-ledger-evt-retry%22");
+  });
+
+  it("refuses an Event mirror ID occupied by different Evidence",async()=>{
+    configure();
+    const event=createEvolutionEvent({
+      id:"evt-conflict",missionId:"mission-1",type:"MissionUpdated",source:"test",payload:{},
+    });
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
+      if(String(input).includes("/rpc/append_evidence_ledger"))return new Response("duplicate",{status:409});
+      return new Response(JSON.stringify([{
+        id:"event-ledger-evt-conflict",workspace_id:"workspace-test",mission_id:"mission-1",
+        sequence:1,kind:"event",source:"test",actor:"evolution-runtime",
+        event_id:"evt-conflict",payload:{},artifact_refs:[],content_hash:"a".repeat(64),
+        signature:"b".repeat(64),signature_key_id:"test-key-v1",chain_hash:"c".repeat(64),
+        created_at:event.at,
+      }]),{status:200});
+    }));
+    await expect(mirrorEvolutionEventToEvidenceLedger(event))
+      .rejects.toThrow("different content");
+  });
+
+  it("refuses a matching Event mirror whose stored signature is invalid",async()=>{
+    configure();
+    const event=createEvolutionEvent({
+      id:"evt-unsigned",missionId:"mission-1",type:"MissionUpdated",source:"test",payload:{},
+    });
+    const material={
+      id:"event-ledger-evt-unsigned",workspaceId:"workspace-test",missionId:"mission-1",
+      kind:"event",source:"test",actor:"evolution-runtime",eventId:event.id,
+      decision:event.type,payload:{type:event.type},artifactRefs:[],
+    };
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
+      if(String(input).includes("/rpc/append_evidence_ledger"))return new Response("duplicate",{status:409});
+      return new Response(JSON.stringify([{
+        id:material.id,workspace_id:material.workspaceId,mission_id:material.missionId,
+        sequence:1,kind:material.kind,source:material.source,actor:material.actor,
+        event_id:material.eventId,decision:material.decision,payload:material.payload,
+        artifact_refs:material.artifactRefs,content_hash:evidenceContentHash(material),
+        signature:"b".repeat(64),signature_key_id:"test-key-v1",
+        chain_hash:"c".repeat(64),created_at:event.at,
+      }]),{status:200});
+    }));
+    await expect(mirrorEvolutionEventToEvidenceLedger(event))
+      .rejects.toBeInstanceOf(EventEvidenceIdentityConflictError);
   });
 
   it("verifies content hash, HMAC signature and the serialized per-mission chain",async()=>{

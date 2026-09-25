@@ -161,6 +161,10 @@ describe("Evidence Ledger signed export/archive",()=>{
     expect(query.get("mission_id")).toBe("eq.health-probe:no-such-mission");
     expect(query.get("sequence")).toBe("gt.0");
     expect(query.get("limit")).toBe("1");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const identityQuery=new URL(String(fetchMock.mock.calls[1][0])).searchParams;
+    expect(identityQuery.get("id")).toBe('eq."health-probe:no-such-event-ledger"');
+    expect(identityQuery.get("limit")).toBe("1");
   });
 
   it("creates a signed canonical export bundle that independently verifies",async()=>{

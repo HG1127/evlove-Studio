@@ -36,6 +36,14 @@ type ResolvedSigningConfig={
 const EVIDENCE_EXPORT_MAX_ENTRIES=50_000;
 const EVIDENCE_EXPORT_PAGE_SIZE=1_000;
 
+export class EventEvidenceIdentityConflictError extends Error{
+  readonly code="EVENT_EVIDENCE_IDENTITY_CONFLICT";
+  constructor(readonly eventId:string,cause:unknown){
+    super(`Event Evidence ID for ${eventId} already exists with different content`,{cause});
+    this.name="EventEvidenceIdentityConflictError";
+  }
+}
+
 async function resolveEvidenceSigningConfig():Promise<ResolvedSigningConfig|undefined>{
   const env=getEvidenceLedgerSigningConfig();
   const verificationKeys:Record<string,string>={...(env?.verificationKeys??{})};
@@ -349,7 +357,25 @@ export async function probeEvidenceLedgerPage(){
     +"&sequence=gt.0&order=sequence.asc&limit=1",
   );
   if(!Array.isArray(rows))throw new Error("Evidence Ledger health page is not an array");
+  await getEvidenceLedgerEntryById("health-probe:no-such-event-ledger");
   return true;
+}
+
+function filterValue(value:string){
+  return "%22"+encodeURIComponent(value.replace(/\\/g,"\\\\").replace(/"/g,'\\"'))+"%22";
+}
+
+export async function getEvidenceLedgerEntryById(id:string){
+  const {request}=restClient();
+  const rows=await request("evidence_ledger?select=*&id=eq."+filterValue(id)+"&limit=1");
+  if(!Array.isArray(rows)||rows.length>1)throw new Error("Evidence Ledger identity lookup is invalid");
+  if(!rows.length)return undefined;
+  if(!rows[0]||typeof rows[0]!=="object"||Array.isArray(rows[0])){
+    throw new Error("Evidence Ledger identity row is invalid");
+  }
+  const entry=rowEntry(rows[0] as JsonRecord);
+  if(entry.id!==id)throw new Error("Evidence Ledger identity lookup returned another row");
+  return entry;
 }
 
 function safeSignatureEqual(a:string,b:string){
@@ -584,7 +610,7 @@ function artifactRefsFromEvent(event:EvolutionEvent){
 
 export async function mirrorEvolutionEventToEvidenceLedger(event:EvolutionEvent){
   if(!evidenceLedgerConfigured()||!event.missionId)return undefined;
-  return appendEvidenceLedger({
+  const input={
     id:"event-ledger-"+event.id,
     missionId:event.missionId,
     kind:"event",
@@ -596,5 +622,26 @@ export async function mirrorEvolutionEventToEvidenceLedger(event:EvolutionEvent)
     decision:event.type,
     payload:{type:event.type,causationId:event.causationId,correlationId:event.correlationId,...event.payload},
     artifactRefs:artifactRefsFromEvent(event),
-  });
+  };
+  try{return await appendEvidenceLedger(input);}
+  catch(error){
+    let existing:EvidenceLedgerEntry|undefined;
+    try{existing=await getEvidenceLedgerEntryById(input.id);}
+    catch{throw error;}
+    if(!existing)throw error;
+    const workspaceId=getEvolutionWorkspaceId();
+    const expectedHash=evidenceContentHash({...input,workspaceId:workspaceId??""});
+    const signing=await resolveEvidenceSigningConfig();
+    const verificationKey=existing.signatureKeyId
+      ?signing?.verificationKeys[existing.signatureKeyId]
+      :undefined;
+    const signatureValid=Boolean(verificationKey&&existing.signature
+      &&safeSignatureEqual(signatureFor(existing.contentHash,verificationKey),existing.signature));
+    if(existing.workspaceId!==workspaceId||existing.missionId!==event.missionId
+      ||existing.eventId!==event.id||existing.contentHash!==expectedHash
+      ||!signatureValid){
+      throw new EventEvidenceIdentityConflictError(event.id,error);
+    }
+    return existing;
+  }
 }

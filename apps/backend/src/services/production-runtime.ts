@@ -16,6 +16,7 @@ import { getServerSupabaseConfig } from "../server-env";
 import {dataPlaneFetch} from "./data-plane-http";
 import {supabaseRestAuthHeaders} from "./supabase-rest-auth";
 import { mirrorEvolutionEventToEvidenceLedger } from "./evidence-ledger";
+import {appendServerEvent,probeServerEventReadback,rowEvent} from "./event-persistence";
 import {probeServerEventPage as probeEventPage,readServerEventRows} from "./event-pages";
 import {probeActiveJobPage,readActiveJobRows} from "./active-job-pages";
 import {readRecentParseJobRows} from "./parse-job-pages";
@@ -43,25 +44,6 @@ function rowJob(row:JsonRecord):EvolutionJob{
     outputRef:row.output_ref??undefined,metadata:row.metadata??undefined,progress:row.progress??undefined,error:row.error??undefined,
     createdAt:row.created_at,startedAt:row.started_at??undefined,heartbeatAt:row.heartbeat_at??undefined,
     finishedAt:row.finished_at??undefined,updatedAt:row.updated_at,
-  });
-}
-
-function eventRow(event:EvolutionEvent){
-  const value=EvolutionEventSchema.parse(event);
-  return {
-    id:value.id,mission_id:value.missionId??null,schema_version:value.schemaVersion,
-    type:value.type,source:value.source,job_id:value.jobId??null,checkpoint_id:value.checkpointId??null,
-    causation_id:value.causationId??null,correlation_id:value.correlationId??null,
-    payload:value.payload,at:value.at,
-  };
-}
-
-function rowEvent(row:JsonRecord):EvolutionEvent{
-  return EvolutionEventSchema.parse({
-    schemaVersion:row.schema_version,id:row.id,missionId:row.mission_id??undefined,
-    type:row.type,source:row.source,jobId:row.job_id??undefined,
-    checkpointId:row.checkpoint_id??undefined,causationId:row.causation_id??undefined,
-    correlationId:row.correlation_id??undefined,payload:row.payload??{},at:row.at,
   });
 }
 
@@ -507,11 +489,7 @@ export function getServerProductionRuntime():ServerControlRuntime{
     },
     artifacts:getServerArtifactStore(),
     events:{
-      append:async(event)=>{
-        const parsed=EvolutionEventSchema.parse(event);
-        await request("events?on_conflict=id",{method:"POST",headers:{Prefer:"resolution=ignore-duplicates,return=minimal"},body:JSON.stringify(eventRow(parsed))});
-        await mirrorEvolutionEventToEvidenceLedger(parsed).catch(()=>undefined);
-      },
+      append:async(event)=>appendServerEvent(request,event),
       list:async(missionId,limit=200)=>{
         const rows=await readServerEventRows(request,missionId,limit);
         return rows.map(rowEvent);
@@ -522,6 +500,10 @@ export function getServerProductionRuntime():ServerControlRuntime{
 
 export async function probeServerEventPage(){
   return probeEventPage(createRestClient().request);
+}
+
+export async function probeServerEventIdentityReadback(){
+  return probeServerEventReadback(createRestClient().request);
 }
 
 export function resetServerProductionRuntime(){
