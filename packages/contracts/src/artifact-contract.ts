@@ -111,6 +111,21 @@ export const ValidationResultSchema=z.object({
 });
 export type ValidationResult=z.infer<typeof ValidationResultSchema>;
 
+export const ValidationDiscoveryQuerySchema=z.object({
+  missionId:z.string().min(1).max(200),
+  artifactId:ArtifactIdSchema.optional(),
+  afterId:z.string().min(1).max(512).optional(),
+  limit:z.coerce.number().int().min(1).max(50).default(50),
+}).strict();
+export type ValidationDiscoveryQuery=z.infer<typeof ValidationDiscoveryQuerySchema>;
+
+export const ValidationDiscoveryPageSchema=z.object({
+  scanned:z.number().int().min(0).max(50),
+  validations:z.array(ValidationResultSchema).max(50),
+  nextCursor:z.string().min(1).optional(),
+}).strict();
+export type ValidationDiscoveryPage=z.infer<typeof ValidationDiscoveryPageSchema>;
+
 export const CheckpointAcceptRequestSchema=z.object({
   validationId:z.string().min(1),
 }).strict();

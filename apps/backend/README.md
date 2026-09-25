@@ -46,6 +46,8 @@ The legacy JSON `GET /api/evolution/artifacts?id=...` returns only textual conte
 
 At least one supported executable check is required to produce `passed`; failed integrity or assertion checks produce `failed`. Missing checks, unbound legacy Artifacts, and unsupported text decoding produce `unverified`. Results include the exact stored Artifact SHA-256 and persist in append-only EvolutionEvents. `GET /api/evolution/validation/:id` reads that durable record. Repeating a POST with the same idempotency key and request returns the same record; using that key for a different request returns `409`.
 
+If an unkeyed POST response is lost, `GET /api/evolution/validation?missionId=...&artifactId=...` scans up to 50 authoritative Events per page and returns matching durable Validation results. Pass `nextCursor` as `afterId` until a page scans zero Events; a page with no matches may still have a cursor. This read requires `data.read`. Once the Validation ID is found, `POST /api/evolution/validation/:id/evidence-reconcile` can complete its signed Event and Validation Evidence without rerunning the Artifact checks; it requires `mission.execute`. Prefer an idempotency key for new Validation requests.
+
 Checkpoint validation takes `missionId`, `checkpointId`, `artifactId`, and a persisted `validationId`; the API checks all four bindings before writing acceptance/rejection evidence. A client-supplied `validationPassed` boolean is not accepted as validation evidence.
 
 ## Job, Checkpoint, and Harness lifecycle

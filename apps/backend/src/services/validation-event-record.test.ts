@@ -2,7 +2,7 @@
 import {describe,expect,it,vi} from "vitest";
 import {createEvolutionEvent,type ValidationResult} from "@evolution/contracts";
 import {eventRow} from "./event-persistence";
-import {readServerValidationRecord} from "./validation-event-record";
+import {parsePersistedValidationEvent,readServerValidationRecord} from "./validation-event-record";
 
 const result:ValidationResult={
   id:"validation:one",schemaVersion:"validation-v1",missionId:"mission-1",
@@ -27,6 +27,14 @@ describe("persisted Validation Event identity",()=>{
 
   it("returns undefined when the exact Event does not exist",async()=>{
     expect(await readServerValidationRecord(async()=>[],result.id)).toBeUndefined();
+  });
+
+  it("skips unrelated Events but rejects a Validation Event with a different ID shape",()=>{
+    const unrelated=createEvolutionEvent({
+      id:"job-created:one",missionId:"mission-1",type:"JobQueued",source:"backend-job-lifecycle",payload:{},
+    });
+    expect(parsePersistedValidationEvent(unrelated)).toBeUndefined();
+    expect(()=>parsePersistedValidationEvent({...event,id:"another-prefix:"+result.id})).toThrow("ID is invalid");
   });
 
   it.each([
