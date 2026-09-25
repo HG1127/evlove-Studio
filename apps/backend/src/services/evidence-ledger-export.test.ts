@@ -15,6 +15,7 @@ import {
   archiveEvidenceLedgerExport,
   createEvidenceLedgerExport,
   evidenceContentHash,
+  listEvidenceLedger,
   listEvidenceLedgerAll,
   probeEvidenceLedgerPage,
   verifyEvidenceLedgerExport,
@@ -114,6 +115,23 @@ describe("Evidence Ledger signed export/archive",()=>{
     installLedger(source);
     await expect(listEvidenceLedgerAll(MISSION,{pageSize:2,maxEntries:4}))
       .rejects.toThrow(/maximum supported entry count/i);
+  });
+
+  it("fills a bounded Ledger list across short pages without exporting the tail",async()=>{
+    const fetchMock=installLedger(rows(5),1);
+    const listed=await listEvidenceLedger(MISSION,3);
+    expect(listed.map((entry)=>entry.sequence)).toEqual([1,2,3]);
+    const continued=await listEvidenceLedger(MISSION,3,listed.at(-1)!.sequence);
+    expect(continued.map((entry)=>entry.sequence)).toEqual([4,5]);
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+    expect(fetchMock.mock.calls.map(([input])=>new URL(String(input)).searchParams.get("sequence")))
+      .toEqual(["gt.0","gt.1","gt.2","gt.3","gt.4","gt.5"]);
+  });
+
+  it("rejects an invalid Ledger cursor before a database request",async()=>{
+    const fetchMock=installLedger(rows(1));
+    await expect(listEvidenceLedger(MISSION,1,-1)).rejects.toThrow(/cursor is invalid/);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("does not certify a valid ledger prefix when the server caps each page",async()=>{

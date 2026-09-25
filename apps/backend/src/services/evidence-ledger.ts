@@ -285,22 +285,16 @@ export async function appendEvidenceLedger(raw:EvidenceLedgerAppendRequest){
   return rowEntry(rows[0]);
 }
 
-export async function listEvidenceLedger(missionId:string,limit=500){
-  const workspaceId=getEvolutionWorkspaceId();
-  if(!workspaceId||!evidenceLedgerConfigured())return[];
+export async function listEvidenceLedger(missionId:string,limit=500,afterSequence=0){
   const bounded=Math.max(1,Math.min(limit,2000));
-  const {request}=restClient();
-  const rows=await request(
-    "evidence_ledger?select=*&workspace_id=eq."+encodeURIComponent(workspaceId)
-    +"&mission_id=eq."+encodeURIComponent(missionId)
-    +"&order=sequence.asc&limit="+bounded,
-  ) as JsonRecord[];
-  return (rows??[]).map(rowEntry);
+  return listEvidenceLedgerAll(missionId,{
+    pageSize:Math.min(bounded,500),maxEntries:bounded,afterSequence,requireComplete:false,
+  });
 }
 
 export async function listEvidenceLedgerAll(
   missionId:string,
-  options?:{pageSize?:number;maxEntries?:number},
+  options?:{pageSize?:number;maxEntries?:number;afterSequence?:number;requireComplete?:boolean},
 ){
   const workspaceId=getEvolutionWorkspaceId();
   if(!workspaceId||!evidenceLedgerConfigured())return[] as EvidenceLedgerEntry[];
@@ -308,7 +302,8 @@ export async function listEvidenceLedgerAll(
   const maxEntries=Math.max(pageSize,Math.min(options?.maxEntries??EVIDENCE_EXPORT_MAX_ENTRIES,100_000));
   const {request}=restClient();
   const entries:EvidenceLedgerEntry[]=[];
-  let cursor=0;
+  let cursor=options?.afterSequence??0;
+  if(!Number.isSafeInteger(cursor)||cursor<0)throw new Error("Evidence Ledger cursor is invalid");
   while(entries.length<maxEntries){
     const limit=Math.min(pageSize,maxEntries-entries.length);
     const rows=await request(
@@ -331,6 +326,7 @@ export async function listEvidenceLedgerAll(
       entries.push(entry);
     }
   }
+  if(options?.requireComplete===false)return entries;
   const extra=await request(
     "evidence_ledger?select=id&workspace_id=eq."+encodeURIComponent(workspaceId)
     +"&mission_id=eq."+encodeURIComponent(missionId)
