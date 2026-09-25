@@ -106,6 +106,36 @@ describe("checkpoint validation gate",()=>{
     expect(appendValidationEvidence).not.toHaveBeenCalled();
   });
 
+  it.each([
+    {label:"missing Job binding",metadata:{...durableMetadata}},
+    {label:"different Job binding",metadata:{...durableMetadata,jobId:"job-2"}},
+  ])("rejects accepted Artifact with $label before Evidence writes",async({metadata})=>{
+    const result={...validationResult,jobId:"job-1"};
+    readValidationRecord.mockResolvedValueOnce({event:createEvolutionEvent({
+      id:validationEvent.id,missionId:input.missionId,jobId:"job-1",
+      checkpointId:input.checkpointId,type:"ValidationPassed",source:"backend-validation-runtime",
+      payload:{validationId:input.validationId,validation:result},
+    }),result});
+    const ports=runtime("checkpoint-1",{metadata});
+    await expect(evaluateCheckpointValidation(ports,input)).rejects.toBeInstanceOf(CheckpointArtifactDriftError);
+    expect(mirror).not.toHaveBeenCalled();
+    expect(appendValidationEvidence).not.toHaveBeenCalled();
+    expect(ports.events.append).not.toHaveBeenCalled();
+    expect(appendEvidence).not.toHaveBeenCalled();
+  });
+
+  it("accepts the Artifact when its durable Job matches the persisted Validation",async()=>{
+    const result={...validationResult,jobId:"job-1"};
+    readValidationRecord.mockResolvedValueOnce({event:createEvolutionEvent({
+      id:validationEvent.id,missionId:input.missionId,jobId:"job-1",
+      checkpointId:input.checkpointId,type:"ValidationPassed",source:"backend-validation-runtime",
+      payload:{validationId:input.validationId,validation:result},
+    }),result});
+    await expect(evaluateCheckpointValidation(runtime("checkpoint-1",{
+      metadata:{...durableMetadata,jobId:"job-1"},
+    }),input)).resolves.toMatchObject({accepted:true});
+  });
+
   it("records a failed Validation as rejected after completing its source Evidence",async()=>{
     const failed={...validationResult,status:"failed",artifactSha256:undefined};
     const failedEvent=createEvolutionEvent({

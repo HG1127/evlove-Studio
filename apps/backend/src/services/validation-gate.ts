@@ -25,7 +25,7 @@ export class CheckpointValidationEvidenceError extends Error{
   constructor(){super("Checkpoint Validation Event is missing or bound to different evidence");this.name="CheckpointValidationEvidenceError";}
 }
 
-async function completeSourceValidationEvidence(input:{missionId:string;checkpointId:string;artifactId:string;artifactSha256:string;validationId:string;status:string}){
+async function readSourceValidationRecord(input:{missionId:string;checkpointId:string;artifactId:string;artifactSha256:string;validationId:string;status:string}){
   const record=await getServerValidationRecord(input.validationId);
   const result=record?.result;
   if(!record||!result||result.missionId!==input.missionId||result.checkpointId!==input.checkpointId
@@ -33,6 +33,11 @@ async function completeSourceValidationEvidence(input:{missionId:string;checkpoi
     ||result.status!==input.status){
     throw new CheckpointValidationEvidenceError();
   }
+  return record;
+}
+
+async function completeSourceValidationEvidence(record:NonNullable<Awaited<ReturnType<typeof getServerValidationRecord>>>){
+  const result=record.result;
   try{await mirrorEvolutionEventToEvidenceLedger(record.event);}
   catch(error){
     if(error instanceof EventEvidenceIdentityConflictError)throw error;
@@ -45,11 +50,12 @@ async function completeSourceValidationEvidence(input:{missionId:string;checkpoi
   });
 }
 
-async function assertAcceptedArtifactIdentity(runtime:ProductionRuntimePorts,input:{missionId:string;artifactId:string;artifactSha256:string}){
+async function assertAcceptedArtifactIdentity(runtime:ProductionRuntimePorts,input:{missionId:string;artifactId:string;artifactSha256:string;jobId?:string}){
   const [artifact,metadata]=await Promise.all([
     runtime.artifacts.get(input.artifactId),runtime.artifacts.getMetadata?.(input.artifactId),
   ]);
   if(!artifact||!metadata||metadata.id!==input.artifactId||metadata.missionId!==input.missionId
+    ||(input.jobId!==undefined&&metadata.jobId!==input.jobId)
     ||metadata.sha256!==input.artifactSha256||metadata.sizeBytes!==artifact.size){
     throw new CheckpointArtifactDriftError();
   }
@@ -86,8 +92,9 @@ export async function evaluateCheckpointValidation(
   const accepted=input.status==="passed"&&Boolean(input.artifactSha256);
   const reason=accepted?"validation passed":"validation not accepted";
 
-  if(accepted)await assertAcceptedArtifactIdentity(runtime,input);
-  await completeSourceValidationEvidence(input);
+  const sourceValidation=await readSourceValidationRecord(input);
+  if(accepted)await assertAcceptedArtifactIdentity(runtime,{...input,jobId:sourceValidation.result.jobId});
+  await completeSourceValidationEvidence(sourceValidation);
 
   await appendCheckpointValidationEvent(runtime,createEvolutionEvent({
     id:`checkpoint-validation:${input.validationId}`,
