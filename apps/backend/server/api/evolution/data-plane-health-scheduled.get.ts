@@ -8,6 +8,7 @@ import {
   listRecentServerParseJobs,
   listServerJobPage,
   listServerMissionEnvelopePage,
+  probeServerActiveJobPage,
   probeServerEventPage,
 } from "../../../src/services/production-runtime";
 import {
@@ -27,6 +28,7 @@ export default defineEventHandler(async(event)=>{
   const health=await getDataPlaneHealth();
   let directRestJobs=false;
   let parseRecoveryQuery=false;
+  let activeJobPage=false;
   let collectionPages=false;
   let eventPage=false;
   let outcomeSamples=false;
@@ -41,6 +43,8 @@ export default defineEventHandler(async(event)=>{
         since:new Date(Date.now()-3_600_000).toISOString(),limit:1,sessionId:"health-probe",
       });
       parseRecoveryQuery=true;
+      await probeServerActiveJobPage();
+      activeJobPage=true;
       await listServerMissionEnvelopePage(undefined,1);
       await listServerJobPage(undefined,undefined,1);
       collectionPages=true;
@@ -65,6 +69,7 @@ export default defineEventHandler(async(event)=>{
     blockers:health.blockers,
     directRestJobs,
     parseRecoveryQuery,
+    activeJobPage,
     collectionPages,
     eventPage,
     outcomeSamples,
@@ -72,7 +77,7 @@ export default defineEventHandler(async(event)=>{
     capabilitySearchPage,
     ...(restFailure?{restFailure}:{}),
   });
-  if(health.status!=="ready"||!directRestJobs||!parseRecoveryQuery||!collectionPages||!eventPage||!outcomeSamples||!evidenceLedgerPage||!capabilitySearchPage){
+  if(health.status!=="ready"||!directRestJobs||!parseRecoveryQuery||!activeJobPage||!collectionPages||!eventPage||!outcomeSamples||!evidenceLedgerPage||!capabilitySearchPage){
     throw createError({statusCode:503,statusMessage:"Scheduled data-plane health is not ready"});
   }
   return health;

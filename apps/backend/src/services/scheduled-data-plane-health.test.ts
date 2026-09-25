@@ -3,9 +3,9 @@ import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
 import {mockEvent} from "nitro/h3";
 import route from "../../server/api/evolution/data-plane-health-scheduled.get";
 
-const {probe,restRead,parseRead,missionPage,jobPage,eventPage,outcomeRead,evidenceRead,capabilityRead}=vi.hoisted(()=>({
+const {probe,restRead,parseRead,activeJobPage,missionPage,jobPage,eventPage,outcomeRead,evidenceRead,capabilityRead}=vi.hoisted(()=>({
   probe:vi.fn(),restRead:vi.fn(),parseRead:vi.fn(),missionPage:vi.fn(),jobPage:vi.fn(),
-  eventPage:vi.fn(),outcomeRead:vi.fn(),evidenceRead:vi.fn(),capabilityRead:vi.fn(),
+  activeJobPage:vi.fn(),eventPage:vi.fn(),outcomeRead:vi.fn(),evidenceRead:vi.fn(),capabilityRead:vi.fn(),
 }));
 vi.mock("./data-plane-health",()=>({getDataPlaneHealth:probe}));
 vi.mock("./outcome-sample-store",()=>({probeOutcomeSampleStore:outcomeRead}));
@@ -15,6 +15,7 @@ vi.mock("./production-runtime",async(importOriginal)=>({
   ...await importOriginal<typeof import("./production-runtime")>(),
   getServerJobByIdempotencyKey:restRead,
   listRecentServerParseJobs:parseRead,
+  probeServerActiveJobPage:activeJobPage,
   listServerMissionEnvelopePage:missionPage,
   listServerJobPage:jobPage,
   probeServerEventPage:eventPage,
@@ -34,6 +35,7 @@ describe("scheduled read-only data-plane health",()=>{
     probe.mockReset();
     restRead.mockReset();
     parseRead.mockReset();
+    activeJobPage.mockReset();
     missionPage.mockReset();
     jobPage.mockReset();
     eventPage.mockReset();
@@ -52,6 +54,7 @@ describe("scheduled read-only data-plane health",()=>{
     expect(probe).not.toHaveBeenCalled();
     expect(restRead).not.toHaveBeenCalled();
     expect(parseRead).not.toHaveBeenCalled();
+    expect(activeJobPage).not.toHaveBeenCalled();
     expect(missionPage).not.toHaveBeenCalled();
     expect(jobPage).not.toHaveBeenCalled();
     expect(eventPage).not.toHaveBeenCalled();
@@ -69,6 +72,7 @@ describe("scheduled read-only data-plane health",()=>{
     expect(probe).toHaveBeenCalledOnce();
     expect(restRead).toHaveBeenCalledWith("health-probe:no-such-job");
     expect(parseRead).toHaveBeenCalledWith(expect.objectContaining({limit:1,sessionId:"health-probe"}));
+    expect(activeJobPage).toHaveBeenCalledOnce();
     expect(missionPage).toHaveBeenCalledWith(undefined,1);
     expect(jobPage).toHaveBeenCalledWith(undefined,undefined,1);
     expect(eventPage).toHaveBeenCalledOnce();
@@ -77,7 +81,7 @@ describe("scheduled read-only data-plane health",()=>{
     expect(capabilityRead).toHaveBeenCalledOnce();
     expect(console.info).toHaveBeenCalledWith("Scheduled data-plane health",{
       status:"ready",database:true,storage:true,artifactCleanup:true,
-      tables:health.tables,blockers:[],directRestJobs:true,parseRecoveryQuery:true,collectionPages:true,
+      tables:health.tables,blockers:[],directRestJobs:true,parseRecoveryQuery:true,activeJobPage:true,collectionPages:true,
       eventPage:true,outcomeSamples:true,evidenceLedgerPage:true,capabilitySearchPage:true,
     });
   });

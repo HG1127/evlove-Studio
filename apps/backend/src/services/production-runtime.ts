@@ -17,6 +17,7 @@ import {dataPlaneFetch} from "./data-plane-http";
 import {supabaseRestAuthHeaders} from "./supabase-rest-auth";
 import { mirrorEvolutionEventToEvidenceLedger } from "./evidence-ledger";
 import {probeServerEventPage as probeEventPage,readServerEventRows} from "./event-pages";
+import {probeActiveJobPage,readActiveJobRows} from "./active-job-pages";
 import { getServerArtifactStore } from "./artifact-runtime";
 
 type JsonRecord=Record<string,unknown>;
@@ -304,22 +305,22 @@ export async function getServerValidationResult(id:string){
 export async function listServerActiveJobs(limit=100,missionId?:string){
   const {request}=createRestClient();
   const bounded=Math.max(1,Math.min(limit,100));
-  const filter=missionId?"&mission_id=eq."+encodeURIComponent(missionId):"";
-  const base="jobs?select=*&order=updated_at.asc&limit="+bounded+filter;
-  async function read(query:"parse"|"campaign",path:string){
-    try{return await request(path) as JsonRecord[];}
-    catch(error){throw new ActiveJobQueryError(query,error);}
+  async function read(kind:"parse"|"campaign",status:"queued"|"running"|"waiting"){
+    try{return await readActiveJobRows(request,{kind,status,limit:bounded,missionId});}
+    catch(error){throw new ActiveJobQueryError(kind,error);}
   }
   const statuses=["queued","running","waiting"] as const;
   const rows=await Promise.all(statuses.flatMap((status)=>[
-    read("parse",base+"&status=eq."+status+"&type=eq.parse"),
-    read("campaign",base+"&status=eq."+status+"&type=eq.campaign&idempotency_key=like.workflow-control*"),
+    read("parse",status),read("campaign",status),
   ]));
   return rows.flat()
     .map(rowJob)
-    .filter((job)=>job.type==="parse"||(job.type==="campaign"&&job.idempotencyKey.startsWith("workflow-control:")))
-    .sort((a,b)=>a.updatedAt.localeCompare(b.updatedAt))
+    .sort((a,b)=>a.updatedAt.localeCompare(b.updatedAt)||a.id.localeCompare(b.id))
     .slice(0,bounded);
+}
+
+export async function probeServerActiveJobPage(){
+  return probeActiveJobPage(createRestClient().request);
 }
 
 export async function getServerJobByIdempotencyKey(idempotencyKey:string){

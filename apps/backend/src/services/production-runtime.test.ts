@@ -429,6 +429,7 @@ describe("server Mission revision CAS",()=>{
     vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
       const url=String(input);
       expect(url).not.toContain("status=in.");
+      if(url.includes("&or="))return new Response("[]",{status:200});
       if(!url.includes("status=eq.running"))return new Response("[]",{status:200});
       if(url.includes("type=eq.parse"))return new Response(JSON.stringify([jobRow(parse)]),{status:200});
       if(url.includes("type=eq.campaign&idempotency_key=like.workflow-control*")){
@@ -437,7 +438,32 @@ describe("server Mission revision CAS",()=>{
       return new Response("unexpected query",{status:500});
     }));
     expect((await listServerActiveJobs(2)).map((job)=>job.id)).toEqual(["parse-1","control-1"]);
-    expect(fetch).toHaveBeenCalledTimes(6);
+    expect(fetch).toHaveBeenCalledTimes(8);
+  });
+
+  it("fills an active Job scan across one-row server pages",async()=>{
+    const jobs=[
+      EvolutionJobSchema.parse({...baseJob,id:"parse-a",type:"parse",idempotencyKey:"parse-a"}),
+      EvolutionJobSchema.parse({...baseJob,id:"parse-b",type:"parse",idempotencyKey:"parse-b"}),
+      EvolutionJobSchema.parse({...baseJob,id:"control-c",idempotencyKey:"workflow-control:c"}),
+    ];
+    const paths:URL[]=[];
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
+      const url=new URL(String(input));
+      paths.push(url);
+      expect(url.searchParams.get("order")).toBe("updated_at.asc,id.asc");
+      if(url.searchParams.get("status")!=="eq.running")return new Response("[]",{status:200});
+      const cursor=url.searchParams.get("or");
+      const next=url.searchParams.get("type")==="eq.parse"
+        ?cursor?.includes("id.gt.\"parse-b\"")?undefined
+          :cursor?.includes("id.gt.\"parse-a\"")?jobs[1]:jobs[0]
+        :cursor?undefined:jobs[2];
+      return new Response(JSON.stringify(next?[jobRow(next)]:[]),{status:200});
+    }));
+    expect((await listServerActiveJobs(3)).map((job)=>job.id))
+      .toEqual(["control-c","parse-a","parse-b"]);
+    expect(paths.filter((path)=>path.searchParams.has("or"))).toHaveLength(3);
+    expect(paths).toHaveLength(9);
   });
 
   it("attributes an active Job read failure to its filter without exposing the response",async()=>{
