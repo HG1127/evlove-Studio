@@ -78,7 +78,15 @@ export async function reconcileArtifactRegistration(runtime:ProductionRuntimePor
   ]);
   if(!mission)throw new ArtifactReconciliationError("mission-missing");
   if(!metadata||!artifact)throw new ArtifactReconciliationError("artifact-missing");
-  if(metadata.missionId!==input.missionId)throw new ArtifactReconciliationError("binding-mismatch");
+  if(metadata.id!==input.artifactId||metadata.missionId!==input.missionId){
+    throw new ArtifactReconciliationError("binding-mismatch");
+  }
+  if(metadata.jobId){
+    const job=await runtime.jobs.get(metadata.jobId);
+    if(!job||job.missionId!==input.missionId){
+      throw new ArtifactReconciliationError("binding-mismatch");
+    }
+  }
   const bytes=await artifact.arrayBuffer();
   const sha256=createHash("sha256").update(new Uint8Array(bytes)).digest("hex");
   if(sha256!==metadata.sha256||bytes.byteLength!==metadata.sizeBytes){

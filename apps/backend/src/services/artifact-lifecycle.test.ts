@@ -16,13 +16,14 @@ const metadata=ArtifactMetadataSchema.parse({
   createdAt:"2026-09-24T00:00:00.000Z",updatedAt:"2026-09-24T00:00:00.000Z",
 });
 
-function runtime(overrides:{sha256?:string;missionId?:string;content?:string}={}){
+function runtime(overrides:{sha256?:string;missionId?:string;artifactId?:string;content?:string;jobMissionId?:string;jobMissing?:boolean}={}){
   return {
     missions:{get:vi.fn(async()=>({id:"mission-1"}))},
+    jobs:{get:vi.fn(async()=>overrides.jobMissing?undefined:{id:"job-1",missionId:overrides.jobMissionId??"mission-1"})},
     artifacts:{
       get:vi.fn(async()=>new Blob([overrides.content??content],{type:"text/plain"})),
       getMetadata:vi.fn(async()=>({...metadata,sha256:overrides.sha256??metadata.sha256,
-        missionId:overrides.missionId??metadata.missionId})),
+        id:overrides.artifactId??metadata.id,missionId:overrides.missionId??metadata.missionId})),
     },
     events:{append:vi.fn(async()=>undefined)},
   } as unknown as ProductionRuntimePorts;
@@ -46,6 +47,7 @@ describe("Artifact registration reconciliation",()=>{
     expect(ports.events.append).toHaveBeenCalledWith(expect.objectContaining({
       id:`artifact-registered:mission-1:artifact-1:${sha256}`,
     }));
+    expect(ports.jobs.get).toHaveBeenCalledWith("job-1");
     expect(appendEvidence).toHaveBeenCalledWith(expect.objectContaining({
       id:`artifact-registration:artifact-1:${sha256}`,artifactRefs:["artifact-1"],
     }));
@@ -58,6 +60,19 @@ describe("Artifact registration reconciliation",()=>{
     await expect(reconcileArtifactRegistration(runtime({content:"changed"}),{
       missionId:"mission-1",artifactId:"artifact-1",
     })).rejects.toMatchObject({reason:"hash-mismatch"});
+    expect(appendEvidence).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {label:"another Artifact ID",overrides:{artifactId:"artifact-2"}},
+    {label:"a missing Job",overrides:{jobMissing:true}},
+    {label:"a Job from another Mission",overrides:{jobMissionId:"mission-2"}},
+  ])("refuses to replay audit records for $label",async({overrides})=>{
+    const ports=runtime(overrides);
+    await expect(reconcileArtifactRegistration(ports,{
+      missionId:"mission-1",artifactId:"artifact-1",
+    })).rejects.toMatchObject({reason:"binding-mismatch"});
+    expect(ports.events.append).not.toHaveBeenCalled();
     expect(appendEvidence).not.toHaveBeenCalled();
   });
 
