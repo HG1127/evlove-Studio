@@ -24,9 +24,10 @@ describe("active Job pages",()=>{
   });
 
   it("probes the production cursor grammar against an empty Mission",async()=>{
-    const request=vi.fn(async(_path:string)=>[]);
+    const paths:string[]=[];
+    const request=vi.fn(async(path:string)=>{paths.push(path);return [];});
     expect(await probeActiveJobPage(request)).toBe(true);
-    const url=new URL("https://example.supabase.co/rest/v1/"+request.mock.calls[0][0]);
+    const url=new URL("https://example.supabase.co/rest/v1/"+paths[0]);
     expect(url.searchParams.get("mission_id")).toBe('eq."health-probe-no-such-mission"');
     expect(url.searchParams.get("or")).toContain('id.gt."health-probe-no-such-job"');
     expect(url.searchParams.get("order")).toBe("updated_at.asc,id.asc");
