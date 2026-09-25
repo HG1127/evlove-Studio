@@ -37,4 +37,19 @@ describe("Job lifecycle",()=>{
     expect(await transitionJob(runtime,"job-1","queued")).toEqual(job);
     expect(transition).not.toHaveBeenCalled();
   });
+
+  it("refuses reconciliation when the observed Job generation, timestamp, or run binding changed",async()=>{
+    const observed=EvolutionJobSchema.parse({...job,idempotencyKey:"workflow-control:job-1",outputRef:"run-1"});
+    const expectation={generation:2,updatedAt:observed.updatedAt,runId:"run-1"};
+    for(const current of [
+      {...observed,generation:3},
+      {...observed,updatedAt:"2026-09-24T00:01:00.000Z"},
+      {...observed,outputRef:"run-2"},
+    ]){
+      const changed={jobs:{get:vi.fn(async()=>EvolutionJobSchema.parse(current))}} as unknown as ProductionRuntimePorts;
+      await expect(transitionJob(changed,"job-1","failed","reconcile",expectation))
+        .rejects.toThrow("Job changed since reconciliation inspection");
+    }
+    expect(transition).not.toHaveBeenCalled();
+  });
 });

@@ -15,7 +15,8 @@ export type JobReconcileIssue="unbound"|"missing-run"|"workflow-failed"|"workflo
 export type JobReconcileDependencies={
   list:(limit:number,missionId?:string)=>Promise<EvolutionJob[]>;
   inspect:(runId:string)=>Promise<RunInspection>;
-  transition:(id:string,status:"completed"|"failed"|"cancelled",detail:string)=>Promise<EvolutionJob>;
+  transition:(id:string,status:"completed"|"failed"|"cancelled",detail:string,
+    expected:{generation:number;updatedAt:string;runId?:string})=>Promise<EvolutionJob>;
 };
 
 type WorkflowRunHandle={exists:Promise<unknown>;status:Promise<unknown>;returnValue:Promise<unknown>};
@@ -35,7 +36,7 @@ export async function inspectWorkflowRun(
 const defaultDependencies:JobReconcileDependencies={
   list:listServerActiveJobs,
   inspect:inspectWorkflowRun,
-  transition:(id,status,detail)=>transitionJob(getServerProductionRuntime(),id,status,detail),
+  transition:(id,status,detail,expected)=>transitionJob(getServerProductionRuntime(),id,status,detail,expected),
 };
 
 function workflowBacked(job:EvolutionJob){
@@ -49,6 +50,7 @@ export async function reconcileWorkflowJobs(raw:unknown,deps:JobReconcileDepende
     jobId:string;generation:number;runId?:string;issue:JobReconcileIssue;
     runStatus?:RunStatus;resultStatus?:string;repaired:boolean;detail?:string;
   }>=[];
+  let repairFailures=0;
   for(const job of jobs){
     if(!workflowBacked(job))continue;
     const ageMs=now.getTime()-Date.parse(job.updatedAt);
@@ -90,18 +92,22 @@ export async function reconcileWorkflowJobs(raw:unknown,deps:JobReconcileDepende
       const status=issue==="workflow-cancelled"?"cancelled":issue==="workflow-result-completed"?"completed":"failed";
       detail=`Workflow reconciliation: ${issue}${runId?` (${runId})`:""}`;
       try{
-        const settled=await deps.transition(job.id,status,detail);
+        const settled=await deps.transition(job.id,status,detail,{
+          generation:job.generation,updatedAt:job.updatedAt,runId,
+        });
         repaired=settled.status===status;
         if(!repaired)detail=`Workflow reconciliation did not settle Job to ${status}`;
-      }catch(error){
-        detail=error instanceof Error?error.message:String(error);
+      }catch{
+        detail="Workflow Job transition unavailable";
       }
+      if(!repaired)repairFailures++;
     }
     results.push({jobId:job.id,generation:job.generation,runId,issue,runStatus,resultStatus,repaired,
       detail:detail??resultError});
   }
   return {checkedAt:now.toISOString(),inspected:jobs.length,
     inspectionFailures:results.filter((item)=>item.issue==="inspection-failed").length,
+    repairFailures,
     issues:results.filter((item)=>item.issue!=="healthy"),
     repaired:results.filter((item)=>item.repaired).length};
 }

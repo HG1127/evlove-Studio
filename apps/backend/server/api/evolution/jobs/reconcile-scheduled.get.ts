@@ -39,5 +39,9 @@ export default defineEventHandler(async(event)=>{
     console.error("Scheduled Job reconciliation had inspection failures",{failed:jobs.inspectionFailures});
     throw createError({statusCode:503,statusMessage:"Scheduled Job reconciliation had inspection failures"});
   }
+  if(jobs.repairFailures){
+    console.error("Scheduled Job reconciliation had repair failures",{failed:jobs.repairFailures});
+    throw createError({statusCode:503,statusMessage:"Scheduled Job reconciliation had repair failures"});
+  }
   return {jobs,artifactBlobs};
 });

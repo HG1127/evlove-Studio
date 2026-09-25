@@ -1,5 +1,6 @@
 import {createEvolutionEvent,EvolutionJobSchema,type EvolutionJobStatus,type ProductionRuntimePorts} from "@evolution/contracts";
 import {transitionServerJobWithEvent} from "./production-runtime";
+import {workflowRunIdForJob} from "./workflow-run-control";
 
 const terminalStatuses=new Set<EvolutionJobStatus>(["completed","partial","failed","cancelled"]);
 const allowedTransitions:Record<EvolutionJobStatus,readonly EvolutionJobStatus[]>={
@@ -18,9 +19,15 @@ export async function transitionJob(
   jobId:string,
   nextStatus:EvolutionJobStatus,
   detail?:string,
+  expected?:{generation:number;updatedAt:string;runId?:string},
 ){
   const current=await runtime.jobs.get(jobId);
   if(!current)throw new Error(`Job not found: ${jobId}`);
+  if(expected&&(current.generation!==expected.generation
+    ||current.updatedAt!==expected.updatedAt
+    ||workflowRunIdForJob(current)!==expected.runId)){
+    throw new Error("Job changed since reconciliation inspection");
+  }
   if(!isAllowedJobTransition(current.status,nextStatus)){
     throw new Error(`Invalid Job transition: ${current.status} -> ${nextStatus}`);
   }

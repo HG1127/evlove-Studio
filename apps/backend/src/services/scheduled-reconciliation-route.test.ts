@@ -33,11 +33,20 @@ describe("scheduled reconciliation inspection failures",()=>{
   });
 
   it("finishes the bounded Artifact scan but reports unresolved Workflow inspection",async()=>{
-    jobs.mockResolvedValue({inspected:1,inspectionFailures:1,repaired:0,
+    jobs.mockResolvedValue({inspected:1,inspectionFailures:1,repairFailures:0,repaired:0,
       issues:[{jobId:"control-1",issue:"inspection-failed",repaired:false}]});
     const log=vi.spyOn(console,"error").mockImplementation(()=>undefined);
     await expect(route(event())).rejects.toMatchObject({status:503});
     expect(blobs).toHaveBeenCalledWith({limit:50,minAgeSeconds:900,dryRun:false});
     expect(log).toHaveBeenCalledWith("Scheduled Job reconciliation had inspection failures",{failed:1});
+  });
+
+  it("reports a failed Job repair after completing the bounded Artifact scan",async()=>{
+    jobs.mockResolvedValue({inspected:1,inspectionFailures:0,repairFailures:1,repaired:0,
+      issues:[{jobId:"control-1",issue:"missing-run",repaired:false}]});
+    const log=vi.spyOn(console,"error").mockImplementation(()=>undefined);
+    await expect(route(event())).rejects.toMatchObject({status:503});
+    expect(blobs).toHaveBeenCalledWith({limit:50,minAgeSeconds:900,dryRun:false});
+    expect(log).toHaveBeenCalledWith("Scheduled Job reconciliation had repair failures",{failed:1});
   });
 });

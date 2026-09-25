@@ -37,7 +37,8 @@ describe("Workflow Job reconciliation",()=>{
     const ports=deps(vi.fn(async()=>({exists:false})));
     const report=await reconcileWorkflowJobs({repair:true},ports,now);
     expect(report.repaired).toBe(1);
-    expect(ports.transition).toHaveBeenCalledWith("control-1","failed",expect.stringContaining("missing-run"));
+    expect(ports.transition).toHaveBeenCalledWith("control-1","failed",expect.stringContaining("missing-run"),
+      {generation:1,updatedAt:base.updatedAt,runId:"run-1"});
   });
 
   it("continues past one failed run inspection without guessing its status or blocking later repairs",async()=>{
@@ -55,7 +56,8 @@ describe("Workflow Job reconciliation",()=>{
       {jobId:"control-2",runId:"run-2",issue:"missing-run",repaired:true},
     ]);
     expect(ports.transition).toHaveBeenCalledOnce();
-    expect(ports.transition).toHaveBeenCalledWith("control-2","failed",expect.stringContaining("missing-run"));
+    expect(ports.transition).toHaveBeenCalledWith("control-2","failed",expect.stringContaining("missing-run"),
+      {generation:1,updatedAt:second.updatedAt,runId:"run-2"});
     expect(JSON.stringify(report)).not.toContain("private upstream diagnostic");
   });
 
@@ -73,7 +75,8 @@ describe("Workflow Job reconciliation",()=>{
     })));
     const report=await reconcileWorkflowJobs({repair:true},ports,now);
     expect(report.issues).toMatchObject([{issue:"workflow-result-completed",resultStatus:"completed",repaired:true}]);
-    expect(ports.transition).toHaveBeenCalledWith("control-1","completed",expect.stringContaining("workflow-result-completed"));
+    expect(ports.transition).toHaveBeenCalledWith("control-1","completed",expect.stringContaining("workflow-result-completed"),
+      {generation:1,updatedAt:base.updatedAt,runId:"run-1"});
   });
 
   it("keeps a completed run unresolved when its result is missing, mismatched, or nonterminal",async()=>{
@@ -96,16 +99,34 @@ describe("Workflow Job reconciliation",()=>{
     })));
     const report=await reconcileWorkflowJobs({repair:true},ports,now);
     expect(report.issues).toMatchObject([{issue:"workflow-result-failed",resultStatus:"failed",repaired:true}]);
-    expect(ports.transition).toHaveBeenCalledWith("control-1","failed",expect.stringContaining("workflow-result-failed"));
+    expect(ports.transition).toHaveBeenCalledWith("control-1","failed",expect.stringContaining("workflow-result-failed"),
+      {generation:1,updatedAt:base.updatedAt,runId:"run-1"});
   });
 
   it("does not claim repair when the persisted transition returns another state",async()=>{
     const ports=deps(vi.fn(async()=>({exists:false})));
     ports.transition=vi.fn(async()=>({...base,status:"running" as const}));
     const report=await reconcileWorkflowJobs({repair:true},ports,now);
-    expect(report.repaired).toBe(0);
+    expect(report).toMatchObject({repaired:0,repairFailures:1});
     expect(report.issues).toMatchObject([{issue:"missing-run",repaired:false,
       detail:"Workflow reconciliation did not settle Job to failed"}]);
+  });
+
+  it("continues after a failed Job transition and never leaks its upstream error",async()=>{
+    const second=EvolutionJobSchema.parse({...base,id:"control-2",outputRef:"run-2"});
+    const ports=deps(vi.fn(async()=>({exists:false})));
+    ports.list=vi.fn(async()=>[base,second]);
+    ports.transition=vi.fn(async(id,status)=>{
+      if(id==="control-1")throw new Error("private database diagnostic");
+      return {...second,status};
+    });
+    const report=await reconcileWorkflowJobs({repair:true},ports,now);
+    expect(report).toMatchObject({inspected:2,repairFailures:1,repaired:1});
+    expect(report.issues).toMatchObject([
+      {jobId:"control-1",issue:"missing-run",repaired:false,detail:"Workflow Job transition unavailable"},
+      {jobId:"control-2",issue:"missing-run",repaired:true},
+    ]);
+    expect(JSON.stringify(report)).not.toContain("private database diagnostic");
   });
 
   it("leaves recently updated Jobs alone",async()=>{
