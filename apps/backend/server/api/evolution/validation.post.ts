@@ -4,7 +4,7 @@ import {getServerProductionRuntime} from "../../../src/services/production-runti
 import {registerArtifactEvidence} from "../../../src/services/evidence-runtime";
 import {EventEvidenceIdentityConflictError} from "../../../src/services/evidence-ledger";
 import {EventEvidenceMirrorError,EventIdempotencyConflictError} from "../../../src/services/event-persistence";
-import {ValidationIdempotencyConflictError,validateArtifact} from "../../../src/services/validation-runtime";
+import {ValidationIdempotencyConflictError,ValidationPersistenceUncertainError,validateArtifact} from "../../../src/services/validation-runtime";
 import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 
 export default defineEventHandler(async(event)=>{
@@ -26,6 +26,10 @@ export default defineEventHandler(async(event)=>{
         ?"Validation Event persisted; Evidence mirror failed. Retry with the same idempotency key."
         :"Validation Event persisted; Evidence mirror failed. Reconcile the Validation ID.",
       data:{validationId:error.eventId.replace(/^validation-result:/,"")}});
+    }
+    if(error instanceof ValidationPersistenceUncertainError){
+      throw createError({statusCode:503,statusMessage:"Validation Event append outcome is unknown. Check the Validation ID before retrying.",
+        data:{validationId:error.validationId}});
     }
     throw error;
   }

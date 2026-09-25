@@ -19,7 +19,7 @@ vi.mock("./evidence-runtime",()=>({registerArtifactEvidence:appendValidationEvid
 
 import {
   canAcceptCheckpoint,getValidation,reconcileValidationEvidence,ValidationEvidenceAppendError,
-  ValidationIdempotencyConflictError,validateArtifact,
+  ValidationIdempotencyConflictError,ValidationPersistenceUncertainError,validateArtifact,
 } from "./validation-runtime";
 
 const text="the exact accepted artifact";
@@ -181,6 +181,47 @@ describe("durable Artifact validation",()=>{
     target.production.events.append=vi.fn(async()=>{throw new EventIdempotencyConflictError(`validation-result:${first.id}`);});
     await expect(validateArtifact(target.production,{...input,checks:{minBytes:2}}))
       .rejects.toBeInstanceOf(ValidationIdempotencyConflictError);
+  });
+
+  it("recovers an unkeyed Validation when Event append committed but its response was lost",async()=>{
+    const target=runtime();
+    const append=target.production.events.append;
+    target.production.events.append=vi.fn(async(event)=>{
+      await append(event);
+      throw new Error("Event insert response was lost");
+    });
+    const validation=await validateArtifact(target.production,{
+      missionId:"mission-1",artifactId:"artifact-1",checks:{minBytes:1},
+    });
+    expect(validation.status).toBe("passed");
+    expect(records.get(validation.id)?.result).toEqual(validation);
+    expect(mirror).toHaveBeenCalledWith(records.get(validation.id)?.event);
+    expect(target.events).toHaveLength(1);
+  });
+
+  it("returns the attempted Validation ID when Event persistence cannot be confirmed",async()=>{
+    const target=runtime();
+    target.production.events.append=vi.fn(async()=>{throw new Error("database timeout");});
+    const error=await validateArtifact(target.production,{
+      missionId:"mission-1",artifactId:"artifact-1",checks:{minBytes:1},
+    }).catch((cause:unknown)=>cause);
+    expect(error).toBeInstanceOf(ValidationPersistenceUncertainError);
+    if(!(error instanceof ValidationPersistenceUncertainError))throw error;
+    expect(error.validationId).toMatch(/^validation:/);
+    expect(records.size).toBe(0);
+    expect(mirror).not.toHaveBeenCalled();
+  });
+
+  it("preserves the attempted ID when the Event readback also fails",async()=>{
+    const target=runtime();
+    target.production.events.append=vi.fn(async()=>{throw new Error("insert response was lost");});
+    readRecord.mockRejectedValueOnce(new Error("readback unavailable"));
+    const error=await validateArtifact(target.production,{
+      missionId:"mission-1",artifactId:"artifact-1",checks:{minBytes:1},
+    }).catch((cause:unknown)=>cause);
+    expect(error).toBeInstanceOf(ValidationPersistenceUncertainError);
+    if(!(error instanceof ValidationPersistenceUncertainError))throw error;
+    expect(error.validationId).toMatch(/^validation:/);
   });
 
   it("reconciles signed Evidence for a persisted validation without an idempotency key",async()=>{

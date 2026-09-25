@@ -31,6 +31,13 @@ export class ValidationEvidenceAppendError extends Error{
   }
 }
 
+export class ValidationPersistenceUncertainError extends Error{
+  constructor(readonly validationId:string,cause:unknown){
+    super(`Validation ${validationId} Event append outcome is unknown`,{cause});
+    this.name="ValidationPersistenceUncertainError";
+  }
+}
+
 async function jobBelongsToMission(runtime:ProductionRuntimePorts,jobId:string,missionId:string){
   const job=await runtime.jobs.get(jobId);
   return job?.id===jobId&&job.missionId===missionId;
@@ -152,11 +159,18 @@ export async function validateArtifact(runtime:ProductionRuntimePorts,input:unkn
   });
   try{await runtime.events.append(event);}
   catch(error){
-    if(error instanceof EventIdempotencyConflictError&&request.idempotencyKey){
+    if(error instanceof EventEvidenceMirrorError||error instanceof EventEvidenceIdentityConflictError)throw error;
+    try{
       const canonical=await getMatchingValidation(id,requestFingerprint,true);
       if(canonical)return canonical;
+    }catch(readError){
+      if(readError instanceof ValidationIdempotencyConflictError
+        ||readError instanceof EventEvidenceMirrorError
+        ||readError instanceof EventEvidenceIdentityConflictError)throw readError;
+      throw new ValidationPersistenceUncertainError(id,readError);
     }
-    throw error;
+    if(error instanceof EventIdempotencyConflictError)throw error;
+    throw new ValidationPersistenceUncertainError(id,error);
   }
   if(request.idempotencyKey){
     const canonical=await getMatchingValidation(id,requestFingerprint,false);

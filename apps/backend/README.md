@@ -48,6 +48,8 @@ At least one supported executable check is required to produce `passed`; failed 
 
 If an unkeyed POST response is lost, `GET /api/evolution/validation?missionId=...&artifactId=...` scans up to 50 authoritative Events per page and returns matching durable Validation results. Pass `nextCursor` as `afterId` until a page scans zero Events; a page with no matches may still have a cursor. This read requires `data.read`. Once the Validation ID is found, `POST /api/evolution/validation/:id/evidence-reconcile` can complete its signed Event and Validation Evidence without rerunning the Artifact checks; it requires `mission.execute`. Prefer an idempotency key for new Validation requests.
 
+If Event append returns an ambiguous error, the server reads back the exact Validation Event and completes its Event Evidence mirror when the record exists. Otherwise HTTP 503 includes `data.validationId`; check `GET /api/evolution/validation/:id` before retrying. An unkeyed request should not be blindly repeated while its original database commit may still be in flight.
+
 Checkpoint validation takes `missionId`, `checkpointId`, `artifactId`, and a persisted `validationId`; the API checks all four bindings before writing acceptance/rejection evidence. A client-supplied `validationPassed` boolean is not accepted as validation evidence.
 
 ## Job, Checkpoint, and Harness lifecycle
