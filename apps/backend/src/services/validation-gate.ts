@@ -1,5 +1,7 @@
-import {createEvolutionEvent,type ProductionRuntimePorts} from "@evolution/contracts";
-import {appendEvidenceLedger} from "./evidence-ledger";
+import {createEvolutionEvent,type EvolutionEvent,type ProductionRuntimePorts} from "@evolution/contracts";
+import {appendEvidenceLedger,canonicalEvidenceJson,EventEvidenceIdentityConflictError,mirrorEvolutionEventToEvidenceLedger} from "./evidence-ledger";
+import {EventEvidenceMirrorError,EventIdempotencyConflictError} from "./event-persistence";
+import {getServerEventById} from "./production-runtime";
 
 export type ValidationGateResult={
   checkpointId:string;
@@ -13,6 +15,24 @@ export class CheckpointBindingError extends Error{
   constructor(){super("Checkpoint does not match the current persisted Mission checkpoint");this.name="CheckpointBindingError";}
 }
 
+function sameCheckpointValidationEvent(a:EvolutionEvent,b:EvolutionEvent){
+  return canonicalEvidenceJson({...a,at:undefined})===canonicalEvidenceJson({...b,at:undefined});
+}
+
+async function appendCheckpointValidationEvent(runtime:ProductionRuntimePorts,event:EvolutionEvent){
+  try{await runtime.events.append(event);}
+  catch(error){
+    if(!(error instanceof EventIdempotencyConflictError))throw error;
+    const persisted=await getServerEventById(event.id);
+    if(!persisted||!sameCheckpointValidationEvent(event,persisted))throw error;
+    try{await mirrorEvolutionEventToEvidenceLedger(persisted);}
+    catch(mirrorError){
+      if(mirrorError instanceof EventEvidenceIdentityConflictError)throw mirrorError;
+      throw new EventEvidenceMirrorError(persisted.id,mirrorError);
+    }
+  }
+}
+
 export async function evaluateCheckpointValidation(
   runtime:ProductionRuntimePorts,
   input:{checkpointId:string;missionId:string;artifactId:string;artifactSha256:string;validationId:string;status:"passed"|"failed"|"partial"|"pending"},
@@ -24,7 +44,7 @@ export async function evaluateCheckpointValidation(
   const accepted=input.status==="passed"&&Boolean(input.artifactSha256);
   const reason=accepted?"validation passed":"validation not accepted";
 
-  await runtime.events.append(createEvolutionEvent({
+  await appendCheckpointValidationEvent(runtime,createEvolutionEvent({
     id:`checkpoint-validation:${input.validationId}`,
     missionId:input.missionId,
     checkpointId:input.checkpointId,

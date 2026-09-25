@@ -16,7 +16,7 @@ import { getServerSupabaseConfig } from "../server-env";
 import {dataPlaneFetch} from "./data-plane-http";
 import {supabaseRestAuthHeaders} from "./supabase-rest-auth";
 import { mirrorEvolutionEventToEvidenceLedger } from "./evidence-ledger";
-import {appendServerEvent,probeServerEventReadback,rowEvent} from "./event-persistence";
+import {appendServerEvent,probeServerEventReadback,readServerEventById,rowEvent} from "./event-persistence";
 import {probeEventEvidencePage,readEventEvidencePage} from "./event-evidence-pages";
 import {readServerValidationRecord} from "./validation-event-record";
 import {probeServerEventPage as probeEventPage,readServerEventRows} from "./event-pages";
@@ -280,6 +280,11 @@ export async function getServerMissionEnvelope(id:string){
 export async function getServerValidationRecord(id:string){
   const {request}=createRestClient();
   return readServerValidationRecord(request,id);
+}
+
+export async function getServerEventById(id:string){
+  const {request}=createRestClient();
+  return readServerEventById(request,id);
 }
 
 export async function getServerValidationResult(id:string){

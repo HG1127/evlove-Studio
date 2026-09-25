@@ -3,6 +3,8 @@ import {CheckpointValidateRequestSchema} from "@evolution/contracts";
 import {getServerProductionRuntime} from "../../../../src/services/production-runtime";
 import {getValidation} from "../../../../src/services/validation-runtime";
 import {CheckpointBindingError,evaluateCheckpointValidation} from "../../../../src/services/validation-gate";
+import {EventEvidenceIdentityConflictError} from "../../../../src/services/evidence-ledger";
+import {EventEvidenceMirrorError,EventIdempotencyConflictError} from "../../../../src/services/event-persistence";
 import {requireGovernedEvolutionPermission} from "../../../../src/services/security-policy";
 
 export default defineEventHandler(async(event)=>{
@@ -23,6 +25,12 @@ export default defineEventHandler(async(event)=>{
     });
   }catch(error){
     if(error instanceof CheckpointBindingError)throw createError({statusCode:409,statusMessage:error.message});
+    if(error instanceof EventIdempotencyConflictError||error instanceof EventEvidenceIdentityConflictError){
+      throw createError({statusCode:409,statusMessage:"Checkpoint Event or Evidence ID already exists with different content"});
+    }
+    if(error instanceof EventEvidenceMirrorError){
+      throw createError({statusCode:503,statusMessage:"Checkpoint Event persisted; Evidence mirror failed. Retry the same validation ID."});
+    }
     throw error;
   }
 });
