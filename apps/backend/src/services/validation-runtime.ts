@@ -70,12 +70,18 @@ export async function validateArtifact(runtime:ProductionRuntimePorts,input:unkn
     if(!metadata?.missionId){
       status="unverified";
       reason="Artifact is not bound to a Mission in durable metadata";
+    }else if(metadata.id!==request.artifactId){
+      status="failed";
+      reason="Artifact metadata is bound to a different Artifact ID";
     }else if(metadata.missionId!==request.missionId){
       status="failed";
       reason="Artifact is registered to a different Mission";
-    }else if(request.jobId&&metadata.jobId&&metadata.jobId!==request.jobId){
+    }else if(request.jobId&&metadata.jobId!==request.jobId){
       status="failed";
-      reason="Artifact is registered to a different Job";
+      reason="Artifact is not registered to the requested Job";
+    }else if(metadata.sizeBytes!==bytes.byteLength){
+      status="failed";
+      reason="Stored Artifact bytes do not match the registered size";
     }else if(metadata?.sha256&&metadata.sha256!==artifactSha256){
       status="failed";
       reason="Stored Artifact bytes do not match the registered SHA-256";

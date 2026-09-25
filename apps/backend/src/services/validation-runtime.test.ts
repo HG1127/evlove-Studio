@@ -91,6 +91,25 @@ describe("durable Artifact validation",()=>{
     expect(wrongMission.reason).toContain("different Mission");
   });
 
+  it.each([
+    {name:"another Artifact ID",metadata:{id:"artifact-2"},reason:"different Artifact ID"},
+    {name:"missing Job binding",metadata:{jobId:undefined},reason:"requested Job"},
+    {name:"another Job",metadata:{jobId:"job-2"},reason:"requested Job"},
+    {name:"wrong registered size",metadata:{sizeBytes:text.length+1},reason:"registered size"},
+  ])("does not pass validation with $name",async({metadata,reason})=>{
+    const result=await validateArtifact(runtime({metadata:{
+      id:"artifact-1",schemaVersion:"artifact-v1",missionId:"mission-1",jobId:"job-1",
+      bucket:"evolution-artifacts",objectPath:"artifacts/artifact-1",mimeType:"text/plain",
+      sizeBytes:text.length,sha256,createdAt:"2026-09-24T00:00:00.000Z",
+      updatedAt:"2026-09-24T00:00:00.000Z",...metadata,
+    }}).production,{
+      missionId:"mission-1",jobId:"job-1",artifactId:"artifact-1",checks:{expectedSha256:sha256},
+    });
+    expect(result.status).toBe("failed");
+    expect(result.reason).toContain(reason);
+    expect(canAcceptCheckpoint(result)).toBe(false);
+  });
+
   it("reuses an idempotent result and rejects key reuse with changed inputs",async()=>{
     const target=runtime();
     const input={missionId:"mission-1",artifactId:"artifact-1",idempotencyKey:"retry-1",checks:{minBytes:1}};
