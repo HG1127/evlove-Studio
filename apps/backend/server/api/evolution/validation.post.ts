@@ -32,8 +32,8 @@ export default defineEventHandler(async(event)=>{
   const evidence=await registerArtifactEvidence({
     missionId:body.missionId,
     artifactId:body.artifactId,
-    jobId:body.jobId,
-    checkpointId:body.checkpointId,
+    jobId:validation.jobId,
+    checkpointId:validation.checkpointId,
     kind:"validation",
     payload:{
       validationId:validation.id,

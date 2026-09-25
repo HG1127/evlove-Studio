@@ -23,6 +23,11 @@ export class ValidationIdempotencyConflictError extends Error{
   constructor(){super("Validation idempotency key was already used with a different request");this.name="ValidationIdempotencyConflictError";}
 }
 
+async function jobBelongsToMission(runtime:ProductionRuntimePorts,jobId:string,missionId:string){
+  const job=await runtime.jobs.get(jobId);
+  return job?.id===jobId&&job.missionId===missionId;
+}
+
 async function getMatchingValidation(id:string,requestFingerprint:string,completeMirror:boolean){
   const record=await getServerValidationRecord(id);
   if(!record)return undefined;
@@ -57,6 +62,7 @@ export async function validateArtifact(runtime:ProductionRuntimePorts,input:unkn
   let status:"passed"|"failed"|"unverified";
   let reason:string;
   let artifactSha256:string|undefined;
+  const boundJobId=request.jobId??metadata?.jobId;
 
   if(!mission){
     status="failed";
@@ -79,6 +85,9 @@ export async function validateArtifact(runtime:ProductionRuntimePorts,input:unkn
     }else if(request.jobId&&metadata.jobId!==request.jobId){
       status="failed";
       reason="Artifact is not registered to the requested Job";
+    }else if(boundJobId&&!(await jobBelongsToMission(runtime,boundJobId,request.missionId))){
+      status="failed";
+      reason="Artifact Job is missing or belongs to a different Mission";
     }else if(metadata.sizeBytes!==bytes.byteLength){
       status="failed";
       reason="Stored Artifact bytes do not match the registered size";
@@ -103,13 +112,13 @@ export async function validateArtifact(runtime:ProductionRuntimePorts,input:unkn
 
   const result=ValidationResultSchema.parse({
     id,schemaVersion:"validation-v1",missionId:request.missionId,artifactId:request.artifactId,
-    artifactSha256,requestFingerprint,jobId:request.jobId,checkpointId:request.checkpointId,
+    artifactSha256,requestFingerprint,jobId:boundJobId,checkpointId:request.checkpointId,
     status,checks,reason,createdAt,
   });
   const type=status==="passed"?"ValidationPassed":status==="failed"?"ValidationFailed":"ValidationUnverified";
   const event=createEvolutionEvent({
     id:`validation-result:${id}`,
-    missionId:request.missionId,jobId:request.jobId,checkpointId:request.checkpointId,
+    missionId:request.missionId,jobId:result.jobId,checkpointId:request.checkpointId,
     type,source:"backend-validation-runtime",
     payload:{validationId:id,validation:result},
   });

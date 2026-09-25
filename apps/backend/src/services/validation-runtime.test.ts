@@ -21,11 +21,11 @@ const text="the exact accepted artifact";
 const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(text));
 const sha256=[...new Uint8Array(digest)].map((byte)=>byte.toString(16).padStart(2,"0")).join("");
 
-function runtime(args:{artifact?:Blob;metadata?:Record<string,unknown>}={}){
+function runtime(args:{artifact?:Blob;metadata?:Record<string,unknown>;job?:Record<string,unknown>|null}={}){
   const events:unknown[]=[];
   const production={
     missions:{get:async(id:string)=>id==="mission-1"?{id}:undefined},
-    jobs:{},
+    jobs:{get:async()=>args.job===null?undefined:args.job??{id:"job-1",missionId:"mission-1"}},
     artifacts:{
       get:async(id:string)=>id==="artifact-1"?args.artifact??new Blob([text],{type:"text/plain"}):undefined,
       getMetadata:async()=>args.metadata??{
@@ -65,6 +65,15 @@ describe("durable Artifact validation",()=>{
     expect(canAcceptCheckpoint(result)).toBe(true);
     expect(await getValidation(result.id)).toEqual(result);
     expect(target.events).toHaveLength(1);
+  });
+
+  it("retains the durable Job binding when the request omits jobId",async()=>{
+    const target=runtime();
+    const result=await validateArtifact(target.production,{
+      missionId:"mission-1",artifactId:"artifact-1",checks:{expectedSha256:sha256},
+    });
+    expect(result).toMatchObject({status:"passed",jobId:"job-1"});
+    expect(target.events[0]).toMatchObject({jobId:"job-1"});
   });
 
   it("keeps missing checks unverified and prevents checkpoint acceptance",async()=>{
@@ -107,6 +116,19 @@ describe("durable Artifact validation",()=>{
     });
     expect(result.status).toBe("failed");
     expect(result.reason).toContain(reason);
+    expect(canAcceptCheckpoint(result)).toBe(false);
+  });
+
+  it.each([
+    {name:"missing Job",job:null},
+    {name:"Job from another Mission",job:{id:"job-1",missionId:"mission-2"}},
+    {name:"different Job identity",job:{id:"job-2",missionId:"mission-1"}},
+  ])("does not pass an Artifact bound to $name",async({job})=>{
+    const result=await validateArtifact(runtime({job}).production,{
+      missionId:"mission-1",artifactId:"artifact-1",checks:{expectedSha256:sha256},
+    });
+    expect(result.status).toBe("failed");
+    expect(result.reason).toContain("Job is missing or belongs to a different Mission");
     expect(canAcceptCheckpoint(result)).toBe(false);
   });
 
