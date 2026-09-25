@@ -4,7 +4,7 @@ import {createEvolutionEvent} from "@evolution/contracts";
 import {EventEvidenceIdentityConflictError} from "./evidence-ledger";
 import {
   appendServerEvent,eventRow,EventEvidenceMirrorError,EventIdempotencyConflictError,
-  probeServerEventReadback,
+  probeServerEventReadback,readServerEventById,
 } from "./event-persistence";
 
 const event=createEvolutionEvent({
@@ -79,5 +79,10 @@ describe("direct Event persistence",()=>{
     expect(query.get("select")).toBe("*");
     expect(query.get("id")).toBe('eq."health-probe:no-such-event"');
     expect(query.get("limit")).toBe("1");
+  });
+
+  it("rejects an exact-ID lookup that returns another Event",async()=>{
+    await expect(readServerEventById(async()=>[eventRow(event)],"different-id"))
+      .rejects.toThrow("another Event");
   });
 });

@@ -2,6 +2,8 @@ import {createError,defineEventHandler,readBody} from "nitro/h3";
 import {ValidationRequestSchema} from "@evolution/contracts";
 import {getServerProductionRuntime} from "../../../src/services/production-runtime";
 import {registerArtifactEvidence} from "../../../src/services/evidence-runtime";
+import {EventEvidenceIdentityConflictError} from "../../../src/services/evidence-ledger";
+import {EventEvidenceMirrorError,EventIdempotencyConflictError} from "../../../src/services/event-persistence";
 import {ValidationIdempotencyConflictError,validateArtifact} from "../../../src/services/validation-runtime";
 import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 
@@ -16,6 +18,14 @@ export default defineEventHandler(async(event)=>{
     validation=await validateArtifact(runtime,body);
   }catch(error){
     if(error instanceof ValidationIdempotencyConflictError)throw createError({statusCode:409,statusMessage:error.message});
+    if(error instanceof EventEvidenceIdentityConflictError||error instanceof EventIdempotencyConflictError){
+      throw createError({statusCode:409,statusMessage:"Validation Event or Evidence ID already exists with different content"});
+    }
+    if(error instanceof EventEvidenceMirrorError){
+      throw createError({statusCode:503,statusMessage:body.idempotencyKey
+        ?"Validation Event persisted; Evidence mirror failed. Retry with the same idempotency key."
+        :"Validation Event persisted; Evidence mirror failed. Run Event Evidence reconciliation."});
+    }
     throw error;
   }
 

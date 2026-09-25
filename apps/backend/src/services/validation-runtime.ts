@@ -6,7 +6,9 @@ import {
   type ArtifactValidationChecks,
   type ProductionRuntimePorts,
 } from "@evolution/contracts";
-import {getServerValidationResult} from "./production-runtime";
+import {EventEvidenceIdentityConflictError,mirrorEvolutionEventToEvidenceLedger} from "./evidence-ledger";
+import {EventEvidenceMirrorError,EventIdempotencyConflictError} from "./event-persistence";
+import {getServerValidationRecord,getServerValidationResult} from "./production-runtime";
 
 function sha256(bytes:ArrayBuffer){
   return createHash("sha256").update(new Uint8Array(bytes)).digest("hex");
@@ -21,6 +23,20 @@ export class ValidationIdempotencyConflictError extends Error{
   constructor(){super("Validation idempotency key was already used with a different request");this.name="ValidationIdempotencyConflictError";}
 }
 
+async function getMatchingValidation(id:string,requestFingerprint:string,completeMirror:boolean){
+  const record=await getServerValidationRecord(id);
+  if(!record)return undefined;
+  if(record.result.requestFingerprint!==requestFingerprint)throw new ValidationIdempotencyConflictError();
+  if(completeMirror){
+    try{await mirrorEvolutionEventToEvidenceLedger(record.event);}
+    catch(error){
+      if(error instanceof EventEvidenceIdentityConflictError)throw error;
+      throw new EventEvidenceMirrorError(record.event.id,error);
+    }
+  }
+  return record.result;
+}
+
 export async function validateArtifact(runtime:ProductionRuntimePorts,input:unknown){
   const request=ValidationRequestSchema.parse(input);
   const requestFingerprint=fingerprint({...request,idempotencyKey:undefined});
@@ -29,12 +45,8 @@ export async function validateArtifact(runtime:ProductionRuntimePorts,input:unkn
     ?`validation:${fingerprint(`${request.missionId}:${request.idempotencyKey}`)}`
     :`validation:${randomUUID()}`;
   if(request.idempotencyKey){
-    const existing=await getServerValidationResult(id);
-    if(existing){
-      const result=ValidationResultSchema.parse(existing);
-      if(result.requestFingerprint!==requestFingerprint)throw new ValidationIdempotencyConflictError();
-      return result;
-    }
+    const existing=await getMatchingValidation(id,requestFingerprint,true);
+    if(existing)return existing;
   }
   const [mission,artifact,metadata]=await Promise.all([
     runtime.missions.get(request.missionId),
@@ -89,19 +101,23 @@ export async function validateArtifact(runtime:ProductionRuntimePorts,input:unkn
     status,checks,reason,createdAt,
   });
   const type=status==="passed"?"ValidationPassed":status==="failed"?"ValidationFailed":"ValidationUnverified";
-  await runtime.events.append(createEvolutionEvent({
+  const event=createEvolutionEvent({
     id:`validation-result:${id}`,
     missionId:request.missionId,jobId:request.jobId,checkpointId:request.checkpointId,
     type,source:"backend-validation-runtime",
     payload:{validationId:id,validation:result},
-  }));
-  if(request.idempotencyKey){
-    const persisted=await getServerValidationResult(id);
-    if(persisted){
-      const canonical=ValidationResultSchema.parse(persisted);
-      if(canonical.requestFingerprint!==requestFingerprint)throw new ValidationIdempotencyConflictError();
-      return canonical;
+  });
+  try{await runtime.events.append(event);}
+  catch(error){
+    if(error instanceof EventIdempotencyConflictError&&request.idempotencyKey){
+      const canonical=await getMatchingValidation(id,requestFingerprint,true);
+      if(canonical)return canonical;
     }
+    throw error;
+  }
+  if(request.idempotencyKey){
+    const canonical=await getMatchingValidation(id,requestFingerprint,false);
+    if(canonical)return canonical;
   }
   return result;
 }

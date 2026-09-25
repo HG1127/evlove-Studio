@@ -1,10 +1,18 @@
 // @vitest-environment node
 import {beforeEach,describe,expect,it,vi} from "vitest";
-import type {ProductionRuntimePorts} from "@evolution/contracts";
+import type {EvolutionEvent,ProductionRuntimePorts} from "@evolution/contracts";
+import {EventEvidenceMirrorError,EventIdempotencyConflictError} from "./event-persistence";
 
-const {records}=vi.hoisted(()=>({records:new Map<string,unknown>()}));
+const {records,readRecord,mirror}=vi.hoisted(()=>({
+  records:new Map<string,{event:EvolutionEvent;result:unknown}>(),readRecord:vi.fn(),mirror:vi.fn(),
+}));
 vi.mock("./production-runtime",()=>({
-  getServerValidationResult:async(id:string)=>records.get(id),
+  getServerValidationRecord:readRecord,
+  getServerValidationResult:async(id:string)=>records.get(id)?.result,
+}));
+vi.mock("./evidence-ledger",async(importOriginal)=>({
+  ...await importOriginal<typeof import("./evidence-ledger")>(),
+  mirrorEvolutionEventToEvidenceLedger:mirror,
 }));
 
 import {canAcceptCheckpoint,getValidation,ValidationIdempotencyConflictError,validateArtifact} from "./validation-runtime";
@@ -26,13 +34,24 @@ function runtime(args:{artifact?:Blob;metadata?:Record<string,unknown>}={}){
         sha256,createdAt:"2026-09-24T00:00:00.000Z",updatedAt:"2026-09-24T00:00:00.000Z",
       },
     },
-    events:{append:async(event:unknown)=>{events.push(event);const payload=(event as {payload:{validation?:{id:string}}}).payload;if(payload.validation)records.set(payload.validation.id,payload.validation);},list:async()=>[]},
+    events:{append:async(event:unknown)=>{
+      events.push(event);
+      const value=event as EvolutionEvent;
+      const result=value.payload.validation as {id:string}|undefined;
+      if(result)records.set(result.id,{event:value,result});
+    },list:async()=>[]},
   } as unknown as ProductionRuntimePorts;
   return {production,events};
 }
 
 describe("durable Artifact validation",()=>{
-  beforeEach(()=>records.clear());
+  beforeEach(()=>{
+    records.clear();
+    readRecord.mockReset();
+    readRecord.mockImplementation(async(id:string)=>records.get(id));
+    mirror.mockReset();
+    mirror.mockResolvedValue(undefined);
+  });
 
   it("passes only explicit checks bound to the stored Mission and exact Artifact hash",async()=>{
     const target=runtime();
@@ -79,6 +98,39 @@ describe("durable Artifact validation",()=>{
     const second=await validateArtifact(target.production,input);
     expect(second).toEqual(first);
     expect(target.events).toHaveLength(1);
+    expect(mirror).toHaveBeenCalledWith(records.get(first.id)?.event);
+    await expect(validateArtifact(target.production,{...input,checks:{minBytes:2}}))
+      .rejects.toBeInstanceOf(ValidationIdempotencyConflictError);
+  });
+
+  it("retries the persisted Event Evidence mirror without appending another validation",async()=>{
+    const target=runtime();
+    const input={missionId:"mission-1",artifactId:"artifact-1",idempotencyKey:"mirror-retry",checks:{minBytes:1}};
+    const first=await validateArtifact(target.production,input);
+    mirror.mockRejectedValueOnce(new Error("ledger temporarily unavailable"));
+    await expect(validateArtifact(target.production,input)).rejects.toBeInstanceOf(EventEvidenceMirrorError);
+    expect(await validateArtifact(target.production,input)).toEqual(first);
+    expect(target.events).toHaveLength(1);
+    expect(mirror).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns the canonical result when identical concurrent requests race on the Event ID",async()=>{
+    const target=runtime();
+    const input={missionId:"mission-1",artifactId:"artifact-1",idempotencyKey:"race",checks:{minBytes:1}};
+    const first=await validateArtifact(target.production,input);
+    readRecord.mockResolvedValueOnce(undefined);
+    target.production.events.append=vi.fn(async()=>{throw new EventIdempotencyConflictError(`validation-result:${first.id}`);});
+    expect(await validateArtifact(target.production,input)).toEqual(first);
+    expect(mirror).toHaveBeenCalledWith(records.get(first.id)?.event);
+    expect(target.events).toHaveLength(1);
+  });
+
+  it("rejects a concurrent reuse of the same key with changed checks",async()=>{
+    const target=runtime();
+    const input={missionId:"mission-1",artifactId:"artifact-1",idempotencyKey:"race-conflict",checks:{minBytes:1}};
+    const first=await validateArtifact(target.production,input);
+    readRecord.mockResolvedValueOnce(undefined);
+    target.production.events.append=vi.fn(async()=>{throw new EventIdempotencyConflictError(`validation-result:${first.id}`);});
     await expect(validateArtifact(target.production,{...input,checks:{minBytes:2}}))
       .rejects.toBeInstanceOf(ValidationIdempotencyConflictError);
   });

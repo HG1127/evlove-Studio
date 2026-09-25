@@ -18,6 +18,7 @@ import {supabaseRestAuthHeaders} from "./supabase-rest-auth";
 import { mirrorEvolutionEventToEvidenceLedger } from "./evidence-ledger";
 import {appendServerEvent,probeServerEventReadback,rowEvent} from "./event-persistence";
 import {probeEventEvidencePage,readEventEvidencePage} from "./event-evidence-pages";
+import {readServerValidationRecord} from "./validation-event-record";
 import {probeServerEventPage as probeEventPage,readServerEventRows} from "./event-pages";
 import {probeActiveJobPage,readActiveJobRows} from "./active-job-pages";
 import {readRecentParseJobRows} from "./parse-job-pages";
@@ -276,14 +277,13 @@ export async function getServerMissionEnvelope(id:string){
   return rows?.[0]?rowMissionEnvelope(rows[0]):undefined;
 }
 
-export async function getServerValidationResult(id:string){
+export async function getServerValidationRecord(id:string){
   const {request}=createRestClient();
-  const query="events?select=payload&payload->>validationId=eq."+encodeURIComponent(id)+"&limit=1";
-  const rows=await request(query) as Array<{payload?:unknown}>;
-  const payload=rows?.[0]?.payload;
-  if(!payload||typeof payload!=="object"||Array.isArray(payload))return undefined;
-  const validation=(payload as JsonRecord).validation;
-  return validation&&typeof validation==="object"&&!Array.isArray(validation)?validation:undefined;
+  return readServerValidationRecord(request,id);
+}
+
+export async function getServerValidationResult(id:string){
+  return (await getServerValidationRecord(id))?.result;
 }
 
 export async function listServerActiveJobs(limit=100,missionId?:string){

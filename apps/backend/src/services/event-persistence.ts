@@ -56,10 +56,20 @@ function filterValue(value:string){
   return "%22"+encodeURIComponent(value.replace(/\\/g,"\\\\").replace(/"/g,'\\"'))+"%22";
 }
 
+export async function readServerEventById(request:(path:string)=>Promise<unknown>,id:string){
+  const rows=await request("events?select=*&id=eq."+filterValue(id)+"&limit=1");
+  if(!Array.isArray(rows)||rows.length>1)throw new Error("Event identity readback is invalid");
+  if(!rows.length)return undefined;
+  if(!rows[0]||typeof rows[0]!=="object"||Array.isArray(rows[0])){
+    throw new Error("Event identity row is invalid");
+  }
+  const event=rowEvent(rows[0] as JsonRecord);
+  if(event.id!==id)throw new Error("Event identity lookup returned another Event");
+  return event;
+}
+
 export async function probeServerEventReadback(request:(path:string)=>Promise<unknown>){
-  const rows=await request("events?select=*&id=eq."
-    +filterValue("health-probe:no-such-event")+"&limit=1");
-  if(!Array.isArray(rows)||rows.length!==0){
+  if(await readServerEventById(request,"health-probe:no-such-event")){
     throw new Error("Event identity readback probe is invalid");
   }
   return true;
@@ -74,11 +84,8 @@ export async function appendServerEvent(
     method:"POST",headers:{Prefer:"resolution=ignore-duplicates,return=minimal"},
     body:JSON.stringify(eventRow(event)),
   });
-  const rows=await request("events?select=*&id=eq."+filterValue(event.id)+"&limit=1");
-  if(!Array.isArray(rows)||rows.length!==1||!rows[0]||typeof rows[0]!=="object"||Array.isArray(rows[0])){
-    throw new Error("Persisted Event could not be read back");
-  }
-  const persisted=rowEvent(rows[0] as JsonRecord);
+  const persisted=await readServerEventById(request,event.id);
+  if(!persisted)throw new Error("Persisted Event could not be read back");
   if(identity(persisted)!==identity(event))throw new EventIdempotencyConflictError(event.id);
   try{await mirror(persisted);}
   catch(error){
