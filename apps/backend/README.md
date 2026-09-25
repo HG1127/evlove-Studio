@@ -83,6 +83,7 @@ Explicit Artifact deletion refuses Mission-bound objects and objects referenced 
 ## Source Parse result identity
 
 Newly completed Parse Jobs record the SHA-256 of their exact serialized result in Job metadata. Status and recovery reads verify that hash and the parsed Artifact's ID, name, MIME type, size, role, upload mode, and source Storage ref against the Job. A valid JSON blob with substituted bytes or another Artifact identity is reported as `resultIssue`, never as a ready Artifact. Repeating the original Parse upload reuses a completed Job only when its result passes these checks; an invalid or legacy result without a binding starts a new Job generation for recovery.
+New Parse starts use a versioned Workflow input with an exact Job generation and raw input SHA-256. Each generation has separate raw-input and parsed-output Storage IDs, so a retry does not attempt to overwrite immutable Artifact bytes. The Workflow checks the current Job identity and raw bytes before parsing and again checks Job generation before writing or finalizing; a stale run cannot fail or complete a newer generation. Persisted legacy Workflow inputs remain readable through the older contract while their old Job refs still match.
 
 ## Git Webhook Mission Binding
 

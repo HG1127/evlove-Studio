@@ -27,6 +27,24 @@ export const SourceParseWorkflowInputSchema=z.object({
 });
 export type SourceParseWorkflowInput=z.infer<typeof SourceParseWorkflowInputSchema>;
 
+export const SourceParseWorkflowInputV2Schema=SourceParseWorkflowInputSchema.extend({
+  schemaVersion:z.literal("source-parse-workflow-v2"),
+  generation:z.number().int().nonnegative(),
+  contentSha256:z.string().regex(/^[a-f0-9]{64}$/),
+}).strict();
+export type SourceParseWorkflowInputV2=z.infer<typeof SourceParseWorkflowInputV2Schema>;
+export const SourceParseWorkflowAnyInputSchema=z.union([
+  SourceParseWorkflowInputV2Schema,SourceParseWorkflowInputSchema.strict(),
+]);
+export type SourceParseWorkflowAnyInput=z.infer<typeof SourceParseWorkflowAnyInputSchema>;
+
+export const SourceParseJobInputIdentitySchema=SourceParseWorkflowInputSchema.pick({
+  inputRef:true,outputRef:true,artifactId:true,name:true,mimeType:true,size:true,role:true,
+}).extend({
+  identityVersion:z.literal("parse-v2"),
+  contentSha256:z.string().regex(/^[a-f0-9]{64}$/),
+});
+
 export const SourceParseResultIdentitySchema=SourceParseWorkflowInputSchema.pick({
   inputRef:true,artifactId:true,name:true,mimeType:true,size:true,role:true,
 }).extend({

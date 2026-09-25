@@ -6,7 +6,7 @@ import {
   PRODUCTION_SCHEMA_VERSIONS,
   SourceParseStartResponseSchema,
   SourceParseUploadMetadataSchema,
-  SourceParseWorkflowInputSchema,
+  SourceParseWorkflowInputV2Schema,
 } from "@evolution/contracts";
 import {getServerArtifactStore} from "../../../src/services/artifact-runtime";
 import {
@@ -60,7 +60,6 @@ export default defineEventHandler(async(event)=>{
     role,
     bytes,
   });
-  const inputRef=artifactId;
   const requestedAt=new Date().toISOString();
   const runtime=getServerProductionRuntime();
   const artifacts=getServerArtifactStore();
@@ -90,8 +89,11 @@ export default defineEventHandler(async(event)=>{
     }
   }
   const jobId=existing?.id??`parse-${randomUUID()}`;
-  const outputRef=existing?.outputRef??`parse-result-${jobId}`;
-  const input=SourceParseWorkflowInputSchema.parse({
+  const generation=(existing?.generation??0)+1;
+  const inputRef=`parse-input-${jobId}-g${generation}`;
+  const outputRef=`parse-result-${jobId}-g${generation}`;
+  const input=SourceParseWorkflowInputV2Schema.parse({
+    schemaVersion:"source-parse-workflow-v2",generation,contentSha256,
     jobId,inputRef,outputRef,artifactId,name:fileName,
     mimeType,size:file.data.byteLength,role,requestedAt,
   });
@@ -99,7 +101,7 @@ export default defineEventHandler(async(event)=>{
   const queuedJob=EvolutionJobSchema.parse({
     schemaVersion:PRODUCTION_SCHEMA_VERSIONS.job,id:jobId,type:"parse",status:"queued",
     label:`Parse ${input.name}`,idempotencyKey,
-    generation:(existing?.generation??0)+1,attempts:existing?.attempts??0,priority:80,inputRef,outputRef,
+    generation,attempts:existing?.attempts??0,priority:80,inputRef,outputRef,
     metadata:{
       artifactId,
       name:input.name,

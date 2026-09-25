@@ -79,7 +79,14 @@ describe("completed Parse result reuse",()=>{
       createdAt:"2026-09-24T00:00:00.000Z"})]);
     const response=await route(request());
     expect(state.putJob).toHaveBeenCalledWith(expect.objectContaining({id:"parse-1",generation:2,status:"queued"}));
+    expect(state.putJob).toHaveBeenCalledWith(expect.objectContaining({
+      inputRef:"parse-input-parse-1-g2",outputRef:"parse-result-parse-1-g2",
+    }));
     expect(state.start).toHaveBeenCalledOnce();
+    expect(state.start.mock.calls[0]?.[1]?.[0]).toMatchObject({
+      schemaVersion:"source-parse-workflow-v2",generation:2,
+      inputRef:"parse-input-parse-1-g2",outputRef:"parse-result-parse-1-g2",
+    });
     expect(response).toMatchObject({jobId:"parse-1",runId:"run-2",status:"queued"});
   });
 });
