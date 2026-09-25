@@ -27,6 +27,23 @@ export const SourceParseWorkflowInputSchema=z.object({
 });
 export type SourceParseWorkflowInput=z.infer<typeof SourceParseWorkflowInputSchema>;
 
+export const SourceParseResultIdentitySchema=SourceParseWorkflowInputSchema.pick({
+  inputRef:true,artifactId:true,name:true,mimeType:true,size:true,role:true,
+}).extend({
+  identityVersion:z.literal("parse-v2"),
+  resultSha256:z.string().regex(/^[a-f0-9]{64}$/),
+});
+
+export const SourceParseResultArtifactSchema=SourceArtifactSchema.extend({
+  id:ArtifactIdSchema,
+  name:z.string().min(1),
+  role:ArtifactRoleSchema,
+  mimeType:z.string().min(1),
+  size:z.number().int().nonnegative(),
+  inputMode:z.literal("upload"),
+  storageRef:z.string().min(1),
+});
+
 export const SourceParseStartResponseSchema=z.object({
   jobId:z.string(),
   runId:z.string(),

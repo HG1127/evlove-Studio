@@ -1,4 +1,5 @@
 // @vitest-environment node
+import {createHash} from "node:crypto";
 import {describe,expect,it,vi} from "vitest";
 import {EvolutionJobSchema} from "@evolution/contracts";
 import {readSourceParseResult,readSourceParseResults} from "./source-parse-result";
@@ -9,6 +10,19 @@ const completed=EvolutionJobSchema.parse({
   idempotencyKey:"parse-key",generation:1,attempts:1,priority:80,
   outputRef:"result-1",createdAt:at,updatedAt:at,finishedAt:at,
 });
+const parsedArtifact={
+  id:"artifact-1",name:"input.txt",role:"target",mimeType:"text/plain",size:5,
+  inputMode:"upload",storageRef:"input-1",createdAt:at,
+};
+function boundResult(artifact:Record<string,unknown>=parsedArtifact){
+  const serialized=JSON.stringify(artifact);
+  const job=EvolutionJobSchema.parse({...completed,inputRef:"input-1",metadata:{
+    identityVersion:"parse-v2",artifactId:"artifact-1",name:"input.txt",
+    mimeType:"text/plain",size:5,role:"target",
+    resultSha256:createHash("sha256").update(serialized).digest("hex"),
+  }});
+  return {job,serialized};
+}
 
 describe("Parse result reading",()=>{
   it("preserves a completed Job while reporting missing or unreadable output",async()=>{
@@ -21,6 +35,39 @@ describe("Parse result reading",()=>{
   it("reports malformed output and never invents a parsed Artifact",async()=>{
     const result=await readSourceParseResult(completed,{get:vi.fn(async()=>new Blob(["not-json"]))});
     expect(result).toEqual({job:completed,resultIssue:"Parse 结果 Artifact 已损坏或 schema 不兼容"});
+  });
+
+  it("returns only a parsed Artifact bound to the completed Job and exact stored bytes",async()=>{
+    const {job,serialized}=boundResult();
+    const response=await readSourceParseResult(job,{get:vi.fn(async()=>new Blob([serialized]))});
+    expect(response.artifact).toMatchObject(parsedArtifact);
+    expect(response.resultIssue).toBeUndefined();
+
+    const swapped=JSON.stringify({...parsedArtifact,id:"another-artifact"});
+    const wrongBytes=await readSourceParseResult(job,{get:vi.fn(async()=>new Blob([swapped]))});
+    expect(wrongBytes).toEqual({job,resultIssue:"Parse 结果 Artifact 与 Job 身份不一致"});
+  });
+
+  it("rejects a valid but cross-bound result even if its hash matches the substituted bytes",async()=>{
+    for(const artifact of [
+      {...parsedArtifact,id:"another-artifact"},
+      {...parsedArtifact,name:"other.txt"},
+      {...parsedArtifact,mimeType:"text/html"},
+      {...parsedArtifact,size:6},
+      {...parsedArtifact,role:"reference"},
+      {...parsedArtifact,storageRef:"other-input"},
+    ]){
+      const {job,serialized}=boundResult(artifact);
+      const response=await readSourceParseResult(job,{get:vi.fn(async()=>new Blob([serialized]))});
+      expect(response).toEqual({job,resultIssue:"Parse 结果 Artifact 与 Job 身份不一致"});
+    }
+  });
+
+  it("marks a completed legacy Job without a result binding as unverifiable",async()=>{
+    const response=await readSourceParseResult(completed,{
+      get:vi.fn(async()=>new Blob([JSON.stringify(parsedArtifact)])),
+    });
+    expect(response).toEqual({job:completed,resultIssue:"Parse 结果身份绑定缺失"});
   });
 
   it("does not read an output for an active Job",async()=>{

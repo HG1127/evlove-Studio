@@ -1,5 +1,7 @@
+import {createHash} from "node:crypto";
 import {
-  SourceArtifactSchema,SourceParseListResponseSchema,SourceParseStatusResponseSchema,
+  SourceParseResultArtifactSchema,SourceParseResultIdentitySchema,
+  SourceParseListResponseSchema,SourceParseStatusResponseSchema,
   type ArtifactStorePort,type EvolutionJob,type SourceParseStatusResponse,
 } from "@evolution/contracts";
 
@@ -18,7 +20,20 @@ export async function readSourceParseResult(
   }
   if(!blob)return SourceParseStatusResponseSchema.parse({job,resultIssue:"Parse 结果 Artifact 缺失"});
   try{
-    const artifact=SourceArtifactSchema.parse(JSON.parse(await blob.text()));
+    const serialized=await blob.text();
+    const artifact=SourceParseResultArtifactSchema.parse(JSON.parse(serialized));
+    const identity=SourceParseResultIdentitySchema.safeParse({...job.metadata,inputRef:job.inputRef});
+    if(!identity.success){
+      return SourceParseStatusResponseSchema.parse({job,resultIssue:"Parse 结果身份绑定缺失"});
+    }
+    const expected=identity.data;
+    const digest=createHash("sha256").update(serialized).digest("hex");
+    if(digest!==expected.resultSha256||artifact.id!==expected.artifactId
+      ||artifact.name!==expected.name||artifact.mimeType!==expected.mimeType
+      ||artifact.size!==expected.size||artifact.role!==expected.role
+      ||artifact.storageRef!==expected.inputRef){
+      return SourceParseStatusResponseSchema.parse({job,resultIssue:"Parse 结果 Artifact 与 Job 身份不一致"});
+    }
     return SourceParseStatusResponseSchema.parse({job,artifact});
   }catch{
     return SourceParseStatusResponseSchema.parse({job,resultIssue:"Parse 结果 Artifact 已损坏或 schema 不兼容"});

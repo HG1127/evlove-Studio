@@ -1,4 +1,5 @@
 import {FatalError} from "workflow";
+import {createHash} from "node:crypto";
 import {
   EvolutionJobSchema,
   SourceArtifactSchema,
@@ -48,7 +49,9 @@ export async function executeSourceParseStep(input:SourceParseWorkflowInput){
     }));
     const beforeWrite=await runtime.jobs.get(input.jobId);
     if(beforeWrite?.status==="cancelled")return cancelledResult();
-    const encoded=new Blob([JSON.stringify(parsed)],{type:"application/json"});
+    const serialized=JSON.stringify(parsed);
+    const resultSha256=createHash("sha256").update(serialized).digest("hex");
+    const encoded=new Blob([serialized],{type:"application/json"});
     await artifacts.put(input.outputRef,encoded);
     const finishedAt=new Date().toISOString();
     const current=await runtime.jobs.get(input.jobId);
@@ -57,6 +60,7 @@ export async function executeSourceParseStep(input:SourceParseWorkflowInput){
       try{
         await runtime.jobs.put(EvolutionJobSchema.parse({
           ...current,status:"completed",outputRef:input.outputRef,
+          metadata:{...current.metadata,resultSha256},
           progress:{percent:100,detail:"Server Parse 完成"},heartbeatAt:finishedAt,finishedAt,updatedAt:finishedAt,
         }));
       }catch(error){

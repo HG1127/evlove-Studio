@@ -21,6 +21,7 @@ import {sourceParseWorkflow} from "../../../../../workflows/source-parse";
 import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 import {cancelWorkflowRunById} from "../../../src/services/workflow-run-control";
 import {sourceParseIdempotencyIdentity} from "../../../src/services/source-parse-identity";
+import {readSourceParseResult} from "../../../src/services/source-parse-result";
 
 const MAX_FILE_BYTES=25*1024*1024;
 const MAX_MULTIPART_BYTES=MAX_FILE_BYTES+64*1024;
@@ -77,8 +78,8 @@ export default defineEventHandler(async(event)=>{
     });
   }
   if(existing?.status==="completed"&&existing.outputRef){
-    const output=await artifacts.get(existing.outputRef).catch(()=>undefined);
-    if(output){
+    const output=await readSourceParseResult(existing,artifacts);
+    if(output.artifact){
       return SourceParseStartResponseSchema.parse({
         jobId:existing.id,
         runId:typeof existing.metadata?.runId==="string"?existing.metadata.runId:`completed-${existing.id}`,

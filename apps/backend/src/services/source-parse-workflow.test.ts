@@ -6,6 +6,7 @@ const state=vi.hoisted(()=>({
   job:undefined as EvolutionJob|undefined,
   blobs:new Map<string,Blob>(),
   outputPut:false,
+  cancelOnOutput:true,
 }));
 
 vi.mock("./production-runtime",async(importOriginal)=>{
@@ -27,7 +28,7 @@ vi.mock("./artifact-runtime",()=>({
       state.blobs.set(id,blob);
       if(id==="parse-output"){
         state.outputPut=true;
-        if(state.job){
+        if(state.cancelOnOutput&&state.job){
           state.job=EvolutionJobSchema.parse({
             ...state.job,
             status:"cancelled",
@@ -57,12 +58,14 @@ vi.mock("./server-source-parser",()=>({
 }));
 
 import {executeSourceParseStep} from "../../../../workflows/source-parse";
+import {readSourceParseResult} from "./source-parse-result";
 
 describe("source parse workflow cancellation",()=>{
   afterEach(()=>{
     state.job=undefined;
     state.blobs.clear();
     state.outputPut=false;
+    state.cancelOnOutput=true;
     vi.clearAllMocks();
   });
 
@@ -102,5 +105,31 @@ describe("source parse workflow cancellation",()=>{
     expect(state.job?.status).toBe("cancelled");
     expect(state.blobs.has("parse-input")).toBe(false);
     expect(state.blobs.has("parse-output")).toBe(false);
+  });
+
+  it("persists a result hash that binds the completed Job to its parsed Artifact",async()=>{
+    state.cancelOnOutput=false;
+    state.job=EvolutionJobSchema.parse({
+      schemaVersion:"job-v1",id:"parse-job",type:"parse",status:"queued",label:"Parse input.txt",
+      idempotencyKey:"parse:artifact-1:5:1",generation:1,attempts:0,priority:80,
+      inputRef:"parse-input",outputRef:"parse-output",
+      metadata:{identityVersion:"parse-v2",artifactId:"artifact-1",name:"input.txt",
+        mimeType:"text/plain",size:5,role:"target"},
+      createdAt:"2026-09-23T01:00:00.000Z",updatedAt:"2026-09-23T01:00:00.000Z",
+    });
+    state.blobs.set("parse-input",new Blob(["hello"],{type:"text/plain"}));
+
+    const result=await executeSourceParseStep({
+      jobId:"parse-job",inputRef:"parse-input",outputRef:"parse-output",
+      artifactId:"artifact-1",name:"input.txt",mimeType:"text/plain",size:5,
+      role:"target",requestedAt:"2026-09-23T01:00:00.000Z",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(state.job?.status).toBe("completed");
+    expect(state.job?.metadata?.resultSha256).toMatch(/^[a-f0-9]{64}$/);
+    const parsed=await readSourceParseResult(state.job!,{get:async(id)=>state.blobs.get(id)});
+    expect(parsed.artifact).toMatchObject({id:"artifact-1",storageRef:"parse-input"});
+    expect(parsed.resultIssue).toBeUndefined();
   });
 });

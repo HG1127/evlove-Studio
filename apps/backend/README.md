@@ -80,6 +80,10 @@ The daily `GET /api/evolution/data-plane-health-scheduled` and `GET /api/evoluti
 V1 retention is conservative: EvolutionEvents, signed Evidence Ledger entries, and accepted Artifact bytes/metadata are retained without automated deletion so the exact accepted Artifact and its audit chain remain verifiable. The scheduled reconciler can remove orphan scratch blob bytes associated with durable deletion tombstones; it does not delete Mission metadata or accepted Artifacts. A finite retention/archive policy requires an explicit architecture decision and an export/identity-preserving migration.
 Explicit Artifact deletion refuses Mission-bound objects and objects referenced by immutable Evidence. Unbound scratch objects without Evidence references can still be removed by the compatibility API.
 
+## Source Parse result identity
+
+Newly completed Parse Jobs record the SHA-256 of their exact serialized result in Job metadata. Status and recovery reads verify that hash and the parsed Artifact's ID, name, MIME type, size, role, upload mode, and source Storage ref against the Job. A valid JSON blob with substituted bytes or another Artifact identity is reported as `resultIssue`, never as a ready Artifact. Repeating the original Parse upload reuses a completed Job only when its result passes these checks; an invalid or legacy result without a binding starts a new Job generation for recovery.
+
 ## Git Webhook Mission Binding
 
 GitHub webhooks are not trusted by HMAC + repository allowlist alone. Only the canonical accepted branch `evolve/<mission>/<candidate>` can be correlated to a Mission Event, and the server then reloads the Mission and requires the same connected repository, Gate F accepted Search Champion, and the already persisted Accepted Git writeback repository / branch / exact commit. `pull_request` events additionally bind to the persisted PR number when one exists. A same-name branch created outside the accepted writeback path is therefore not sufficient to create Mission audit events.
