@@ -20,7 +20,7 @@ describe("scheduled reconciliation preview",()=>{
   beforeEach(()=>{
     process.env.CRON_SECRET="test-preview-cron-secret";
     jobs.mockReset();blobs.mockReset();eventEvidence.mockReset();
-    jobs.mockResolvedValue({checkedAt:"2026-09-24T00:00:00.000Z",inspected:0,issues:[],repaired:0});
+    jobs.mockResolvedValue({checkedAt:"2026-09-24T00:00:00.000Z",inspected:0,inspectionFailures:0,issues:[],repaired:0});
     blobs.mockResolvedValue({checkedAt:"2026-09-24T00:00:00.000Z",inspected:0,removed:0,results:[]});
     eventEvidence.mockResolvedValue({inspected:0,missing:0,repaired:0,conflicts:0,failed:0,results:[]});
   });
@@ -53,6 +53,17 @@ describe("scheduled reconciliation preview",()=>{
       results:[{artifactId:"scratch-1",status:"failed"}]});
     vi.spyOn(console,"info").mockImplementation(()=>undefined);
     await expect(route(event("test-preview-cron-secret"))).rejects.toMatchObject({status:503});
+  });
+
+  it("reports a failed Workflow run inspection as degraded without repairing anything",async()=>{
+    jobs.mockResolvedValue({checkedAt:"2026-09-24T00:00:00.000Z",inspected:1,inspectionFailures:1,
+      issues:[{jobId:"control-1",issue:"inspection-failed",repaired:false}],repaired:0});
+    const log=vi.spyOn(console,"info").mockImplementation(()=>undefined);
+    await expect(route(event("test-preview-cron-secret"))).rejects.toMatchObject({status:503});
+    expect(blobs).toHaveBeenCalledWith({limit:50,minAgeSeconds:900,dryRun:true});
+    expect(log).toHaveBeenCalledWith("Scheduled reconciliation preview",expect.objectContaining({
+      jobInspectionFailures:1,jobsRepaired:0,
+    }));
   });
 
   it("identifies a failed Job inspection without starting Artifact inspection",async()=>{

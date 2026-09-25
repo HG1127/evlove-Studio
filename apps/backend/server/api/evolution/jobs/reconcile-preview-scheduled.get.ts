@@ -41,6 +41,7 @@ export default defineEventHandler(async(event)=>{
   console.info("Scheduled reconciliation preview",{
     jobsInspected:jobs.inspected,
     jobIssues:jobs.issues.length,
+    jobInspectionFailures:jobs.inspectionFailures,
     jobsRepaired:jobs.repaired,
     blobsInspected:artifactBlobs.inspected,
     blobsWouldRemove:artifactBlobs.results.filter((result)=>result.status==="would-remove").length,
@@ -50,7 +51,7 @@ export default defineEventHandler(async(event)=>{
     eventMirrorConflicts:eventEvidence.conflicts,
     eventMirrorFailures:eventEvidence.failed,
   });
-  if(failed||eventEvidence.failed||eventEvidence.conflicts){
+  if(jobs.inspectionFailures||failed||eventEvidence.failed||eventEvidence.conflicts){
     throw createError({statusCode:503,statusMessage:"Scheduled reconciliation preview has failed items"});
   }
   return {jobs,artifactBlobs,eventEvidence};

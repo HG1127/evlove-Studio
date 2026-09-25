@@ -1,13 +1,16 @@
 import {getRun} from "workflow/api";
+import {z} from "zod";
 import {EvolutionWorkflowResultSchema,JobReconcileRequestSchema,type EvolutionJob} from "@evolution/contracts";
 import {transitionJob} from "./job-lifecycle";
 import {getServerProductionRuntime,listServerActiveJobs} from "./production-runtime";
 import {workflowRunIdForJob} from "./workflow-run-control";
 
-type RunStatus="pending"|"running"|"completed"|"failed"|"cancelled";
+const RunStatusSchema=z.enum(["pending","running","completed","failed","cancelled"]);
+type RunStatus=z.infer<typeof RunStatusSchema>;
 type RunInspection={exists:boolean;status?:RunStatus;result?:unknown;resultError?:string};
 export type JobReconcileIssue="unbound"|"missing-run"|"workflow-failed"|"workflow-cancelled"
-  |"workflow-result-completed"|"workflow-result-failed"|"workflow-completed"|"heartbeat-stale"|"healthy";
+  |"workflow-result-completed"|"workflow-result-failed"|"workflow-completed"|"heartbeat-stale"|"healthy"
+  |"inspection-failed";
 
 export type JobReconcileDependencies={
   list:(limit:number,missionId?:string)=>Promise<EvolutionJob[]>;
@@ -15,17 +18,23 @@ export type JobReconcileDependencies={
   transition:(id:string,status:"completed"|"failed"|"cancelled",detail:string)=>Promise<EvolutionJob>;
 };
 
+type WorkflowRunHandle={exists:Promise<unknown>;status:Promise<unknown>;returnValue:Promise<unknown>};
+
+export async function inspectWorkflowRun(
+  runId:string,resolve:(id:string)=>WorkflowRunHandle=(id)=>getRun(id) as WorkflowRunHandle,
+):Promise<RunInspection>{
+  const run=resolve(runId);
+  const exists=z.boolean().parse(await run.exists);
+  if(!exists)return {exists};
+  const status=RunStatusSchema.parse(await run.status);
+  if(status!=="completed")return {exists,status};
+  try{return {exists,status,result:await run.returnValue};}
+  catch{return {exists,status,resultError:"Workflow return value unavailable"};}
+}
+
 const defaultDependencies:JobReconcileDependencies={
   list:listServerActiveJobs,
-  inspect:async(runId)=>{
-    const run=getRun(runId);
-    const exists=await run.exists;
-    if(!exists)return {exists};
-    const status=await run.status as RunStatus;
-    if(status!=="completed")return {exists,status};
-    try{return {exists,status,result:await run.returnValue};}
-    catch{return {exists,status,resultError:"Workflow return value unavailable"};}
-  },
+  inspect:inspectWorkflowRun,
   transition:(id,status,detail)=>transitionJob(getServerProductionRuntime(),id,status,detail),
 };
 
@@ -52,7 +61,13 @@ export async function reconcileWorkflowJobs(raw:unknown,deps:JobReconcileDepende
     if(!runId){
       issue="unbound";
     }else{
-      const run=await deps.inspect(runId);
+      let run:RunInspection;
+      try{run=await deps.inspect(runId);}
+      catch{
+        results.push({jobId:job.id,generation:job.generation,runId,issue:"inspection-failed",
+          repaired:false,detail:"Workflow run inspection unavailable"});
+        continue;
+      }
       runStatus=run.status;
       resultError=run.resultError;
       if(run.status==="completed"&&job.type==="campaign"){
@@ -85,6 +100,8 @@ export async function reconcileWorkflowJobs(raw:unknown,deps:JobReconcileDepende
     results.push({jobId:job.id,generation:job.generation,runId,issue,runStatus,resultStatus,repaired,
       detail:detail??resultError});
   }
-  return {checkedAt:now.toISOString(),inspected:jobs.length,issues:results.filter((item)=>item.issue!=="healthy"),
+  return {checkedAt:now.toISOString(),inspected:jobs.length,
+    inspectionFailures:results.filter((item)=>item.issue==="inspection-failed").length,
+    issues:results.filter((item)=>item.issue!=="healthy"),
     repaired:results.filter((item)=>item.repaired).length};
 }

@@ -35,5 +35,9 @@ export default defineEventHandler(async(event)=>{
     console.error("Scheduled Artifact cleanup had failed items",{failed});
     throw createError({statusCode:503,statusMessage:"Scheduled Artifact cleanup had failed items"});
   }
+  if(jobs.inspectionFailures){
+    console.error("Scheduled Job reconciliation had inspection failures",{failed:jobs.inspectionFailures});
+    throw createError({statusCode:503,statusMessage:"Scheduled Job reconciliation had inspection failures"});
+  }
   return {jobs,artifactBlobs};
 });
