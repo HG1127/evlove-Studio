@@ -1,5 +1,5 @@
 import {createHmac,timingSafeEqual} from "node:crypto";
-import {createError,getHeader,type H3Event} from "nitro/h3";
+import {createError,getHeader,getMethod,type H3Event} from "nitro/h3";
 import {
   EvolutionActorSchema,
   SecurityCapabilitiesSchema,
@@ -21,6 +21,7 @@ import {
   vercelReleaseWriteConfigured,
 } from "../server-env";
 import {requireActiveOrganizationMember} from "./organization-member-directory";
+import {assertOperatorSameOrigin,operatorSessionConfigured,readOperatorSession} from "./operator-session";
 
 const ROLE_PERMISSIONS:Record<EvolutionRole,ReadonlySet<EvolutionPermission>>={
   viewer:new Set(["data.read","release.observe"]),
@@ -92,6 +93,13 @@ export function resolveEvolutionActor(event:H3Event):EvolutionActor{
   }
   const encoded=getHeader(event,"x-evolution-actor")??"";
   const signature=getHeader(event,"x-evolution-actor-signature")??"";
+  if(!encoded&&!signature){
+    const session=readOperatorSession(event);
+    if(session){
+      if(["POST","PUT","PATCH","DELETE"].includes(getMethod(event)))assertOperatorSameOrigin(event);
+      return session.actor;
+    }
+  }
   if(!encoded||!signature)throw createError({statusCode:401,statusMessage:"Trusted Evolution actor headers are required"});
   const expected=createHmac("sha256",config.identitySecret!).update(encoded).digest("hex");
   if(!secureEqual(signature,expected))throw createError({statusCode:401,statusMessage:"Invalid Evolution actor signature"});
@@ -118,7 +126,8 @@ export function requireEvolutionPermission(event:H3Event,permission:EvolutionPer
 
 export async function requireGovernedEvolutionPermission(event:H3Event,permission:EvolutionPermission){
   const actor=requireEvolutionPermission(event,permission);
-  if(permission!=="data.read"&&actor.source!=="internal-dev"&&actor.source!=="vercel-protected-internal"){
+  if(permission!=="data.read"&&actor.source!=="internal-dev"
+    &&actor.source!=="vercel-protected-internal"&&actor.source!=="browser-session"){
     try{
       await requireActiveOrganizationMember(actor);
     }catch(error){
@@ -139,6 +148,7 @@ export function getSecurityCapabilities(){
   const security=getServerSecurityConfig();
   const target=getServerTargetProxyConfig();
   const credentials=[
+    {id:"browser-operator-session",provider:"env" as const,envVars:["EVOLUTION_OPERATOR_ACCESS_KEY","EVOLUTION_IDENTITY_HMAC_SECRET","EVOLUTION_WORKSPACE_ID"],purpose:"Single-admin browser session",configured:operatorSessionConfigured(),scopes:["browser-session"]},
     {id:"supabase-data-plane",provider:"env" as const,envVars:["SUPABASE_SECRET_KEY","SUPABASE_SERVICE_ROLE_KEY"],purpose:"Server Data Plane / Object Store",configured:serverSupabaseSecureConfigured(),scopes:["database","storage"]},
     {id:"server-ai",provider:"env" as const,envVars:["EVOLUTION_AI_API_KEY","OPENAI_API_KEY"],purpose:"Server AI operations",configured:serverAiConfigured(),scopes:["ai"]},
     {id:"vercel-release",provider:"env" as const,envVars:["VERCEL_RELEASE_TOKEN"],purpose:"Production release writes",configured:vercelReleaseWriteConfigured(),scopes:["release"]},

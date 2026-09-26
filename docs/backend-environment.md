@@ -1,24 +1,41 @@
 # Backend Environment · V1
 
-P0-1 uses Supabase as the production data foundation. Do **not** put a Supabase service-role key in any `VITE_*` variable.
+The Vercel API owns production data access. Keep Supabase server credentials, actor signing material, and the browser operator key in server-only environment variables. Never put them in `VITE_*` variables or commit them to Git.
 
-Evolution OS also deliberately ignores `SUPABASE_SERVICE_ROLE_KEY` in its current server data plane. Server reads use `SUPABASE_PUBLISHABLE_KEY` (or the internal-MVP `VITE_SUPABASE_ANON_KEY`) so a leftover service-role variable cannot silently bypass future RLS.
+## Production data plane
 
-Configure the Vite/Vercel environment with:
+Configure `SUPABASE_URL` and the full `SUPABASE_SECRET_KEY` in Vercel Production. `SUPABASE_SERVICE_ROLE_KEY` remains a compatibility fallback. The server accepts a publishable key only in nonproduction or when `EVOLUTION_ALLOW_PUBLISHABLE_DATA_PLANE` is explicitly enabled; this is not the production security posture. `VITE_SUPABASE_ARTIFACT_BUCKET` selects the private Artifact bucket (default `evolution-artifacts`).
 
-```text
-VITE_SUPABASE_URL=<your Supabase project URL>
-VITE_SUPABASE_ANON_KEY=<your publishable/anon key>
-VITE_SUPABASE_ARTIFACT_BUCKET=evolution-artifacts
-```
+The production browser uses the same-origin `/api/evolution/*` API and does not need a Supabase secret. The browser can explicitly select local mode if the backend is unavailable; data created there stays in that browser until a later authenticated sync.
 
-Optional future API gateway:
+## Single-operator browser access
+
+The initial production UI uses a single-operator access key. Set these server-only Vercel Production variables:
 
 ```text
-VITE_EVOLUTION_API_URL=<Vercel API base URL>
+EVOLUTION_WORKSPACE_ID=<the configured production workspace ID>
+EVOLUTION_IDENTITY_HMAC_SECRET=<at least 32 random characters; preserve the existing value if configured>
+EVOLUTION_OPERATOR_ACCESS_KEY=<64 random hexadecimal characters, generated independently of the signing secret>
 ```
 
-When `VITE_EVOLUTION_API_URL` is configured it takes precedence over direct Supabase ports. Without either backend configuration the product stays on Local Adapter.
+Generate the access key locally with PowerShell, then copy it directly to the Vercel Production variable. Do not paste it into a chat or repository file:
+
+```powershell
+$bytes = [byte[]]::new(32)
+[Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+[Convert]::ToHexString($bytes).ToLowerInvariant()
+```
+
+Redeploy after changing the variables. Open the production alias and enter the access key in the browser's “连接工作区” form. The server exchanges it for a signed, HttpOnly, Secure, SameSite=Strict cookie lasting eight hours. The key is not stored in browser storage. The operator session is scoped to `EVOLUTION_WORKSPACE_ID`; rotating either the access key or signing secret invalidates existing sessions. Logging out clears the current browser cookie. Browser writes require a same-origin request.
+
+This is for a trusted single administrator on one workspace. The access key grants the existing `admin` role, including release approval and security administration; handle it as a production root credential. Full multiuser identity, organization membership, per-user revocation, and RLS remain separate work. Keep the current exact-deployment internal bridge limited to protected deployment diagnostics and remove it when the browser actor flow is production-evidenced.
+
+Verify deployment without exposing secrets:
+
+1. `GET /api/evolution/operator-session` returns `{configured:true,authenticated:false}` in a fresh browser.
+2. A wrong key returns 401; the correct key returns `{configured:true,authenticated:true}` with a protected cookie.
+3. `GET /api/evolution/operator-session` then reports authenticated. The UI must show “后端同步正常” before treating browser data as synced.
+4. `DELETE /api/evolution/operator-session` clears the cookie, and protected API reads again return 401.
 
 ## Vercel Release Provider
 
@@ -33,5 +50,3 @@ VERCEL_RELEASE_TOKEN=<dedicated Vercel API token>
 `VERCEL_OIDC_TOKEN` is **not** a substitute for this release credential: OIDC is used by Sandbox / Workflow, while Vercel Project and Deployment management APIs currently reject it. Never expose `VERCEL_RELEASE_TOKEN` through a `VITE_*` variable.
 
 The current Vercel Hobby project uses **Preview Gate → Production Promote**. Rolling Release / 5% → 20% → 50% Canary is not supported by the plan and is explicitly skipped rather than simulated.
-
-Before entering public multi-user production, remove the temporary auth-free migration policies and add Auth/RLS. The current migration intentionally matches the decision to postpone login/RBAC for the internal MVP.

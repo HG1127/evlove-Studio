@@ -20,7 +20,10 @@ function routeFiles(dir:string,prefix=""):Array<{relative:string;source:string}>
 }
 
 const routes=routeFiles(routeRoot);
-const publicRoutes=new Set(["public-readiness.get.ts","build-info.get.ts"]);
+const publicRoutes=new Set([
+  "public-readiness.get.ts","build-info.get.ts",
+  "operator-session.get.ts","operator-session.post.ts","operator-session.delete.ts",
+]);
 const webhookRoutes=new Set(["git-webhook.post.ts","connector-webhook/[id].post.ts"]);
 const scheduledRoutes=new Set([
   "jobs/reconcile-scheduled.get.ts",
@@ -49,6 +52,7 @@ describe("Evolution API route security invariants",()=>{
     const middleware=fs.readFileSync(middlewarePath,"utf8");
     expect(middleware).toContain('path==="/api/evolution/public-readiness"');
     expect(middleware).toContain('path==="/api/evolution/build-info"');
+    expect(middleware).toContain('path==="/api/evolution/operator-session"');
     expect(middleware).toContain('path==="/api/evolution/jobs/reconcile-scheduled"');
     expect(middleware).toContain('path==="/api/evolution/jobs/reconcile-preview-scheduled"');
     expect(middleware).toContain('path==="/api/evolution/data-plane-health-scheduled"');
@@ -56,6 +60,18 @@ describe("Evolution API route security invariants",()=>{
     expect(middleware).toContain('/^\\/api\\/evolution\\/connector-webhook\\/[^/]+$/');
     expect(middleware).not.toContain('endsWith("/public-readiness")');
     expect(middleware).not.toContain('includes("/connector-webhook/")');
+  });
+
+  it("keeps public operator session routes bounded and origin checked",()=>{
+    const login=routes.find((route)=>route.relative==="operator-session.post.ts");
+    const logout=routes.find((route)=>route.relative==="operator-session.delete.ts");
+    const status=routes.find((route)=>route.relative==="operator-session.get.ts");
+    expect(login?.source).toContain("assertBodySize(event,4096)");
+    expect(login?.source).toContain("assertOperatorSameOrigin(event)");
+    expect(login?.source).toContain("createOperatorSession(input.data.accessKey)");
+    expect(logout?.source).toContain("assertOperatorSameOrigin(event)");
+    expect(logout?.source).toContain("clearOperatorSessionCookie(event)");
+    expect(status?.source).toContain("operatorSessionStatus(event)");
   });
 
   it("allows only the bounded passive public endpoints; all other non-webhook routes declare authorization",()=>{

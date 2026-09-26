@@ -26,9 +26,16 @@ export const EvolutionActorSchema=z.object({
   workspaceId:z.string().optional(),
   issuedAt:z.number().int().optional(),
   expiresAt:z.number().int().optional(),
-  source:z.enum(["trusted-header","vercel-protected-internal","internal-dev","service"]).default("trusted-header"),
+  source:z.enum(["trusted-header","browser-session","vercel-protected-internal","internal-dev","service"]).default("trusted-header"),
 });
 export type EvolutionActor=z.infer<typeof EvolutionActorSchema>;
+
+export const OperatorSessionStatusSchema=z.object({
+  configured:z.boolean(),
+  authenticated:z.boolean(),
+  expiresAt:z.number().int().positive().optional(),
+}).strict();
+export type OperatorSessionStatus=z.infer<typeof OperatorSessionStatusSchema>;
 
 export const OrganizationMemberStatusSchema=z.enum(["active","suspended"]);
 export type OrganizationMemberStatus=z.infer<typeof OrganizationMemberStatusSchema>;

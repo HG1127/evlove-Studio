@@ -16,6 +16,7 @@ export default defineEventHandler((event)=>{
   }
   if(path==="/api/evolution/public-readiness"
     ||path==="/api/evolution/build-info"
+    ||path==="/api/evolution/operator-session"
     ||path==="/api/evolution/jobs/reconcile-scheduled"
     ||path==="/api/evolution/jobs/reconcile-preview-scheduled"
     ||path==="/api/evolution/data-plane-health-scheduled"
