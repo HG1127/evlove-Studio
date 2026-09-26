@@ -22,6 +22,7 @@ import {
   serverBaselineFingerprint,
   unavailableBaselineRun,
 } from "./server-baseline-evidence";
+import { indexUniqueBatchResults } from "./server-batch-results";
 
 export { trustedServerBaselineChampion } from "./server-baseline-evidence";
 
@@ -118,9 +119,11 @@ export async function runServerBaseline(
     } else {
       try {
         const results = await ports.executeExternalBatch({ project, testCases: externalCases });
-        const byId = new Map(results.map((run) => [run.testCaseId, run]));
+        const { byId, duplicateIds } = indexUniqueBatchResults(results);
         for (const testCase of externalCases) {
-          ordered.set(testCase.id, byId.get(testCase.id) ?? unavailableBaselineRun(testCase, "Server External Runner 没有返回本题结果。"));
+          ordered.set(testCase.id, duplicateIds.has(testCase.id)
+            ? unavailableBaselineRun(testCase, "Server External Runner 对本题返回了重复结果，证据身份不明确。")
+            : byId.get(testCase.id) ?? unavailableBaselineRun(testCase, "Server External Runner 没有返回本题结果。"));
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -137,11 +140,13 @@ export async function runServerBaseline(
         testCases: semanticCases,
         artifactContext: boundedBaselineArtifacts(project),
       });
-      const byId = new Map(result.results.map((item) => [item.testCaseId, item]));
+      const { byId, duplicateIds } = indexUniqueBatchResults(result.results);
       const latency = Math.max(1, Math.round((Date.now() - semanticStarted) / Math.max(1, semanticCases.length)));
       for (const testCase of semanticCases) {
         const item = byId.get(testCase.id);
-        ordered.set(testCase.id, item ? {
+        ordered.set(testCase.id, duplicateIds.has(testCase.id)
+          ? unavailableBaselineRun(testCase, "Server AI Batch 对本题返回了重复结果，证据身份不明确。")
+          : item ? {
           testCaseId: testCase.id,
           output: item.output,
           latencyMs: latency,

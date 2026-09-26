@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { EvaluateAiResult, EvolveProject, TargetRunResult } from "@evolution/contracts";
 import { runServerHoldout } from "./server-holdout";
+import { executeServerCurrentArtifactSuite } from "./server-current-artifact-runner";
 
 function judged(score:number,testCaseId="H1"):EvaluateAiResult{
   return {
@@ -61,6 +62,19 @@ function semanticPorts(baselineScore=82,candidateScore=92){
 }
 
 describe("server hidden holdout",()=>{
+  it("keeps repeated current-version semantic evidence unverified",async()=>{
+    const project=fixture();
+    const runs=await executeServerCurrentArtifactSuite(project,project.hiddenEvalSuite,{
+      executeSemanticBatch:async()=>({results:[
+        {testCaseId:"H1",output:"passed",trace:[]},
+        {testCaseId:"H1",output:"failed",trace:[]},
+      ]}),
+      judge:async()=>judged(90),
+    });
+    expect(runs[0]).toMatchObject({testCaseId:"H1",verificationStatus:"unverified"});
+    expect(runs[0]?.output).toContain("重复结果");
+  });
+
   it("executes only the frozen hidden paper and persists exact Candidate evidence",async()=>{
     const setup=semanticPorts();
     const outcome=await runServerHoldout(fixture(),setup.ports,{now:()=> "2026-09-20T14:30:00.000Z"});

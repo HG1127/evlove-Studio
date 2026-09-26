@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Candidate, EvaluateAiResult, EvolveProject, TargetRunResult } from "@evolution/contracts";
 import { runServerExperiment } from "./server-experiment";
+import { executeServerExperimentCandidate } from "./server-experiment-runner";
 
 function fixture(executionMode:"artifact-runtime"|"external-runner"|"visual-review"="artifact-runtime"):EvolveProject{
   const now="2026-09-20T13:00:00.000Z";
@@ -56,6 +57,22 @@ function judge(score:number):EvaluateAiResult{
 }
 
 describe("server experiment",()=>{
+  it("discards repeated semantic Candidate results and uses only the exact local snapshot",async()=>{
+    const project=fixture();
+    const runs=await executeServerExperimentCandidate(project,frozenCandidate(project.candidates[0]!),{
+      executeSemanticBatch:async()=>({results:[
+        {testCaseId:"V1",output:"passed",trace:[]},
+        {testCaseId:"V1",output:"failed",trace:[]},
+      ]}),
+      judge:async()=>judge(90),
+    });
+    expect(runs[0]).toMatchObject({testCaseId:"V1",verificationStatus:"verified"});
+    expect(runs[0]?.output).toContain("CURRENT CANDIDATE SNAPSHOT EVIDENCE");
+    expect(runs[0]?.output).not.toContain("passed");
+    expect(runs[0]?.output).not.toContain("failed");
+    expect(runs[0]?.trace[0]?.detail).toContain("重复结果");
+  });
+
   it("builds exact artifacts, judges them and persists an Experiment Winner checkpoint",async()=>{
     const outcome=await runServerExperiment(fixture(),{
       buildCandidate:async({candidate})=>frozenCandidate(candidate),

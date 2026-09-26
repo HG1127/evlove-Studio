@@ -14,6 +14,7 @@ import {
   serverBaselineCurrentViewGap,
   unavailableBaselineRun,
 } from "./server-baseline-evidence";
+import { indexUniqueBatchResults } from "./server-batch-results";
 
 export type ServerCurrentArtifactPorts = {
   executeSemanticBatch(args: {
@@ -72,8 +73,10 @@ export async function executeServerCurrentArtifactSuite(
     }else{
       try{
         const results=await ports.executeExternalBatch({project,testCases:externalCases});
-        const byId=new Map(results.map((run)=>[run.testCaseId,run]));
-        for(const testCase of externalCases)ordered.set(testCase.id,byId.get(testCase.id)??unavailableBaselineRun(testCase,"Server External Runner 没有返回本题结果。"));
+        const {byId,duplicateIds}=indexUniqueBatchResults(results);
+        for(const testCase of externalCases)ordered.set(testCase.id,duplicateIds.has(testCase.id)
+          ?unavailableBaselineRun(testCase,"Server External Runner 对本题返回了重复结果，证据身份不明确。")
+          :byId.get(testCase.id)??unavailableBaselineRun(testCase,"Server External Runner 没有返回本题结果。"));
       }catch(error){
         const message=error instanceof Error?error.message:String(error);
         for(const testCase of externalCases)ordered.set(testCase.id,unavailableBaselineRun(testCase,`Server External Runner 未完成：${message}`));
@@ -84,11 +87,13 @@ export async function executeServerCurrentArtifactSuite(
     const started=Date.now();
     try{
       const result=await ports.executeSemanticBatch({project,testCases:semanticCases,artifactContext:boundedBaselineArtifacts(project)});
-      const byId=new Map(result.results.map((item)=>[item.testCaseId,item]));
+      const {byId,duplicateIds}=indexUniqueBatchResults(result.results);
       const latency=Math.max(1,Math.round((Date.now()-started)/Math.max(1,semanticCases.length)));
       for(const testCase of semanticCases){
         const item=byId.get(testCase.id);
-        ordered.set(testCase.id,item?{
+        ordered.set(testCase.id,duplicateIds.has(testCase.id)
+          ?unavailableBaselineRun(testCase,"Server AI Batch 对本题返回了重复结果，证据身份不明确。")
+          :item?{
           testCaseId:testCase.id,output:item.output,latencyMs:latency,cost:0,
           verificationStatus:semanticEvidenceStatus(item.output),
           trace:[{id:`server-current-semantic-${testCase.id}`,stage:"AI 语义核查",summary:"Server AI 读取当前版本并定位同卷证据",status:"info",detail:"仅提供当前成果观察；独立 Judge 负责 Rubric 结算。"},...item.trace],

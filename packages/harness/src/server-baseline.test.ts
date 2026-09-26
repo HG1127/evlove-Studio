@@ -53,6 +53,35 @@ function judge(): EvaluateAiResult {
 }
 
 describe("server baseline",()=>{
+  it("does not score a repeated semantic Test Case result as verified evidence",async()=>{
+    const outcome=await runServerBaseline(fixture(),{
+      executeSemanticBatch:async()=>({results:[
+        {testCaseId:"V1",output:"contradictory first",trace:[]},
+        {testCaseId:"V1",output:"contradictory second",trace:[]},
+      ]}),
+      judge:async()=>{throw new Error("ambiguous evidence must not reach Judge");},
+    });
+    const run=outcome.baseline.runs.find((item)=>item.testCaseId==="V1");
+    expect(run?.verificationStatus).toBe("unverified");
+    expect(run?.output).toContain("重复结果");
+    expect(outcome.ready).toBe(false);
+  });
+
+  it("does not trust repeated external Runner results",async()=>{
+    const project=fixture();
+    project.evalSuite[0]={...project.evalSuite[0]!,executionMode:"external-runner"};
+    project.acceptanceRubric[0]={...project.acceptanceRubric[0]!,validationMethod:"executable-test"};
+    const outcome=await runServerBaseline(project,{
+      executeSemanticBatch:async()=>({results:[]}),
+      executeExternalBatch:async()=>[
+        {testCaseId:"V1",output:"passed",latencyMs:1,cost:0,verificationStatus:"verified",trace:[]},
+        {testCaseId:"V1",output:"failed",latencyMs:1,cost:0,verificationStatus:"failed",trace:[]},
+      ],
+      judge:async()=>{throw new Error("ambiguous evidence must not reach Judge");},
+    });
+    expect(outcome.baseline.runs.find((item)=>item.testCaseId==="V1")).toMatchObject({verificationStatus:"unverified"});
+  });
+
   it("executes semantic + deterministic evidence and produces a ready BaselineRun",async()=>{
     const outcome=await runServerBaseline(fixture(),{
       executeSemanticBatch:async({testCases})=>({results:testCases.map((testCase)=>({testCaseId:testCase.id,output:"当前说明包含安装步骤，但验证与回滚说明不足。",trace:[]}))}),
