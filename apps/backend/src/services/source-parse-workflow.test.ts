@@ -7,9 +7,13 @@ import {EvolutionJobSchema,type ArtifactStorePort,type EvolutionJob,type Product
 const state=vi.hoisted(()=>({
   job:undefined as EvolutionJob|undefined,
   blobs:new Map<string,Blob>(),
+  metadataHashes:new Map<string,string>(),
   outputPut:false,
   cancelOnOutput:true,
   changeJobOnParse:false,
+  failOutputAfterWrite:false,
+  failCompletionBeforeWrite:false,
+  failCompletionAfterWrite:false,
 }));
 
 vi.mock("./production-runtime",async(importOriginal)=>{
@@ -18,7 +22,17 @@ vi.mock("./production-runtime",async(importOriginal)=>{
     jobs:{
       list:async()=>state.job?[state.job]:[],
       get:async()=>state.job,
-      put:async(job)=>{state.job=EvolutionJobSchema.parse(job);},
+      put:async(job)=>{
+        if(job.status==="completed"&&state.failCompletionBeforeWrite){
+          state.failCompletionBeforeWrite=false;
+          throw new Error("completion request failed");
+        }
+        state.job=EvolutionJobSchema.parse(job);
+        if(job.status==="completed"&&state.failCompletionAfterWrite){
+          state.failCompletionAfterWrite=false;
+          throw new Error("completion response lost");
+        }
+      },
       cancel:async()=>undefined,
     },
   };
@@ -29,8 +43,13 @@ vi.mock("./artifact-runtime",()=>({
   getServerArtifactStore:():ArtifactStorePort=>({
     put:async(id,blob)=>{
       state.blobs.set(id,blob);
+      state.metadataHashes.set(id,createHash("sha256").update(Buffer.from(await blob.arrayBuffer())).digest("hex"));
       if(id==="parse-output"||id.startsWith("parse-result-")){
         state.outputPut=true;
+        if(state.failOutputAfterWrite){
+          state.failOutputAfterWrite=false;
+          throw new Error("upload response lost");
+        }
         if(state.cancelOnOutput&&state.job){
           state.job=EvolutionJobSchema.parse({
             ...state.job,
@@ -42,7 +61,16 @@ vi.mock("./artifact-runtime",()=>({
       }
     },
     get:async(id)=>state.blobs.get(id),
-    delete:async(id)=>{state.blobs.delete(id);},
+    getMetadata:async(id)=>{
+      const blob=state.blobs.get(id);
+      const sha256=state.metadataHashes.get(id);
+      return blob&&sha256?{
+        id,schemaVersion:"artifact-v1" as const,bucket:"private",objectPath:id,
+        mimeType:blob.type,sizeBytes:blob.size,sha256,
+        createdAt:"2026-09-23T01:00:00.000Z",updatedAt:"2026-09-23T01:00:00.000Z",
+      }:undefined;
+    },
+    delete:async(id)=>{state.blobs.delete(id);state.metadataHashes.delete(id);},
   }),
 }));
 
@@ -60,6 +88,7 @@ vi.mock("./server-source-parser",()=>({
     kind:"text",
     mimeType:"text/plain",
     size:5,
+    inputMode:"upload",
     content:"hello",
     createdAt:"2026-09-23T01:00:00.000Z",
     storageRef:args.storageRef,
@@ -94,9 +123,13 @@ describe("source parse workflow cancellation",()=>{
   afterEach(()=>{
     state.job=undefined;
     state.blobs.clear();
+    state.metadataHashes.clear();
     state.outputPut=false;
     state.cancelOnOutput=true;
     state.changeJobOnParse=false;
+    state.failOutputAfterWrite=false;
+    state.failCompletionBeforeWrite=false;
+    state.failCompletionAfterWrite=false;
     vi.clearAllMocks();
   });
 
@@ -149,6 +182,76 @@ describe("source parse workflow cancellation",()=>{
     const parsed=await readSourceParseResult(state.job!,{get:async(id)=>state.blobs.get(id)});
     expect(parsed.artifact).toMatchObject({id:"artifact-1",storageRef:input.inputRef});
     expect(parsed.resultIssue).toBeUndefined();
+  });
+
+  it("recovers a same-generation output after the upload response is lost",async()=>{
+    state.cancelOnOutput=false;
+    state.failOutputAfterWrite=true;
+    const input=queuedV2Run();
+    await expect(executeSourceParseStep(input)).rejects.toThrow("Parse result Artifact write could not be confirmed");
+    expect(state.job?.status).toBe("running");
+    expect(state.blobs.has(input.outputRef)).toBe(true);
+    vi.mocked(parseServerSource).mockClear();
+
+    const result=await executeSourceParseStep(input);
+    expect(result.status).toBe("completed");
+    expect(parseServerSource).not.toHaveBeenCalled();
+    expect((await readSourceParseResult(state.job!,{get:async(id)=>state.blobs.get(id)})).resultIssue).toBeUndefined();
+  });
+
+  it("accepts an authoritative completed Job after its response is lost",async()=>{
+    state.cancelOnOutput=false;
+    state.failCompletionAfterWrite=true;
+    const input=queuedV2Run();
+    const result=await executeSourceParseStep(input);
+    expect(result.status).toBe("completed");
+    expect(state.job?.status).toBe("completed");
+    expect((await readSourceParseResult(state.job!,{get:async(id)=>state.blobs.get(id)})).resultIssue).toBeUndefined();
+  });
+
+  it("settles a saved result after a transient Job completion failure",async()=>{
+    state.cancelOnOutput=false;
+    state.failCompletionBeforeWrite=true;
+    const input=queuedV2Run();
+    await expect(executeSourceParseStep(input)).rejects.toThrow("Parse Job completion could not be confirmed");
+    expect(state.job?.status).toBe("running");
+    expect(state.blobs.has(input.outputRef)).toBe(true);
+    vi.mocked(parseServerSource).mockClear();
+
+    const result=await executeSourceParseStep(input);
+    expect(result.status).toBe("completed");
+    expect(parseServerSource).not.toHaveBeenCalled();
+    expect((await readSourceParseResult(state.job!,{get:async(id)=>state.blobs.get(id)})).resultIssue).toBeUndefined();
+  });
+
+  it("rejects a preexisting result with a different source identity",async()=>{
+    state.cancelOnOutput=false;
+    const input=queuedV2Run();
+    const existing=new Blob([JSON.stringify({
+      id:input.artifactId,name:input.name,mimeType:input.mimeType,size:input.size,
+      role:input.role,inputMode:"upload",storageRef:"another-input",
+      createdAt:input.requestedAt,
+    })],{type:"application/json"});
+    state.blobs.set(input.outputRef,existing);
+    state.metadataHashes.set(input.outputRef,createHash("sha256").update(Buffer.from(await existing.arrayBuffer())).digest("hex"));
+    await expect(executeSourceParseStep(input)).rejects.toThrow("Parse result Artifact does not match its Workflow input");
+    expect(parseServerSource).not.toHaveBeenCalled();
+    expect(state.job?.status).toBe("failed");
+    expect(state.outputPut).toBe(false);
+  });
+
+  it("rejects a persisted result whose bytes differ from Artifact metadata",async()=>{
+    state.cancelOnOutput=false;
+    const input=queuedV2Run();
+    state.blobs.set(input.outputRef,new Blob([JSON.stringify({
+      id:input.artifactId,name:input.name,mimeType:input.mimeType,size:input.size,
+      role:input.role,inputMode:"upload",storageRef:input.inputRef,
+      createdAt:input.requestedAt,
+    })],{type:"application/json"}));
+    state.metadataHashes.set(input.outputRef,"0".repeat(64));
+    await expect(executeSourceParseStep(input)).rejects.toThrow("Parse result Artifact metadata does not match its stored bytes");
+    expect(parseServerSource).not.toHaveBeenCalled();
+    expect(state.job?.status).toBe("failed");
   });
 
   it("fails a v2 Job before parsing when its raw Storage bytes change",async()=>{
