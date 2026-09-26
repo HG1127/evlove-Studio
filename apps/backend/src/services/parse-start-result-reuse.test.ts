@@ -92,7 +92,7 @@ describe("completed Parse result reuse",()=>{
 
   it("does not restart a completed Parse when Storage is temporarily unreadable",async()=>{
     state.getError=true;
-    await expect(route(request())).rejects.toMatchObject({status:503,data:{jobId:"parse-1",generation:1}});
+    await expect(route(request())).rejects.toMatchObject({status:503,data:{code:"PARSE_RESULT_TEMPORARILY_UNAVAILABLE",jobId:"parse-1",generation:1}});
     expect(state.putJob).not.toHaveBeenCalled();
     expect(state.start).not.toHaveBeenCalled();
   });
@@ -121,7 +121,7 @@ describe("completed Parse result reuse",()=>{
     state.existing=undefined;
     state.getError=true;
     state.putJob.mockRejectedValueOnce(new JobStateConflictError(current.id,"idempotency-conflict",current));
-    await expect(route(request())).rejects.toMatchObject({status:503,data:{jobId:current.id}});
+    await expect(route(request())).rejects.toMatchObject({status:503,data:{code:"PARSE_RESULT_TEMPORARILY_UNAVAILABLE",jobId:current.id}});
     expect(state.start).not.toHaveBeenCalled();
   });
 

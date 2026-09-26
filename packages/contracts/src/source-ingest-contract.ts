@@ -75,6 +75,11 @@ export const SourceParseStartResponseSchema=z.object({
 });
 export type SourceParseStartResponse=z.infer<typeof SourceParseStartResponseSchema>;
 
+export const SourceParseResultPendingErrorDataSchema=z.object({
+  code:z.literal("PARSE_RESULT_TEMPORARILY_UNAVAILABLE"),
+  jobId:z.string().min(1),
+});
+
 export const SourceParseStatusResponseSchema=z.object({
   job:EvolutionJobSchema,
   artifact:SourceArtifactSchema.optional(),

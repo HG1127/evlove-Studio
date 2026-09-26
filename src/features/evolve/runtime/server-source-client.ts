@@ -2,6 +2,7 @@ import {
   SourceParseCapabilitiesSchema,
   SourceParseCancelResponseSchema,
   SourceParseListResponseSchema,
+  SourceParseResultPendingErrorDataSchema,
   SourceParseStartResponseSchema,
   SourceParseStatusResponseSchema,
   type EvolutionJob,
@@ -13,6 +14,11 @@ export class ServerParseUnavailableError extends Error{
   code="SERVER_PARSE_UNAVAILABLE" as const;
 }
 
+class ServerParseResultPendingError extends Error{
+  readonly jobId:string;
+  constructor(message:string,jobId:string){super(message);this.jobId=jobId;}
+}
+
 async function json(path:string,init?:RequestInit){
   const response=await fetch(path,init);
   const body=await response.json().catch(()=>({}));
@@ -20,6 +26,10 @@ async function json(path:string,init?:RequestInit){
     const message=String((body as {statusMessage?:string;message?:string}).statusMessage
       ??(body as {message?:string}).message
       ??`Parse API HTTP ${response.status}`);
+    if(response.status===503){
+      const pending=SourceParseResultPendingErrorDataSchema.safeParse((body as {data?:unknown}).data);
+      if(pending.success)throw new ServerParseResultPendingError(message,pending.data.jobId);
+    }
     if([401,403,404,503].includes(response.status))throw new ServerParseUnavailableError(message);
     throw new Error(message);
   }
@@ -37,7 +47,14 @@ export async function startServerParseFile(file:File,role:ArtifactRole,artifactI
   form.append("artifactId",artifactId);
   form.append("lastModified",String(file.lastModified));
   if(sessionId)form.append("sessionId",sessionId);
-  return SourceParseStartResponseSchema.parse(await json("/api/evolution/parse-start",{method:"POST",body:form}));
+  try{
+    return SourceParseStartResponseSchema.parse(await json("/api/evolution/parse-start",{method:"POST",body:form}));
+  }catch(error){
+    if(error instanceof ServerParseResultPendingError){
+      return SourceParseStartResponseSchema.parse({jobId:error.jobId,artifactId,status:"completed",reused:true});
+    }
+    throw error;
+  }
 }
 
 export async function getServerParseStatus(jobId:string){

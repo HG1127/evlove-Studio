@@ -44,6 +44,16 @@ describe("server source client degraded fallback classification",()=>{
     )).rejects.not.toBeInstanceOf(ServerParseUnavailableError);
   });
 
+  it("retains the server Job when its completed result is temporarily unreadable",async()=>{
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({
+      statusCode:503,statusMessage:"Parse result temporarily unavailable",
+      data:{code:"PARSE_RESULT_TEMPORARILY_UNAVAILABLE",jobId:"parse-1"},
+    }),{status:503,headers:{"Content-Type":"application/json"}})));
+    expect(await startServerParseFile(
+      new File(["hello"],"input.txt",{type:"text/plain"}),"target","artifact-1",
+    )).toEqual({jobId:"parse-1",artifactId:"artifact-1",status:"completed",reused:true});
+  });
+
   it("validates the Workflow cancellation receipt before returning it",async()=>{
     const receipt={jobId:"parse-1",status:"cancelled",workflow:{
       runId:"run-1",bound:true,exists:true,statusBefore:"running",statusAfter:"cancelled",
