@@ -27,7 +27,7 @@ import type { ArtifactRole, EvolveProject, ProjectAiProfile, SourceArtifact } fr
 import { defaultProjectAiProfile } from "../ai/project-profile";
 import { ingestSources, runIntakeFromArtifacts } from "../runtime/api";
 import { deleteArtifactBlob, putArtifactBlob } from "../runtime/artifact-blob-store";
-import {clearDismissedParseArtifacts,dismissParseArtifact,readDismissedParseArtifacts} from "../runtime/composer-parse-dismissal";
+import {clearComposerParseSessionId,clearDismissedParseArtifacts,composerParseSessionId,dismissParseArtifact,readDismissedParseArtifacts} from "../runtime/composer-parse-dismissal";
 import { loadRecoveredParseSource, recoveredParseState } from "../runtime/server-parse-recovery";
 import {
   cancelServerParseJob,
@@ -64,17 +64,6 @@ const objectTypes = [
   ["workflow", "Workflow"], ["document", "文档"], ["presentation", "PPT/演示文稿"], ["spreadsheet", "表格"], ["codebase", "代码工程"], ["knowledge", "知识库 / Memory"], ["tool", "Tool"], ["template", "内容模板"],
 ] as const;
 const roleLabels: Record<ArtifactRole, string> = { target: "进化对象", reference: "参考材料", eval: "测试样本" };
-const PARSE_SESSION_KEY="evolve-studio:composer-parse-session:v1";
-
-function composerParseSessionId(){
-  if(typeof window==="undefined")return `composer-${Date.now()}`;
-  const existing=window.sessionStorage.getItem(PARSE_SESSION_KEY);
-  if(existing)return existing;
-  const created=`composer-${crypto.randomUUID()}`;
-  window.sessionStorage.setItem(PARSE_SESSION_KEY,created);
-  return created;
-}
-
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
@@ -645,10 +634,8 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
       updatedAt: new Date().toISOString(),
     };
     saveLocalProject(project);
-    if(typeof window!=="undefined"){
-      window.sessionStorage.removeItem(PARSE_SESSION_KEY);
-      clearDismissedParseArtifacts();
-    }
+    clearComposerParseSessionId();
+    clearDismissedParseArtifacts();
     if (appliedTemplate) recordTemplateUse(appliedTemplate.id);
     navigate(`/projects/${id}?autostart=1`);
   };

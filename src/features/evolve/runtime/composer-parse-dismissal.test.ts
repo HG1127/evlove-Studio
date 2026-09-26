@@ -1,8 +1,8 @@
 import {beforeEach,describe,expect,it} from "vitest";
-import {clearDismissedParseArtifacts,dismissParseArtifact,readDismissedParseArtifacts} from "./composer-parse-dismissal";
+import {clearComposerParseSessionId,clearDismissedParseArtifacts,composerParseSessionId,dismissParseArtifact,readDismissedParseArtifacts} from "./composer-parse-dismissal";
 
 describe("composer Parse dismissal",()=>{
-  beforeEach(()=>window.sessionStorage.clear());
+  beforeEach(()=>{window.sessionStorage.clear();clearComposerParseSessionId();clearDismissedParseArtifacts();});
 
   it("keeps a removed source hidden after refresh within the same draft",()=>{
     expect([...dismissParseArtifact("draft-1","artifact-1")]).toEqual(["artifact-1"]);
@@ -25,5 +25,22 @@ describe("composer Parse dismissal",()=>{
     expect(ids.size).toBe(200);
     expect(ids.has("artifact-0")).toBe(false);
     expect(ids.has("artifact-204")).toBe(true);
+  });
+
+  it("uses a memory fallback when session storage rejects access",()=>{
+    const denied={
+      getItem(){throw new Error("storage denied");},
+      setItem(){throw new Error("storage denied");},
+      removeItem(){throw new Error("storage denied");},
+    } as unknown as Storage;
+    const sessionId=composerParseSessionId(denied);
+    expect(composerParseSessionId(denied)).toBe(sessionId);
+    dismissParseArtifact(sessionId,"artifact-1",denied);
+    dismissParseArtifact(sessionId,"artifact-2",denied);
+    expect([...readDismissedParseArtifacts(sessionId,denied)]).toEqual(["artifact-1","artifact-2"]);
+    clearDismissedParseArtifacts(denied);
+    expect(readDismissedParseArtifacts(sessionId,denied).size).toBe(0);
+    clearComposerParseSessionId(denied);
+    expect(composerParseSessionId(denied)).not.toBe(sessionId);
   });
 });
