@@ -15,6 +15,6 @@ describe("Artifact batch adapter identity", () => {
     expect(results?.map((item) => item.testCaseId)).toEqual(["T1", "T2"]);
     expect(results?.[0]?.verificationStatus).toBe("verified");
     expect(results?.[1]).toMatchObject({ verificationStatus: "unverified", output: expect.stringContaining("未返回") });
-    expect(results?.[1]?.error).toBeUndefined();
+    expect(results?.[1]?.error).toBe("batch executor missing result");
   });
 });

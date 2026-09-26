@@ -235,6 +235,7 @@ export const artifactTargetAdapter: TargetAdapter = {
           latencyMs: latencyPerCase,
           cost: 0,
           trace: [],
+          error: "batch executor missing result",
           verificationStatus: "unverified",
         });
       }

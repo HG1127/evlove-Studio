@@ -560,8 +560,9 @@ export function fastGateCaseLimit(project: EvolveProject) {
 export async function executeCaseSet(args: { adapter: ReturnType<typeof getTargetAdapter>; project: EvolveProject; testCases: TestCase[]; variant?: Candidate; batchSize: number; concurrency?: number; onProgress?: (done: number, total: number) => void }) {
   const { adapter, project, testCases, variant, batchSize, onProgress } = args;
   const duplicateCaseIds = indexUniqueById(testCases, (testCase) => testCase.id).duplicateIds;
-  const unverified = (testCaseId: string, reason: string): TargetRunResult => ({
-    testCaseId, output: `UNVERIFIED：${reason}`, latencyMs: 0, cost: 0, trace: [], verificationStatus: "unverified",
+  const unverified = (testCaseId: string, reason: string, retryable = true): TargetRunResult => ({
+    testCaseId, output: `UNVERIFIED：${reason}`, latencyMs: 0, cost: 0, trace: [],
+    ...(retryable ? { error: reason } : {}), verificationStatus: "unverified",
   });
   if (adapter.runBatch && testCases.length > 1) {
     const chunks: TestCase[][] = [];
@@ -617,14 +618,14 @@ export async function executeCaseSet(args: { adapter: ReturnType<typeof getTarge
     });
     const { byId, duplicateIds } = indexScopedTestCaseResults(batchResults);
     return testCases.map((testCase) => duplicateCaseIds.has(testCase.id)
-      ? unverified(testCase.id, "验收题 ID 重复，身份不明确")
+      ? unverified(testCase.id, "验收题 ID 重复，需修正题目定义", false)
       : duplicateIds.has(testCase.id)
         ? unverified(testCase.id, "批量执行返回重复 Test Case 结果，身份不明确")
         : byId.get(testCase.id) ?? unverified(testCase.id, "批量执行缺失 Test Case 结果"));
   }
   const results = await pooled(testCases, Math.min(args.concurrency ?? TOTAL_CONCURRENCY, testCases.length), (testCase) => resilientCase(() => adapter.run({ project, testCase, variant }), testCase.id), onProgress);
   return testCases.map((testCase, index) => duplicateCaseIds.has(testCase.id)
-    ? unverified(testCase.id, "验收题 ID 重复，身份不明确")
+    ? unverified(testCase.id, "验收题 ID 重复，需修正题目定义", false)
     : results[index]?.testCaseId === testCase.id
       ? results[index]!
       : unverified(testCase.id, "单题执行返回了不同的 Test Case ID"));
@@ -652,10 +653,10 @@ export async function executeCandidateAwareCaseSet(args: Parameters<typeof execu
   const normalizedFresh = remaining.length ? normalizeLocallyVerifiableCandidateRuns(args.project, args.variant, remaining, fresh) : [];
   const freshIndex = indexUniqueById(normalizedFresh, (run) => run.testCaseId);
   return args.testCases.map((testCase) => repeatedCaseIds.has(testCase.id)
-    || localIndex.duplicateIds.has(testCase.id)
-    || freshIndex.duplicateIds.has(testCase.id)
-    ? { testCaseId: testCase.id, output: "UNVERIFIED：本地证据出现重复 Test Case 身份", latencyMs: 0, cost: 0, trace: [], verificationStatus: "unverified" as const }
-    : localById.get(testCase.id) ?? freshIndex.byId.get(testCase.id) ?? ({ testCaseId: testCase.id, output: "UNVERIFIED：执行未返回结果", latencyMs: 0, cost: 0, trace: [], verificationStatus: "unverified" as const }));
+    ? { testCaseId: testCase.id, output: "UNVERIFIED：验收题 ID 重复，需修正题目定义", latencyMs: 0, cost: 0, trace: [], verificationStatus: "unverified" as const }
+    : localIndex.duplicateIds.has(testCase.id) || freshIndex.duplicateIds.has(testCase.id)
+      ? { testCaseId: testCase.id, output: "UNVERIFIED：本地执行返回重复 Test Case 身份", latencyMs: 0, cost: 0, trace: [], error: "duplicate Test Case result", verificationStatus: "unverified" as const }
+    : localById.get(testCase.id) ?? freshIndex.byId.get(testCase.id) ?? ({ testCaseId: testCase.id, output: "UNVERIFIED：执行未返回结果", latencyMs: 0, cost: 0, trace: [], error: "missing Test Case result", verificationStatus: "unverified" as const }));
 }
 
 
@@ -943,7 +944,7 @@ export async function retryFailedExperimentCases(project: EvolveProject, inputCa
   const updated = new Map(parsed.experimentRun.candidateResults.map((result) => [result.candidateId, result]));
   // 补考题跨候选拍平进一个池子，答完按候选归组并发评审，不再逐候选串行等 API。
   const retryJobs = targetResults.flatMap(({ result, candidate }) => failedIndexesOf(result.runs).map((index) => ({ candidate, index })));
-  const rerunAll = await pooled(retryJobs, TOTAL_CONCURRENCY, (job) => resilientCase(() => adapter.run({ project: parsed, testCase: suite[job.index]!, variant: job.candidate }), suite[job.index]!.id), (done, total) => onProgress?.(done, total, "补考失败题"));
+  const rerunAll = await pooled(retryJobs, TOTAL_CONCURRENCY, async (job) => (await executeCaseSet({ adapter, project: parsed, testCases: [suite[job.index]!], variant: job.candidate, batchSize: 1 }))[0]!, (done, total) => onProgress?.(done, total, "补考失败题"));
   const rerunByCandidate = new Map<string, TargetRunResult[]>(targetResults.map(({ candidate }) => [candidate.id, []]));
   rerunAll.forEach((run, position) => rerunByCandidate.get(retryJobs[position]!.candidate.id)!.push(run));
   onProgress?.(retryTotal, retryTotal, "评审候选");

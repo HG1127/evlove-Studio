@@ -74,13 +74,21 @@ describe("local Target execution identity", () => {
     const runs = await executeCaseSet({ adapter, project: demoProject, testCases: cases, batchSize: 2 });
     expect(runs[0]).toMatchObject({ testCaseId: a!.id, verificationStatus: "unverified" });
     expect(runs[1]).toMatchObject({ testCaseId: b!.id, verificationStatus: "unverified" });
-    expect(runs.every((run) => !run.error)).toBe(true);
+    expect(runs.every((run) => Boolean(run.error))).toBe(true);
   });
 
   it("rejects a single-case response with a different Test Case ID", async () => {
     const adapter = { run: async () => result("wrong-case", "claimed pass") } as unknown as ReturnType<typeof getTargetAdapter>;
     const runs = await executeCaseSet({ adapter, project: demoProject, testCases: cases.slice(0, 1), batchSize: 1 });
     expect(runs[0]).toMatchObject({ testCaseId: cases[0]!.id, verificationStatus: "unverified" });
+    expect(runs[0]?.error).toBeTruthy();
+  });
+
+  it("requires fixing a duplicate Test Case definition instead of offering a pointless rerun", async () => {
+    const testCase = cases[0]!;
+    const adapter = { run: async () => result(testCase.id, "claimed pass") } as unknown as ReturnType<typeof getTargetAdapter>;
+    const runs = await executeCaseSet({ adapter, project: demoProject, testCases: [testCase, { ...testCase }], batchSize: 1 });
+    expect(runs.every((run) => run.verificationStatus === "unverified" && !run.error)).toBe(true);
   });
 
   it("does not let local snapshot evidence upgrade duplicate Test Case definitions", async () => {
@@ -92,6 +100,7 @@ describe("local Target execution identity", () => {
     const runs = await executeCandidateAwareCaseSet({ adapter, project, testCases: [testCase, { ...testCase }], variant: candidate, batchSize: 1 });
     expect(runs).toHaveLength(2);
     expect(runs.every((run) => run.verificationStatus === "unverified")).toBe(true);
+    expect(runs.every((run) => !run.error)).toBe(true);
   });
 });
 
