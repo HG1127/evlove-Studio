@@ -12,14 +12,21 @@ export function hasDeterministicRoundtripProof(
   runs: TargetRunResult[],
 ) {
   if (criterion.validationMethod !== "format-roundtrip") return false;
-  const mappedCases = testCases.filter((testCase) => testCase.criterionIds.includes(criterion.id)).map((testCase) => testCase.id);
-  if (!mappedCases.length) return false;
-  const runMap = new Map(runs.map((run) => [run.testCaseId, run]));
+  const mapped = testCases.filter((testCase) => testCase.criterionIds.includes(criterion.id));
+  if (!mapped.length || mapped.some((testCase) => testCase.executionMode !== "roundtrip")) return false;
+  const mappedCases = mapped.map((testCase) => testCase.id);
+  if (new Set(mappedCases).size !== mappedCases.length) return false;
+  const runMap = new Map<string, TargetRunResult>();
+  const duplicateRunIds = new Set<string>();
+  for (const run of runs) {
+    if (runMap.has(run.testCaseId)) duplicateRunIds.add(run.testCaseId);
+    runMap.set(run.testCaseId, run);
+  }
   return mappedCases.every((id) => {
+    if (duplicateRunIds.has(id)) return false;
     const run = runMap.get(id);
     return run?.verificationStatus === "verified"
-      && (run.output?.includes("CANDIDATE TEXT FORMAT ROUNDTRIP VERIFIED")
-        || run.trace?.some((step) => step.stage === "format-roundtrip" && step.status === "pass"));
+      && run.trace?.some((step) => step.stage === "format-roundtrip" && step.status === "pass");
   });
 }
 
