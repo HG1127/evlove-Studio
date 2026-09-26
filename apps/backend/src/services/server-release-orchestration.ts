@@ -1,10 +1,11 @@
-import type {EvolveProject,ReleaseAdapterResult} from "@evolution/contracts";
+import type {EvolveProject,ReleaseAdapterResult,ReleaseOutcomeTelemetryStatus} from "@evolution/contracts";
 import {currentReleaseCandidate,projectUsesConnectorRelease,projectUsesHttpRelease} from "@evolution/core";
 import {runServerReleaseOrchestration,type ServerReleasePorts} from "@evolution/harness";
 import {executeConnectorReleaseAction} from "./connector-release";
 import {releaseHttpTarget} from "./http-target-gateway";
 import {getActiveReleaseApprovalGrant} from "./release-approval-store";
 import {recordConnectorReleaseOutcomeObservation,recordHttpReleaseOutcomeObservation} from "./release-outcome-telemetry";
+import {captureReleaseOutcomeTelemetry} from "./release-outcome-status";
 import {executeVercelReleaseAction} from "./vercel-release";
 
 export async function executeServerReleaseProvider(
@@ -54,13 +55,12 @@ export async function runServerMissionRelease(project:EvolveProject){
       return receipt;
     },
   });
+  let outcomeTelemetry:ReleaseOutcomeTelemetryStatus|undefined;
   if(adapterReceipt?.observedAt&&outcome.project.release.observedAt===adapterReceipt.observedAt){
-    const recorded=await (projectUsesConnectorRelease(project)
-      ?recordConnectorReleaseOutcomeObservation(outcome.project,adapterReceipt)
-      :recordHttpReleaseOutcomeObservation(outcome.project,adapterReceipt)).catch(()=>undefined);
-    if(recorded?.telemetry?.warnings.length){
-      console.warn("[outcome-telemetry] HTTP release receipt completed with warnings",recorded.telemetry.warnings);
-    }
+    const acceptedReceipt=adapterReceipt;
+    outcomeTelemetry=await captureReleaseOutcomeTelemetry(()=>(projectUsesConnectorRelease(project)
+      ?recordConnectorReleaseOutcomeObservation(outcome.project,acceptedReceipt)
+      :recordHttpReleaseOutcomeObservation(outcome.project,acceptedReceipt)));
   }
-  return outcome;
+  return {...outcome,outcomeTelemetry};
 }

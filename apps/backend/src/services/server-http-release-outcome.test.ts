@@ -53,6 +53,7 @@ describe("server HTTP release outcome persistence",()=>{
     expect(record).toHaveBeenCalledTimes(1);
     expect(record.mock.calls[0]?.[0].release.deploymentId).toBe("http-candidate");
     expect(record.mock.calls[0]?.[1]).toMatchObject({effectiveAction:"shadow",deploymentId:"http-candidate"});
+    expect(outcome.outcomeTelemetry).toMatchObject({status:"recorded",inserted:1});
   });
 
   it("does not persist an HTTP receipt rejected by exact artifact binding",async()=>{
@@ -67,5 +68,27 @@ describe("server HTTP release outcome persistence",()=>{
     expect(outcome.control).toBe("stop");
     expect(outcome.project.campaign.stopReason).toContain("server-release-receipt-invalid");
     expect(record).not.toHaveBeenCalled();
+    expect(outcome.outcomeTelemetry).toBeUndefined();
+  });
+
+  it("reports an Outcome write failure without changing the accepted Release",async()=>{
+    process.env.EVOLUTION_TARGET_RELEASE_URL="https://release.internal/action";
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({
+      ok:true,trafficPercent:0,note:"shadow healthy",healthy:true,kpis:[],evidenceMode:"live",
+      effectiveAction:"shadow",observationStatus:"healthy",deploymentId:"http-candidate",stableDeploymentId:"http-stable",
+      artifactHashes:[{sourceArtifactId:"source",contentHash:"hash-c1"}],
+      environment:"preview",observedAt:"2026-09-22T02:02:00Z",latencyMs:25,sampleSize:2,windowMinutes:1,
+    }),{status:200,headers:{"Content-Type":"application/json"}})));
+    record.mockRejectedValueOnce(new Error("private database error"));
+    const warn=vi.spyOn(console,"warn").mockImplementation(()=>undefined);
+    try{
+      const outcome=await runServerMissionRelease(fixture());
+      expect(outcome.control).toBe("continue");
+      expect(outcome.project.release.observedAt).toBe("2026-09-22T02:02:00Z");
+      expect(outcome.outcomeTelemetry).toMatchObject({status:"failed"});
+      expect(warn).toHaveBeenCalled();
+    }finally{
+      warn.mockRestore();
+    }
   });
 });

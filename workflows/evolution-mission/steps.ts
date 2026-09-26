@@ -1152,6 +1152,7 @@ export async function executeServerControlStep(
         candidateId:releaseOutcome.project.release.candidateId,
         deploymentId:releaseOutcome.project.release.deploymentId,
         stableDeploymentId:releaseOutcome.project.release.stableDeploymentId,
+        outcomeTelemetry:releaseOutcome.outcomeTelemetry,
         reason:releaseOutcome.reason,
       },
     }));
@@ -1177,6 +1178,7 @@ export async function executeServerControlStep(
         healthy:releaseOutcome.project.release.healthy,
         observationStatus:releaseOutcome.project.release.observationStatus,
         recovery:releaseOutcome.project.release.recovery,
+        outcomeTelemetry:releaseOutcome.outcomeTelemetry,
         reason:releaseOutcome.reason,
       },
     }));
