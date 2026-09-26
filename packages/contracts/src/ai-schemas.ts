@@ -321,6 +321,20 @@ export const EvaluateAiResultSchema = z.object({
   if (value.accuracy === 0 && value.evidence === 0 && value.riskCoverage === 0) {
     ctx.addIssue({ code: "custom", message: "Evaluator returned all-zero scores; treating as invalid response" });
   }
+  const caseIds = new Set<string>();
+  value.cases.forEach((item, index) => {
+    if (caseIds.has(item.testCaseId)) {
+      ctx.addIssue({ code: "custom", path: ["cases", index, "testCaseId"], message: `Duplicate evaluator Test Case ID: ${item.testCaseId}` });
+    }
+    caseIds.add(item.testCaseId);
+  });
+  const criterionIds = new Set<string>();
+  value.criteria.forEach((item, index) => {
+    if (criterionIds.has(item.criterionId)) {
+      ctx.addIssue({ code: "custom", path: ["criteria", index, "criterionId"], message: `Duplicate evaluator Criterion ID: ${item.criterionId}` });
+    }
+    criterionIds.add(item.criterionId);
+  });
 });
 export type EvaluateAiResult = z.infer<typeof EvaluateAiResultSchema>;
 

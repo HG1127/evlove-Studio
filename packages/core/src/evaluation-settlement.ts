@@ -29,19 +29,45 @@ export function criteriaRequiringJudge(
   return criteria.filter((criterion) => mapped.has(criterion.id) && !hasDeterministicRoundtripProof(criterion, testCases, runs));
 }
 
+function indexUniqueById<T>(items: readonly T[], idOf: (item: T) => string) {
+  const byId = new Map<string, T>();
+  const duplicateIds = new Set<string>();
+  for (const item of items) {
+    const id = idOf(item);
+    if (duplicateIds.has(id)) continue;
+    if (byId.has(id)) {
+      byId.delete(id);
+      duplicateIds.add(id);
+    } else {
+      byId.set(id, item);
+    }
+  }
+  return { byId, duplicateIds };
+}
+
 export function deriveCriterionScores(
   criteria: AcceptanceCriterion[],
   testCases: TestCase[],
   caseScores: CaseScore[],
   runs: TargetRunResult[],
   aiCriteria?: Array<{ criterionId: string; score: number; pass: boolean; evidence: string[]; gaps: string[]; testCaseIds: string[] }>,
+  ambiguousCaseIds: ReadonlySet<string> = new Set(),
 ) {
-  const aiMap = new Map((aiCriteria ?? []).map((item) => [item.criterionId, item]));
-  const caseMap = new Map(caseScores.map((item) => [item.testCaseId, item]));
-  const runMap = new Map(runs.map((item) => [item.testCaseId, item]));
+  const { byId: aiMap, duplicateIds: repeatedCriteria } = indexUniqueById(aiCriteria ?? [], (item) => item.criterionId);
+  const { byId: caseMap, duplicateIds: repeatedCases } = indexUniqueById(caseScores, (item) => item.testCaseId);
+  const { byId: runMap, duplicateIds: repeatedRuns } = indexUniqueById(runs, (item) => item.testCaseId);
   const criterionScores: CriterionScore[] = criteria.map((criterion) => {
     const mappedCases = testCases.filter((testCase) => testCase.criterionIds.includes(criterion.id)).map((testCase) => testCase.id);
     const mappedStatuses = mappedCases.map((id) => runMap.get(id)?.verificationStatus ?? "unverified");
+    if (mappedCases.some((id) => repeatedRuns.has(id))) return {
+      criterionId: criterion.id,
+      score: 0,
+      pass: false,
+      verificationStatus: "unverified" as const,
+      evidence: [],
+      gaps: ["同一 Test Case 出现重复执行结果，证据身份不明确；需重新执行"],
+      testCaseIds: mappedCases,
+    };
     const deterministicRoundtrip = hasDeterministicRoundtripProof(criterion, testCases, runs);
     if (deterministicRoundtrip) return {
       criterionId: criterion.id,
@@ -50,6 +76,15 @@ export function deriveCriterionScores(
       verificationStatus: "verified" as const,
       evidence: mappedCases.map((id) => `${id}: 当前 Candidate 已完成原格式 Roundtrip 并逐字一致`),
       gaps: [],
+      testCaseIds: mappedCases,
+    };
+    if (repeatedCriteria.has(criterion.id) || mappedCases.some((id) => repeatedCases.has(id) || ambiguousCaseIds.has(id))) return {
+      criterionId: criterion.id,
+      score: 0,
+      pass: false,
+      verificationStatus: "unverified" as const,
+      evidence: [],
+      gaps: ["评审对同一 Criterion 或 Test Case 返回了重复判定，不能选择其中一项作为验收结果"],
       testCaseIds: mappedCases,
     };
     const ai = aiMap.get(criterion.id);
@@ -155,7 +190,7 @@ export function settleAiEvaluation(args: {
   notes?: string[];
 }): EvaluationResult {
   const knownIds = new Set(args.testCases.map((testCase) => testCase.id));
-  const caseScores: CaseScore[] = args.ai.cases
+  const normalizedCaseScores: CaseScore[] = args.ai.cases
     .filter((item) => knownIds.has(item.testCaseId))
     .map((item) => ({
       testCaseId: item.testCaseId,
@@ -164,7 +199,9 @@ export function settleAiEvaluation(args: {
       completeness: normalizeEvaluationScore(item.completeness),
       reason: item.reason.slice(0, 200),
     }));
-  const rubric = deriveCriterionScores(args.criteria, args.testCases, caseScores, args.runs, args.ai.criteria);
+  const { duplicateIds: ambiguousCaseIds } = indexUniqueById(normalizedCaseScores, (item) => item.testCaseId);
+  const caseScores = normalizedCaseScores.filter((item) => !ambiguousCaseIds.has(item.testCaseId));
+  const rubric = deriveCriterionScores(args.criteria, args.testCases, caseScores, args.runs, args.ai.criteria, ambiguousCaseIds);
   const executed = args.runs.filter((run) => !run.error);
   const costSource = executed.length ? executed : args.runs;
   return {
