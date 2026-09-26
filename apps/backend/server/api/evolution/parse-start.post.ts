@@ -135,9 +135,18 @@ export default defineEventHandler(async(event)=>{
   }catch(error){
     if(error instanceof JobStateConflictError&&error.reason==="idempotency-conflict"&&error.current?.idempotencyKey===idempotencyKey){
       const current=error.current;
+      if(current.type!=="parse"){
+        throw createError({statusCode:409,statusMessage:"Parse idempotency key belongs to another Job type",data:{jobId:current.id}});
+      }
       if(["queued","running","waiting","completed"].includes(current.status)){
         const runId=persistedParseRunId(current);
         if(current.status!=="completed"&&!runId)throw createError({statusCode:409,statusMessage:"Parse Job 尚无已绑定的 Workflow runId，请按 Job ID 检查或稍后重试",data:{jobId:current.id,generation:current.generation}});
+        if(current.status==="completed"){
+          const output=await readSourceParseResult(current,artifacts);
+          if(!output.artifact){
+            throw createError({statusCode:409,statusMessage:"并发 Parse Job 的完成结果无法验证，请按 Job ID 检查",data:{jobId:current.id,generation:current.generation,resultIssue:output.resultIssue}});
+          }
+        }
         return SourceParseStartResponseSchema.parse({
           jobId:current.id,
           runId,

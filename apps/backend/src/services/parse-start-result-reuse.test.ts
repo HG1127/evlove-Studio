@@ -3,6 +3,8 @@ import {createHash} from "node:crypto";
 import {beforeEach,describe,expect,it,vi} from "vitest";
 import {mockEvent} from "nitro/h3";
 import {EvolutionJobSchema,type EvolutionJob} from "@evolution/contracts";
+import {JobStateConflictError} from "./production-runtime";
+import {sourceParseIdempotencyIdentity} from "./source-parse-identity";
 
 const state=vi.hoisted(()=>( {
   existing:undefined as EvolutionJob|undefined,
@@ -45,6 +47,14 @@ function request(){
   return mockEvent(new Request("http://localhost/api/evolution/parse-start",{method:"POST",body:"test"}));
 }
 
+function racedJob(){
+  const {idempotencyKey}=sourceParseIdempotencyIdentity({
+    artifactId:"artifact-1",name:"input.txt",mimeType:"text/plain",role:"target",
+    bytes:new TextEncoder().encode("hello"),
+  });
+  return EvolutionJobSchema.parse({...state.current,idempotencyKey});
+}
+
 describe("completed Parse result reuse",()=>{
   beforeEach(()=>{
     const artifact={id:"artifact-1",name:"input.txt",role:"target",mimeType:"text/plain",
@@ -72,6 +82,33 @@ describe("completed Parse result reuse",()=>{
     expect(response).toMatchObject({jobId:"parse-1",status:"completed",reused:true});
     expect(response.runId).toBeUndefined();
     expect(state.putJob).not.toHaveBeenCalled();
+    expect(state.start).not.toHaveBeenCalled();
+  });
+
+  it("rechecks a concurrently completed Job before reusing its result",async()=>{
+    const current=racedJob();
+    state.existing=undefined;
+    state.putJob.mockRejectedValueOnce(new JobStateConflictError(current.id,"idempotency-conflict",current));
+    const response=await route(request());
+    expect(response).toMatchObject({jobId:current.id,status:"completed",reused:true});
+    expect(response.runId).toBeUndefined();
+    expect(state.start).not.toHaveBeenCalled();
+  });
+
+  it("rejects a concurrently completed Job with substituted result bytes",async()=>{
+    const current=racedJob();
+    state.existing=undefined;
+    state.output=new Blob(["substituted result"]);
+    state.putJob.mockRejectedValueOnce(new JobStateConflictError(current.id,"idempotency-conflict",current));
+    await expect(route(request())).rejects.toMatchObject({status:409,data:{jobId:current.id,resultIssue:expect.any(String)}});
+    expect(state.start).not.toHaveBeenCalled();
+  });
+
+  it("rejects a concurrent Job of another type with the same operation key",async()=>{
+    const current=EvolutionJobSchema.parse({...racedJob(),type:"campaign"});
+    state.existing=undefined;
+    state.putJob.mockRejectedValueOnce(new JobStateConflictError(current.id,"idempotency-conflict",current));
+    await expect(route(request())).rejects.toMatchObject({status:409,data:{jobId:current.id}});
     expect(state.start).not.toHaveBeenCalled();
   });
 
