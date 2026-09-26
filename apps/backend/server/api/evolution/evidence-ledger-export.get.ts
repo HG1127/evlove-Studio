@@ -1,10 +1,11 @@
 import {createError,defineEventHandler,getQuery} from "nitro/h3";
+import {MissionReadQuerySchema} from "@evolution/contracts";
 import {createEvidenceLedgerExport} from "../../../src/services/evidence-ledger";
 import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 
 export default defineEventHandler(async(event)=>{
   await requireGovernedEvolutionPermission(event,"data.read");
-  const missionId=typeof getQuery(event).missionId==="string"?String(getQuery(event).missionId).trim():"";
-  if(!missionId)throw createError({statusCode:400,statusMessage:"missionId is required"});
-  return createEvidenceLedgerExport(missionId);
+  const parsed=MissionReadQuerySchema.safeParse(getQuery(event));
+  if(!parsed.success)throw createError({statusCode:400,statusMessage:"Invalid missionId"});
+  return createEvidenceLedgerExport(parsed.data.missionId);
 });
