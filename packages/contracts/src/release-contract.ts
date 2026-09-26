@@ -134,7 +134,9 @@ export type VercelReleaseActionRequest=z.infer<typeof VercelReleaseActionRequest
 
 export const ReleaseActionRequestSchema=VercelReleaseActionRequestSchema;
 export type ReleaseActionRequest=z.infer<typeof ReleaseActionRequestSchema>;
-export const ReleaseActionResponseSchema=ReleaseAdapterResultSchema;
+export const ReleaseActionResponseSchema=ReleaseAdapterResultSchema.extend({
+  outcomeTelemetry:ReleaseOutcomeTelemetryStatusSchema.optional(),
+});
 export type ReleaseActionResponse=z.infer<typeof ReleaseActionResponseSchema>;
 
 export const ReleaseApprovalRequestSchema=z.object({

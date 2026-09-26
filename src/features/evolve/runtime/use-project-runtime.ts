@@ -1141,8 +1141,11 @@ export function useProjectRuntime(initialProject: EvolveProject) {
       ?result.ok&&result.healthy===true&&result.observationStatus==="healthy"&&(effectiveAction==="promote"||effectiveAction==="rollback")
       :effectiveAction==="promote"||effectiveAction==="rollback";
     setStage(terminal?"learning":"release");
+    if(result.outcomeTelemetry?.status==="failed"){
+      setStatus({busy:false,message:"发布已结算；Outcome 样本未保存，请执行线上核对以重试采集"});
+    }
     return result;
-  }, [commit, project, run, winner]);
+  }, [commit, project, run, setStatus, winner]);
 
   const reconcileRelease = useCallback(async () => {
     const missionId=projectRef.current.id;

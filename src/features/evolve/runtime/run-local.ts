@@ -3,6 +3,7 @@ import { evidenceFingerprint } from "./evidence-binding";
 import { reusableBaselineRuns } from "./baseline-readiness";
 import { createValidationReuse, validationImpactPriority } from "./validation-reuse";
 import { getActiveAbortSignal } from "./abort-scope";
+import type {ReleaseOutcomeTelemetryStatus} from "@evolution/contracts";
 import { stepCompleted } from "./real-evolution-workflow";
 // 原 Next Route Handler（/api/v1/intake、/api/v1/sources/ingest、/api/v1/runner/*）的
 // 浏览器内等价实现：编排逻辑逐行对应 docs/reference/next-api/ 下的原始路由文件，
@@ -1329,7 +1330,7 @@ const requiredPrevious: Partial<Record<Action, string | string[]>> = {
   promote: "canary-50",
 };
 
-export async function runRelease(project: EvolveProject, inputCandidate: Candidate, action: Action): Promise<ReleaseAdapterResult & { action: Action }> {
+export async function runRelease(project: EvolveProject, inputCandidate: Candidate, action: Action): Promise<ReleaseAdapterResult & { action: Action;outcomeTelemetry?:ReleaseOutcomeTelemetryStatus }> {
   const parsed = EvolveProjectSchema.parse(project);
   const candidate = CandidateSchema.parse(inputCandidate);
   if (!actions.includes(action)) throw new Error("Unsupported release action");
@@ -1374,7 +1375,7 @@ export async function runRelease(project: EvolveProject, inputCandidate: Candida
     }
   }
 
-  let result: ReleaseAdapterResult;
+  let result: ReleaseAdapterResult & {outcomeTelemetry?:ReleaseOutcomeTelemetryStatus};
   const serverManagedOnlineRelease=productionRuntimeMode()!=="local"&&projectHasOnlineReleaseTarget(parsed);
   if (serverManagedOnlineRelease) {
     // Server API re-reads the Mission and durable approval before touching production.

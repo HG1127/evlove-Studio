@@ -1,11 +1,12 @@
 import { createError, defineEventHandler, readBody } from "nitro/h3";
-import { createEvolutionEvent, VercelReleaseActionRequestSchema } from "@evolution/contracts";
+import { createEvolutionEvent, VercelReleaseActionRequestSchema,type ReleaseOutcomeTelemetryStatus } from "@evolution/contracts";
 import { applyProductionLearningGovernance, applyReleaseResultToProject, projectHasOnlineReleaseTarget, projectUsesConnectorRelease, projectUsesHttpRelease, projectUsesVercelRelease } from "@evolution/core";
 import { getServerVercelReleaseConfig } from "../../../src/server-env";
 import { getServerProductionRuntime } from "../../../src/services/production-runtime";
 import { requireActiveReleaseApprovalGrant } from "../../../src/services/release-approval-store";
 import { executeServerReleaseProvider } from "../../../src/services/server-release-orchestration";
 import {recordConnectorReleaseOutcomeObservation,recordHttpReleaseOutcomeObservation} from "../../../src/services/release-outcome-telemetry";
+import {captureReleaseOutcomeTelemetry} from "../../../src/services/release-outcome-status";
 import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 
 function fail(statusCode:number,statusMessage:string):never{
@@ -105,6 +106,7 @@ export default defineEventHandler(async(event)=>{
   if(input.action==="rollback"&&!deploymentId)fail(409,"Rollback 缺少稳定 Deployment ID");
 
   let result;
+  let outcomeTelemetry:ReleaseOutcomeTelemetryStatus|undefined;
   try{
     result=await executeServerReleaseProvider(mission,{
       action:input.action,
@@ -154,8 +156,11 @@ export default defineEventHandler(async(event)=>{
     const governanceAt=result.observedAt??new Date().toISOString();
     const updated=applyProductionLearningGovernance(released,{at:governanceAt,now:Date.parse(governanceAt)});
     await runtime.missions.save(updated);
-    if(projectUsesConnectorRelease(mission))await recordConnectorReleaseOutcomeObservation(updated,result).catch(()=>undefined);
-    else if(projectUsesHttpRelease(mission))await recordHttpReleaseOutcomeObservation(updated,result).catch(()=>undefined);
+    if(projectUsesConnectorRelease(mission)){
+      outcomeTelemetry=await captureReleaseOutcomeTelemetry(()=>recordConnectorReleaseOutcomeObservation(updated,result));
+    }else if(projectUsesHttpRelease(mission)){
+      outcomeTelemetry=await captureReleaseOutcomeTelemetry(()=>recordHttpReleaseOutcomeObservation(updated,result));
+    }
     await runtime.events.append(createEvolutionEvent({
       missionId:mission.id,
       type:"ReleaseChanged",
@@ -173,6 +178,7 @@ export default defineEventHandler(async(event)=>{
         healthy:updated.release.healthy,
         observationStatus:updated.release.observationStatus,
         approvalGrantId,
+        outcomeTelemetry,
         rollingRelease:"rollingRelease" in result?result.rollingRelease:undefined,
         reason:result.note,
       },
@@ -196,5 +202,5 @@ export default defineEventHandler(async(event)=>{
     })).catch(()=>undefined);
     throw error;
   }
-  return result;
+  return {...result,outcomeTelemetry};
 });
