@@ -22,7 +22,7 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       PRODUCTION_URL: https://500ipo-evolve-studio.vercel.app
       EXPECTED_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
@@ -116,6 +116,22 @@ jobs:
             exit 1
           fi
 
+      - name: Node 24 for production browser smoke
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Install production browser smoke dependencies
+        run: |
+          npm ci --prefix runner-gateway
+          node runner-gateway/node_modules/playwright/cli.js install chromium
+
+      - name: Production UI renders in read-only local mode
+        env:
+          RUNNER_BROWSER_CI_NO_SANDBOX: "1"
+        run: node scripts/production-ui-smoke.mjs
+
       - name: Smoke summary
         shell: bash
         run: |
@@ -128,4 +144,5 @@ jobs:
             echo "- Public readiness: Supabase, server identity, server AI, and Cron configured"
             echo "- Public backend-health: 401 as required"
             echo "- Scheduled repair without Cron token: 401 as required"
+            echo "- Public UI: four desktop routes and mobile layout rendered in read-only local mode"
           } >> "$GITHUB_STEP_SUMMARY"
