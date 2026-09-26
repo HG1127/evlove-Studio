@@ -64,10 +64,14 @@ export const SourceParseResultArtifactSchema=SourceArtifactSchema.extend({
 
 export const SourceParseStartResponseSchema=z.object({
   jobId:z.string(),
-  runId:z.string(),
+  runId:z.string().min(1).optional(),
   artifactId:z.string(),
   status:z.enum(["queued","running","waiting","completed"]),
   reused:z.boolean().optional(),
+}).superRefine((receipt,context)=>{
+  if(receipt.status!=="completed"&&!receipt.runId){
+    context.addIssue({code:"custom",path:["runId"],message:"Active Parse requires a durable Workflow runId"});
+  }
 });
 export type SourceParseStartResponse=z.infer<typeof SourceParseStartResponseSchema>;
 

@@ -70,7 +70,15 @@ describe("completed Parse result reuse",()=>{
   it("reuses a completed Job only when its stored result passes identity and hash checks",async()=>{
     const response=await route(request());
     expect(response).toMatchObject({jobId:"parse-1",status:"completed",reused:true});
+    expect(response.runId).toBeUndefined();
     expect(state.putJob).not.toHaveBeenCalled();
+    expect(state.start).not.toHaveBeenCalled();
+  });
+
+  it("does not invent a Workflow runId for an active Job awaiting binding",async()=>{
+    state.existing=EvolutionJobSchema.parse({...state.existing,status:"queued",finishedAt:undefined,outputRef:undefined});
+    state.current=state.existing;
+    await expect(route(request())).rejects.toMatchObject({status:409,data:{jobId:"parse-1",generation:1}});
     expect(state.start).not.toHaveBeenCalled();
   });
 

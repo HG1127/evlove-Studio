@@ -1,5 +1,5 @@
 import {describe,expect,it} from "vitest";
-import {SourceParseUploadMetadataSchema,SourceParseWorkflowAnyInputSchema} from "./source-ingest-contract";
+import {SourceParseStartResponseSchema,SourceParseUploadMetadataSchema,SourceParseWorkflowAnyInputSchema} from "./source-ingest-contract";
 
 const valid={
   name:"source.txt",mimeType:"text/plain",role:"target",sessionId:"session-1",
@@ -40,5 +40,18 @@ describe("Source Parse Workflow input versioning",()=>{
     expect(SourceParseWorkflowAnyInputSchema.safeParse({...legacy,
       schemaVersion:"source-parse-workflow-v2",generation:-1,contentSha256:"bad",
     }).success).toBe(false);
+  });
+});
+
+describe("Source Parse start receipt",()=>{
+  const receipt={jobId:"parse-1",artifactId:"artifact-1",status:"queued"};
+
+  it("requires a real run ID while the Workflow is active",()=>{
+    expect(SourceParseStartResponseSchema.safeParse(receipt).success).toBe(false);
+    expect(SourceParseStartResponseSchema.safeParse({...receipt,runId:"run-1"}).success).toBe(true);
+  });
+
+  it("allows a verified completed Parse result with no historic run ID",()=>{
+    expect(SourceParseStartResponseSchema.safeParse({...receipt,status:"completed",reused:true}).success).toBe(true);
   });
 });

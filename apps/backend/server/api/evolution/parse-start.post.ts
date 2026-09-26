@@ -3,6 +3,7 @@ import {assertBodySize,createError,defineEventHandler,readMultipartFormData} fro
 import {start} from "workflow/api";
 import {
   EvolutionJobSchema,
+  type EvolutionJob,
   PRODUCTION_SCHEMA_VERSIONS,
   SourceParseStartResponseSchema,
   SourceParseUploadMetadataSchema,
@@ -28,6 +29,11 @@ async function cleanupStartedParseRun(runId:string){
   catch{
     throw createError({statusCode:503,statusMessage:"Parse Workflow 已启动但取消未确认，请按 runId 检查",data:{runId}});
   }
+}
+
+function persistedParseRunId(job:EvolutionJob):string|undefined{
+  const value=job.metadata?.runId;
+  return typeof value==="string"&&value.trim()?value.trim():undefined;
 }
 
 const MAX_FILE_BYTES=25*1024*1024;
@@ -75,9 +81,11 @@ export default defineEventHandler(async(event)=>{
     throw createError({statusCode:409,statusMessage:"Parse idempotency key belongs to another Job type"});
   }
   if(existing&&["queued","running","waiting"].includes(existing.status)){
+    const runId=persistedParseRunId(existing);
+    if(!runId)throw createError({statusCode:409,statusMessage:"Parse Job 尚无已绑定的 Workflow runId，请按 Job ID 检查或稍后重试",data:{jobId:existing.id,generation:existing.generation}});
     return SourceParseStartResponseSchema.parse({
       jobId:existing.id,
-      runId:typeof existing.metadata?.runId==="string"?existing.metadata.runId:`existing-${existing.id}`,
+      runId,
       artifactId,
       status:existing.status,
       reused:true,
@@ -88,7 +96,7 @@ export default defineEventHandler(async(event)=>{
     if(output.artifact){
       return SourceParseStartResponseSchema.parse({
         jobId:existing.id,
-        runId:typeof existing.metadata?.runId==="string"?existing.metadata.runId:`completed-${existing.id}`,
+        runId:persistedParseRunId(existing),
         artifactId,
         status:"completed",
         reused:true,
@@ -128,9 +136,11 @@ export default defineEventHandler(async(event)=>{
     if(error instanceof JobStateConflictError&&error.reason==="idempotency-conflict"&&error.current?.idempotencyKey===idempotencyKey){
       const current=error.current;
       if(["queued","running","waiting","completed"].includes(current.status)){
+        const runId=persistedParseRunId(current);
+        if(current.status!=="completed"&&!runId)throw createError({statusCode:409,statusMessage:"Parse Job 尚无已绑定的 Workflow runId，请按 Job ID 检查或稍后重试",data:{jobId:current.id,generation:current.generation}});
         return SourceParseStartResponseSchema.parse({
           jobId:current.id,
-          runId:typeof current.metadata?.runId==="string"?current.metadata.runId:`existing-${current.id}`,
+          runId,
           artifactId,
           status:current.status,
           reused:true,
