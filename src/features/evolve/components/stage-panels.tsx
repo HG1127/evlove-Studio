@@ -1,5 +1,5 @@
 import { BaselineRetryAction } from "./baseline-retry-action";
-import { experimentNeedsEvidenceRepair, computeGapAnalysis, buildGapAdvicePayload, productionOutcomeFreshness, productionOutcomeTrend, projectHasOnlineReleaseTarget, releaseAuditTimeline, type GapAnalysis } from "@evolution/core";
+import { experimentNeedsEvidenceRepair, computeGapAnalysis, buildGapAdvicePayload, evidenceRouteForCriterion, productionOutcomeFreshness, productionOutcomeTrend, projectHasOnlineReleaseTarget, releaseAuditTimeline, type GapAnalysis } from "@evolution/core";
 import { compileUserEvolutionSteps, preferredInternalStage, stepForStage, workflowStepState } from "../runtime/real-evolution-workflow";
 
 import {
@@ -61,7 +61,6 @@ import { evidenceRefSummary } from "../runtime/evidence-provenance";
 import { addVisualEvidence, getVisualEvidence, VISUAL_EVIDENCE_EVENT } from "../runtime/visual-evidence";
 import { connectedTargetConnection, getRunnerGatewayConfig, getTargetProxyCapabilities, testRunnerGateway } from "../runtime/target-runner-config";
 import { latestSupplementalEvidenceForCriterion } from "../runtime/supplemental-validation-evidence";
-import { criterionCanUseLocalSnapshotEvidence } from "../runtime/eval-suite-normalization";
 import { checkServerVercelReleaseHealth, getServerVercelReleaseCapabilities, listServerVercelDeployments } from "../runtime/server-release-client";
 import type { TargetProxyCapabilities, VercelDeploymentSummary, VercelReleaseCapabilities, VercelReleaseHealth } from "@evolution/contracts";
 
@@ -742,18 +741,6 @@ function AdviceLedgerPanel({ ledger }: { ledger: AdviceSettlement[] }) {
   </CardContent></Card>;
 }
 
-type EvidenceRoute = "visual" | "manual" | "runner" | "local";
-
-function evidenceRouteForCriterion(project: EvolveProject, criterion: AcceptanceCriterion): EvidenceRoute {
-  if (criterion.validationMethod === "visual-review") return "visual";
-  if (criterion.validationMethod === "manual-review") return "manual";
-  if (criterion.validationMethod === "executable-test") return "runner";
-  if (criterionCanUseLocalSnapshotEvidence(project, criterion)) return "local";
-  const modes = project.hiddenEvalSuite.filter((test) => test.criterionIds.includes(criterion.id)).map((test) => test.executionMode);
-  if (modes.includes("external-runner") || criterion.validationMethod === "user-scenario") return "runner";
-  return "local";
-}
-
 function PendingEvidenceCard({ runtime, criterion }: { runtime: ProjectRuntime; criterion: AcceptanceCriterion }) {
   const p = runtime.project;
   const winner = runtime.winner;
@@ -810,7 +797,7 @@ function PendingEvidenceCard({ runtime, criterion }: { runtime: ProjectRuntime; 
     <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"><div><div className="flex flex-wrap items-center gap-2"><span className="font-semibold text-slate-900">{criterion.title}</span><Badge className="border-amber-200 bg-amber-50 text-amber-700">{routeLabel}</Badge>{criterion.hardGate&&<Badge>关键要求</Badge>}</div><p className="mt-1 text-xs leading-5 text-slate-500">{criterion.requirement}</p></div>{saved&&<Badge className={saved.verdict==="pass"?"border-emerald-200 bg-emerald-50 text-emerald-700":"border-rose-200 bg-rose-50 text-rose-700"}>已记录：{saved.verdict==="pass"?"通过":"未通过"}</Badge>}</div>
     {route === "visual" && <div className="mt-3 rounded-xl border border-indigo-100 bg-indigo-50/40 p-3"><div className="flex items-start gap-2"><Camera className="mt-0.5 size-4 shrink-0 text-indigo-600"/><div className="text-xs leading-5 text-slate-600"><b>怎么验证：</b>上传当前新版的实际截图，看这一条视觉要求是否满足。截图只证明画面，不会替代点击、保存、上传等 E2E 行为验证。</div></div><input ref={inputRef} type="file" accept="image/*" multiple className="hidden" onChange={(event)=>{ const files=[...(event.target.files??[])]; event.currentTarget.value=""; if(!files.length)return; if(!winner||!relevantSnapshot?.contentHash){setError("当前新版还没有可绑定的成果指纹，请先重新验收一次。");return;} setBusy(true);setError("");void addVisualEvidence(p.id,files,{artifactHash:relevantSnapshot.contentHash,sourceArtifactId:relevantSnapshot.sourceArtifactId,candidateId:winner.id,origin:"upload"}).catch((cause)=>setError(cause instanceof Error?cause.message:String(cause))).finally(()=>setBusy(false)); }}/><div className="mt-3 flex flex-wrap items-center gap-2"><Button size="sm" variant="secondary" disabled={busy||!winner} onClick={()=>inputRef.current?.click()}><Camera className="size-3.5"/>上传当前版本截图</Button><span className="text-[11px] text-slate-500">当前已绑定 {screenshotIds.length} 张</span></div></div>}
     {(route === "visual" || route === "manual") && <div className="mt-3"><textarea className="min-h-20 w-full rounded-xl border bg-white px-3 py-2 text-xs leading-5 outline-none focus:border-indigo-300" placeholder={route==="visual"?"写下你实际看到的结果，例如：主操作突出，信息层级清楚；或具体指出哪里仍不达标。":"填写实际验收结果和依据，不能只写“通过”。"} value={note} onChange={(event)=>setNote(event.target.value)}/><div className="mt-2 flex flex-wrap justify-end gap-2"><Button size="sm" variant="secondary" disabled={busy||!note.trim()||(route==="visual"&&screenshotIds.length===0)} onClick={()=>saveDecision("fail")}>确认未通过</Button><Button size="sm" disabled={busy||!note.trim()||(route==="visual"&&screenshotIds.length===0)} onClick={()=>saveDecision("pass")}><Check className="size-3.5"/>确认这一项通过</Button></div><p className="mt-2 text-[11px] leading-4 text-slate-400">确认只对当前新版和当前成果指纹有效；新版内容变化后必须重新验证。</p></div>}
-    {route === "runner" && <div className="mt-3 rounded-xl border border-sky-100 bg-sky-50/50 p-3"><div className="flex items-start gap-2"><PlugZap className="mt-0.5 size-4 shrink-0 text-sky-600"/><div className="text-xs leading-5 text-slate-600"><b>怎么验证：</b>这条要求涉及真实点击、运行、上传、保存或端到端行为，截图不能证明。需要由 Target Runner 实际执行。</div></div><div className="mt-3 flex flex-wrap gap-2">{p.targetConnection.adapter==="http"?<Button size="sm" disabled={runtime.validationRequestQueued} onClick={revalidateAndResume}><Play className="size-3.5"/>{runtime.validationRequestQueued?"已排队重新验收":"用真实 Runner 验收并继续"}</Button>:<Button size="sm" disabled={busy} onClick={()=>void connectRunner()}><PlugZap className="size-3.5"/>{busy?"正在检测…":"检测并连接 Runner"}</Button>}<a href="#/settings" className="inline-flex h-8 items-center rounded-lg border bg-white px-3 text-xs font-medium text-slate-600 hover:bg-slate-50">Runner 设置</a></div>{p.targetConnection.adapter==="http"&&<p className="mt-2 text-[11px] text-emerald-700">Runner 已连接；重新验收会用真实执行结果结算这一项。</p>}</div>}
+    {route === "runner" && <div className="mt-3 rounded-xl border border-sky-100 bg-sky-50/50 p-3"><div className="flex items-start gap-2"><PlugZap className="mt-0.5 size-4 shrink-0 text-sky-600"/><div className="text-xs leading-5 text-slate-600"><b>怎么验证：</b>这条要求涉及真实点击、运行、上传、保存或端到端行为，截图不能证明。需要由 Target Runner 实际执行。</div></div><div className="mt-3 flex flex-wrap gap-2">{p.targetConnection.adapter==="http"?<Button size="sm" disabled={runtime.validationRequestQueued} onClick={revalidateAndResume}><Play className="size-3.5"/>{runtime.validationRequestQueued?"已排队重新验收":"用真实 Runner 验收并继续"}</Button>:<Button size="sm" disabled={busy} onClick={()=>void connectRunner()}><PlugZap className="size-3.5"/>{busy?"正在检测…":"检测并连接 Runner"}</Button>}<a href="#/settings" className="inline-flex h-8 items-center rounded-lg border bg-white px-3 text-xs font-medium text-slate-600 hover:bg-slate-50">Runner 设置</a></div>{p.targetConnection.adapter==="http"&&<p className="mt-2 text-[11px] text-emerald-700">Runner 已连接；当前提示来自上一轮验收结果，点击后才会用真实执行证据重新结算。</p>}</div>}
     {route === "local" && <div className="mt-3 flex flex-col gap-2 rounded-xl border border-slate-100 bg-slate-50 p-3 sm:flex-row sm:items-center sm:justify-between"><p className="text-xs leading-5 text-slate-600">这条要求不需要人工截图。系统可以按它自己的验证方式重新检查结构、格式 Roundtrip 或当前成果内容。</p><Button size="sm" variant="secondary" disabled={runtime.validationRequestQueued} onClick={revalidateAndResume}><RefreshCcw className="size-3.5"/>{runtime.validationRequestQueued?"已排队重新验收":runtime.status.busy?"当前任务结束后自动验收":"重新检查并继续"}</Button></div>}
     {saved&&<div className="mt-3 rounded-lg border border-emerald-100 bg-emerald-50/60 px-3 py-2 text-xs leading-5 text-emerald-800">已记录证据：{saved.note}。系统会自动重新验收；通过则继续到成果，不通过则自动进入下一轮改进。</div>}
     {error&&<div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs leading-5 text-rose-700">{error}</div>}

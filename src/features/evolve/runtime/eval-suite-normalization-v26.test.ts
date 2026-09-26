@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { EvolveProject, TestCase } from "../schemas";
-import { criterionCanUseLocalSnapshotEvidence, normalizeEvalSuiteForProject } from "./eval-suite-normalization";
+import { criterionCanUseLocalSnapshotEvidence, evidenceRouteForCriterion, normalizeEvalSuiteForProject } from "./eval-suite-normalization";
 
 const project = {
   objectType: "codebase",
@@ -22,6 +22,22 @@ describe("V2.6 evidence-aware eval normalization",()=>{
     expect(result.validationCases[0]?.executionMode).toBe("external-runner");
     expect(`${result.validationCases[0]?.input} ${result.validationCases[0]?.expected.join(" ")}`).not.toMatch(/semantic-evolution|workflow-engine|tailwind|typeid/i);
     expect(result.validationCases[0]?.expected.join(" ")).toMatch(/真实上传场景|真实用户可上传/i);
+  });
+  it("keeps runtime evidence on the real Runner after the Runner connects",()=>{
+    const criterion=project.acceptanceRubric[0]!;
+    const hidden={...tc("compat-hidden",[criterion.id],"真实上传融资 ZIP，完成导入并保存",["上传成功并进入正确流程"]),hidden:true};
+    const connected={...project,targetConnection:{adapter:"http",connectionId:"runner-gateway",status:"connected",label:"Server Target Proxy"},hiddenEvalSuite:[hidden]} as EvolveProject;
+    const normalized=normalizeEvalSuiteForProject(connected,[],[hidden]);
+    expect(normalized.hiddenCases[0]?.executionMode).toBe("external-runner");
+    expect(evidenceRouteForCriterion(connected,criterion)).toBe("runner");
+  });
+  it("routes documentation-style codebase scenarios to local evidence instead of a fake E2E requirement",()=>{
+    const criterion={...project.acceptanceRubric[0]!,id:"CONFIG-CLARITY",title:"配置流程可理解性",requirement:"配置流程必须直观易理解，使用清晰的步骤编号、示例和注意事项",evidenceExpected:["步骤编号","配置示例","注意事项"]} as EvolveProject["acceptanceRubric"][number];
+    const hidden={...tc("config-clarity",[criterion.id],"检查配置说明是否完整清楚",criterion.evidenceExpected),hidden:true};
+    const connected={...project,targetConnection:{adapter:"http",connectionId:"runner-gateway",status:"connected",label:"Server Target Proxy"},acceptanceRubric:[criterion],hiddenEvalSuite:[hidden]} as EvolveProject;
+    const normalized=normalizeEvalSuiteForProject(connected,[],[hidden]);
+    expect(normalized.hiddenCases[0]?.executionMode).toBe("static-evidence");
+    expect(evidenceRouteForCriterion(connected,criterion)).toBe("local");
   });
   it("splits mixed visual, format and semantic criteria so visual evidence does not block unrelated requirements",()=>{
     const mixedProject={...project,acceptanceRubric:[

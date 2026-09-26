@@ -1,4 +1,5 @@
 import type { AcceptanceCriterion, EvolveProject, TestCase } from "@evolution/contracts";
+import { criterionCanUseLocalSnapshotEvidence } from "./criterion-evidence";
 export { criterionCanUseLocalSnapshotEvidence } from "./criterion-evidence";
 
 const INTERNAL_PATTERN = /(src\/|docs\/|\.tsx?\b|\.jsx?\b|\.test\.|\.spec\.|typeid\b|semantic-evolution|workflow-engine|artifact-compatibility|tailwind|css\s*token|theme\s*token|index\.css|schema\.ts|local-store|validation-report|vitest|playwright|babel|parser\/builder|undefined\s*断点)/i;
@@ -42,7 +43,10 @@ function executionForProject(project: EvolveProject, criteria: AcceptanceCriteri
   if (methods.includes("manual-review")) return { executionMode: "manual" as const, evidenceScope: "product-behavior" as const };
   if (methods.length > 0 && methods.every((method) => method === "semantic-judge")) return { executionMode: "artifact-runtime" as const, evidenceScope: "product-behavior" as const };
 
-  if (isCodebaseProject(project) && project.targetConnection.adapter !== "http") {
+  // Evidence requirements belong to the acceptance contract, not to the currently
+  // selected adapter. Connecting a Runner must not silently turn a real runtime
+  // scenario back into an AI-simulated artifact-runtime check.
+  if (isCodebaseProject(project)) {
     const combined = `${test.title} ${test.input} ${test.expected.join(" ")} ${criteria.map((item)=>`${item.title} ${item.requirement}`).join(" ")}`;
     if (VISUAL_PATTERN.test(combined)) return { executionMode: "visual-review" as const, evidenceScope: "product-behavior" as const };
     if (RUNTIME_PATTERN.test(combined)) return { executionMode: "external-runner" as const, evidenceScope: "product-behavior" as const };
@@ -151,4 +155,30 @@ export function normalizeEvalSuiteForProject(project: EvolveProject, validationC
     validationCases: validationCases.flatMap((test) => normalize(test, false)),
     hiddenCases: hiddenCases.flatMap((test) => normalize(test, true)),
   };
+}
+
+export type CriterionEvidenceRoute = "visual" | "manual" | "runner" | "local";
+
+/**
+ * Resolve the user-facing evidence action from the same normalized Hidden Test
+ * contract that validation executes. This prevents the UI from asking for a
+ * Runner while the runtime is actually using static/artifact evidence (or the
+ * reverse) after a connection change.
+ */
+export function evidenceRouteForCriterion(project: EvolveProject, criterion: AcceptanceCriterion): CriterionEvidenceRoute {
+  const modes = normalizeEvalSuiteForProject(project, [], project.hiddenEvalSuite).hiddenCases
+    .filter((test) => test.criterionIds.includes(criterion.id))
+    .map((test) => test.executionMode);
+
+  if (modes.includes("visual-review")) return "visual";
+  if (modes.includes("manual")) return "manual";
+  if (modes.includes("external-runner")) return "runner";
+  if (modes.length > 0 || criterionCanUseLocalSnapshotEvidence(project, criterion)) return "local";
+
+  // Imported/legacy projects may temporarily have no mapped Hidden Test. Keep a
+  // truthful fallback until suite repair creates the authoritative test case.
+  if (criterion.validationMethod === "visual-review") return "visual";
+  if (criterion.validationMethod === "manual-review") return "manual";
+  if (criterion.validationMethod === "executable-test" || criterion.validationMethod === "user-scenario") return "runner";
+  return "local";
 }
