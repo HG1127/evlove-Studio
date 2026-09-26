@@ -23,6 +23,13 @@ import {cancelWorkflowRunById} from "../../../src/services/workflow-run-control"
 import {sourceParseIdempotencyIdentity} from "../../../src/services/source-parse-identity";
 import {readSourceParseResult} from "../../../src/services/source-parse-result";
 
+async function cleanupStartedParseRun(runId:string){
+  try{return await cancelWorkflowRunById(runId);}
+  catch{
+    throw createError({statusCode:503,statusMessage:"Parse Workflow 已启动但取消未确认，请按 runId 检查",data:{runId}});
+  }
+}
+
 const MAX_FILE_BYTES=25*1024*1024;
 const MAX_MULTIPART_BYTES=MAX_FILE_BYTES+64*1024;
 
@@ -156,30 +163,30 @@ export default defineEventHandler(async(event)=>{
 
   const queued=await runtime.jobs.get(jobId);
   if(!queued){
-    await cancelWorkflowRunById(run.runId).catch(()=>undefined);
-    throw createError({statusCode:409,statusMessage:"Parse Workflow 已启动，但对应 Job 已不存在"});
+    const cleanup=await cleanupStartedParseRun(run.runId);
+    throw createError({statusCode:409,statusMessage:"Parse Workflow 已启动，但对应 Job 已不存在；请核对清理结果",data:{runId:run.runId,cleanup}});
   }
 
   let boundJob;
   try{
     boundJob=await bindServerJobWorkflowRun(jobId,queued.generation,run.runId,"metadata");
   }catch(error){
-    await cancelWorkflowRunById(run.runId).catch(()=>undefined);
+    const cleanup=await cleanupStartedParseRun(run.runId);
     if(error instanceof JobStateConflictError){
       throw createError({
-        statusCode:409,statusMessage:"Parse Workflow runId 绑定失败，已取消孤儿 Workflow",
-        data:{code:error.code,jobId:error.jobId,reason:error.reason,current:error.current,runId:run.runId},
+        statusCode:409,statusMessage:"Parse Workflow runId 绑定失败，请核对清理结果",
+        data:{code:error.code,jobId:error.jobId,reason:error.reason,current:error.current,runId:run.runId,cleanup},
       });
     }
     throw error;
   }
 
   if(["cancelled","failed","partial"].includes(boundJob.status)){
-    await cancelWorkflowRunById(run.runId).catch(()=>undefined);
+    const cleanup=await cleanupStartedParseRun(run.runId);
     throw createError({
       statusCode:409,
-      statusMessage:`Parse Job 在 Workflow 启动期间已进入 ${boundJob.status}，已取消刚启动的 Workflow`,
-      data:{jobId,boundStatus:boundJob.status,runId:run.runId},
+      statusMessage:`Parse Job 在 Workflow 启动期间已进入 ${boundJob.status}，请核对清理结果`,
+      data:{jobId,boundStatus:boundJob.status,runId:run.runId,cleanup},
     });
   }
 

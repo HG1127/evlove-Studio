@@ -20,6 +20,11 @@ import { evolutionMissionWorkflow } from "../../../../../workflows/evolution-mis
 import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 import {cancelWorkflowRunById,workflowRunIdForJob} from "../../../src/services/workflow-run-control";
 
+async function cleanupStartedRun(runId:string){
+  try{return {ok:true as const,result:await cancelWorkflowRunById(runId)};}
+  catch{return {ok:false as const,reason:"workflow-run-cancel-failed" as const};}
+}
+
 export default defineEventHandler(async(event)=>{
   await requireGovernedEvolutionPermission(event,"mission.execute");
   const parsed=EvolutionWorkflowStartRequestSchema.safeParse(await readBody(event));
@@ -153,22 +158,26 @@ export default defineEventHandler(async(event)=>{
 
   const queued=await runtime.jobs.get(controlJobId);
   if(!queued){
-    await cancelWorkflowRunById(run.runId).catch(()=>undefined);
-    setResponseStatus(event,409);
-    return {error:"Workflow 已启动，但 Control Job 已不存在；孤儿 Workflow 已取消",runId:run.runId};
+    const cleanup=await cleanupStartedRun(run.runId);
+    setResponseStatus(event,cleanup.ok?409:503);
+    return {error:cleanup.ok?"Workflow 已启动，但 Control Job 已不存在；请核对清理结果":"Workflow 已启动但取消未确认，请按 runId 检查",runId:run.runId,cleanup:cleanup.ok?cleanup.result:{reason:cleanup.reason}};
   }
   try{
     const bound=await bindServerJobWorkflowRun(controlJobId,queued.generation,run.runId,"output-ref");
     if(["cancelled","failed","partial"].includes(bound.status)){
-      await cancelWorkflowRunById(run.runId).catch(()=>undefined);
-      setResponseStatus(event,409);
-      return {error:`Control Job 已进入 ${bound.status}；刚启动的 Workflow 已取消`,runId:run.runId};
+      const cleanup=await cleanupStartedRun(run.runId);
+      setResponseStatus(event,cleanup.ok?409:503);
+      return {error:cleanup.ok?`Control Job 已进入 ${bound.status}；请核对 Workflow 清理结果`:"Workflow 已启动但取消未确认，请按 runId 检查",runId:run.runId,cleanup:cleanup.ok?cleanup.result:{reason:cleanup.reason}};
     }
   }catch(error){
-    await cancelWorkflowRunById(run.runId).catch(()=>undefined);
+    const cleanup=await cleanupStartedRun(run.runId);
+    if(!cleanup.ok){
+      setResponseStatus(event,503);
+      return {error:"Workflow 绑定失败且取消未确认，请按 runId 检查",runId:run.runId,cleanup:{reason:cleanup.reason}};
+    }
     if(error instanceof JobStateConflictError){
       setResponseStatus(event,409);
-      return {error:"Workflow 已启动，但 runId 绑定发生并发冲突；孤儿 Workflow 已取消",message:error.message,runId:run.runId};
+      return {error:"Workflow 已启动，但 runId 绑定发生并发冲突；请核对清理结果",message:error.message,runId:run.runId,cleanup:cleanup.result};
     }
     throw error;
   }

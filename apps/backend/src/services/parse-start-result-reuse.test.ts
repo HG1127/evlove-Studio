@@ -8,7 +8,7 @@ const state=vi.hoisted(()=>( {
   existing:undefined as EvolutionJob|undefined,
   current:undefined as EvolutionJob|undefined,
   output:undefined as Blob|undefined,
-  putJob:vi.fn(),putBlob:vi.fn(),start:vi.fn(),
+  putJob:vi.fn(),putBlob:vi.fn(),start:vi.fn(),getRun:vi.fn(),
 }));
 vi.mock("nitro/h3",async(importOriginal)=>( {
   ...await importOriginal<typeof import("nitro/h3")>(),
@@ -17,7 +17,7 @@ vi.mock("nitro/h3",async(importOriginal)=>( {
     {name:"artifactId",data:new TextEncoder().encode("artifact-1")},
   ],
 }));
-vi.mock("workflow/api",()=>({start:state.start}));
+vi.mock("workflow/api",()=>({start:state.start,getRun:state.getRun}));
 vi.mock("./security-policy",()=>({requireGovernedEvolutionPermission:async()=>undefined}));
 vi.mock("../server-env",async(importOriginal)=>( {
   ...await importOriginal<typeof import("../server-env")>(),serverSupabaseSecureConfigured:()=>true,
@@ -64,6 +64,7 @@ describe("completed Parse result reuse",()=>{
     state.putJob.mockReset().mockImplementation(async(job:EvolutionJob)=>{state.current=job;});
     state.putBlob.mockReset();
     state.start.mockReset().mockResolvedValue({runId:"run-2"});
+    state.getRun.mockReset();
   });
 
   it("reuses a completed Job only when its stored result passes identity and hash checks",async()=>{
@@ -88,5 +89,12 @@ describe("completed Parse result reuse",()=>{
       inputRef:"parse-input-parse-1-g2",outputRef:"parse-result-parse-1-g2",
     });
     expect(response).toMatchObject({jobId:"parse-1",runId:"run-2",status:"queued"});
+  });
+
+  it("reports an unconfirmed cancellation when the Parse Job disappears after start",async()=>{
+    state.output=new Blob(["substituted result"]);
+    state.start.mockImplementationOnce(async()=>{state.current=undefined;return {runId:"run-2"};});
+    state.getRun.mockReturnValue({exists:Promise.resolve(true),status:Promise.resolve("running"),cancel:vi.fn().mockRejectedValue(new Error("unavailable"))});
+    await expect(route(request())).rejects.toMatchObject({status:503,data:{runId:"run-2"}});
   });
 });

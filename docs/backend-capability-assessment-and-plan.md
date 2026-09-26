@@ -121,6 +121,7 @@ The migration `20260924100000_job_lifecycle_security_invariants.sql` defines the
 **Acceptance:** API returns a durable Job/run identity; execution survives function restarts; cancellation and retries are generation-safe; terminal Job/Event state reflects the Workflow result.
 
 The legacy `harness-execute` route now delegates to the existing durable Mission Workflow start handler. Finalization emits a completion Event only when the persisted Control Job is completed, preserves terminal cancellation, and records nonterminal results as progress. Cancelling a run that has already completed no longer invents a completed Job; an unresolved result returns `409` and remains visible to reconciliation. Workflow step behavior and operational recovery remain under P5.
+Mission and Parse start routes now return the actual run cleanup receipt after a Job disappears, a binding conflict, or a terminal Job race. If cancellation cannot be confirmed, the route reports a 503 and the run ID for operator inspection instead of claiming the orphan Workflow was cancelled. A terminal or missing run is reported by its observed cleanup reason; production has not yet exercised this failure path.
 
 ### P4 — Production identity and tenant ownership gate
 
