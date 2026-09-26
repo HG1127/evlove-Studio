@@ -115,17 +115,26 @@ function parseProjects(raw: string | null): EvolveProject[] {
   } catch { return []; }
 }
 
+function readStorageItem(key: string): string | null | undefined {
+  try { return window.localStorage.getItem(key); }
+  catch { return undefined; }
+}
+
 function readAll(): EvolveProject[] {
   if (databaseProjects()) return databaseProjects()!;
   if (typeof window === "undefined") return [];
   // 当前键只要存在（包括「把项目删光后写回的 []」）就是唯一权威数据源；
   // 旧版本键里还躺着用户早已删除的项目副本，一旦回落去读，就会把删除记录整体复活。
   // 因此只在当前键从未被创建过、且历史迁移尚未执行时，才做一次性升级迁移。
-  const raw = window.localStorage.getItem(KEY);
+  const raw = readStorageItem(KEY);
+  if (raw === undefined) return [];
   if (raw !== null) return parseProjects(raw);
-  if (window.localStorage.getItem(MIGRATION_FLAG) === "1") return [];
+  const migrationFlag = readStorageItem(MIGRATION_FLAG);
+  if (migrationFlag === undefined || migrationFlag === "1") return [];
   for (const legacyKey of LEGACY_KEYS) {
-    const migrated = parseProjects(window.localStorage.getItem(legacyKey));
+    const legacy = readStorageItem(legacyKey);
+    if (legacy === undefined) return [];
+    const migrated = parseProjects(legacy);
     if (migrated.length) {
       window.localStorage.setItem(KEY, JSON.stringify(migrated));
       window.localStorage.setItem(MIGRATION_FLAG, "1");
@@ -168,4 +177,14 @@ export function markDemoRemoved() {
   try { window.localStorage.setItem(DEMO_REMOVED_KEY, "1"); } catch { /* 本地存储不可用时静默降级 */ }
 }
 
-export async function initializeLocalProjects(){await initializeProjectDatabase(readAll());if(databaseProjects())window.localStorage.removeItem(KEY);}
+export async function initializeLocalProjects(){
+  await initializeProjectDatabase(readAll());
+  if(databaseProjects()){
+    // IndexedDB is now authoritative. Denied legacy storage must not hide it.
+    try{window.localStorage.removeItem(KEY);}catch{/* IndexedDB remains authoritative. */}
+    return;
+  }
+  if(typeof window==="undefined")return;
+  // No durable browser store is usable; mounting a writable-looking UI would lose projects.
+  if(readStorageItem(KEY)===undefined)throw new Error("浏览器项目存储不可用，请允许本地存储后重试。未覆盖原有数据。");
+}

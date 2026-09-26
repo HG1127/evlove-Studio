@@ -12,8 +12,10 @@ async function enterLocalModeIfNeeded(page){
   const choice=page.getByRole('button',{name:'仅在此浏览器继续',exact:true});
   const app=page.locator('.studio-main');
   await Promise.race([choice.waitFor({state:'visible'}),app.waitFor({state:'visible'})]);
-  if(await choice.isVisible())await choice.click();
+  const selectedLocalMode=await choice.isVisible();
+  if(selectedLocalMode)await choice.click();
   await app.waitFor();
+  return selectedLocalMode;
 }
 
 const browser=await getBrowser();
@@ -35,9 +37,9 @@ try{
   page.on('pageerror',(error)=>errors.push(error.message));
   for(const [name,route,title] of routes){
     await page.goto(`${baseUrl}/#${route}`,{waitUntil:'domcontentloaded'});
-    await enterLocalModeIfNeeded(page);
+    const selectedLocalMode=await enterLocalModeIfNeeded(page);
     if(title)await page.getByRole('heading',{name:title,exact:true}).waitFor();
-    await page.getByText('本地模式 · 数据仅保存在此浏览器',{exact:true}).waitFor();
+    if(selectedLocalMode)await page.getByText('本地模式 · 数据仅保存在此浏览器',{exact:true}).waitFor();
     const body=await page.locator('main').innerText();
     assert.ok(body.trim().length>30,`${name} did not render meaningful content`);
     rendered.push(name);
@@ -48,9 +50,18 @@ try{
   await page.getByRole('heading',{name:'工作台',exact:true}).waitFor();
   const mobile=await page.evaluate(()=>({width:innerWidth,scrollWidth:document.documentElement.scrollWidth}));
   assert.ok(mobile.scrollWidth<=mobile.width+2,`Mobile horizontal overflow: ${JSON.stringify(mobile)}`);
+  const deniedStoragePage=await context.newPage();
+  deniedStoragePage.on('pageerror',(error)=>errors.push(error.message));
+  await deniedStoragePage.addInitScript(()=>{
+    Object.defineProperty(window,'localStorage',{configurable:true,get(){throw new Error('Storage denied');}});
+  });
+  await deniedStoragePage.goto(`${baseUrl}/#/`,{waitUntil:'domcontentloaded'});
+  await enterLocalModeIfNeeded(deniedStoragePage);
+  await deniedStoragePage.getByRole('heading',{name:'工作台',exact:true}).waitFor();
+  await deniedStoragePage.close();
   assert.deepEqual(errors,[],'Production page errors');
   assert.deepEqual(blockedWrites,[],'Production UI attempted a write during read-only smoke');
-  console.log(JSON.stringify({status:'PASS',rendered,mobile,pageErrors:errors,productionWrites:blockedWrites}));
+  console.log(JSON.stringify({status:'PASS',rendered,mobile,deniedLocalStorage:'passed',pageErrors:errors,productionWrites:blockedWrites}));
   await context.close();
 }finally{
   await closeBrowser();

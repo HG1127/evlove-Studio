@@ -109,6 +109,11 @@ function safeParse<T>(raw: string | null, fallback: T): T {
   try { return JSON.parse(raw) as T; } catch { return fallback; }
 }
 
+function readStorageItem(key: string): string | null {
+  try { return window.localStorage.getItem(key); }
+  catch { return null; }
+}
+
 function defaultRouting(): AiRoutingPolicy {
   return {
     mode: "independent-eval",
@@ -136,8 +141,15 @@ export function getProviderFallbackModels(providerId: string) {
 
 export function migrateLegacyProviderOnce() {
   if (typeof window === "undefined") return;
-  if (window.localStorage.getItem(MIGRATED_KEY)) return;
-  const existing = safeParse<ProviderConnection[]>(window.localStorage.getItem(CONNECTIONS_KEY), []);
+  let storage: Storage;
+  let migrated: string | null;
+  let existing: ProviderConnection[];
+  try {
+    storage = window.localStorage;
+    migrated = storage.getItem(MIGRATED_KEY);
+    existing = safeParse<ProviderConnection[]>(storage.getItem(CONNECTIONS_KEY), []);
+  } catch { return; }
+  if (migrated) return;
   if (!existing.length) {
     const legacy = getByokConfig();
     if (legacy?.apiKey) {
@@ -155,17 +167,21 @@ export function migrateLegacyProviderOnce() {
         createdAt: now(),
         updatedAt: now(),
       };
-      window.localStorage.setItem(CONNECTIONS_KEY, JSON.stringify([item]));
-      window.localStorage.setItem(ROUTING_KEY, JSON.stringify({ ...defaultRouting(), defaultRoute: { connectionId: item.id, model, fallbackConnectionIds: [] } }));
+      try {
+        // Write routing first. A failed second write can be retried without marking migration complete.
+        storage.setItem(ROUTING_KEY, JSON.stringify({ ...defaultRouting(), defaultRoute: { connectionId: item.id, model, fallbackConnectionIds: [] } }));
+        storage.setItem(CONNECTIONS_KEY, JSON.stringify([item]));
+      } catch { return; }
     }
   }
-  window.localStorage.setItem(MIGRATED_KEY, "1");
+  try { storage.setItem(MIGRATED_KEY, "1"); }
+  catch { /* Retry migration when browser storage becomes writable. */ }
 }
 
 export function listProviderConnections(): ProviderConnection[] {
   if (typeof window === "undefined") return [];
   migrateLegacyProviderOnce();
-  return safeParse<ProviderConnection[]>(window.localStorage.getItem(CONNECTIONS_KEY), [])
+  return safeParse<ProviderConnection[]>(readStorageItem(CONNECTIONS_KEY), [])
     .map((item) => {
       const models = normalizeModels(item.providerId, item.models ?? [], item.defaultModel, item.modelsExact);
       const testedModels = (item.testedModels ?? []).filter((model) => isPlausibleModelId(model));
@@ -278,7 +294,7 @@ export function deleteProviderConnection(id: string) {
 export function getAiRoutingPolicy(): AiRoutingPolicy {
   if (typeof window === "undefined") return defaultRouting();
   migrateLegacyProviderOnce();
-  return { ...defaultRouting(), ...safeParse<AiRoutingPolicy>(window.localStorage.getItem(ROUTING_KEY), defaultRouting()) };
+  return { ...defaultRouting(), ...safeParse<AiRoutingPolicy>(readStorageItem(ROUTING_KEY), defaultRouting()) };
 }
 
 export function saveAiRoutingPolicy(policy: AiRoutingPolicy) {
@@ -294,7 +310,7 @@ const USER_PRESETS_KEY = "evolve-studio:user-routing-presets:v1";
 
 export function listSavedRoutingPresets(): SavedRoutingPreset[] {
   if (typeof window === "undefined") return [];
-  return safeParse<SavedRoutingPreset[]>(window.localStorage.getItem(USER_PRESETS_KEY), [])
+  return safeParse<SavedRoutingPreset[]>(readStorageItem(USER_PRESETS_KEY), [])
     .filter((item) => item?.id && item?.policy);
 }
 

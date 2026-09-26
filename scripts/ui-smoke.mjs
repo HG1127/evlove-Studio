@@ -118,8 +118,16 @@ try{
  await deniedStoragePage.goto(`${baseUrl}/#/`);
  await deniedStoragePage.getByRole('heading',{name:'工作台',exact:true}).waitFor();
  await deniedStoragePage.close();
+ const deniedLocalStoragePage=await context.newPage();
+ deniedLocalStoragePage.on('pageerror',error=>errors.push(error.stack??error.message));
+ await deniedLocalStoragePage.addInitScript(()=>{
+  Object.defineProperty(window,'localStorage',{configurable:true,get(){throw new Error('Storage denied');}});
+ });
+ await deniedLocalStoragePage.goto(`${baseUrl}/#/`);
+ await deniedLocalStoragePage.getByRole('heading',{name:'工作台',exact:true}).waitFor();
+ await deniedLocalStoragePage.close();
  assert.equal(errors.length,0,errors.join('\n'));
  assert.ok(rows.every(row=>row.scrollWidth<=row.width+2),JSON.stringify(rows));
- console.log(JSON.stringify({status:'PASS',rows,pageErrors:errors,failedResponses,mobilePaste:'passed',localParse,lateParseRemoval:'passed',parseRecoveryIsolation:'passed',deniedSessionStorage:'passed'},null,2));
+ console.log(JSON.stringify({status:'PASS',rows,pageErrors:errors,failedResponses,mobilePaste:'passed',localParse,lateParseRemoval:'passed',parseRecoveryIsolation:'passed',deniedSessionStorage:'passed',deniedLocalStorage:'passed'},null,2));
  await context.close();
 }catch(error){console.error(JSON.stringify({errors,failedResponses,rows,body:await page?.locator('body').innerText().catch(()=>''),failure:String(error)},null,2));throw error;}finally{await closeBrowser();}
