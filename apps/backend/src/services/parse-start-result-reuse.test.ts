@@ -11,7 +11,7 @@ const state=vi.hoisted(()=>( {
   current:undefined as EvolutionJob|undefined,
   output:undefined as Blob|undefined,
   getError:false,
-  putJob:vi.fn(),putBlob:vi.fn(),start:vi.fn(),getRun:vi.fn(),
+  putJob:vi.fn(),putBlob:vi.fn(),deleteBlob:vi.fn(),start:vi.fn(),getRun:vi.fn(),
 }));
 vi.mock("nitro/h3",async(importOriginal)=>( {
   ...await importOriginal<typeof import("nitro/h3")>(),
@@ -30,7 +30,7 @@ vi.mock("./artifact-runtime",()=>({getServerArtifactStore:()=>({
     if(state.getError)throw new Error("storage temporarily unavailable");
     return id==="parse-result-1"?state.output:undefined;
   },
-  put:state.putBlob,delete:async()=>undefined,
+  put:state.putBlob,delete:state.deleteBlob,
 })}));
 vi.mock("./production-runtime",async(importOriginal)=>( {
   ...await importOriginal<typeof import("./production-runtime")>(),
@@ -78,6 +78,7 @@ describe("completed Parse result reuse",()=>{
     state.current=state.existing;
     state.putJob.mockReset().mockImplementation(async(job:EvolutionJob)=>{state.current=job;});
     state.putBlob.mockReset();
+    state.deleteBlob.mockReset().mockResolvedValue(undefined);
     state.start.mockReset().mockResolvedValue({runId:"run-2"});
     state.getRun.mockReset();
   });
@@ -105,6 +106,28 @@ describe("completed Parse result reuse",()=>{
     expect(response).toMatchObject({jobId:current.id,status:"completed",reused:true});
     expect(response.runId).toBeUndefined();
     expect(state.start).not.toHaveBeenCalled();
+    expect(state.deleteBlob).toHaveBeenCalledWith(expect.stringMatching(/^parse-input-parse-/));
+  });
+
+  it("reports a losing upload whose independent input Artifact could not be cleaned",async()=>{
+    const current=racedJob();
+    state.existing=undefined;
+    state.putJob.mockRejectedValueOnce(new JobStateConflictError(current.id,"idempotency-conflict",current));
+    state.deleteBlob.mockRejectedValueOnce(new Error("Storage delete unavailable"));
+    await expect(route(request())).rejects.toMatchObject({status:409,data:{jobId:current.id,inputRef:expect.stringMatching(/^parse-input-parse-/)}});
+    expect(state.deleteBlob).toHaveBeenCalledOnce();
+    expect(state.start).not.toHaveBeenCalled();
+  });
+
+  it("does not delete a shared generation input when an existing Job retry races",async()=>{
+    const existing=EvolutionJobSchema.parse({...racedJob(),status:"failed",finishedAt:state.existing?.finishedAt});
+    state.existing=existing;
+    const current=EvolutionJobSchema.parse({...existing,status:"running",finishedAt:undefined,
+      inputRef:"parse-input-parse-1-g2",outputRef:"parse-result-parse-1-g2",generation:2,
+      metadata:{...existing.metadata,runId:"run-2"}});
+    state.putJob.mockRejectedValueOnce(new JobStateConflictError(current.id,"idempotency-conflict",current));
+    expect(await route(request())).toMatchObject({jobId:current.id,status:"running",reused:true});
+    expect(state.deleteBlob).not.toHaveBeenCalled();
   });
 
   it("rejects a concurrently completed Job with substituted result bytes",async()=>{

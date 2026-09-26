@@ -138,6 +138,14 @@ export default defineEventHandler(async(event)=>{
   }catch(error){
     if(error instanceof JobStateConflictError&&error.reason==="idempotency-conflict"&&error.current?.idempotencyKey===idempotencyKey){
       const current=error.current;
+      // A newly generated Job ID gives this losing request its own input Artifact.
+      // Retries of an existing Job can share a generation input with the winner.
+      if(!existing&&current.id!==jobId){
+        try{await artifacts.delete(inputRef);}
+        catch{
+          throw createError({statusCode:409,statusMessage:"并发 Parse 输入清理未确认，请按 Job ID 检查后重试",data:{jobId:current.id,inputRef}});
+        }
+      }
       if(current.type!=="parse"){
         throw createError({statusCode:409,statusMessage:"Parse idempotency key belongs to another Job type",data:{jobId:current.id}});
       }
