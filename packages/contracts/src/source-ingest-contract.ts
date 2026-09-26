@@ -79,6 +79,7 @@ export const SourceParseStatusResponseSchema=z.object({
   job:EvolutionJobSchema,
   artifact:SourceArtifactSchema.optional(),
   resultIssue:z.string().min(1).max(500).optional(),
+  resultIssueCode:z.enum(["temporary-storage-unavailable"]).optional(),
 });
 export type SourceParseStatusResponse=z.infer<typeof SourceParseStatusResponseSchema>;
 

@@ -73,4 +73,21 @@ describe("server source client degraded fallback classification",()=>{
     await expect(waitForServerParseJob(job.id)).rejects.toThrow("Parse 结果 Artifact 缺失");
     expect(fetch).toHaveBeenCalledOnce();
   });
+
+  it("waits for a temporarily unreadable completed result instead of treating it as Parse failure",async()=>{
+    const at="2026-09-24T00:00:00.000Z";
+    const job=EvolutionJobSchema.parse({
+      schemaVersion:"job-v1",id:"parse-1",type:"parse",status:"completed",label:"Parse",
+      idempotencyKey:"parse-key",generation:1,attempts:1,priority:80,
+      createdAt:at,updatedAt:at,finishedAt:at,
+    });
+    const artifact={id:"artifact-1",name:"input.txt",role:"target",mimeType:"text/plain",size:5,
+      inputMode:"upload",storageRef:"input-1",createdAt:at};
+    const fetch=vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({job,resultIssue:"Parse 结果 Artifact 暂时不可读取",resultIssueCode:"temporary-storage-unavailable"}),{status:200}))
+      .mockResolvedValueOnce(new Response(JSON.stringify({job,artifact}),{status:200}));
+    vi.stubGlobal("fetch",fetch);
+    expect(await waitForServerParseJob(job.id)).toMatchObject(artifact);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
 });

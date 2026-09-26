@@ -29,7 +29,7 @@ describe("Parse result reading",()=>{
     const missing=await readSourceParseResult(completed,{get:vi.fn(async()=>undefined)});
     expect(missing).toEqual({job:completed,resultIssue:"Parse 结果 Artifact 缺失"});
     const unavailable=await readSourceParseResult(completed,{get:vi.fn(async()=>{throw new Error("private storage detail");})});
-    expect(unavailable).toEqual({job:completed,resultIssue:"Parse 结果 Artifact 暂时不可读取"});
+    expect(unavailable).toEqual({job:completed,resultIssue:"Parse 结果 Artifact 暂时不可读取",resultIssueCode:"temporary-storage-unavailable"});
   });
 
   it("reports malformed output and never invents a parsed Artifact",async()=>{
