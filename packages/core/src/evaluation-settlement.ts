@@ -8,6 +8,7 @@ import type {
   TestCase,
 } from "@evolution/contracts";
 import { hasDeterministicRoundtripProof } from "./deterministic-criterion-evidence";
+import { indexUniqueById } from "./identity-index";
 
 export function citesHistoricalEvidence(text: string) {
   return /\b(?:diagnosis|sourceUnderstanding|designRationale|appliedPatches|searchAppliedPatches)\s*[.[]/i.test(text);
@@ -27,22 +28,6 @@ export function criteriaRequiringJudge(
 ) {
   const mapped = new Set(testCases.flatMap((testCase) => testCase.criterionIds));
   return criteria.filter((criterion) => mapped.has(criterion.id) && !hasDeterministicRoundtripProof(criterion, testCases, runs));
-}
-
-function indexUniqueById<T>(items: readonly T[], idOf: (item: T) => string) {
-  const byId = new Map<string, T>();
-  const duplicateIds = new Set<string>();
-  for (const item of items) {
-    const id = idOf(item);
-    if (duplicateIds.has(id)) continue;
-    if (byId.has(id)) {
-      byId.delete(id);
-      duplicateIds.add(id);
-    } else {
-      byId.set(id, item);
-    }
-  }
-  return { byId, duplicateIds };
 }
 
 export function deriveCriterionScores(
