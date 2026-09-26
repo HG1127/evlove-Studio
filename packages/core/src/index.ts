@@ -24,6 +24,7 @@ export * from "./evaluation-settlement";
 export * from "./experiment-winner";
 export * from "./validation-decision";
 export * from "./artifact-acceptance-settlement";
+export * from "./acceptance-result-identity";
 export * from "./artifact-validation-checks";
 export * from "./search-champion-settlement";
 export * from "./autonomous-completion";

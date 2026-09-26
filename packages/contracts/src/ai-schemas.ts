@@ -177,6 +177,14 @@ export const ArtifactAcceptanceAiResultSchema = z.object({
     note: z.string().default(""),
   })),
   summary: z.string(),
+}).superRefine((value, ctx) => {
+  const ids = new Set<string>();
+  value.results.forEach((item, index) => {
+    if (ids.has(item.criterionId)) {
+      ctx.addIssue({ code: "custom", path: ["results", index, "criterionId"], message: `Duplicate acceptance Criterion ID: ${item.criterionId}` });
+    }
+    ids.add(item.criterionId);
+  });
 });
 export type ArtifactAcceptanceAiResult = z.infer<typeof ArtifactAcceptanceAiResultSchema>;
 

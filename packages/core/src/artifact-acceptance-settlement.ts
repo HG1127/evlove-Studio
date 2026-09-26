@@ -6,9 +6,14 @@ import type {
   ValidationRun,
 } from "@evolution/contracts";
 import { evidenceFingerprint } from "./evidence-binding";
+import { indexScopedAcceptanceResults } from "./acceptance-result-identity";
+
+function validationScoreIndex(project:EvolveProject,validation:ValidationRun){
+  return indexScopedAcceptanceResults([{requestedCriterionIds:project.acceptanceRubric.map((item)=>item.id),results:validation.evaluation?.criterionScores??[]}]);
+}
 
 export function verifiedValidationFailures(project:EvolveProject,validation:ValidationRun){
-  const scores=new Map((validation.evaluation?.criterionScores??[]).map((item)=>[item.criterionId,item]));
+  const scores=validationScoreIndex(project,validation).byId;
   return project.acceptanceRubric.filter((criterion)=>{
     const score=scores.get(criterion.id);
     return score?.verificationStatus==="verified" && score.pass!==true;
@@ -42,7 +47,10 @@ export function settleArtifactAcceptanceFromValidation(args:{
     && args.validation.candidateId===args.candidate.id
     && args.validation.evidenceFingerprint===binding
     && !args.validation.evaluation?.demoJudged;
-  const scoreById=new Map((validationReusable?args.validation.evaluation?.criterionScores??[]:[]).map((item)=>[item.criterionId,item]));
+  const {byId:scoreById,duplicateIds}=indexScopedAcceptanceResults([{
+    requestedCriterionIds:args.project.acceptanceRubric.map((item)=>item.id),
+    results:validationReusable?args.validation.evaluation?.criterionScores??[]:[],
+  }]);
   const results:ArtifactAcceptance["results"]=args.project.acceptanceRubric.map((criterion)=>{
     const score=scoreById.get(criterion.id);
     if(score?.verificationStatus==="verified"){
@@ -54,7 +62,9 @@ export function settleArtifactAcceptanceFromValidation(args:{
       score:score?.score??0,
       pass:false,
       evidence:score?.evidence??[],
-      gaps:[...(score?.gaps??[]),`Criterion ${criterion.id} 缺少 exact-fingerprint VERIFIED 证据`],
+      gaps:[...(score?.gaps??[]),duplicateIds.has(criterion.id)
+        ?`Criterion ${criterion.id} 存在重复 Validation 分数，证据身份不明确`
+        :`Criterion ${criterion.id} 缺少 exact-fingerprint VERIFIED 证据`],
       note:"unverified Gate F evidence",
     };
   });

@@ -1,5 +1,5 @@
 import { evidenceFingerprint } from "./evidence-binding";
-import { acceptanceArtifacts as coreAcceptanceArtifacts } from "@evolution/core";
+import { acceptanceArtifacts as coreAcceptanceArtifacts, indexScopedAcceptanceResults } from "@evolution/core";
 import { htmlCandidateGuard } from "./html-candidate-guard";
 import {
   ArtifactAcceptanceAiResultSchema,
@@ -375,7 +375,10 @@ async function acceptCandidateArtifactsUnbound(project: EvolveProject, candidate
     && project.validationRun.candidateId === candidate.id
     && project.validationRun.evidenceFingerprint === acceptanceBinding
     && !project.validationRun.evaluation?.demoJudged;
-  const validatedById = new Map((validationReusable ? project.validationRun.evaluation?.criterionScores ?? [] : []).map((score) => [score.criterionId, score]));
+  const validatedById = indexScopedAcceptanceResults([{
+    requestedCriterionIds: criteria.map((criterion) => criterion.id),
+    results: validationReusable ? project.validationRun.evaluation?.criterionScores ?? [] : [],
+  }]).byId;
   const preResolved = new Map<string, ArtifactAcceptance["results"][number]>();
   const frozenIds = new Set(frozenArtifacts.map((artifact) => artifact.sourceArtifactId));
   for (const criterion of criteria) {
@@ -407,17 +410,17 @@ async function acceptCandidateArtifactsUnbound(project: EvolveProject, candidate
     const unresolved = subset.filter((criterion)=>!preResolved.has(criterion.id));
     if (!unresolved.length) return [];
     const batches: AcceptanceCriterion[][]=[]; for(let i=0;i<unresolved.length;i+=4)batches.push(unresolved.slice(i,i+4));
-    const queue=[...batches]; const responses:Array<ReturnType<typeof ArtifactAcceptanceAiResultSchema.parse>>=[];
+    const queue=[...batches]; const responses:Array<{requestedCriterionIds:string[];result:ReturnType<typeof ArtifactAcceptanceAiResultSchema.parse>}>=[];
     const workers=Array.from({length:Math.min(3,queue.length)},async()=>{while(queue.length){const batch=queue.shift();if(!batch)break;const ids=new Set(batch.map((item)=>item.id));const result=ArtifactAcceptanceAiResultSchema.parse(await runEvolveAi("artifact-acceptance",{
       aiProfile:project.aiProfile,
       project:{name:project.name,objectType:project.objectType,goal:project.goal,evolutionCommand:project.evolutionCommand,protectedItems:project.protectedItems,metrics:project.metrics,sourceUnderstanding:project.sourceUnderstanding,artifactGraph:project.artifactGraph,semanticEvolution:project.semanticEvolution,semanticObject:project.semanticEvolution?.semanticObject,evolutionIntentModel:project.semanticEvolution?.intent,adaptiveStrategy:resolveProjectArtifactStrategy(project)},
       rubric:batch,criterionEvidence:evidenceByCriterion.filter((item)=>ids.has(item.criterionId)),integritySignals:integrity,actualFileEvidence:frozenArtifacts,
       artifactMeta:candidate.artifactSnapshots.map((artifact)=>({sourceArtifactId:artifact.sourceArtifactId,name:artifact.name,mimeType:artifact.mimeType,length:artifact.content.length,contentHash:artifact.contentHash,notes:artifact.notes,descriptor:originalById.get(artifact.sourceArtifactId)?.artifactDescriptor})),
       evaluatorInstruction:"Judge ONLY this rubric subset and only its scoped artifactIds. Return every criterionId. Cite exact source offsets or actualFileEvidence checks. Excerpts are partial: do not infer whole-document coverage from an excerpt. Structural file checks do NOT prove rendering, execution, recalculation or usability. Never claim checks listed as limitations passed. Separate user requirements from AI suggestions. Hard gates cannot be averaged away. Be concise and evidence-based."
-    }));responses.push(result);}});await Promise.all(workers);return responses;
+    }));responses.push({requestedCriterionIds:[...ids],result});}});await Promise.all(workers);return responses;
   };
-  const normalize = (subset: AcceptanceCriterion[], responses:Array<ReturnType<typeof ArtifactAcceptanceAiResultSchema.parse>>) => {
-    const map=new Map(responses.flatMap((response)=>response.results).map((item)=>[item.criterionId,item]));
+  const normalize = (subset: AcceptanceCriterion[], responses:Array<{requestedCriterionIds:string[];result:ReturnType<typeof ArtifactAcceptanceAiResultSchema.parse>}>) => {
+    const {byId:map,duplicateIds}=indexScopedAcceptanceResults(responses.map((response)=>({requestedCriterionIds:response.requestedCriterionIds,results:response.result.results})));
     return subset.map((criterion)=>{
       const item=map.get(criterion.id);
       const alreadyResolved = preResolved.get(criterion.id);
@@ -436,7 +439,7 @@ async function acceptCandidateArtifactsUnbound(project: EvolveProject, candidate
           note: "supplemental human evidence",
         };
       }
-      if(!item)return {criterionId:criterion.id,score:0,pass:false,evidence:[],gaps:["Evaluator 未返回该 Criterion 结果"],note:"missing evaluator result"};
+      if(!item)return {criterionId:criterion.id,score:0,pass:false,evidence:[],gaps:[duplicateIds.has(criterion.id)?"Evaluator 对该 Criterion 返回重复结果，证据身份不明确":"Evaluator 未返回该 Criterion 结果"],note:"missing evaluator result"};
       const score=Math.max(0,Math.min(100,item.score));
       return {...item,score,pass:item.pass&&score>=criterion.minScore&&item.evidence.some(e=>e.trim().length>0)};
     });
@@ -457,7 +460,7 @@ async function acceptCandidateArtifactsUnbound(project: EvolveProject, candidate
   const softResponses=await runBatches(softCriteria);
   const softResults=normalize(softCriteria,softResponses);
   const normalizedResults=[...hardResults,...softResults];
-  const allResponses=[...hardResponses,...softResponses];
+  const allResponses=[...hardResponses,...softResponses].map((response)=>response.result);
   const weightedTotal=criteria.reduce((sum,criterion)=>sum+(normalizedResults.find((item)=>item.criterionId===criterion.id)?.score??0)*criterion.weight,0);
   const weightTotal=criteria.reduce((sum,criterion)=>sum+criterion.weight,0)||1;
   const overallScore=Math.round(weightedTotal/weightTotal);

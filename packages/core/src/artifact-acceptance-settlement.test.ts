@@ -52,4 +52,20 @@ describe("artifact acceptance settlement",()=>{
     x.validation.evaluation!.criterionScores![0]={...x.validation.evaluation!.criterionScores![0]!,score:50,pass:false};
     expect(verifiedValidationFailures(x.project,x.validation).map((item)=>item.id)).toEqual(["CONTENT"]);
   });
+  it("keeps duplicate verified Validation scores unverified regardless of row order",()=>{
+    for (const scores of [
+      [{criterionId:"CONTENT",score:10,pass:false},{criterionId:"CONTENT",score:100,pass:true}],
+      [{criterionId:"CONTENT",score:100,pass:true},{criterionId:"CONTENT",score:10,pass:false}],
+    ]) {
+      const x=fixture();
+      const original=x.validation.evaluation!.criterionScores![0]!;
+      x.validation.evaluation!.criterionScores!.push(...scores.map((score)=>({...original,...score})));
+      const result=settleArtifactAcceptanceFromValidation({project:x.project,candidate:x.candidate,validation:x.validation,frozenArtifacts:[x.frozen]});
+      expect(result.status).toBe("unverified");
+      expect(result.hardGatePass).toBe(false);
+      expect(result.results.find((item)=>item.criterionId==="CONTENT")?.gaps[0]).toContain("重复");
+      expect(result.results.find((item)=>item.criterionId==="FORMAT")?.pass).toBe(true);
+      expect(verifiedValidationFailures(x.project,x.validation)).toHaveLength(0);
+    }
+  });
 });
