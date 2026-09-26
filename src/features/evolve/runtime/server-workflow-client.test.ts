@@ -54,7 +54,7 @@ describe("server workflow routing",()=>{
       release:{read:true,write:true},git:{configured:true,webhook:true},
       capability:{database:true,semantic:true,sharing:true},evidence:{database:true,signing:true,immutable:true,export:true},
       outcome:{database:true,ingestion:true,analysis:true,telemetry:true},
-      security:{configured:true,enforced:true,productionSafe:true,vault:true,approvalStore:true,memberDirectory:true},
+      security:{configured:true,browserAccessConfigured:true,enforced:true,productionSafe:true,vault:true,approvalStore:true,memberDirectory:true},
       connectors:{configured:true,fullLifecycle:true},targetProxy:{run:true,release:true,observe:true},
     };
     const fetchMock=vi.fn(async(url:RequestInfo|URL)=>{
