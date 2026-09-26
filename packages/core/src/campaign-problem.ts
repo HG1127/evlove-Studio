@@ -1,7 +1,11 @@
 import type { EvolveProject, Problem } from "@evolution/contracts";
+import { indexScopedAcceptanceResults } from "./acceptance-result-identity";
 
 export function baselineRubricProblem(project: EvolveProject): Problem | undefined {
-  const scores = new Map((project.baselineRun.result?.criterionScores ?? []).map((item) => [item.criterionId, item]));
+  const scores = indexScopedAcceptanceResults([{
+    requestedCriterionIds: project.acceptanceRubric.map((criterion) => criterion.id),
+    results: project.baselineRun.result?.criterionScores ?? [],
+  }]).byId;
   const ranked = project.acceptanceRubric.flatMap((criterion) => {
     const score = scores.get(criterion.id);
     if (!score || score.verificationStatus !== "verified" || score.pass) return [];
