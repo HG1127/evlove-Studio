@@ -5,6 +5,7 @@ import {
   SourceParseResultPendingErrorDataSchema,
   SourceParseStartResponseSchema,
   SourceParseStatusResponseSchema,
+  SourceParseWriteUnconfirmedErrorDataSchema,
   type EvolutionJob,
   type ArtifactRole,
   type SourceArtifact,
@@ -29,6 +30,8 @@ async function json(path:string,init?:RequestInit){
     if(response.status===503){
       const pending=SourceParseResultPendingErrorDataSchema.safeParse((body as {data?:unknown}).data);
       if(pending.success)throw new ServerParseResultPendingError(message,pending.data.jobId);
+      const unconfirmed=SourceParseWriteUnconfirmedErrorDataSchema.safeParse((body as {data?:unknown}).data);
+      if(unconfirmed.success)throw new Error(`${message}（Job ${unconfirmed.data.jobId}）`);
     }
     if([401,403,404,503].includes(response.status))throw new ServerParseUnavailableError(message);
     throw new Error(message);

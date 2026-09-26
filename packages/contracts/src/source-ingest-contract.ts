@@ -80,6 +80,12 @@ export const SourceParseResultPendingErrorDataSchema=z.object({
   jobId:z.string().min(1),
 });
 
+export const SourceParseWriteUnconfirmedErrorDataSchema=z.object({
+  code:z.literal("PARSE_JOB_WRITE_UNCONFIRMED"),
+  jobId:z.string().min(1),
+  generation:z.number().int().positive(),
+});
+
 export const SourceParseStatusResponseSchema=z.object({
   job:EvolutionJobSchema,
   artifact:SourceArtifactSchema.optional(),

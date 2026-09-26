@@ -11,7 +11,7 @@ const state=vi.hoisted(()=>( {
   current:undefined as EvolutionJob|undefined,
   output:undefined as Blob|undefined,
   getError:false,
-  putJob:vi.fn(),putBlob:vi.fn(),deleteBlob:vi.fn(),start:vi.fn(),getRun:vi.fn(),
+  putJob:vi.fn(),getJob:vi.fn(),putBlob:vi.fn(),deleteBlob:vi.fn(),start:vi.fn(),getRun:vi.fn(),
 }));
 vi.mock("nitro/h3",async(importOriginal)=>( {
   ...await importOriginal<typeof import("nitro/h3")>(),
@@ -36,7 +36,7 @@ vi.mock("./production-runtime",async(importOriginal)=>( {
   ...await importOriginal<typeof import("./production-runtime")>(),
   getServerJobByIdempotencyKey:async()=>state.existing,
   getServerProductionRuntime:()=>({jobs:{
-    get:async()=>state.current,
+    get:state.getJob,
     put:state.putJob,
   }}),
   bindServerJobWorkflowRun:async(_id:string,_generation:number,runId:string)=>{
@@ -77,6 +77,7 @@ describe("completed Parse result reuse",()=>{
     });
     state.current=state.existing;
     state.putJob.mockReset().mockImplementation(async(job:EvolutionJob)=>{state.current=job;});
+    state.getJob.mockReset().mockImplementation(async()=>state.current);
     state.putBlob.mockReset();
     state.deleteBlob.mockReset().mockResolvedValue(undefined);
     state.start.mockReset().mockResolvedValue({runId:"run-2"});
@@ -128,6 +129,47 @@ describe("completed Parse result reuse",()=>{
     state.putJob.mockRejectedValueOnce(new JobStateConflictError(current.id,"idempotency-conflict",current));
     expect(await route(request())).toMatchObject({jobId:current.id,status:"running",reused:true});
     expect(state.deleteBlob).not.toHaveBeenCalled();
+  });
+
+  it("starts the Workflow after a lost Job write response when exact queued state committed",async()=>{
+    state.existing=undefined;
+    state.putJob.mockImplementationOnce(async(job:EvolutionJob)=>{
+      state.current=job;
+      throw new Error("database response lost");
+    });
+    const result=await route(request());
+    expect(result).toMatchObject({jobId:state.current?.id,runId:"run-2",status:"queued"});
+    expect(state.start).toHaveBeenCalledOnce();
+    expect(state.deleteBlob).not.toHaveBeenCalled();
+  });
+
+  it("does not start a Workflow when the Job write cannot be read back",async()=>{
+    state.existing=undefined;
+    state.putJob.mockRejectedValueOnce(new Error("database response lost"));
+    state.getJob.mockRejectedValueOnce(new Error("database read unavailable"));
+    await expect(route(request())).rejects.toMatchObject({status:503,data:{code:"PARSE_JOB_WRITE_UNCONFIRMED",jobId:expect.stringMatching(/^parse-/),generation:1}});
+    expect(state.start).not.toHaveBeenCalled();
+    expect(state.deleteBlob).not.toHaveBeenCalled();
+  });
+
+  it("does not start a Workflow for a different Job readback after a failed write",async()=>{
+    state.existing=undefined;
+    state.putJob.mockRejectedValueOnce(new Error("database response lost"));
+    state.current=racedJob();
+    await expect(route(request())).rejects.toMatchObject({status:503,data:{code:"PARSE_JOB_WRITE_UNCONFIRMED",generation:1}});
+    expect(state.start).not.toHaveBeenCalled();
+    expect(state.deleteBlob).not.toHaveBeenCalled();
+  });
+
+  it("does not reinterpret a confirmed state conflict as a lost write response",async()=>{
+    const existing=EvolutionJobSchema.parse({...racedJob(),status:"failed"});
+    state.existing=existing;
+    const current=EvolutionJobSchema.parse({...existing,status:"queued",generation:2,
+      inputRef:"parse-input-parse-1-g2",outputRef:"parse-result-parse-1-g2",finishedAt:undefined});
+    state.putJob.mockRejectedValueOnce(new JobStateConflictError(current.id,"generation-conflict",current));
+    await expect(route(request())).rejects.toMatchObject({status:409,data:{code:"JOB_STATE_CONFLICT",reason:"generation-conflict"}});
+    expect(state.getJob).not.toHaveBeenCalled();
+    expect(state.start).not.toHaveBeenCalled();
   });
 
   it("rejects a concurrently completed Job with substituted result bytes",async()=>{

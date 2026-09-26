@@ -54,6 +54,17 @@ describe("server source client degraded fallback classification",()=>{
     )).toEqual({jobId:"parse-1",artifactId:"artifact-1",status:"completed",reused:true});
   });
 
+  it("keeps an unconfirmed Job write visible instead of switching to local Parse",async()=>{
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({
+      statusCode:503,statusMessage:"Parse Job write unconfirmed",
+      data:{code:"PARSE_JOB_WRITE_UNCONFIRMED",jobId:"parse-1",generation:1},
+    }),{status:503,headers:{"Content-Type":"application/json"}})));
+    const attempt=startServerParseFile(new File(["hello"],"input.txt",{type:"text/plain"}),"target","artifact-1");
+    await expect(attempt).rejects.toThrow("Parse Job write unconfirmed（Job parse-1）");
+    await expect(startServerParseFile(new File(["hello"],"input.txt",{type:"text/plain"}),"target","artifact-1"))
+      .rejects.not.toBeInstanceOf(ServerParseUnavailableError);
+  });
+
   it("validates the Workflow cancellation receipt before returning it",async()=>{
     const receipt={jobId:"parse-1",status:"cancelled",workflow:{
       runId:"run-1",bound:true,exists:true,statusBefore:"running",statusAfter:"cancelled",

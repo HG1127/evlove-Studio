@@ -245,12 +245,12 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
   const canSend = command.trim().length > 0 || pastedText.trim().length > 0 || files.length > 0 || (!intake && artifacts.length > 0);
 
   const startBackgroundParse = (item: PendingFile) => {
-    setFiles((current) => current.map((entry) => entry.id === item.id ? { ...entry, status: "parsing", error: undefined } : entry));
+    const artifactId=item.artifactId??`artifact-${crypto.randomUUID()}`;
+    setFiles((current) => current.map((entry) => entry.id === item.id ? { ...entry, artifactId, status: "parsing", error: undefined } : entry));
     const job = (async () => {
       try {
         let parsed: SourceArtifact | undefined;
         let serverJobId=item.serverJobId;
-        const artifactId=item.artifactId??`artifact-${crypto.randomUUID()}`;
         if(serverJobId){
           parsed=await waitForServerParseJob(serverJobId);
         }else if(serverParseAvailableRef.current===false){

@@ -5,9 +5,11 @@ import {
   EvolutionJobSchema,
   type EvolutionJob,
   PRODUCTION_SCHEMA_VERSIONS,
+  SourceParseJobInputIdentitySchema,
   SourceParseStartResponseSchema,
   SourceParseUploadMetadataSchema,
   SourceParseWorkflowInputV2Schema,
+  type SourceParseWorkflowInputV2,
 } from "@evolution/contracts";
 import {getServerArtifactStore} from "../../../src/services/artifact-runtime";
 import {
@@ -34,6 +36,21 @@ async function cleanupStartedParseRun(runId:string){
 function persistedParseRunId(job:EvolutionJob):string|undefined{
   const value=job.metadata?.runId;
   return typeof value==="string"&&value.trim()?value.trim():undefined;
+}
+
+function matchesUnboundParseJob(job:EvolutionJob|undefined,input:SourceParseWorkflowInputV2,idempotencyKey:string){
+  if(!job||job.id!==input.jobId||job.type!=="parse"||job.status!=="queued"
+    ||job.idempotencyKey!==idempotencyKey||job.generation!==input.generation
+    ||persistedParseRunId(job))return false;
+  const identity=SourceParseJobInputIdentitySchema.safeParse({
+    ...job.metadata,inputRef:job.inputRef,outputRef:job.outputRef,
+  });
+  if(!identity.success)return false;
+  const bound=identity.data;
+  return bound.inputRef===input.inputRef&&bound.outputRef===input.outputRef
+    &&bound.artifactId===input.artifactId&&bound.name===input.name
+    &&bound.mimeType===input.mimeType&&bound.size===input.size
+    &&bound.role===input.role&&bound.contentSha256===input.contentSha256;
 }
 
 const MAX_FILE_BYTES=25*1024*1024;
@@ -173,7 +190,19 @@ export default defineEventHandler(async(event)=>{
         data:{code:error.code,jobId:current.id,status:current.status,generation:current.generation},
       });
     }
-    throw error;
+    if(error instanceof JobStateConflictError){
+      throw createError({statusCode:409,statusMessage:"Parse Job 写入被当前状态拒绝，请按 Job ID 检查",data:{code:error.code,jobId:error.jobId,reason:error.reason,current:error.current}});
+    }
+    let committed:EvolutionJob|undefined;
+    try{committed=await runtime.jobs.get(jobId);}
+    catch{
+      throw createError({statusCode:503,statusMessage:"Parse Job 写入结果无法读取，请按 Job ID 检查后重试",data:{code:"PARSE_JOB_WRITE_UNCONFIRMED",jobId,generation,inputRef}});
+    }
+    if(!matchesUnboundParseJob(committed,input,idempotencyKey)){
+      throw createError({statusCode:503,statusMessage:"Parse Job 写入结果未确认，已保留原始文件供恢复",data:{code:"PARSE_JOB_WRITE_UNCONFIRMED",jobId,generation,inputRef}});
+    }
+    // The write may have committed before its response was lost. This request has not
+    // started a Workflow yet, so the exact unbound Job can continue below.
   }
   let run;
   try{
