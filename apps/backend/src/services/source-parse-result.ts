@@ -5,6 +5,8 @@ import {
   type ArtifactStorePort,type EvolutionJob,type SourceParseStatusResponse,
 } from "@evolution/contracts";
 
+export const SOURCE_PARSE_RESULT_TEMPORARILY_UNREADABLE="Parse 结果 Artifact 暂时不可读取";
+
 export async function readSourceParseResult(
   job:EvolutionJob,
   artifacts:Pick<ArtifactStorePort,"get">,
@@ -16,7 +18,7 @@ export async function readSourceParseResult(
   let blob:Blob|undefined;
   try{blob=await artifacts.get(job.outputRef);}
   catch{
-    return SourceParseStatusResponseSchema.parse({job,resultIssue:"Parse 结果 Artifact 暂时不可读取"});
+    return SourceParseStatusResponseSchema.parse({job,resultIssue:SOURCE_PARSE_RESULT_TEMPORARILY_UNREADABLE});
   }
   if(!blob)return SourceParseStatusResponseSchema.parse({job,resultIssue:"Parse 结果 Artifact 缺失"});
   try{

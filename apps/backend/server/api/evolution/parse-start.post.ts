@@ -22,7 +22,7 @@ import {sourceParseWorkflow} from "../../../../../workflows/source-parse";
 import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 import {cancelWorkflowRunById} from "../../../src/services/workflow-run-control";
 import {sourceParseIdempotencyIdentity} from "../../../src/services/source-parse-identity";
-import {readSourceParseResult} from "../../../src/services/source-parse-result";
+import {readSourceParseResult,SOURCE_PARSE_RESULT_TEMPORARILY_UNREADABLE} from "../../../src/services/source-parse-result";
 
 async function cleanupStartedParseRun(runId:string){
   try{return await cancelWorkflowRunById(runId);}
@@ -102,6 +102,9 @@ export default defineEventHandler(async(event)=>{
         reused:true,
       });
     }
+    if(output.resultIssue===SOURCE_PARSE_RESULT_TEMPORARILY_UNREADABLE){
+      throw createError({statusCode:503,statusMessage:"Parse 结果暂时不可读取，请按 Job ID 重试",data:{jobId:existing.id,generation:existing.generation}});
+    }
   }
   const jobId=existing?.id??`parse-${randomUUID()}`;
   const generation=(existing?.generation??0)+1;
@@ -144,7 +147,8 @@ export default defineEventHandler(async(event)=>{
         if(current.status==="completed"){
           const output=await readSourceParseResult(current,artifacts);
           if(!output.artifact){
-            throw createError({statusCode:409,statusMessage:"并发 Parse Job 的完成结果无法验证，请按 Job ID 检查",data:{jobId:current.id,generation:current.generation,resultIssue:output.resultIssue}});
+            const unavailable=output.resultIssue===SOURCE_PARSE_RESULT_TEMPORARILY_UNREADABLE;
+            throw createError({statusCode:unavailable?503:409,statusMessage:unavailable?"Parse 结果暂时不可读取，请按 Job ID 重试":"并发 Parse Job 的完成结果无法验证，请按 Job ID 检查",data:{jobId:current.id,generation:current.generation,resultIssue:output.resultIssue}});
           }
         }
         return SourceParseStartResponseSchema.parse({

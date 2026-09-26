@@ -10,6 +10,7 @@ const state=vi.hoisted(()=>( {
   existing:undefined as EvolutionJob|undefined,
   current:undefined as EvolutionJob|undefined,
   output:undefined as Blob|undefined,
+  getError:false,
   putJob:vi.fn(),putBlob:vi.fn(),start:vi.fn(),getRun:vi.fn(),
 }));
 vi.mock("nitro/h3",async(importOriginal)=>( {
@@ -25,7 +26,10 @@ vi.mock("../server-env",async(importOriginal)=>( {
   ...await importOriginal<typeof import("../server-env")>(),serverSupabaseSecureConfigured:()=>true,
 }));
 vi.mock("./artifact-runtime",()=>({getServerArtifactStore:()=>({
-  get:async(id:string)=>id==="parse-result-1"?state.output:undefined,
+  get:async(id:string)=>{
+    if(state.getError)throw new Error("storage temporarily unavailable");
+    return id==="parse-result-1"?state.output:undefined;
+  },
   put:state.putBlob,delete:async()=>undefined,
 })}));
 vi.mock("./production-runtime",async(importOriginal)=>( {
@@ -61,6 +65,7 @@ describe("completed Parse result reuse",()=>{
       size:5,inputMode:"upload",storageRef:"artifact-1",createdAt:"2026-09-24T00:00:00.000Z"};
     const serialized=JSON.stringify(artifact);
     state.output=new Blob([serialized]);
+    state.getError=false;
     state.existing=EvolutionJobSchema.parse({
       schemaVersion:"job-v1",id:"parse-1",type:"parse",status:"completed",label:"Parse input.txt",
       idempotencyKey:"parse-key",generation:1,attempts:1,priority:80,
@@ -85,6 +90,13 @@ describe("completed Parse result reuse",()=>{
     expect(state.start).not.toHaveBeenCalled();
   });
 
+  it("does not restart a completed Parse when Storage is temporarily unreadable",async()=>{
+    state.getError=true;
+    await expect(route(request())).rejects.toMatchObject({status:503,data:{jobId:"parse-1",generation:1}});
+    expect(state.putJob).not.toHaveBeenCalled();
+    expect(state.start).not.toHaveBeenCalled();
+  });
+
   it("rechecks a concurrently completed Job before reusing its result",async()=>{
     const current=racedJob();
     state.existing=undefined;
@@ -101,6 +113,15 @@ describe("completed Parse result reuse",()=>{
     state.output=new Blob(["substituted result"]);
     state.putJob.mockRejectedValueOnce(new JobStateConflictError(current.id,"idempotency-conflict",current));
     await expect(route(request())).rejects.toMatchObject({status:409,data:{jobId:current.id,resultIssue:expect.any(String)}});
+    expect(state.start).not.toHaveBeenCalled();
+  });
+
+  it("returns a retryable error for a concurrently completed result during a Storage outage",async()=>{
+    const current=racedJob();
+    state.existing=undefined;
+    state.getError=true;
+    state.putJob.mockRejectedValueOnce(new JobStateConflictError(current.id,"idempotency-conflict",current));
+    await expect(route(request())).rejects.toMatchObject({status:503,data:{jobId:current.id}});
     expect(state.start).not.toHaveBeenCalled();
   });
 
