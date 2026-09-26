@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Candidate, EvaluationResult, EvolveProject } from "@evolution/contracts";
-import { candidateWinnerDecision, experimentEvidencePendingOnly } from "./experiment-winner";
+import { candidateWinnerDecision, experimentEvaluationScore, experimentEvidencePendingOnly } from "./experiment-winner";
 
 function project():EvolveProject{
   return {
@@ -41,5 +41,31 @@ describe("experiment winner decision",()=>{
   it("distinguishes evidence pending from verified product failure",()=>{
     expect(experimentEvidencePendingOnly(evaluation(90,100,"unverified"))).toBe(true);
     expect(experimentEvidencePendingOnly(evaluation(60,100,"verified"))).toBe(false);
+  });
+
+  it("does not promote or rank a duplicate-scored candidate regardless of row order",()=>{
+    for (const rows of [
+      [{score:20,pass:false},{score:100,pass:true}],
+      [{score:100,pass:true},{score:20,pass:false}],
+    ]) {
+      const challenger=evaluation(95,100);
+      challenger.criterionScores=challenger.criterionScores!.filter((item)=>item.criterionId!=="GOAL");
+      challenger.criterionScores.push(...rows.map((row)=>({criterionId:"GOAL",verificationStatus:"verified" as const,evidence:[],gaps:[],testCaseIds:["V1"],...row})));
+      const result=candidateWinnerDecision(project(),challenger,evaluation(82,100));
+      expect(result.eligible).toBe(false);
+      expect(result.blockers.join(" ")).toContain("重复 Criterion：GOAL");
+      expect(result.comparedCriterionIds).not.toContain("GOAL");
+      expect(experimentEvaluationScore(project(),challenger)).toBe(-Infinity);
+      expect(experimentEvidencePendingOnly(challenger)).toBe(true);
+    }
+  });
+
+  it("does not compare against a duplicate-scored baseline",()=>{
+    const baseline=evaluation(82,100);
+    baseline.criterionScores!.push({...baseline.criterionScores![0]!,score:99});
+    const result=candidateWinnerDecision(project(),evaluation(95,100),baseline);
+    expect(result.eligible).toBe(false);
+    expect(result.blockers.join(" ")).toContain("基线评分存在重复 Criterion：GOAL");
+    expect(result.comparedCriterionIds).not.toContain("GOAL");
   });
 });

@@ -1,7 +1,15 @@
 import type { Candidate, EvaluationResult, EvolveProject } from "@evolution/contracts";
+import { indexScopedAcceptanceResults } from "./acceptance-result-identity";
+
+function scoreIndex(project: EvolveProject, evaluation: EvaluationResult) {
+  return indexScopedAcceptanceResults([{
+    requestedCriterionIds: project.acceptanceRubric.map((criterion) => criterion.id),
+    results: evaluation.criterionScores ?? [],
+  }]);
+}
 
 function hardRubricFailures(project: EvolveProject, evaluation: EvaluationResult) {
-  const byId = new Map((evaluation.criterionScores ?? []).map((item) => [item.criterionId, item]));
+  const byId = scoreIndex(project, evaluation).byId;
   return project.acceptanceRubric.filter((criterion) => {
     if (!criterion.hardGate) return false;
     const result = byId.get(criterion.id);
@@ -10,7 +18,7 @@ function hardRubricFailures(project: EvolveProject, evaluation: EvaluationResult
 }
 
 export function experimentEvaluationScore(project: EvolveProject, evaluation: EvaluationResult) {
-  if (evaluation.safety === "FAIL" || hardRubricFailures(project, evaluation).length) return -Infinity;
+  if (evaluation.safety === "FAIL" || hardRubricFailures(project, evaluation).length || scoreIndex(project, evaluation).duplicateIds.size) return -Infinity;
   const generic = evaluation.accuracy * 0.28
     + evaluation.evidence * 0.22
     + evaluation.riskCoverage * 0.15
@@ -44,8 +52,8 @@ function targetCriterionIds(project: EvolveProject, candidate?: Candidate) {
 }
 
 function pairedRubricQuality(project: EvolveProject, evaluation: EvaluationResult, baseline: EvaluationResult, onlyIds?: string[]) {
-  const candidateById = new Map((evaluation.criterionScores ?? []).map((item) => [item.criterionId, item]));
-  const baselineById = new Map((baseline.criterionScores ?? []).map((item) => [item.criterionId, item]));
+  const candidateById = scoreIndex(project, evaluation).byId;
+  const baselineById = scoreIndex(project, baseline).byId;
   const allowed = onlyIds?.length ? new Set(onlyIds) : undefined;
   const comparable = project.acceptanceRubric.filter((criterion) => {
     if (allowed && !allowed.has(criterion.id)) return false;
@@ -78,6 +86,10 @@ export function candidateWinnerDecision(
 ) {
   const blockers: string[] = [];
   const signals: string[] = [];
+  const candidateScores = scoreIndex(project, evaluation);
+  const baselineScores = scoreIndex(project, baseline);
+  if (candidateScores.duplicateIds.size) blockers.push(`候选评分存在重复 Criterion：${[...candidateScores.duplicateIds].join("、")}；需重新验证`);
+  if (baselineScores.duplicateIds.size) blockers.push(`基线评分存在重复 Criterion：${[...baselineScores.duplicateIds].join("、")}；需重新测量`);
   if (evaluation.safety === "FAIL") blockers.push("Safety 未通过");
   if (evaluation.demoJudged) blockers.push("评审使用演示兜底，不能据此选出 Winner");
   const candidateHardFailures = hardRubricFailures(project, evaluation).length;
@@ -89,8 +101,9 @@ export function candidateWinnerDecision(
   if (!paired && candidateCoverage + 5 < baselineCoverage) blockers.push(`缺少同卷证据，覆盖率由 ${baselineCoverage}% 变为 ${candidateCoverage}%，请补证后比较`);
   if (paired && candidateCoverage + 5 < baselineCoverage) signals.push(`未配对标准待独立验收补证（覆盖率 ${candidateCoverage}%）`);
   const lostProtected = project.acceptanceRubric.filter((criterion) => (criterion.hardGate || criterion.protectedConstraint)
-    && baseline.criterionScores?.some((item) => item.criterionId === criterion.id && item.verificationStatus === "verified" && item.pass)
-    && !evaluation.criterionScores?.some((item) => item.criterionId === criterion.id && item.verificationStatus === "verified" && item.pass));
+    && baselineScores.byId.get(criterion.id)?.verificationStatus === "verified"
+    && baselineScores.byId.get(criterion.id)?.pass
+    && !(candidateScores.byId.get(criterion.id)?.verificationStatus === "verified" && candidateScores.byId.get(criterion.id)?.pass));
   if (lostProtected.length) blockers.push(`原版已通过的保护标准需补证或修复：${lostProtected.map((item) => item.id).join("、")}`);
   const candidateQuality = paired?.candidate ?? comparableQuality(evaluation);
   const baselineQuality = paired?.baseline ?? comparableQuality(baseline);
@@ -125,7 +138,10 @@ export function candidateWinnerDecision(
 
 export function experimentEvidencePendingOnly(evaluation: EvaluationResult) {
   const scores = evaluation.criterionScores ?? [];
+  const { byId, duplicateIds } = indexScopedAcceptanceResults([{
+    requestedCriterionIds: scores.map((item) => item.criterionId), results: scores,
+  }]);
   return evaluation.safety !== "FAIL"
-    && scores.some((item) => item.verificationStatus !== "verified")
-    && !scores.some((item) => item.verificationStatus === "verified" && !item.pass);
+    && (duplicateIds.size > 0 || [...byId.values()].some((item) => item.verificationStatus !== "verified"))
+    && ![...byId.values()].some((item) => item.verificationStatus === "verified" && !item.pass);
 }
