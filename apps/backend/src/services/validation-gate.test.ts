@@ -40,6 +40,7 @@ const input={missionId:"mission-1",checkpointId:"checkpoint-1",artifactId:"artif
 const validationResult={
   id:input.validationId,missionId:input.missionId,checkpointId:input.checkpointId,
   artifactId:input.artifactId,artifactSha256:input.artifactSha256,status:input.status,
+  checks:[{name:"minBytes",passed:true,expected:10,actual:artifact.size,detail:"Artifact meets minimum size"}],
 };
 const validationEvent=createEvolutionEvent({
   id:"validation-result:"+input.validationId,missionId:input.missionId,
@@ -88,6 +89,33 @@ describe("checkpoint validation gate",()=>{
     await expect(evaluateCheckpointValidation(ports,input)).rejects.toBeInstanceOf(CheckpointValidationEvidenceError);
     expect(ports.events.append).not.toHaveBeenCalled();
     expect(appendEvidence).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {label:"no executable checks",checks:[]},
+    {label:"a failed check",checks:[{name:"minBytes",passed:false,expected:10,actual:artifact.size,detail:"failed"}]},
+    {label:"a duplicated check",checks:[...validationResult.checks,...validationResult.checks]},
+    {label:"a false expected value",checks:[{name:"minBytes",passed:true,expected:artifact.size+1,actual:artifact.size,detail:"passed"}]},
+    {label:"a false actual value",checks:[{name:"minBytes",passed:true,expected:10,actual:999,detail:"passed"}]},
+    {label:"a false text claim",checks:[{name:"containsText",passed:true,expected:"text not present",actual:true,detail:"passed"}]},
+  ])("rejects a passed Validation with $label before writing evidence",async({checks})=>{
+    readValidationRecord.mockResolvedValueOnce({event:validationEvent,result:{...validationResult,checks}});
+    const ports=runtime();
+    await expect(evaluateCheckpointValidation(ports,input)).rejects.toBeInstanceOf(CheckpointValidationEvidenceError);
+    expect(mirror).not.toHaveBeenCalled();
+    expect(appendValidationEvidence).not.toHaveBeenCalled();
+    expect(ports.events.append).not.toHaveBeenCalled();
+    expect(appendEvidence).not.toHaveBeenCalled();
+  });
+
+  it("rechecks valid hash, size, and text claims against the same Artifact bytes",async()=>{
+    const checks=[
+      {name:"expectedSha256",passed:true,expected:artifactSha256,actual:artifactSha256,detail:"hash matches"},
+      {name:"minBytes",passed:true,expected:10,actual:artifact.size,detail:"size matches"},
+      {name:"containsText",passed:true,expected:"checkpoint artifact",actual:true,detail:"text matches"},
+    ];
+    readValidationRecord.mockResolvedValueOnce({event:validationEvent,result:{...validationResult,checks}});
+    await expect(evaluateCheckpointValidation(runtime(),input)).resolves.toMatchObject({accepted:true});
   });
 
   it("does not accept when the source Validation Evidence write fails",async()=>{

@@ -89,6 +89,10 @@ describe("durable Artifact validation",()=>{
     });
     expect(result.status).toBe("unverified");
     expect(canAcceptCheckpoint(result)).toBe(false);
+    expect(canAcceptCheckpoint({...result,status:"passed",checks:[]})).toBe(false);
+    expect(canAcceptCheckpoint({...result,status:"passed",checks:[{
+      name:"minBytes",passed:false,expected:1,actual:0,detail:"failed",
+    }]})).toBe(false);
   });
 
   it("fails on requested hash drift and Mission binding mismatch",async()=>{

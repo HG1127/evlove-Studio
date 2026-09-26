@@ -3,9 +3,10 @@ import {
   createEvolutionEvent,
   ValidationRequestSchema,
   ValidationResultSchema,
-  type ArtifactValidationChecks,
+  type ValidationResult,
   type ProductionRuntimePorts,
 } from "@evolution/contracts";
+import {canAcceptValidatedArtifact,evaluateArtifactValidationChecks} from "@evolution/core";
 import {EventEvidenceIdentityConflictError,mirrorEvolutionEventToEvidenceLedger} from "./evidence-ledger";
 import {EventEvidenceMirrorError,EventIdempotencyConflictError} from "./event-persistence";
 import {registerArtifactEvidence} from "./evidence-runtime";
@@ -136,7 +137,7 @@ export async function validateArtifact(runtime:ProductionRuntimePorts,input:unkn
       status="unverified";
       reason="No executable validation checks were supplied";
     }else{
-      const result=runChecks(request.checks,bytes,artifact.type);
+      const result=evaluateArtifactValidationChecks(request.checks,bytes,artifact.type,artifactSha256);
       checks.push(...result.checks);
       status=result.unsupported.length?"unverified":checks.every((check)=>check.passed)?"passed":"failed";
       reason=result.unsupported.length
@@ -179,42 +180,12 @@ export async function validateArtifact(runtime:ProductionRuntimePorts,input:unkn
   return result;
 }
 
-function runChecks(checks:ArtifactValidationChecks,bytes:ArrayBuffer,mimeType:string){
-  const output:Array<{name:"expectedSha256"|"minBytes"|"maxBytes"|"containsText";passed:boolean;expected?:unknown;actual?:unknown;detail:string}>=[];
-  const unsupported:string[]=[];
-  const size=bytes.byteLength;
-  const digest=sha256(bytes);
-  if(checks.expectedSha256){
-    output.push({name:"expectedSha256",passed:digest===checks.expectedSha256,expected:checks.expectedSha256,actual:digest,detail:digest===checks.expectedSha256?"Artifact hash matches":"Artifact hash does not match"});
-  }
-  if(checks.minBytes!==undefined){
-    output.push({name:"minBytes",passed:size>=checks.minBytes,expected:checks.minBytes,actual:size,detail:size>=checks.minBytes?"Artifact meets minimum size":"Artifact is smaller than the required minimum"});
-  }
-  if(checks.maxBytes!==undefined){
-    output.push({name:"maxBytes",passed:size<=checks.maxBytes,expected:checks.maxBytes,actual:size,detail:size<=checks.maxBytes?"Artifact is within maximum size":"Artifact exceeds the allowed maximum size"});
-  }
-  if(checks.containsText!==undefined){
-    const textual=mimeType.startsWith("text/")||/json|xml|yaml|javascript|typescript/.test(mimeType);
-    if(!textual){
-      unsupported.push("containsText (non-text Artifact)");
-    }else{
-      try{
-        const text=new TextDecoder("utf-8",{fatal:true}).decode(bytes);
-        const passed=text.includes(checks.containsText);
-        output.push({name:"containsText",passed,expected:checks.containsText,actual:passed,detail:passed?"Required text was found":"Required text was not found"});
-      }catch{
-        unsupported.push("containsText (Artifact is not valid UTF-8 text)");
-      }
-    }
-  }
-  return {checks:output,unsupported};
-}
-
 export async function getValidation(id:string){
   const record=await getServerValidationResult(id);
   return record?ValidationResultSchema.parse(record):undefined;
 }
 
-export function canAcceptCheckpoint(validation:{status:string;artifactId:string;artifactSha256?:string}){
-  return validation.status==="passed"&&Boolean(validation.artifactId&&validation.artifactSha256);
+// Compatibility shim for existing backend routes; the decision lives in Core.
+export function canAcceptCheckpoint(validation:Pick<ValidationResult,"status"|"artifactId"|"artifactSha256"|"checks">){
+  return canAcceptValidatedArtifact(validation);
 }
