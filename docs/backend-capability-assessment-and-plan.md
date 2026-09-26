@@ -265,6 +265,8 @@ Commit `a46f2e9` passed local lint, architecture check, build, and the full Vite
 
 Commit `6e7cfbe` passed local lint, architecture check, build, and the full Vitest suite (918 passed, 1 skipped); its [Quality Gate](https://github.com/HG1127/evlove-Studio/actions/runs/36017372731) and [Production Smoke](https://github.com/HG1127/evlove-Studio/actions/runs/36018027879) passed. At 2026-09-24 15:09 UTC, the read-only production health invocation returned HTTP 200 and logged `collectionPages: true` alongside `status: ready`, `directRestJobs: true`, and `parseRecoveryQuery: true`. This verifies both one-row pagination queries against the configured production Supabase database; a production collection larger than one page is still unexercised.
 
+The Composer now records removal of an in-flight Parse source for the current draft session before clearing its chip. A delayed server start receipt is cancelled when it arrives, a late local/server result is not merged back into the draft, and a refreshed browser tab skips the removed Job during server recovery. The dismissal record is Zod-validated, session-scoped, and bounded to 200 Artifact IDs. Local UI smoke exercises a delayed Parse start followed by removal and refresh; it does not prove production cancellation because authenticated browser access is still unconfigured. A terminal server Job's scratch bytes remain subject to the existing retention/cleanup path; removal does not claim that those bytes were deleted.
+
 The following external configuration or product-scope decisions remain deferred while backend code work continues:
 
 | Item | Current effect | Completion evidence |

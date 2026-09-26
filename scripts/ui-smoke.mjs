@@ -42,8 +42,64 @@ try{
   await page.getByText('已读取 · 后台解析完成',{exact:true}).waitFor({timeout:15000});
   localParse='passed';
  }
+ const racePage=await context.newPage();
+ racePage.on('pageerror',error=>errors.push(error.message));
+ let releaseStart;
+ let markStarted;
+ let markCancelled;
+ let markListed;
+ const startGate=new Promise(resolve=>{releaseStart=resolve;});
+ const startSeen=new Promise(resolve=>{markStarted=resolve;});
+ const cancelSeen=new Promise(resolve=>{markCancelled=resolve;});
+ const listSeen=new Promise(resolve=>{markListed=resolve;});
+ let listCalls=0;
+ let submittedArtifactId;
+ const within=async(promise,label)=>{
+  let timer;
+  try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error(`${label} timed out`)),15000);})]);}
+  finally{clearTimeout(timer);}
+ };
+ await racePage.route('**/api/evolution/parse-capabilities',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({available:true,durable:true,artifactStore:true,serverNative:true,supportedExtensions:['md']})}));
+ await racePage.route('**/api/evolution/parse-jobs*',async route=>{
+  const job={schemaVersion:'job-v1',id:'parse-smoke-late',type:'parse',status:'cancelled',label:'Parse smoke-late.md',
+   idempotencyKey:'smoke-late',generation:1,attempts:1,priority:80,inputRef:'parse-input-smoke-late',
+   outputRef:'parse-result-smoke-late',metadata:{artifactId:submittedArtifactId??'artifact-smoke-late',name:'smoke-late.md',mimeType:'text/markdown',size:11,role:'target'},
+   createdAt:'2026-09-24T00:00:00.000Z',updatedAt:'2026-09-24T00:00:00.000Z'};
+  await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({items:listCalls++? [{job}]:[]})});
+  markListed();
+ });
+ await racePage.route('**/api/evolution/parse-start',async route=>{
+  markStarted();
+  await startGate;
+  const request=route.request();
+  const body=request.postDataBuffer();
+  const match=body?.toString().match(/name="artifactId"\r?\n\r?\n([^\r\n]+)/);
+  assert.ok(match?.[1],'Parse start did not send an artifactId');
+  submittedArtifactId=match[1];
+  await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({jobId:'parse-smoke-late',runId:'run-smoke-late',artifactId:submittedArtifactId,status:'queued'})});
+ });
+ await racePage.route('**/api/evolution/parse-cancel',async route=>{
+  await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({jobId:'parse-smoke-late',status:'cancelled',workflow:{runId:'run-smoke-late',bound:true,exists:true,statusBefore:'running',statusAfter:'cancelled',cancelIssued:true,reason:'workflow-run-cancelled'}})});
+  markCancelled();
+ });
+ await racePage.goto(`${baseUrl}/#/`);
+ await within(listSeen,'initial Parse list');
+ await racePage.locator('input[type="file"]').first().setInputFiles({name:'smoke-late.md',mimeType:'text/markdown',buffer:Buffer.from('late source')});
+ await within(startSeen,'delayed Parse start');
+ await racePage.getByRole('button',{name:'移除附件：smoke-late.md'}).click();
+ releaseStart();
+ await within(cancelSeen,'Parse cancellation');
+ assert.equal(await racePage.getByText('smoke-late.md',{exact:true}).count(),0,'removed Parse input reappeared after delayed start');
+ const recoveredList=racePage.waitForResponse(response=>response.url().includes('/api/evolution/parse-jobs')&&response.ok());
+ await racePage.reload();
+ await recoveredList;
+ await racePage.getByRole('heading',{name:'工作台',exact:true}).waitFor();
+ await racePage.waitForTimeout(250);
+ assert.ok(listCalls>=2,'Parse recovery list was not requested after reload');
+ assert.equal(await racePage.getByText('smoke-late.md',{exact:true}).count(),0,'dismissed Parse Job reappeared after reload');
+ await racePage.close();
  assert.equal(errors.length,0,errors.join('\n'));
  assert.ok(rows.every(row=>row.scrollWidth<=row.width+2),JSON.stringify(rows));
- console.log(JSON.stringify({status:'PASS',rows,pageErrors:errors,failedResponses,mobilePaste:'passed',localParse},null,2));
+ console.log(JSON.stringify({status:'PASS',rows,pageErrors:errors,failedResponses,mobilePaste:'passed',localParse,lateParseRemoval:'passed'},null,2));
  await context.close();
 }catch(error){console.error(JSON.stringify({errors,failedResponses,rows,body:await page?.locator('body').innerText().catch(()=>''),failure:String(error)},null,2));throw error;}finally{await closeBrowser();}

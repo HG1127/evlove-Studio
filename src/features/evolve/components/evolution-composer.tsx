@@ -27,6 +27,7 @@ import type { ArtifactRole, EvolveProject, ProjectAiProfile, SourceArtifact } fr
 import { defaultProjectAiProfile } from "../ai/project-profile";
 import { ingestSources, runIntakeFromArtifacts } from "../runtime/api";
 import { deleteArtifactBlob, putArtifactBlob } from "../runtime/artifact-blob-store";
+import {clearDismissedParseArtifacts,dismissParseArtifact,readDismissedParseArtifacts} from "../runtime/composer-parse-dismissal";
 import { loadRecoveredParseSource, recoveredParseState } from "../runtime/server-parse-recovery";
 import {
   cancelServerParseJob,
@@ -122,7 +123,10 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
   const navigate = useNavigate();
   const fileRef = useRef<HTMLInputElement>(null);
   const replaceRef = useRef<HTMLInputElement>(null);
-  const parseSessionIdRef=useRef(composerParseSessionId());
+  const [parseSessionId]=useState(composerParseSessionId);
+  const [initialDismissedParse]=useState(()=>readDismissedParseArtifacts(parseSessionId));
+  const parseSessionIdRef=useRef(parseSessionId);
+  const dismissedParseRef=useRef(initialDismissedParse);
   const serverParseAvailableRef=useRef<boolean|undefined>(undefined);
   const autoCreatePendingRef = useRef(false);
   const parseJobsRef = useRef(new Map<string, Promise<SourceArtifact | undefined>>());
@@ -262,6 +266,10 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
             setFiles((current)=>current.map((entry)=>entry.id===item.id
               ?{...entry,status:"parsing",serverJobId,artifactId}
               :entry));
+            if(dismissedParseRef.current.has(artifactId)){
+              void cancelServerParseJob(serverJobId,true).catch(()=>undefined);
+              return undefined;
+            }
             parsed=await waitForServerParseJob(serverJobId);
           }catch(cause){
             if(!(cause instanceof ServerParseUnavailableError))throw cause;
@@ -269,6 +277,11 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
           }
         }
         if (!parsed) throw new Error("未能读取文件");
+        if(dismissedParseRef.current.has(artifactId)){
+          if(serverJobId)void cancelServerParseJob(serverJobId,true).catch(()=>undefined);
+          else void deleteArtifactBlob(parsed.id).catch(()=>undefined);
+          return undefined;
+        }
         const nextArtifacts = mergeArtifactState(parsed);
         setFiles((current) => current.map((entry) => entry.id === item.id
           ? { ...entry, status: "ready", artifactId: parsed!.id, serverJobId, error: undefined }
@@ -326,6 +339,7 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
   };
 
   const removePendingFile = (item: PendingFile) => {
+    if(item.artifactId)dismissedParseRef.current=dismissParseArtifact(parseSessionIdRef.current,item.artifactId);
     parseJobsRef.current.delete(item.id);
     setFiles((current) => current.filter((entry) => entry.id !== item.id));
     if (item.artifactId) {
@@ -334,7 +348,7 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
       if (intakeRef.current) scheduleProgressiveIntake(next);
     }
     if(item.serverJobId)void cancelServerParseJob(item.serverJobId,true).catch(()=>undefined);
-    else if(item.artifactId)void deleteArtifactBlob(item.artifactId).catch(()=>undefined);
+    else if(item.status==="ready"&&item.artifactId)void deleteArtifactBlob(item.artifactId).catch(()=>undefined);
   };
 
   useEffect(() => {
@@ -349,6 +363,7 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
       const resume: PendingFile[] = [];
       for (const record of persisted) {
         const metadata=parseJobMetadata(record.job);
+        if(metadata.artifactId&&dismissedParseRef.current.has(metadata.artifactId))continue;
         const file = new File([], metadata.name, { type: metadata.mimeType, lastModified: metadata.lastModified });
         const recovery=recoveredParseState(record);
         const item: PendingFile = {
@@ -389,6 +404,7 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
     replaceArtifactState(next);
     const pending = files.find((item) => item.artifactId === id);
     if (pending) {
+      dismissedParseRef.current=dismissParseArtifact(parseSessionIdRef.current,id);
       setFiles((current) => current.filter((item) => item.id !== pending.id));
       if(pending.serverJobId)void cancelServerParseJob(pending.serverJobId,true).catch(()=>undefined);
       else void deleteArtifactBlob(id).catch(()=>undefined);
@@ -617,7 +633,10 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
       updatedAt: new Date().toISOString(),
     };
     saveLocalProject(project);
-    if(typeof window!=="undefined")window.sessionStorage.removeItem(PARSE_SESSION_KEY);
+    if(typeof window!=="undefined"){
+      window.sessionStorage.removeItem(PARSE_SESSION_KEY);
+      clearDismissedParseArtifacts();
+    }
     if (appliedTemplate) recordTemplateUse(appliedTemplate.id);
     navigate(`/projects/${id}?autostart=1`);
   };
@@ -708,7 +727,7 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
 
         <div className={cn("bg-white px-5 pb-4 pt-1", dragging && "bg-indigo-50/70")} onDragOver={(e) => { e.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={(e) => { e.preventDefault(); setDragging(false); addFiles(e.dataTransfer.files); }}>
           {error && <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</div>}
-          {files.length > 0 && <div className="mb-3 flex flex-wrap gap-2">{files.map((item) => { const readiness = assessFileReadiness(item.file.name, item.file.type); const failed = item.status === "error"; const active = item.status === "queued" || item.status === "parsing"; const size=item.sourceSize??item.file.size; return <div key={item.id} className={cn("group flex max-w-full items-center gap-2 rounded-xl border px-2.5 py-2", failed || readiness.level === "blocked" ? "border-rose-200 bg-rose-50" : readiness.level === "caution" ? "border-amber-200 bg-amber-50" : item.status === "ready" ? "border-emerald-200 bg-emerald-50/50" : "bg-slate-50")}><div className={cn(failed || readiness.level === "blocked" ? "text-rose-500" : readiness.level === "caution" ? "text-amber-500" : item.status === "ready" ? "text-emerald-600" : "text-slate-500")}>{active ? <Loader2 className="size-4 animate-spin" /> : <FileGlyph file={item.file} />}</div><div className="min-w-0"><div className={cn("max-w-52 truncate text-[11px] font-semibold", failed ? "text-rose-700" : "text-slate-700")}>{item.file.name}</div><div className={cn("text-[9px]", failed ? "text-rose-500" : item.status === "ready" ? "text-emerald-600" : readiness.level === "caution" ? "text-amber-600" : "text-slate-400")}>{failed ? item.error : item.status === "ready" ? "已读取 · 后台解析完成" : active ? "正在后台读取并建立索引…" : readiness.level === "ok" ? formatBytes(size) : `${formatBytes(size)} · ${readiness.note}`}</div></div><Badge className={item.status === "ready" ? "border-emerald-200 bg-white text-emerald-700" : active ? "border-indigo-100 bg-white text-indigo-600" : undefined}>{item.status === "ready" ? "已读取" : active ? "解析中" : failed ? "异常" : roleLabels[item.role]}</Badge>{failed && <button onClick={() => { void retryPendingFile(item); }} className="rounded-lg border border-rose-200 bg-white px-2 py-1 text-[9px] font-semibold text-rose-600 hover:bg-rose-50">重试</button>}<button onClick={() => removePendingFile(item)} className="grid size-6 place-items-center rounded-lg text-slate-400 hover:bg-white hover:text-rose-500"><X className="size-3" /></button></div>; })}</div>}
+          {files.length > 0 && <div className="mb-3 flex flex-wrap gap-2">{files.map((item) => { const readiness = assessFileReadiness(item.file.name, item.file.type); const failed = item.status === "error"; const active = item.status === "queued" || item.status === "parsing"; const size=item.sourceSize??item.file.size; return <div key={item.id} className={cn("group flex max-w-full items-center gap-2 rounded-xl border px-2.5 py-2", failed || readiness.level === "blocked" ? "border-rose-200 bg-rose-50" : readiness.level === "caution" ? "border-amber-200 bg-amber-50" : item.status === "ready" ? "border-emerald-200 bg-emerald-50/50" : "bg-slate-50")}><div className={cn(failed || readiness.level === "blocked" ? "text-rose-500" : readiness.level === "caution" ? "text-amber-500" : item.status === "ready" ? "text-emerald-600" : "text-slate-500")}>{active ? <Loader2 className="size-4 animate-spin" /> : <FileGlyph file={item.file} />}</div><div className="min-w-0"><div className={cn("max-w-52 truncate text-[11px] font-semibold", failed ? "text-rose-700" : "text-slate-700")}>{item.file.name}</div><div className={cn("text-[9px]", failed ? "text-rose-500" : item.status === "ready" ? "text-emerald-600" : readiness.level === "caution" ? "text-amber-600" : "text-slate-400")}>{failed ? item.error : item.status === "ready" ? "已读取 · 后台解析完成" : active ? "正在后台读取并建立索引…" : readiness.level === "ok" ? formatBytes(size) : `${formatBytes(size)} · ${readiness.note}`}</div></div><Badge className={item.status === "ready" ? "border-emerald-200 bg-white text-emerald-700" : active ? "border-indigo-100 bg-white text-indigo-600" : undefined}>{item.status === "ready" ? "已读取" : active ? "解析中" : failed ? "异常" : roleLabels[item.role]}</Badge>{failed && <button onClick={() => { void retryPendingFile(item); }} className="rounded-lg border border-rose-200 bg-white px-2 py-1 text-[9px] font-semibold text-rose-600 hover:bg-rose-50">重试</button>}<button aria-label={`移除附件：${item.file.name}`} onClick={() => removePendingFile(item)} className="grid size-6 place-items-center rounded-lg text-slate-400 hover:bg-white hover:text-rose-500"><X className="size-3" /></button></div>; })}</div>}
           {showPaste && <div className="mb-3 rounded-xl border bg-slate-50 p-3"><div className="mb-2 flex items-center justify-between"><div className="text-xs font-semibold text-slate-600">粘贴需要进化或参考的原始内容</div><button onClick={() => { setShowPaste(false); setPastedText(""); }} className="text-xs text-slate-400">关闭</button></div><Textarea value={pastedText} onChange={(e) => setPastedText(e.target.value)} className="min-h-32 bg-white font-mono text-xs" placeholder="例如：当前 System Prompt、Workflow JSON、报告模板、代码片段……" /></div>}
           <div className="composer-input rounded-xl bg-slate-100/80 p-2 focus-within:bg-slate-50 focus-within:ring-2 focus-within:ring-indigo-200">
             <Textarea value={command} onChange={(e) => setCommand(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(); } }} className="min-h-20 resize-none border-0 px-2 py-2 shadow-none outline-none focus:ring-0" placeholder={intake ? "继续补充要求，例如：保持现有格式，不允许改数据库结构……" : "告诉 AI 你要怎么进化。例如：把这个 Agent 的结论证据完整率提高到 90%，同时不要增加明显成本……"} />
