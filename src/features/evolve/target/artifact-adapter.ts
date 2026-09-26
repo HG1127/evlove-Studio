@@ -231,12 +231,11 @@ export const artifactTargetAdapter: TargetAdapter = {
           verificationStatus: semanticEvidenceStatus(item.output),
         } : {
           testCaseId: testCase.id,
-          output: "（批量执行器未返回本题结果）",
+          output: "UNVERIFIED：批量执行器未返回本题结果",
           latencyMs: latencyPerCase,
           cost: 0,
           trace: [],
-          error: "batch executor missing result",
-          verificationStatus: "failed",
+          verificationStatus: "unverified",
         });
       }
     }

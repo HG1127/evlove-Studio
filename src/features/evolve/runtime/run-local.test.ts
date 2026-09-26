@@ -3,8 +3,9 @@ import { AcceptanceCriterionSchema, CandidateSchema } from "../schemas";
 import { demoProject } from "../data/mock-project";
 import { getAiProviderStatus } from "../ai/service";
 import { getTargetAdapter } from "../target/registry";
+import type { TestCase } from "@evolution/contracts";
 import { runIntake, runBaseline, runAi, runValidation } from "./api";
-import { effectiveExperimentPolicy, fastGateCaseLimit, isSimpleLocalTextProject, normalizeLocallyVerifiableCandidateRuns, reusableScreeningRuns, visibleBaselineEvaluationReusable } from "./run-local";
+import { effectiveExperimentPolicy, executeCandidateAwareCaseSet, executeCaseSet, fastGateCaseLimit, isSimpleLocalTextProject, normalizeLocallyVerifiableCandidateRuns, reusableScreeningRuns, visibleBaselineEvaluationReusable } from "./run-local";
 
 describe("experiment performance policy", () => {
   it("upgrades only the legacy automatic defaults", () => {
@@ -31,6 +32,9 @@ describe("experiment performance policy", () => {
     expect(visibleBaselineEvaluationReusable(verified, demoProject.evalSuite)).toBe(true);
     expect(visibleBaselineEvaluationReusable(verified, demoProject.evalSuite.map((test, index) => index === 0 ? { ...test, expected:[...test.expected, "changed"] } : test))).toBe(false);
     expect(visibleBaselineEvaluationReusable({ ...verified, baselineRun:{ ...verified.baselineRun, runs:verified.baselineRun.runs.map((run, index) => index === 0 ? { ...run, error:"timeout" } : run) } }, demoProject.evalSuite)).toBe(false);
+    const repeatedRuns = [verified.baselineRun.runs[0]!, { ...verified.baselineRun.runs[0]! }, ...verified.baselineRun.runs.slice(2)];
+    expect(visibleBaselineEvaluationReusable({ ...verified, baselineRun: { ...verified.baselineRun, runs: repeatedRuns } }, demoProject.evalSuite)).toBe(false);
+    expect(visibleBaselineEvaluationReusable({ ...verified, evalSuite: [verified.evalSuite[0]!, { ...verified.evalSuite[0]! }, ...verified.evalSuite.slice(2)] }, demoProject.evalSuite)).toBe(false);
   });
 
   it("reuses only exact verified local Smoke evidence in the full suite", () => {
@@ -44,6 +48,50 @@ describe("experiment performance policy", () => {
     expect(reused.has(local.id)).toBe(true);
     expect(reused.has(live.id)).toBe(false);
     expect(reusableScreeningRuns([{ ...local, expected:["changed"] }], [local], runs).size).toBe(0);
+    expect(reusableScreeningRuns([local], [local], [runs[0]!, { ...runs[0]! }]).size).toBe(0);
+    expect(reusableScreeningRuns([local], [local, { ...local }], [runs[0]!]).size).toBe(0);
+  });
+});
+
+describe("local Target execution identity", () => {
+  const result = (testCaseId: string, output: string) => ({ testCaseId, output, latencyMs: 1, cost: 0, trace: [], verificationStatus: "verified" as const });
+  const cases = demoProject.evalSuite.slice(0, 2);
+
+  it("keeps each batch bound to the Test Cases it requested", async () => {
+    const [a, b] = cases;
+    const adapter = {
+      runBatch: async ({ testCases }: { testCases: TestCase[] }) => testCases[0]?.id === a!.id
+        ? [result(a!.id, "A correct"), result(b!.id, "B extra")]
+        : [result(b!.id, "B correct")],
+    } as unknown as ReturnType<typeof getTargetAdapter>;
+    const runs = await executeCaseSet({ adapter, project: demoProject, testCases: cases, batchSize: 1 });
+    expect(runs.map((run) => run.output)).toEqual(["A correct", "B correct"]);
+  });
+
+  it("keeps duplicate and missing batch results unverified", async () => {
+    const [a, b] = cases;
+    const adapter = { runBatch: async () => [result(a!.id, "first"), result(a!.id, "second")] } as unknown as ReturnType<typeof getTargetAdapter>;
+    const runs = await executeCaseSet({ adapter, project: demoProject, testCases: cases, batchSize: 2 });
+    expect(runs[0]).toMatchObject({ testCaseId: a!.id, verificationStatus: "unverified" });
+    expect(runs[1]).toMatchObject({ testCaseId: b!.id, verificationStatus: "unverified" });
+    expect(runs.every((run) => !run.error)).toBe(true);
+  });
+
+  it("rejects a single-case response with a different Test Case ID", async () => {
+    const adapter = { run: async () => result("wrong-case", "claimed pass") } as unknown as ReturnType<typeof getTargetAdapter>;
+    const runs = await executeCaseSet({ adapter, project: demoProject, testCases: cases.slice(0, 1), batchSize: 1 });
+    expect(runs[0]).toMatchObject({ testCaseId: cases[0]!.id, verificationStatus: "unverified" });
+  });
+
+  it("does not let local snapshot evidence upgrade duplicate Test Case definitions", async () => {
+    const criterion = AcceptanceCriterionSchema.parse({ id: "FORMAT", title: "TXT 格式", requirement: "UTF-8 往返", source: "system-integrity", weight: 100, hardGate: true, judgeType: "integrity", validationMethod: "format-roundtrip", minScore: 90, evidenceExpected: ["往返"], protectedConstraint: false, artifactIds: ["txt-source"], category: "artifact-specific" });
+    const project = { ...demoProject, sourceArtifacts: [{ ...demoProject.sourceArtifacts[0]!, id: "txt-source", name: "workflow.txt", artifactKind: "document" as const, mimeType: "text/plain", extension: "txt", textContent: "旧内容" }], acceptanceRubric: [criterion] };
+    const candidate = CandidateSchema.parse({ id: "TXT-DUP", name: "TXT 新版", change: "优化文本", artifactSnapshots: [{ id: "txt-snapshot", sourceArtifactId: "txt-source", name: "workflow.txt", mimeType: "text/plain", content: "新版内容", createdAt: "2026-09-16T00:00:00.000Z" }] });
+    const testCase = { id: "T-FORMAT", title: "TXT 原格式", input: "检查 TXT", expected: ["往返"], tags: [], hidden: true, criterionIds: ["FORMAT"], executionMode: "roundtrip" as const, evidenceScope: "format" as const };
+    const adapter = { run: async ({ testCase: requested }: { testCase: TestCase }) => result(requested.id, "claimed pass") } as unknown as ReturnType<typeof getTargetAdapter>;
+    const runs = await executeCandidateAwareCaseSet({ adapter, project, testCases: [testCase, { ...testCase }], variant: candidate, batchSize: 1 });
+    expect(runs).toHaveLength(2);
+    expect(runs.every((run) => run.verificationStatus === "unverified")).toBe(true);
   });
 });
 

@@ -1,6 +1,7 @@
 /** Evolution Domain public API. Infrastructure dependencies are forbidden here. */
 export * from "./evaluation/gap";
 export * from "./identity-index";
+export * from "./test-case-result-identity";
 export * from "./stable-hash";
 export * from "./artifact-strategy";
 export * from "./goal-readiness";

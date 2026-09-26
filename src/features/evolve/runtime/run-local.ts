@@ -17,7 +17,7 @@ import { buildCandidateArtifacts } from "./artifact-quality";
 import { mapTestsToRubric, normalizeAcceptanceRubric, rubricCoverage, rubricValidation } from "./acceptance-rubric";
 import { describeArtifact, resolveProjectArtifactStrategy } from "./artifact-strategy";
 import { buildArtifactGraph, compileSemanticEvolution } from "./semantic-evolution";
-import { candidateWinnerDecision, computeGapAnalysis, gapHeadline, projectHasOnlineReleaseTarget, REGRESSION_TOLERANCE, validationRegression as coreValidationRegression } from "@evolution/core";
+import { candidateWinnerDecision, computeGapAnalysis, gapHeadline, indexScopedTestCaseResults, indexUniqueById, projectHasOnlineReleaseTarget, REGRESSION_TOLERANCE, validationRegression as coreValidationRegression } from "@evolution/core";
 import { extractSource } from "../sources/source-loader";
 import { getArtifactBlob, putArtifactBlob } from "./artifact-blob-store";
 import { readFrozenArtifact } from "./frozen-artifact";
@@ -557,18 +557,23 @@ export function fastGateCaseLimit(project: EvolveProject) {
   return isSimpleLocalTextProject(project) ? 2 : 4;
 }
 
-async function executeCaseSet(args: { adapter: ReturnType<typeof getTargetAdapter>; project: EvolveProject; testCases: TestCase[]; variant?: Candidate; batchSize: number; concurrency?: number; onProgress?: (done: number, total: number) => void }) {
+export async function executeCaseSet(args: { adapter: ReturnType<typeof getTargetAdapter>; project: EvolveProject; testCases: TestCase[]; variant?: Candidate; batchSize: number; concurrency?: number; onProgress?: (done: number, total: number) => void }) {
   const { adapter, project, testCases, variant, batchSize, onProgress } = args;
+  const duplicateCaseIds = indexUniqueById(testCases, (testCase) => testCase.id).duplicateIds;
+  const unverified = (testCaseId: string, reason: string): TargetRunResult => ({
+    testCaseId, output: `UNVERIFIED：${reason}`, latencyMs: 0, cost: 0, trace: [], verificationStatus: "unverified",
+  });
   if (adapter.runBatch && testCases.length > 1) {
     const chunks: TestCase[][] = [];
     for (let index = 0; index < testCases.length; index += batchSize) chunks.push(testCases.slice(index, index + batchSize));
+    const scoped = (chunk: TestCase[], results: TargetRunResult[]) => ({ requestedTestCaseIds: chunk.map((item) => item.id), results });
     let completedCases = 0;
     const batchResults = await pooled(chunks, Math.min(args.concurrency ?? 3, chunks.length), async (chunk) => {
       try {
         const results = await adapter.runBatch!({ project, testCases: chunk, variant });
         completedCases += chunk.length;
         onProgress?.(Math.min(completedCases, testCases.length), testCases.length);
-        return results;
+        return scoped(chunk, results);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         // V2.8 watchdog: a batch request may already have consumed the whole 45–60s timeout.
@@ -577,7 +582,7 @@ async function executeCaseSet(args: { adapter: ReturnType<typeof getTargetAdapte
         if (/timeout|timed out|abort/i.test(message)) {
           completedCases += chunk.length;
           onProgress?.(Math.min(completedCases, testCases.length), testCases.length);
-          return chunk.map((testCase) => ({
+          return scoped(chunk, chunk.map((testCase) => ({
             testCaseId: testCase.id,
             output: `（批量执行超时：${message}）`,
             latencyMs: 0,
@@ -585,7 +590,7 @@ async function executeCaseSet(args: { adapter: ReturnType<typeof getTargetAdapte
             trace: [],
             error: message,
             verificationStatus: "failed" as const,
-          }));
+          })));
         }
         // Payload/context errors benefit from smaller batches. Split once before falling all the way
         // back to per-case calls; this keeps shared context reuse without repeating a huge request.
@@ -601,19 +606,28 @@ async function executeCaseSet(args: { adapter: ReturnType<typeof getTargetAdapte
           });
           completedCases += chunk.length;
           onProgress?.(Math.min(completedCases, testCases.length), testCases.length);
-          return split.flat();
+          return scoped(chunk, split.flat());
         }
         // Fast non-timeout failures may still be rescued cheaply by independent per-case execution.
         const fallback = await pooled(chunk, Math.min(CASE_CONCURRENCY, chunk.length), (testCase) => resilientCase(() => adapter.run({ project, testCase, variant }), testCase.id));
         completedCases += chunk.length;
         onProgress?.(Math.min(completedCases, testCases.length), testCases.length);
-        return fallback;
+        return scoped(chunk, fallback);
       }
     });
-    const byId = new Map(batchResults.flat().map((run) => [run.testCaseId, run]));
-    return testCases.map((testCase) => byId.get(testCase.id) ?? ({ testCaseId: testCase.id, output: "（批量执行缺失结果）", latencyMs: 0, cost: 0, trace: [], error: "missing batch result", verificationStatus: "failed" as const }));
+    const { byId, duplicateIds } = indexScopedTestCaseResults(batchResults);
+    return testCases.map((testCase) => duplicateCaseIds.has(testCase.id)
+      ? unverified(testCase.id, "验收题 ID 重复，身份不明确")
+      : duplicateIds.has(testCase.id)
+        ? unverified(testCase.id, "批量执行返回重复 Test Case 结果，身份不明确")
+        : byId.get(testCase.id) ?? unverified(testCase.id, "批量执行缺失 Test Case 结果"));
   }
-  return pooled(testCases, Math.min(args.concurrency ?? TOTAL_CONCURRENCY, testCases.length), (testCase) => resilientCase(() => adapter.run({ project, testCase, variant }), testCase.id), onProgress);
+  const results = await pooled(testCases, Math.min(args.concurrency ?? TOTAL_CONCURRENCY, testCases.length), (testCase) => resilientCase(() => adapter.run({ project, testCase, variant }), testCase.id), onProgress);
+  return testCases.map((testCase, index) => duplicateCaseIds.has(testCase.id)
+    ? unverified(testCase.id, "验收题 ID 重复，身份不明确")
+    : results[index]?.testCaseId === testCase.id
+      ? results[index]!
+      : unverified(testCase.id, "单题执行返回了不同的 Test Case ID"));
 }
 
 /**
@@ -621,21 +635,27 @@ async function executeCaseSet(args: { adapter: ReturnType<typeof getTargetAdapte
  * evidence first and call the target adapter only for cases the local snapshot cannot prove. This
  * removes one LLM executor hop per semantic/roundtrip case without changing the independent judge.
  */
-async function executeCandidateAwareCaseSet(args: Parameters<typeof executeCaseSet>[0]) {
+export async function executeCandidateAwareCaseSet(args: Parameters<typeof executeCaseSet>[0]) {
   if (!args.variant || !isSimpleLocalTextProject(args.project)) return executeCaseSet(args);
+  const repeatedCaseIds = indexUniqueById(args.testCases, (testCase) => testCase.id).duplicateIds;
   const seedRuns: TargetRunResult[] = args.testCases.map((testCase) => ({
     testCaseId: testCase.id, output: "LOCAL SNAPSHOT EVIDENCE PENDING", latencyMs: 0, cost: 0, trace: [], verificationStatus: "unverified",
   }));
   const localRuns = normalizeLocallyVerifiableCandidateRuns(args.project, args.variant, args.testCases, seedRuns);
-  const localById = new Map(localRuns.filter((run) => !run.error && (run.verificationStatus === "verified" || run.verificationStatus === "partial")).map((run) => [run.testCaseId, run]));
+  const localIndex = indexUniqueById(localRuns.filter((run) => !run.error && (run.verificationStatus === "verified" || run.verificationStatus === "partial")), (run) => run.testCaseId);
+  const localById = localIndex.byId;
   const remaining = args.testCases.filter((testCase) => !localById.has(testCase.id));
   args.onProgress?.(localById.size, args.testCases.length);
   const fresh = remaining.length
     ? await executeCaseSet({ ...args, testCases: remaining, onProgress: (done) => args.onProgress?.(localById.size + done, args.testCases.length) })
     : [];
   const normalizedFresh = remaining.length ? normalizeLocallyVerifiableCandidateRuns(args.project, args.variant, remaining, fresh) : [];
-  const freshById = new Map(normalizedFresh.map((run) => [run.testCaseId, run]));
-  return args.testCases.map((testCase) => localById.get(testCase.id) ?? freshById.get(testCase.id) ?? ({ testCaseId: testCase.id, output: "执行未返回结果", latencyMs: 0, cost: 0, trace: [], error: "missing result", verificationStatus: "failed" as const }));
+  const freshIndex = indexUniqueById(normalizedFresh, (run) => run.testCaseId);
+  return args.testCases.map((testCase) => repeatedCaseIds.has(testCase.id)
+    || localIndex.duplicateIds.has(testCase.id)
+    || freshIndex.duplicateIds.has(testCase.id)
+    ? { testCaseId: testCase.id, output: "UNVERIFIED：本地证据出现重复 Test Case 身份", latencyMs: 0, cost: 0, trace: [], verificationStatus: "unverified" as const }
+    : localById.get(testCase.id) ?? freshIndex.byId.get(testCase.id) ?? ({ testCaseId: testCase.id, output: "UNVERIFIED：执行未返回结果", latencyMs: 0, cost: 0, trace: [], verificationStatus: "unverified" as const }));
 }
 
 
@@ -666,13 +686,16 @@ const SAME_EXPERIMENT_REUSABLE_MODES = new Set<TestCase["executionMode"]>(["arti
 
 /** Reuse exact verified local Smoke observations inside the same immutable Candidate experiment. */
 export function reusableScreeningRuns(fullSuite: TestCase[], screeningCases: TestCase[], runs: TargetRunResult[]) {
-  const screenedDefinitions = new Map(screeningCases.map((test) => [test.id, JSON.stringify(test)]));
-  const runById = new Map(runs.map((run) => [run.testCaseId, run]));
+  const screenedDefinitions = indexUniqueById(screeningCases, (test) => test.id).byId;
+  const runIndex = indexUniqueById(runs, (run) => run.testCaseId);
+  const fullSuiteIndex = indexUniqueById(fullSuite, (test) => test.id);
   const reusable = new Map<string, TargetRunResult>();
   for (const test of fullSuite) {
-    const run = runById.get(test.id);
+    const run = runIndex.byId.get(test.id);
+    const screened = screenedDefinitions.get(test.id);
+    if (fullSuiteIndex.duplicateIds.has(test.id)) continue;
     if (!SAME_EXPERIMENT_REUSABLE_MODES.has(test.executionMode)) continue;
-    if (screenedDefinitions.get(test.id) !== JSON.stringify(test)) continue;
+    if (!screened || JSON.stringify(screened) !== JSON.stringify(test)) continue;
     if (!run || run.error || run.verificationStatus !== "verified") continue;
     reusable.set(test.id, run);
   }
@@ -723,11 +746,12 @@ async function screenCandidatePopulation(project: EvolveProject, candidates: Can
 
 export function visibleBaselineEvaluationReusable(project: EvolveProject, suite: TestCase[]) {
   if (!project.baselineRun.result || project.baselineRun.runs.length !== suite.length) return false;
-  const previous = new Map(project.evalSuite.map((test) => [test.id, JSON.stringify(test)]));
-  const runs = new Map(project.baselineRun.runs.map((run) => [run.testCaseId, run]));
+  const previous = indexUniqueById(project.evalSuite, (test) => test.id);
+  const runs = indexUniqueById(project.baselineRun.runs, (run) => run.testCaseId);
+  if (previous.duplicateIds.size || runs.duplicateIds.size || indexUniqueById(suite, (test) => test.id).duplicateIds.size) return false;
   return suite.every((test) => {
-    const run = runs.get(test.id);
-    return previous.get(test.id) === JSON.stringify(test) && Boolean(run && !run.error && run.verificationStatus === "verified");
+    const run = runs.byId.get(test.id);
+    return JSON.stringify(previous.byId.get(test.id)) === JSON.stringify(test) && Boolean(run && !run.error && run.verificationStatus === "verified");
   });
 }
 
@@ -741,9 +765,12 @@ export async function runExperiment(project: EvolveProject, inputCandidates: Can
   const mapped = mapTestsToRubric(parsed.acceptanceRubric, parsed.evalSuite, parsed.hiddenEvalSuite);
   const suite = normalizeEvalSuiteForProject(parsed, mapped.validationCases, mapped.hiddenCases).validationCases;
   const baselineEvaluationReusable = visibleBaselineEvaluationReusable(parsed, suite);
-  const previousCases = new Map(parsed.evalSuite.map((item) => [item.id, JSON.stringify(item)]));
-  const reusable = new Map(parsed.baselineRun.runs.filter((run) => !run.error && run.verificationStatus === "verified"
-    && suite.some((item) => item.id === run.testCaseId && JSON.stringify(item) === previousCases.get(item.id))).map((run) => [run.testCaseId, run]));
+  const previousCases = indexUniqueById(parsed.evalSuite, (item) => item.id).byId;
+  const previousRuns = indexUniqueById(parsed.baselineRun.runs, (run) => run.testCaseId).byId;
+  const uniqueSuite = indexUniqueById(suite, (item) => item.id);
+  const reusable = new Map([...previousRuns.values()].filter((run) => !run.error && run.verificationStatus === "verified"
+    && !uniqueSuite.duplicateIds.has(run.testCaseId)
+    && suite.some((item) => item.id === run.testCaseId && JSON.stringify(item) === JSON.stringify(previousCases.get(item.id)))).map((run) => [run.testCaseId, run]));
   parsed.evalSuite = suite;
   const adapter = getTargetAdapter(parsed);
   const policy = effectiveExperimentPolicy(parsed);

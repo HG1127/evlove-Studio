@@ -225,6 +225,14 @@ export const ExecuteArtifactBatchAiResultSchema = z.object({
       detail: z.string().optional(),
     })).default([]),
   })).min(1),
+}).superRefine((value, ctx) => {
+  const ids = new Set<string>();
+  value.results.forEach((item, index) => {
+    if (ids.has(item.testCaseId)) {
+      ctx.addIssue({ code: "custom", path: ["results", index, "testCaseId"], message: `Duplicate Artifact Batch Test Case ID: ${item.testCaseId}` });
+    }
+    ids.add(item.testCaseId);
+  });
 });
 export type ExecuteArtifactBatchAiResult = z.infer<typeof ExecuteArtifactBatchAiResultSchema>;
 
