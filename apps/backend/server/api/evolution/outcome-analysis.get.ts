@@ -1,16 +1,21 @@
 import {createError,defineEventHandler,getQuery} from "nitro/h3";
+import {z} from "zod";
 import {analyzeMissionOutcome} from "../../../src/services/outcome-analytics";
 import {resolveOutcomeAnalysisCandidate} from "../../../src/services/outcome-ingestion";
 import {OutcomeSampleLimitExceededError} from "../../../src/services/outcome-sample-store";
 import {getServerProductionRuntime} from "../../../src/services/production-runtime";
 import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 
+const OutcomeAnalysisQuerySchema=z.object({
+  missionId:z.string().trim().min(1).max(200),
+  candidateId:z.string().trim().min(1).max(200).optional(),
+});
+
 export default defineEventHandler(async(event)=>{
   await requireGovernedEvolutionPermission(event,"data.read");
-  const query=getQuery(event);
-  const missionId=typeof query.missionId==="string"?query.missionId.trim():"";
-  const candidateId=typeof query.candidateId==="string"&&query.candidateId.trim()?query.candidateId.trim():undefined;
-  if(!missionId)throw createError({statusCode:400,statusMessage:"missionId is required"});
+  const parsed=OutcomeAnalysisQuerySchema.safeParse(getQuery(event));
+  if(!parsed.success)throw createError({statusCode:400,statusMessage:"Invalid Outcome analysis query",data:parsed.error.flatten()});
+  const {missionId,candidateId}=parsed.data;
   const mission=await getServerProductionRuntime().missions.get(missionId);
   if(!mission)throw createError({statusCode:404,statusMessage:"Outcome Mission not found"});
   let resolvedCandidateId:string;

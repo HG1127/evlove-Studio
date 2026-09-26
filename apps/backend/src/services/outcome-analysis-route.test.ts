@@ -14,8 +14,8 @@ vi.mock("./production-runtime",()=>({
 vi.mock("./outcome-ingestion",()=>({resolveOutcomeAnalysisCandidate:resolveCandidate}));
 vi.mock("./outcome-analytics",()=>({analyzeMissionOutcome:analyze}));
 
-function event(){
-  return mockEvent(new Request("http://localhost/api/evolution/outcome-analysis?missionId=mission-1&candidateId=candidate-1"));
+function event(query="missionId=mission-1&candidateId=candidate-1"){
+  return mockEvent(new Request("http://localhost/api/evolution/outcome-analysis?"+query));
 }
 
 describe("Outcome analysis route",()=>{
@@ -37,5 +37,35 @@ describe("Outcome analysis route",()=>{
   it("returns complete analysis results",async()=>{
     analyze.mockResolvedValue({status:"insufficient",sampleCount:0});
     await expect(route(event())).resolves.toEqual({status:"insufficient",sampleCount:0});
+  });
+
+  it("still resolves the current Candidate when candidateId is omitted",async()=>{
+    analyze.mockResolvedValue({status:"insufficient",sampleCount:0});
+    await expect(route(event("missionId=mission-1"))).resolves.toEqual({status:"insufficient",sampleCount:0});
+    expect(resolveCandidate).toHaveBeenCalledWith({id:"mission-1"},undefined);
+  });
+
+  it("rejects an empty or ambiguous Candidate instead of using the active Candidate",async()=>{
+    for(const query of [
+      "missionId=mission-1&candidateId=",
+      "missionId=mission-1&candidateId=%20%20",
+      "missionId=mission-1&candidateId=candidate-1&candidateId=candidate-2",
+    ]){
+      await expect(route(event(query))).rejects.toMatchObject({status:400});
+    }
+    expect(missionGet).not.toHaveBeenCalled();
+    expect(resolveCandidate).not.toHaveBeenCalled();
+    expect(analyze).not.toHaveBeenCalled();
+  });
+
+  it("rejects an empty or ambiguous Mission scope before reading the Mission",async()=>{
+    for(const query of [
+      "missionId=",
+      "missionId=%20%20",
+      "missionId=mission-1&missionId=mission-2",
+    ]){
+      await expect(route(event(query))).rejects.toMatchObject({status:400});
+    }
+    expect(missionGet).not.toHaveBeenCalled();
   });
 });
