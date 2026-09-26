@@ -22,10 +22,12 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input, Textarea } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import type { IntakeAiResult } from "../ai/schemas";
+import type { EvolutionJob } from "@evolution/contracts";
 import type { ArtifactRole, EvolveProject, ProjectAiProfile, SourceArtifact } from "../schemas";
 import { defaultProjectAiProfile } from "../ai/project-profile";
 import { ingestSources, runIntakeFromArtifacts } from "../runtime/api";
-import { deleteArtifactBlob, getArtifactBlob, putArtifactBlob } from "../runtime/artifact-blob-store";
+import { deleteArtifactBlob, putArtifactBlob } from "../runtime/artifact-blob-store";
+import { loadRecoveredParseSource, recoveredParseState } from "../runtime/server-parse-recovery";
 import {
   cancelServerParseJob,
   getServerParseCapabilities,
@@ -49,6 +51,8 @@ type PendingFile = {
   status: "queued" | "parsing" | "ready" | "error";
   artifactId?: string;
   serverJobId?: string;
+  recoveredJob?: EvolutionJob;
+  sourceSize?: number;
   error?: string;
 };
 type ChatLine = { id: string; role: "user" | "assistant"; content: string; files?: string[] };
@@ -309,9 +313,16 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
     additions.forEach(queueFileForParsing);
   };
 
-  const retryPendingFile = (item: PendingFile) => {
+  const retryPendingFile = async (item: PendingFile) => {
     if (item.status !== "error") return;
-    void startBackgroundParse({ ...item, status: "queued", serverJobId: undefined, error: undefined });
+    setFiles((current)=>current.map((entry)=>entry.id===item.id?{...entry,status:"queued",error:undefined}:entry));
+    try {
+      const file=item.recoveredJob?await loadRecoveredParseSource(item.recoveredJob):item.file;
+      void startBackgroundParse({ ...item, file, recoveredJob:undefined, status: "queued", serverJobId: undefined, error: undefined });
+    } catch (cause) {
+      const message=cause instanceof Error?cause.message:String(cause);
+      setFiles((current)=>current.map((entry)=>entry.id===item.id?{...entry,status:"error",error:message}:entry));
+    }
   };
 
   const removePendingFile = (item: PendingFile) => {
@@ -338,24 +349,22 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
       const resume: PendingFile[] = [];
       for (const record of persisted) {
         const metadata=parseJobMetadata(record.job);
-        const blob=metadata.artifactId?await getArtifactBlob(metadata.artifactId).catch(()=>undefined):undefined;
-        if(!blob&&record.job.status!=="completed")continue;
-        const file = new File([blob??new Blob()], metadata.name, { type: metadata.mimeType, lastModified: metadata.lastModified });
-        const ready = record.job.status === "completed" && Boolean(record.artifact);
-        const status: PendingFile["status"] = ready ? "ready"
-          : (record.resultIssue||record.job.status === "failed"||record.job.status === "cancelled") ? "error" : "parsing";
+        const file = new File([], metadata.name, { type: metadata.mimeType, lastModified: metadata.lastModified });
+        const recovery=recoveredParseState(record);
         const item: PendingFile = {
           id: `pending-${record.job.id}`,
           file,
           role: metadata.role,
-          status,
+          status:recovery.status,
           artifactId: metadata.artifactId,
           serverJobId:record.job.id,
+          recoveredJob:record.job,
+          sourceSize:metadata.size,
           error: record.resultIssue??record.job.error??(record.job.status==="cancelled"?"Parse 已取消":undefined),
         };
         recoveredFiles.push(item);
         if (record.artifact) recoveredArtifacts.push(record.artifact);
-        if (!ready && !record.resultIssue && record.job.status !== "failed" && record.job.status !== "cancelled") resume.push(item);
+        if(recovery.resume)resume.push(item);
       }
       if (cancelled) return;
       if (recoveredFiles.length) setFiles(recoveredFiles);
@@ -699,7 +708,7 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
 
         <div className={cn("bg-white px-5 pb-4 pt-1", dragging && "bg-indigo-50/70")} onDragOver={(e) => { e.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={(e) => { e.preventDefault(); setDragging(false); addFiles(e.dataTransfer.files); }}>
           {error && <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</div>}
-          {files.length > 0 && <div className="mb-3 flex flex-wrap gap-2">{files.map((item) => { const readiness = assessFileReadiness(item.file.name, item.file.type); const failed = item.status === "error"; const active = item.status === "queued" || item.status === "parsing"; return <div key={item.id} className={cn("group flex max-w-full items-center gap-2 rounded-xl border px-2.5 py-2", failed || readiness.level === "blocked" ? "border-rose-200 bg-rose-50" : readiness.level === "caution" ? "border-amber-200 bg-amber-50" : item.status === "ready" ? "border-emerald-200 bg-emerald-50/50" : "bg-slate-50")}><div className={cn(failed || readiness.level === "blocked" ? "text-rose-500" : readiness.level === "caution" ? "text-amber-500" : item.status === "ready" ? "text-emerald-600" : "text-slate-500")}>{active ? <Loader2 className="size-4 animate-spin" /> : <FileGlyph file={item.file} />}</div><div className="min-w-0"><div className={cn("max-w-52 truncate text-[11px] font-semibold", failed ? "text-rose-700" : "text-slate-700")}>{item.file.name}</div><div className={cn("text-[9px]", failed ? "text-rose-500" : item.status === "ready" ? "text-emerald-600" : readiness.level === "caution" ? "text-amber-600" : "text-slate-400")}>{failed ? item.error : item.status === "ready" ? "已读取 · 后台解析完成" : active ? "正在后台读取并建立索引…" : readiness.level === "ok" ? formatBytes(item.file.size) : `${formatBytes(item.file.size)} · ${readiness.note}`}</div></div><Badge className={item.status === "ready" ? "border-emerald-200 bg-white text-emerald-700" : active ? "border-indigo-100 bg-white text-indigo-600" : undefined}>{item.status === "ready" ? "已读取" : active ? "解析中" : failed ? "异常" : roleLabels[item.role]}</Badge>{failed && <button onClick={() => retryPendingFile(item)} className="rounded-lg border border-rose-200 bg-white px-2 py-1 text-[9px] font-semibold text-rose-600 hover:bg-rose-50">重试</button>}<button onClick={() => removePendingFile(item)} className="grid size-6 place-items-center rounded-lg text-slate-400 hover:bg-white hover:text-rose-500"><X className="size-3" /></button></div>; })}</div>}
+          {files.length > 0 && <div className="mb-3 flex flex-wrap gap-2">{files.map((item) => { const readiness = assessFileReadiness(item.file.name, item.file.type); const failed = item.status === "error"; const active = item.status === "queued" || item.status === "parsing"; const size=item.sourceSize??item.file.size; return <div key={item.id} className={cn("group flex max-w-full items-center gap-2 rounded-xl border px-2.5 py-2", failed || readiness.level === "blocked" ? "border-rose-200 bg-rose-50" : readiness.level === "caution" ? "border-amber-200 bg-amber-50" : item.status === "ready" ? "border-emerald-200 bg-emerald-50/50" : "bg-slate-50")}><div className={cn(failed || readiness.level === "blocked" ? "text-rose-500" : readiness.level === "caution" ? "text-amber-500" : item.status === "ready" ? "text-emerald-600" : "text-slate-500")}>{active ? <Loader2 className="size-4 animate-spin" /> : <FileGlyph file={item.file} />}</div><div className="min-w-0"><div className={cn("max-w-52 truncate text-[11px] font-semibold", failed ? "text-rose-700" : "text-slate-700")}>{item.file.name}</div><div className={cn("text-[9px]", failed ? "text-rose-500" : item.status === "ready" ? "text-emerald-600" : readiness.level === "caution" ? "text-amber-600" : "text-slate-400")}>{failed ? item.error : item.status === "ready" ? "已读取 · 后台解析完成" : active ? "正在后台读取并建立索引…" : readiness.level === "ok" ? formatBytes(size) : `${formatBytes(size)} · ${readiness.note}`}</div></div><Badge className={item.status === "ready" ? "border-emerald-200 bg-white text-emerald-700" : active ? "border-indigo-100 bg-white text-indigo-600" : undefined}>{item.status === "ready" ? "已读取" : active ? "解析中" : failed ? "异常" : roleLabels[item.role]}</Badge>{failed && <button onClick={() => { void retryPendingFile(item); }} className="rounded-lg border border-rose-200 bg-white px-2 py-1 text-[9px] font-semibold text-rose-600 hover:bg-rose-50">重试</button>}<button onClick={() => removePendingFile(item)} className="grid size-6 place-items-center rounded-lg text-slate-400 hover:bg-white hover:text-rose-500"><X className="size-3" /></button></div>; })}</div>}
           {showPaste && <div className="mb-3 rounded-xl border bg-slate-50 p-3"><div className="mb-2 flex items-center justify-between"><div className="text-xs font-semibold text-slate-600">粘贴需要进化或参考的原始内容</div><button onClick={() => { setShowPaste(false); setPastedText(""); }} className="text-xs text-slate-400">关闭</button></div><Textarea value={pastedText} onChange={(e) => setPastedText(e.target.value)} className="min-h-32 bg-white font-mono text-xs" placeholder="例如：当前 System Prompt、Workflow JSON、报告模板、代码片段……" /></div>}
           <div className="composer-input rounded-xl bg-slate-100/80 p-2 focus-within:bg-slate-50 focus-within:ring-2 focus-within:ring-indigo-200">
             <Textarea value={command} onChange={(e) => setCommand(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(); } }} className="min-h-20 resize-none border-0 px-2 py-2 shadow-none outline-none focus:ring-0" placeholder={intake ? "继续补充要求，例如：保持现有格式，不允许改数据库结构……" : "告诉 AI 你要怎么进化。例如：把这个 Agent 的结论证据完整率提高到 90%，同时不要增加明显成本……"} />
