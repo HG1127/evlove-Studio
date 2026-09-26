@@ -14,6 +14,8 @@ import type { EvolveProject } from "../schemas";
 import type { ProjectRuntime } from "../runtime/use-project-runtime";
 import { AutonomousEvolutionPanel } from "./autonomous-evolution-panel";
 import { EvolutionCampaignCenter } from "./evolution-campaign-center";
+import { AttentionRequestPanel } from "./attention-request-panel";
+import { autonomousAttention } from "../runtime/autonomous-evolution";
 
 function readyProject(patch: Partial<EvolveProject> = {}): EvolveProject {
   return {
@@ -92,6 +94,30 @@ describe("autonomous interaction routing", () => {
     await act(async () => button!.click());
     expect(resume).toHaveBeenCalledTimes(1);
     expect(runAutoPilot).not.toHaveBeenCalled();
+    await act(async () => root.unmount());
+    host.remove();
+  });
+
+  it("shows a visible reason when retry cannot pass the current boundary", async () => {
+    const project = readyProject({
+      campaign: { ...demoProject.campaign, status: "paused", stopReason: "已达到设定的最大进化轮数 5" },
+    });
+    const attention = autonomousAttention(project);
+    expect(attention?.request?.type).toBe("limit");
+    const resume = vi.fn().mockResolvedValue(false);
+    const runtime = runtimeFor(project, { resumeAutonomousEvolution: resume });
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    await act(async () => root.render(<AttentionRequestPanel runtime={runtime} attention={attention!} onOpenSource={vi.fn()} onOpenAdvanced={vi.fn()} />));
+    const button = [...host.querySelectorAll("button")].find((item) => item.textContent?.includes("按当前设置重试"));
+    expect(button).toBeTruthy();
+    await act(async () => {
+      button!.click();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+    expect(resume).toHaveBeenCalledTimes(1);
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("调整高级边界");
     await act(async () => root.unmount());
     host.remove();
   });

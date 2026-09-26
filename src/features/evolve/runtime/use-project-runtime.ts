@@ -1,4 +1,4 @@
-import { applyProductionLearningGovernance, applyReleaseResultToProject, beginReleaseCycle, completeAutonomousMission, experimentNeedsEvidenceRepair, buildExperimentGapAdvicePayload, buildGapAdvicePayload, fallbackExperimentAdvice, integrateDistilledLesson, mergeGovernedNextQueue, nextDurableReleaseAction, productionOutcomeFreshness, productionOutcomeTrend, projectHasStableHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, projectUsesConnectorRelease, projectUsesHttpRelease, projectUsesVercelRelease, transitionReleaseTarget } from "@evolution/core";
+import { applyProductionLearningGovernance, applyReleaseResultToProject, beginReleaseCycle, completeAutonomousMission, experimentNeedsEvidenceRepair, buildExperimentGapAdvicePayload, buildGapAdvicePayload, fallbackExperimentAdvice, integrateDistilledLesson, mergeGovernedNextQueue, nextDurableReleaseAction, prepareCampaignRetry, productionOutcomeFreshness, productionOutcomeTrend, projectHasStableHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, projectUsesConnectorRelease, projectUsesHttpRelease, projectUsesVercelRelease, transitionReleaseTarget } from "@evolution/core";
 import { deliveryReadiness } from "./delivery-readiness";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -2306,17 +2306,15 @@ export function useProjectRuntime(initialProject: EvolveProject) {
     }
 
     const resumedAt = now();
+    const retried = prepareCampaignRetry(current, new Date(resumedAt));
+    const remainingBoundary = campaignPreflightStopReason(retried);
+    if (remainingBoundary && decision.attention?.type === "limit") {
+      setStatus({ busy: false, message: `当前设置仍会触发安全边界：${remainingBoundary}。请调整高级边界后继续。` });
+      pushActivity(`继续自主进化被安全边界阻塞：${remainingBoundary}`, undefined, projectId);
+      return false;
+    }
     commit((state) => {
-      const reconciled = reconcileAttentionRequest(state);
-      return {
-        ...reconciled,
-        campaign: {
-          ...reconciled.campaign,
-          status: reconciled.campaign.status === "completed" ? "completed" : "idle",
-          stopReason: undefined,
-          completedAt: reconciled.campaign.status === "completed" ? reconciled.campaign.completedAt : undefined,
-        },
-      };
+      return reconcileAttentionRequest(prepareCampaignRetry(state, new Date(resumedAt)));
     });
     setStatus({ busy: false, message: "已解除可恢复暂停，正在从当前断点继续自主进化…" });
     pushActivity(`恢复自主进化 · ${resumedAt}`, undefined, projectId);

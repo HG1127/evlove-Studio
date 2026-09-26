@@ -88,3 +88,22 @@ export function campaignPreflightStopReason(project: EvolveProject): string | un
   }
   return undefined;
 }
+
+/** An explicit retry starts a fresh patience/time window without erasing prior rounds or evidence. */
+export function prepareCampaignRetry(project: EvolveProject, at: Date = new Date()): EvolveProject {
+  const campaign = project.campaign;
+  const patienceExhausted = campaign.noImprovementRounds >= campaign.stopCriteria.patienceRounds;
+  const wallTimeExhausted = campaign.stopCriteria.maxWallMinutes !== undefined && campaign.startedAt !== undefined
+    && (at.getTime() - new Date(campaign.startedAt).getTime()) / 60_000 >= campaign.stopCriteria.maxWallMinutes;
+  return {
+    ...project,
+    campaign: {
+      ...campaign,
+      noImprovementRounds: patienceExhausted ? 0 : campaign.noImprovementRounds,
+      startedAt: wallTimeExhausted ? undefined : campaign.startedAt,
+      status: campaign.status === "completed" ? "completed" : "idle",
+      stopReason: undefined,
+      completedAt: campaign.status === "completed" ? campaign.completedAt : undefined,
+    },
+  };
+}

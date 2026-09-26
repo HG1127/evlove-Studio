@@ -3,6 +3,7 @@ import type { Candidate, EvolveProject, EvolutionArchiveEntry } from "../schemas
 import { CandidateSchema, EvolutionArchiveEntrySchema } from "../schemas";
 import { advanceCampaignScheduleAfterRun, campaignGoalSatisfied, campaignMetricTargetStatus, campaignPreflightStopReason, campaignScheduleIssue, campaignStopReason, nextScheduledAt, selectDiverseCandidates } from "./evolution-search";
 import { demoProject } from "../data/mock-project";
+import { prepareCampaignRetry } from "@evolution/core";
 
 type PatchInput = { component: "prompt" | "workflow" | "tool" | "memory" | "code" | "model"; operation: "add" | "update" | "remove"; target: string; content: string };
 
@@ -99,6 +100,56 @@ describe("campaign control preflight", () => {
       campaign: { ...demoProject.campaign, searchMode:"focused" as const, candidateCount:5, estimatedCost:0.99, stopCriteria:{ ...demoProject.campaign.stopCriteria, maxEstimatedCost:1, stopWhenAcceptanceMet:false, stopWhenMetricTargetsMet:false }, currentRound:0, noImprovementRounds:0 },
     } as EvolveProject;
     expect(campaignPreflightStopReason(p)).toContain("超过预算上限");
+  });
+
+  it("explicit retry restarts the patience window while preserving completed rounds and champion", () => {
+    const p = {
+      ...demoProject,
+      campaign: {
+        ...demoProject.campaign,
+        status: "paused" as const,
+        currentRound: 2,
+        noImprovementRounds: 2,
+        stopCriteria: { ...demoProject.campaign.stopCriteria, maxRounds: 5, patienceRounds: 2 },
+        stopReason: "连续 2 轮没有达到最小提升 0.3",
+      },
+    } as EvolveProject;
+    expect(campaignPreflightStopReason(p)).toContain("连续 2 轮");
+    const retried = prepareCampaignRetry(p);
+    expect(retried.campaign.noImprovementRounds).toBe(0);
+    expect(retried.campaign.currentRound).toBe(2);
+    expect(retried.searchChampion).toBe(p.searchChampion);
+    expect(retried.campaign.stopReason).toBeUndefined();
+    expect(campaignPreflightStopReason(retried)).toBeUndefined();
+  });
+
+  it("explicit retry does not bypass the total round limit", () => {
+    const p = {
+      ...demoProject,
+      campaign: {
+        ...demoProject.campaign,
+        status: "paused" as const,
+        currentRound: 5,
+        noImprovementRounds: 2,
+        stopCriteria: { ...demoProject.campaign.stopCriteria, maxRounds: 5, patienceRounds: 2 },
+      },
+    } as EvolveProject;
+    expect(campaignPreflightStopReason(prepareCampaignRetry(p))).toContain("最大进化轮数");
+  });
+
+  it("explicit retry starts a new elapsed time window", () => {
+    const p = {
+      ...demoProject,
+      campaign: {
+        ...demoProject.campaign,
+        status: "paused" as const,
+        startedAt: "2026-09-26T00:00:00.000Z",
+        stopCriteria: { ...demoProject.campaign.stopCriteria, maxWallMinutes: 10 },
+      },
+    } as EvolveProject;
+    const retried = prepareCampaignRetry(p, new Date("2026-09-26T00:11:00.000Z"));
+    expect(retried.campaign.startedAt).toBeUndefined();
+    expect(retried.campaign.currentRound).toBe(p.campaign.currentRound);
   });
 
   it("advances recurring schedules and closes one-shot schedules after execution", () => {
