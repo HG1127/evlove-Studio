@@ -16,10 +16,12 @@ import {
 } from "../server-env";
 import {connectorManifestDeclaresFullLifecycle,getServerConnectorManifests} from "./connector-registry";
 import {getSecurityCapabilities} from "./security-policy";
+import {operatorSessionConfigured} from "./operator-session";
 
 function readinessBlockers(input:{
   dataPlane:ReturnType<typeof serverSupabaseConfigDiagnostics>;
   security:ReturnType<typeof getSecurityCapabilities>;
+  browserAccessConfigured:boolean;
   serverAi:boolean;
   releaseConfigured:boolean;
   gitConfigured:boolean;
@@ -70,6 +72,13 @@ function readinessBlockers(input:{
       code:"TEMPORARY_PROTECTED_DEPLOYMENT_AUTH",severity:"warning",area:"security",
       message:"当前使用临时 Vercel Protected Deployment operator 身份，仅适合内部功能验证。",
       action:"正式上线前替换为用户身份/Passport → server-signed actor，并关闭 EVOLUTION_ALLOW_PROTECTED_DEPLOYMENT_INTERNAL_AUTH。",
+    });
+  }
+  if(!input.browserAccessConfigured){
+    add({
+      code:"BROWSER_ADMIN_ACCESS_NOT_CONFIGURED",severity:"error",area:"security",
+      message:"正式浏览器还不能建立受保护的管理员会话。",
+      action:"在 Vercel Production 配置随机 64 个十六进制字符的 EVOLUTION_OPERATOR_ACCESS_KEY，并重新部署。",
     });
   }
   if(!scheduledReconciliationConfigured()){
@@ -133,6 +142,7 @@ export async function getPublicReadinessSnapshot(){
   const configured=serverSupabaseConfigured();
   const dataPlaneConfig=serverSupabaseConfigDiagnostics();
   const security=getSecurityCapabilities();
+  const browserAccessConfigured=operatorSessionConfigured();
   const targetProxy=targetProxyCapabilities();
   let connectorConfigured=false;
   let connectorFullLifecycleConfigured=false;
@@ -145,6 +155,7 @@ export async function getPublicReadinessSnapshot(){
   const blockers=readinessBlockers({
     dataPlane:dataPlaneConfig,
     security,
+    browserAccessConfigured,
     serverAi:serverAiConfigured(),
     releaseConfigured:vercelReleaseWriteConfigured(),
     gitConfigured:githubTargetConfigured(),
@@ -185,6 +196,7 @@ export async function getPublicReadinessSnapshot(){
     outcome:{database:false,ingestion:false,analysis:false,telemetry:false},
     security:{
       configured:security.configured,
+      browserAccessConfigured,
       enforced:security.enforced,
       productionSafe:false,
       vault:false,

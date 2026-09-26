@@ -14,6 +14,7 @@ describe("public readiness passive boundary",()=>{
     process.env.SUPABASE_SECRET_KEY="server-secret-key-for-passive-readiness-test";
     process.env.EVOLUTION_WORKSPACE_ID="workspace-test";
     process.env.EVOLUTION_IDENTITY_HMAC_SECRET="x".repeat(40);
+    process.env.EVOLUTION_OPERATOR_ACCESS_KEY="a".repeat(64);
     process.env.EVOLUTION_AI_API_KEY="ai-key";
     process.env.EVOLUTION_AI_MODEL="model";
     process.env.CRON_SECRET="c".repeat(32);
@@ -39,6 +40,8 @@ describe("public readiness passive boundary",()=>{
     expect(snapshot.release).toEqual({read:false,write:false});
     expect(snapshot.connectors).toEqual({configured:true,fullLifecycle:true});
     expect(snapshot.security).toMatchObject({configured:true,enforced:true,productionSafe:false});
+    expect(snapshot.security.browserAccessConfigured).toBe(true);
+    expect(snapshot.blockers.map((item)=>item.code)).not.toContain("BROWSER_ADMIN_ACCESS_NOT_CONFIGURED");
     expect(snapshot.blockers.map((item)=>item.code)).not.toContain("SUPABASE_SERVER_SECRET_MISSING");
     expect(snapshot.blockers.map((item)=>item.code)).not.toContain("WORKSPACE_ID_MISSING");
     expect(snapshot.blockers.map((item)=>item.code)).not.toContain("IDENTITY_NOT_CONFIGURED");
@@ -56,6 +59,7 @@ describe("public readiness passive boundary",()=>{
     process.env.EVOLUTION_WORKSPACE_ID="workspace-test";
     process.env.EVOLUTION_IDENTITY_HMAC_SECRET="x".repeat(40);
     process.env.EVOLUTION_AI_GATEWAY_ENABLED="true";
+    delete process.env.EVOLUTION_OPERATOR_ACCESS_KEY;
     process.env.VERCEL_ENV="production";
     vi.stubGlobal("fetch",vi.fn(async()=>{throw new Error("public readiness must remain passive");}));
 
@@ -75,7 +79,13 @@ describe("public readiness passive boundary",()=>{
         severity:"warning",
         area:"release",
       }),
+      expect.objectContaining({
+        code:"BROWSER_ADMIN_ACCESS_NOT_CONFIGURED",
+        severity:"error",
+        area:"security",
+      }),
     ]));
+    expect(snapshot.security.browserAccessConfigured).toBe(false);
     expect(snapshot.blockers.find((item)=>item.code==="SUPABASE_SERVER_SECRET_MISSING")?.action)
       .toContain("SUPABASE_SERVICE_ROLE_KEY");
     expect(fetch).not.toHaveBeenCalled();

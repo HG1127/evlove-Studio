@@ -42,6 +42,7 @@ export const PublicReadinessSnapshotSchema=z.object({
   outcome:z.object({database:z.boolean(),ingestion:z.boolean(),analysis:z.boolean(),telemetry:z.boolean()}),
   security:z.object({
     configured:z.boolean(),
+    browserAccessConfigured:z.boolean().default(false),
     enforced:z.boolean(),
     productionSafe:z.boolean(),
     vault:z.boolean(),
