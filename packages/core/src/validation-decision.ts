@@ -1,8 +1,16 @@
 import type { EvaluationResult, EvolveProject } from "@evolution/contracts";
 import { REGRESSION_TOLERANCE } from "./evaluation/gap";
+import { indexScopedAcceptanceResults } from "./acceptance-result-identity";
+
+function criterionScoresById(project: EvolveProject, evaluation: EvaluationResult) {
+  return indexScopedAcceptanceResults([{
+    requestedCriterionIds: project.acceptanceRubric.map((criterion) => criterion.id),
+    results: evaluation.criterionScores ?? [],
+  }]).byId;
+}
 
 export function validationHardRubricFailures(project: EvolveProject, evaluation: EvaluationResult) {
-  const byId = new Map((evaluation.criterionScores ?? []).map((item) => [item.criterionId, item]));
+  const byId = criterionScoresById(project, evaluation);
   return project.acceptanceRubric.filter((criterion) => {
     if (!criterion.hardGate) return false;
     const result = byId.get(criterion.id);
@@ -11,7 +19,7 @@ export function validationHardRubricFailures(project: EvolveProject, evaluation:
 }
 
 export function validationUnverifiedHardCriteria(project: EvolveProject, evaluation: EvaluationResult) {
-  const byId = new Map((evaluation.criterionScores ?? []).map((item) => [item.criterionId, item]));
+  const byId = criterionScoresById(project, evaluation);
   return project.acceptanceRubric.filter((criterion) => {
     if (!criterion.hardGate) return false;
     const result = byId.get(criterion.id);
@@ -25,9 +33,11 @@ export function validationRegression(project: EvolveProject, candidate: Evaluati
     return candidate.accuracy < baseline.accuracy - REGRESSION_TOLERANCE
       || candidate.completeness < baseline.completeness - REGRESSION_TOLERANCE;
   }
+  const candidateById = criterionScoresById(project, candidate);
+  const baselineById = criterionScoresById(project, baseline);
   return project.acceptanceRubric.some((criterion) => {
-    const current = candidate.criterionScores?.find((item) => item.criterionId === criterion.id);
-    const prior = baseline.criterionScores?.find((item) => item.criterionId === criterion.id);
+    const current = candidateById.get(criterion.id);
+    const prior = baselineById.get(criterion.id);
     return current?.verificationStatus === "verified"
       && prior?.verificationStatus === "verified"
       && current.testCaseIds.some((id) => prior.testCaseIds.includes(id))
@@ -38,8 +48,8 @@ export function validationRegression(project: EvolveProject, candidate: Evaluati
 export function validationDecision(project: EvolveProject, candidate: EvaluationResult, baseline: EvaluationResult) {
   const hardCriterionFailures = validationHardRubricFailures(project, candidate);
   const unverifiedHardCriteria = validationUnverifiedHardCriteria(project, candidate);
-  const candidateById = new Map((candidate.criterionScores ?? []).map((item) => [item.criterionId, item]));
-  const baselineById = new Map((baseline.criterionScores ?? []).map((item) => [item.criterionId, item]));
+  const candidateById = criterionScoresById(project, candidate);
+  const baselineById = criterionScoresById(project, baseline);
   const comparisonEvidenceGaps = project.acceptanceRubric.filter((criterion) => {
     if (!criterion.hardGate || criterion.id === "SYS-PAIRWISE") return false;
     const current = candidateById.get(criterion.id);

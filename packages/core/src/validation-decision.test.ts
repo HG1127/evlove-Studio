@@ -53,4 +53,28 @@ describe("validation decision",()=>{
     expect(result.hardFail).toBe(true);
     expect(result.hardCriterionFailures.map((item)=>item.id)).toContain("FORMAT");
   });
+
+  it("treats duplicate candidate hard-gate scores as missing evidence in either row order",()=>{
+    for (const scores of [
+      [{score:0,pass:false},{score:100,pass:true}],
+      [{score:100,pass:true},{score:0,pass:false}],
+    ]) {
+      const candidate=evaluation(90,100);
+      const original=candidate.criterionScores![0]!;
+      candidate.criterionScores=[...candidate.criterionScores!,...scores.map((score)=>({...original,...score}))];
+      const result=validationDecision(project(),candidate,evaluation(85,100));
+      expect(result.unverifiedHardCriteria.map((item)=>item.id)).toContain("GOAL");
+      expect(result.evidenceIncomplete).toBe(true);
+      expect(result.hardCriterionFailures.map((item)=>item.id)).not.toContain("GOAL");
+      expect(result.regression).toBe(false);
+    }
+  });
+
+  it("does not treat a duplicate baseline score as same-paper comparison evidence",()=>{
+    const baseline=evaluation(85,100);
+    baseline.criterionScores!.push({...baseline.criterionScores![0]!,score:10});
+    const result=validationDecision(project(),evaluation(90,100),baseline);
+    expect(result.comparisonEvidenceGaps.map((item)=>item.id)).toContain("GOAL");
+    expect(result.evidenceIncomplete).toBe(true);
+  });
 });
