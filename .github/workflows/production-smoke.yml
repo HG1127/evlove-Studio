@@ -27,7 +27,27 @@ jobs:
       PRODUCTION_URL: https://500ipo-evolve-studio.vercel.app
       EXPECTED_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
     steps:
-      - name: Wait for main alias to reach the verified commit
+      - name: Checkout verified commit
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          fetch-depth: 0
+
+      - name: Find latest deploy-relevant commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate="$EXPECTED_SHA"
+          while parent="$(git rev-parse "$candidate^" 2>/dev/null)"; do
+            if git diff --name-only "$parent" "$candidate" | grep -Ev '^(docs/|\.github/)' >/dev/null; then
+              break
+            fi
+            candidate="$parent"
+          done
+          echo "DEPLOY_RELEVANT_SHA=$candidate" >> "$GITHUB_ENV"
+          echo "Latest deploy-relevant commit: $candidate"
+
+      - name: Wait for main alias to reach a verified commit
         shell: bash
         run: |
           set -euo pipefail
@@ -36,14 +56,15 @@ jobs:
             commit="$(printf '%s' "$body" | jq -r '.commitSha // empty' 2>/dev/null || true)"
             ref="$(printf '%s' "$body" | jq -r '.commitRef // empty' 2>/dev/null || true)"
             env_name="$(printf '%s' "$body" | jq -r '.vercelEnvironment // empty' 2>/dev/null || true)"
-            if [ "$commit" = "$EXPECTED_SHA" ] && [ "$ref" = "main" ] && [ "$env_name" = "production" ]; then
+            if { [ "$commit" = "$EXPECTED_SHA" ] || [ "$commit" = "$DEPLOY_RELEVANT_SHA" ]; } && [ "$ref" = "main" ] && [ "$env_name" = "production" ]; then
               echo "Main alias is serving $commit"
+              echo "SERVED_SHA=$commit" >> "$GITHUB_ENV"
               exit 0
             fi
-            echo "Waiting for main alias: attempt $attempt/72, observed=${commit:-none}, expected=$EXPECTED_SHA"
+            echo "Waiting for main alias: attempt $attempt/72, observed=${commit:-none}, accepted=$EXPECTED_SHA or $DEPLOY_RELEVANT_SHA"
             sleep 5
           done
-          echo "::error::Main alias did not reach the Quality Gate commit within six minutes."
+          echo "::error::Main alias did not reach the verified commit or its docs-only predecessor within six minutes."
           exit 1
 
       - name: Homepage renders
@@ -101,7 +122,8 @@ jobs:
           {
             echo "## Production smoke passed"
             echo ""
-            echo "- Main alias commit: `$EXPECTED_SHA`"
+            echo "- Main alias commit: `$SERVED_SHA`"
+            echo "- Quality Gate commit: `$EXPECTED_SHA`"
             echo "- Homepage: 200"
             echo "- Public readiness: Supabase, server identity, server AI, and Cron configured"
             echo "- Public backend-health: 401 as required"
