@@ -40,6 +40,7 @@ export default defineEventHandler(async(event)=>{
       rollingRelease:outcome.rollingRelease,
       checkedAt:outcome.observedAt,
       observationErrors:outcome.observationErrors,
+      outcomeTelemetry:outcome.outcomeTelemetry,
       reason:outcome.reason,
     },
   }));
@@ -51,5 +52,6 @@ export default defineEventHandler(async(event)=>{
     observation:outcome.observation,
     releaseStatus:outcome.project.release.status,
     recoveryStatus:outcome.project.release.recovery?.status,
+    outcomeTelemetry:outcome.outcomeTelemetry,
   });
 });

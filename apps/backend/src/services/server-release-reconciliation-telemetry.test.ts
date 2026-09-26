@@ -5,13 +5,13 @@ import type {Candidate,EvolveProject,ReleaseAdapterResult,VercelReleaseObservati
 const {observeHttp,observeConnector,observeVercel,recordHttp,recordConnector,recordVercel}=vi.hoisted(()=>({
   observeHttp:vi.fn(),observeConnector:vi.fn(),observeVercel:vi.fn(),
   recordHttp:vi.fn(async(_project:EvolveProject,_observation:ReleaseAdapterResult)=>{
-    void _project;void _observation;return{telemetry:{warnings:[]}};
+    void _project;void _observation;return{recorded:true,inserted:1,reason:"ok",telemetry:{warnings:[]}};
   }),
   recordConnector:vi.fn(async(_project:EvolveProject,_observation:ReleaseAdapterResult)=>{
-    void _project;void _observation;return{telemetry:{warnings:[]}};
+    void _project;void _observation;return{recorded:true,inserted:1,reason:"ok",telemetry:{warnings:[]}};
   }),
   recordVercel:vi.fn(async(_project:EvolveProject,_observation:VercelReleaseObservation)=>{
-    void _project;void _observation;return{telemetry:{warnings:[]}};
+    void _project;void _observation;return{recorded:true,inserted:1,reason:"ok",telemetry:{warnings:[]}};
   }),
 }));
 
@@ -84,6 +84,7 @@ describe("server release reconciliation telemetry gate",()=>{
       expect(outcome.boundHealthReady).toBeUndefined();
       expect(outcome.project.release.recovery?.status).toBe("manual-check");
       expect(record).not.toHaveBeenCalled();
+      expect(outcome.outcomeTelemetry.status).toBe("skipped");
     });
 
     it(`does not report stale Production health for rejected ${provider} observations`,async()=>{
@@ -104,6 +105,20 @@ describe("server release reconciliation telemetry gate",()=>{
       expect(outcome.disposition).toBe("terminal-live-decision");
       expect(record).toHaveBeenCalledTimes(1);
       expect(record.mock.calls[0]?.[0].release.status).toBe("promoted");
+      expect(outcome.outcomeTelemetry).toMatchObject({status:"recorded",inserted:1});
+    });
+
+    it(`reports a retryable ${provider} Outcome write failure without changing the live release decision`,async()=>{
+      const observe=provider==="http"?observeHttp:observeConnector;
+      const record=provider==="http"?recordHttp:recordConnector;
+      observe.mockResolvedValue(receipt("promote"));
+      record.mockRejectedValueOnce(new Error("database unavailable"));
+      const warn=vi.spyOn(console,"warn").mockImplementation(()=>undefined);
+      const outcome=await runServerMissionReleaseReconciliation(fixture(provider));
+      expect(outcome.disposition).toBe("terminal-live-decision");
+      expect(outcome.outcomeTelemetry.status).toBe("failed");
+      expect(warn).toHaveBeenCalled();
+      warn.mockRestore();
     });
   }
 

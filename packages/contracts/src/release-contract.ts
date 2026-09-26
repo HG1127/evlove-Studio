@@ -104,6 +104,14 @@ export const VercelReleaseReconcileResponseSchema=z.object({
 });
 export type VercelReleaseReconcileResponse=z.infer<typeof VercelReleaseReconcileResponseSchema>;
 
+export const ReleaseOutcomeTelemetryStatusSchema=z.object({
+  status:z.enum(["recorded","skipped","failed"]),
+  inserted:z.number().int().nonnegative().default(0),
+  warningCount:z.number().int().nonnegative().default(0),
+  reason:z.string().max(300).optional(),
+});
+export type ReleaseOutcomeTelemetryStatus=z.infer<typeof ReleaseOutcomeTelemetryStatusSchema>;
+
 export const ReleaseReconcileResponseSchema=z.object({
   provider:z.enum(["vercel","http","connector"]),
   disposition:z.enum(["safe-to-resume","terminal-live-decision","manual-check"]),
@@ -112,6 +120,7 @@ export const ReleaseReconcileResponseSchema=z.object({
   observation:z.union([VercelReleaseObservationSchema,ReleaseAdapterResultSchema]).optional(),
   releaseStatus:z.enum(["idle","shadow","canary-5","canary-20","canary-50","promoted","rolled-back"]),
   recoveryStatus:z.enum(["pending","manual-check","reconciled"]).optional(),
+  outcomeTelemetry:ReleaseOutcomeTelemetryStatusSchema.optional(),
 });
 export type ReleaseReconcileResponse=z.infer<typeof ReleaseReconcileResponseSchema>;
 

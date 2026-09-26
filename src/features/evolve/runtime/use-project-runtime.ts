@@ -1152,8 +1152,13 @@ export function useProjectRuntime(initialProject: EvolveProject) {
       commit(persisted);
       setStage(persisted.stage);
     }
-    setStatus({busy:false,message:response.reason});
-    pushActivity(`Release Reconcile · ${response.disposition} · ${response.reason}`,undefined,projectId);
+    const telemetryNote=response.outcomeTelemetry?.status==="failed"
+      ?"；Outcome 样本未保存，请重试线上核对"
+      :response.outcomeTelemetry?.warningCount
+        ?`；Outcome 采集有 ${response.outcomeTelemetry.warningCount} 项警告`
+        :"";
+    setStatus({busy:false,message:response.reason+telemetryNote});
+    pushActivity(`Release Reconcile · ${response.disposition} · ${response.reason}${telemetryNote}`,undefined,projectId);
     return response;
   },[commit,projectId,run,setStatus]);
 

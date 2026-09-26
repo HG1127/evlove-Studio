@@ -5,21 +5,20 @@ import {observeHttpTarget} from "./http-target-gateway";
 import {observeConnectorReleaseReality} from "./connector-release";
 import {observeVercelReleaseReality} from "./vercel-release";
 import {recordConnectorReleaseOutcomeObservation,recordHttpReleaseOutcomeObservation,recordReleaseOutcomeObservation} from "./release-outcome-telemetry";
+import {captureReleaseOutcomeTelemetry,skippedReleaseOutcomeTelemetry} from "./release-outcome-status";
 
 export async function runServerMissionReleaseReconciliation(project:EvolveProject){
   if(projectUsesConnectorRelease(project)){
     const outcome=await runServerAdapterReleaseReconciliation(project,{
       observe:({deploymentId,stableDeploymentId,recoveryAction})=>observeConnectorReleaseReality(project,{deploymentId,stableDeploymentId,recoveryAction}),
     },{providerLabel:"Connector Observe",failureLabel:"Connector Observe"});
-    if(outcome.disposition!=="manual-check"&&outcome.observation){
-      const recorded=await recordConnectorReleaseOutcomeObservation(outcome.project,outcome.observation).catch(()=>undefined);
-      if(recorded?.telemetry?.warnings.length){
-        console.warn("[outcome-telemetry] Connector release observation completed with warnings",recorded.telemetry.warnings);
-      }
-    }
+    const outcomeTelemetry=outcome.disposition!=="manual-check"&&outcome.observation
+      ?await captureReleaseOutcomeTelemetry(()=>recordConnectorReleaseOutcomeObservation(outcome.project,outcome.observation!))
+      :skippedReleaseOutcomeTelemetry();
     return{
       ...outcome,
       provider:"connector" as const,
+      outcomeTelemetry,
       previewReady:outcome.disposition!=="manual-check"&&outcome.observation?.effectiveAction==="shadow"&&outcome.observation.healthy===true,
       productionDeploymentId:outcome.project.release.environment==="production"?outcome.project.release.deploymentId:undefined,
       boundDeploymentId:outcome.project.release.deploymentId,
@@ -44,15 +43,13 @@ export async function runServerMissionReleaseReconciliation(project:EvolveProjec
         healthPath,
       }),
     });
-    if(outcome.disposition!=="manual-check"&&outcome.observation){
-      const recorded=await recordHttpReleaseOutcomeObservation(outcome.project,outcome.observation).catch(()=>undefined);
-      if(recorded?.telemetry?.warnings.length){
-        console.warn("[outcome-telemetry] HTTP release observation completed with warnings",recorded.telemetry.warnings);
-      }
-    }
+    const outcomeTelemetry=outcome.disposition!=="manual-check"&&outcome.observation
+      ?await captureReleaseOutcomeTelemetry(()=>recordHttpReleaseOutcomeObservation(outcome.project,outcome.observation!))
+      :skippedReleaseOutcomeTelemetry();
     return{
       ...outcome,
       provider:"http" as const,
+      outcomeTelemetry,
       previewReady:outcome.disposition!=="manual-check"&&outcome.observation?.effectiveAction==="shadow"&&outcome.observation.healthy===true,
       productionDeploymentId:outcome.project.release.environment==="production"?outcome.project.release.deploymentId:undefined,
       boundDeploymentId:outcome.project.release.deploymentId,
@@ -75,15 +72,13 @@ export async function runServerMissionReleaseReconciliation(project:EvolveProjec
       return observed;
     },
   });
-  if(outcome.disposition!=="manual-check"&&observed){
-    const recorded=await recordReleaseOutcomeObservation(outcome.project,observed).catch(()=>undefined);
-    if(recorded?.telemetry?.warnings.length){
-      console.warn("[outcome-telemetry] release observation completed with warnings",recorded.telemetry.warnings);
-    }
-  }
+  const outcomeTelemetry=outcome.disposition!=="manual-check"&&observed
+    ?await captureReleaseOutcomeTelemetry(()=>recordReleaseOutcomeObservation(outcome.project,observed!))
+    :skippedReleaseOutcomeTelemetry();
   return{
     ...outcome,
     provider:"vercel" as const,
+    outcomeTelemetry,
     observedAt:outcome.observation.checkedAt,
     previewReady:outcome.disposition!=="manual-check"&&outcome.observation.boundDeployment?.state==="READY",
     productionDeploymentId:outcome.observation.productionDeployment?.id,
