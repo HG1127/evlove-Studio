@@ -361,8 +361,11 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
       const recoveredFiles: PendingFile[] = [];
       const recoveredArtifacts: SourceArtifact[] = [];
       const resume: PendingFile[] = [];
+      const invalidJobIds:string[]=[];
       for (const record of persisted) {
-        const metadata=parseJobMetadata(record.job);
+        let metadata:ReturnType<typeof parseJobMetadata>;
+        try{metadata=parseJobMetadata(record.job);}
+        catch{invalidJobIds.push(record.job.id);continue;}
         if(metadata.artifactId&&dismissedParseRef.current.has(metadata.artifactId))continue;
         const file = new File([], metadata.name, { type: metadata.mimeType, lastModified: metadata.lastModified });
         const recovery=recoveredParseState(record);
@@ -382,8 +385,17 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
         if(recovery.resume)resume.push(item);
       }
       if (cancelled) return;
-      if (recoveredFiles.length) setFiles(recoveredFiles);
-      if (recoveredArtifacts.length) replaceArtifactState(recoveredArtifacts);
+      if (recoveredFiles.length) setFiles((current)=>{
+        const presentArtifactIds=new Set(current.map((item)=>item.artifactId).filter(Boolean));
+        const presentJobIds=new Set(current.map((item)=>item.serverJobId).filter(Boolean));
+        return [...recoveredFiles.filter((item)=>!presentArtifactIds.has(item.artifactId)&&!presentJobIds.has(item.serverJobId)),...current];
+      });
+      if (recoveredArtifacts.length){
+        const byId=new Map(recoveredArtifacts.map((artifact)=>[artifact.id,artifact]));
+        for(const artifact of artifactsRef.current)byId.set(artifact.id,artifact);
+        replaceArtifactState([...byId.values()]);
+      }
+      if(invalidJobIds.length)setError(`${invalidJobIds.length} 个 Server Parse 任务的附件信息无效，无法安全恢复；请重新上传原文件。Job：${invalidJobIds.slice(0,3).join("、")}${invalidJobIds.length>3?" 等":""}`);
       resume.forEach(startBackgroundParse);
     })().catch((cause) => {
       if (!cancelled && !(cause instanceof ServerParseUnavailableError)) {

@@ -2,6 +2,7 @@ import {
   SourceParseCapabilitiesSchema,
   SourceParseCancelResponseSchema,
   SourceParseListResponseSchema,
+  SourceParseRecoveryMetadataSchema,
   SourceParseResultPendingErrorDataSchema,
   SourceParseStartResponseSchema,
   SourceParseStatusResponseSchema,
@@ -96,14 +97,16 @@ export async function cancelServerParseJob(jobId:string,deleteArtifact=true){
 
 export function parseJobMetadata(job:EvolutionJob){
   const metadata=job.metadata??{};
-  return {
-    artifactId:typeof metadata.artifactId==="string"?metadata.artifactId:job.inputRef,
-    name:typeof metadata.name==="string"?metadata.name:job.label.replace(/^Parse\s+/,""),
-    mimeType:typeof metadata.mimeType==="string"?metadata.mimeType:"application/octet-stream",
-    size:typeof metadata.size==="number"?metadata.size:0,
-    lastModified:typeof metadata.lastModified==="number"?metadata.lastModified:Date.now(),
-    role:(typeof metadata.role==="string"?metadata.role:"target") as ArtifactRole,
-  };
+  const parsed=SourceParseRecoveryMetadataSchema.safeParse({
+    artifactId:metadata.artifactId,
+    name:metadata.name,
+    mimeType:metadata.mimeType,
+    size:metadata.size,
+    lastModified:metadata.lastModified,
+    role:metadata.role,
+  });
+  if(!parsed.success)throw new Error(`Parse Job ${job.id} 的恢复元数据无效，请重新上传原文件`);
+  return parsed.data;
 }
 
 export async function parseServerFile(args:{

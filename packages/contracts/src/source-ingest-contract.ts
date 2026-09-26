@@ -14,6 +14,11 @@ export const SourceParseUploadMetadataSchema=z.object({
 }).strict();
 export type SourceParseUploadMetadata=z.infer<typeof SourceParseUploadMetadataSchema>;
 
+export const SourceParseRecoveryMetadataSchema=SourceParseUploadMetadataSchema.pick({
+  artifactId:true,name:true,mimeType:true,role:true,lastModified:true,
+}).extend({size:z.number().int().nonnegative()}).strict();
+export type SourceParseRecoveryMetadata=z.infer<typeof SourceParseRecoveryMetadataSchema>;
+
 export const SourceParseWorkflowInputSchema=z.object({
   jobId:z.string().min(1),
   inputRef:z.string().min(1),

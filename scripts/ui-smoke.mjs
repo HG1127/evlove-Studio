@@ -48,10 +48,12 @@ try{
  let markStarted;
  let markCancelled;
  let markListed;
+ let releaseInitialList;
  const startGate=new Promise(resolve=>{releaseStart=resolve;});
  const startSeen=new Promise(resolve=>{markStarted=resolve;});
  const cancelSeen=new Promise(resolve=>{markCancelled=resolve;});
  const listSeen=new Promise(resolve=>{markListed=resolve;});
+ const initialListGate=new Promise(resolve=>{releaseInitialList=resolve;});
  let listCalls=0;
  let submittedArtifactId;
  const within=async(promise,label)=>{
@@ -63,10 +65,15 @@ try{
  await racePage.route('**/api/evolution/parse-jobs*',async route=>{
   const job={schemaVersion:'job-v1',id:'parse-smoke-late',type:'parse',status:'cancelled',label:'Parse smoke-late.md',
    idempotencyKey:'smoke-late',generation:1,attempts:1,priority:80,inputRef:'parse-input-smoke-late',
-   outputRef:'parse-result-smoke-late',metadata:{artifactId:submittedArtifactId??'artifact-smoke-late',name:'smoke-late.md',mimeType:'text/markdown',size:11,role:'target'},
+   outputRef:'parse-result-smoke-late',metadata:{artifactId:submittedArtifactId??'artifact-smoke-late',name:'smoke-late.md',mimeType:'text/markdown',size:11,role:'target',lastModified:0},
    createdAt:'2026-09-24T00:00:00.000Z',updatedAt:'2026-09-24T00:00:00.000Z'};
-  await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({items:listCalls++? [{job}]:[]})});
+  const good={...job,id:'parse-smoke-good',status:'failed',label:'Parse smoke-good.md',
+   metadata:{...job.metadata,artifactId:'artifact-smoke-good',name:'smoke-good.md',role:'reference'}};
+  const corrupt={...job,id:'parse-smoke-corrupt',metadata:{...job.metadata,artifactId:'artifact-smoke-corrupt',role:'administrator'}};
+  const call=listCalls++;
   markListed();
+  if(call===0)await initialListGate;
+  await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({items:call? [{job:corrupt},{job:good},{job}]:[{job:good}]})});
  });
  await racePage.route('**/api/evolution/parse-start',async route=>{
   markStarted();
@@ -86,6 +93,9 @@ try{
  await within(listSeen,'initial Parse list');
  await racePage.locator('input[type="file"]').first().setInputFiles({name:'smoke-late.md',mimeType:'text/markdown',buffer:Buffer.from('late source')});
  await within(startSeen,'delayed Parse start');
+ releaseInitialList();
+ await racePage.getByText('smoke-good.md',{exact:true}).waitFor();
+ await racePage.getByRole('button',{name:'移除附件：smoke-late.md'}).waitFor();
  await racePage.getByRole('button',{name:'移除附件：smoke-late.md'}).click();
  releaseStart();
  await within(cancelSeen,'Parse cancellation');
@@ -97,9 +107,11 @@ try{
  await racePage.waitForTimeout(250);
  assert.ok(listCalls>=2,'Parse recovery list was not requested after reload');
  assert.equal(await racePage.getByText('smoke-late.md',{exact:true}).count(),0,'dismissed Parse Job reappeared after reload');
+ await racePage.getByText('smoke-good.md',{exact:true}).waitFor();
+ await racePage.getByText(/1 个 Server Parse 任务的附件信息无效/).waitFor();
  await racePage.close();
  assert.equal(errors.length,0,errors.join('\n'));
  assert.ok(rows.every(row=>row.scrollWidth<=row.width+2),JSON.stringify(rows));
- console.log(JSON.stringify({status:'PASS',rows,pageErrors:errors,failedResponses,mobilePaste:'passed',localParse,lateParseRemoval:'passed'},null,2));
+ console.log(JSON.stringify({status:'PASS',rows,pageErrors:errors,failedResponses,mobilePaste:'passed',localParse,lateParseRemoval:'passed',parseRecoveryIsolation:'passed'},null,2));
  await context.close();
 }catch(error){console.error(JSON.stringify({errors,failedResponses,rows,body:await page?.locator('body').innerText().catch(()=>''),failure:String(error)},null,2));throw error;}finally{await closeBrowser();}

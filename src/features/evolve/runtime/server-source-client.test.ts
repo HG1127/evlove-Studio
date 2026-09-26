@@ -4,12 +4,32 @@ import {
   ServerParseUnavailableError,
   cancelServerParseJob,
   listServerParseJobs,
+  parseJobMetadata,
   startServerParseFile,
   waitForServerParseJob,
 } from "./server-source-client";
 
 describe("server source client degraded fallback classification",()=>{
   afterEach(()=>vi.unstubAllGlobals());
+
+  it("validates persisted Parse metadata before restoring source identity",()=>{
+    const at="2026-09-24T00:00:00.000Z";
+    const metadata={artifactId:"artifact-1",name:"source.md",mimeType:"text/markdown",size:5,
+      role:"reference",lastModified:0};
+    const job=EvolutionJobSchema.parse({schemaVersion:"job-v1",id:"parse-1",type:"parse",
+      status:"failed",label:"Parse source.md",idempotencyKey:"parse-key",metadata,
+      createdAt:at,updatedAt:at});
+    expect(parseJobMetadata(job)).toEqual(metadata);
+    for(const damaged of [
+      {...metadata,role:"administrator"},
+      {...metadata,size:-1},
+      {...metadata,name:""},
+      {...metadata,lastModified:Number.POSITIVE_INFINITY},
+      {...metadata,artifactId:undefined},
+    ]){
+      expect(()=>parseJobMetadata({...job,metadata:damaged})).toThrow("恢复元数据无效");
+    }
+  });
 
   it.each([401,403,404,503])("treats HTTP %s as server-parse unavailable so callers can fall back locally",async(status)=>{
     vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({
