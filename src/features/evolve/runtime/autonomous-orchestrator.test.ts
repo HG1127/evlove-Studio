@@ -5,6 +5,7 @@ import { evidenceFingerprint } from "./evidence-binding";
 import type { EvolveProject } from "../schemas";
 import { deriveAttentionRequest, deriveAutonomousDecision, LOCAL_REVIEW_CONTRACT_VERSION, reconcileAttentionRequest } from "./autonomous-orchestrator";
 import { buildServerHarnessPlan } from "@evolution/harness";
+import { describeArtifact } from "@evolution/core";
 
 function frozenFor(candidate:EvolveProject["candidates"][number]){
   const snapshot=candidate.artifactSnapshots[0]!;
@@ -107,6 +108,61 @@ describe("autonomous orchestrator", () => {
       artifactAcceptance: { ...demoProject.artifactAcceptance, status: "unverified", summary: "等待系统重新检查当前文本" },
       campaign: { ...demoProject.campaign, status: "paused", stopReason: "当前只剩缺少验证证据，系统可自动复验" },
     });
+    expect(deriveAutonomousDecision(p).action).toBe("revalidate");
+  });
+
+  it("rechecks a DOCX SOP locally instead of asking for outside evidence", () => {
+    const source = {
+      ...demoProject.sourceArtifacts[0]!, id:"sop", name:"sop.docx", extension:"docx", artifactKind:"document" as const,
+      mimeType:"application/vnd.openxmlformats-officedocument.wordprocessingml.document", textContent:"旧版配置流程",
+      structuredContent:{kind:"document",subtype:"docx",parts:[{path:"word/document.xml",textRuns:[{index:0,text:"旧版配置流程"}]}]},
+    };
+    const criterion = {
+      id:"DOC-CONFIG", title:"配置流程可理解性", requirement:"配置步骤编号、示例和注意事项清晰", source:"user-command" as const,
+      weight:100, hardGate:true, judgeType:"llm" as const, validationMethod:"user-scenario" as const, minScore:85,
+      evidenceExpected:["步骤编号","示例","注意事项"], protectedConstraint:false, artifactIds:[source.id], category:"outcome" as const,
+    };
+    const candidate = CandidateSchema.parse({ id:"DOC-C", name:"SOP 新版", change:"补齐配置流程", artifactSnapshots:[{
+      id:"doc-snapshot", sourceArtifactId:source.id, name:source.name, mimeType:source.mimeType,
+      content:JSON.stringify({kind:"document",subtype:"docx",parts:[{path:"word/document.xml",textRuns:[{index:0,text:"1. 配置地址。示例：输入网址。注意事项：保存后检测。"}]}]}),
+      createdAt:"2026-09-27T00:00:00.000Z",
+    }] });
+    const p = project({
+      inputUnderstanding:{status:"ready",intentRestatement:"优化 SOP",implicitRequirements:[],assumptions:[],acceptanceFocus:[],confidence:0.9,clarifications:[]},
+      sourceArtifacts:[{...source,artifactDescriptor:describeArtifact(source)}], acceptanceRubric:[criterion], candidates:[candidate],
+      experimentRun:{...demoProject.experimentRun,status:"completed",pendingEvidenceCandidateId:candidate.id},
+      validationRun:{...demoProject.validationRun,status:"completed",candidateId:candidate.id,recommendation:"hold",evaluation:{...demoProject.baselineRun.result!,unverifiedCriterionIds:[criterion.id]}},
+      artifactAcceptance:{...demoProject.artifactAcceptance,status:"unverified",candidateId:candidate.id,summary:"等待重新检查 SOP"},
+      campaign:{...demoProject.campaign,status:"paused",stopReason:"当前只剩缺少验证证据"},
+    });
+    expect(deriveAttentionRequest(p)?.type).not.toBe("evidence");
+    expect(deriveAutonomousDecision(p).action).toBe("revalidate");
+  });
+
+  it("rechecks an uploaded HTML tutorial locally instead of asking for a DOCX", () => {
+    const source = {
+      ...demoProject.sourceArtifacts[0]!, id:"tutorial", name:"tutorial.html", extension:"html", artifactKind:"document" as const,
+      mimeType:"text/html", textContent:"<!doctype html><html><body>旧版说明</body></html>",
+    };
+    const criterion = {
+      id:"HTML-READ", title:"理解难度降低", requirement:"概念解释直白、示例贴近实际", source:"user-command" as const,
+      weight:100, hardGate:true, judgeType:"llm" as const, validationMethod:"user-scenario" as const, minScore:85,
+      evidenceExpected:["直白解释","具体示例"], protectedConstraint:false, artifactIds:[source.id], category:"outcome" as const,
+    };
+    const candidate = CandidateSchema.parse({ id:"HTML-C", name:"教程新版", change:"降低理解难度", artifactSnapshots:[{
+      id:"html-snapshot", sourceArtifactId:source.id, name:source.name, mimeType:source.mimeType,
+      content:"<!doctype html><html><body><h2>概念解释</h2><p>用真实项目举例。</p></body></html>",
+      createdAt:"2026-09-27T00:00:00.000Z",
+    }] });
+    const p = project({
+      inputUnderstanding:{status:"ready",intentRestatement:"优化教程",implicitRequirements:[],assumptions:[],acceptanceFocus:[],confidence:0.9,clarifications:[]},
+      sourceArtifacts:[{...source,artifactDescriptor:describeArtifact(source)}], acceptanceRubric:[criterion], candidates:[candidate],
+      experimentRun:{...demoProject.experimentRun,status:"completed",pendingEvidenceCandidateId:candidate.id},
+      validationRun:{...demoProject.validationRun,status:"completed",candidateId:candidate.id,recommendation:"hold",evaluation:{...demoProject.baselineRun.result!,unverifiedCriterionIds:[criterion.id]}},
+      artifactAcceptance:{...demoProject.artifactAcceptance,status:"unverified",candidateId:candidate.id,summary:"等待重新检查 HTML"},
+      campaign:{...demoProject.campaign,status:"paused",stopReason:"当前只剩缺少验证证据"},
+    });
+    expect(deriveAttentionRequest(p)?.type).not.toBe("evidence");
     expect(deriveAutonomousDecision(p).action).toBe("revalidate");
   });
 

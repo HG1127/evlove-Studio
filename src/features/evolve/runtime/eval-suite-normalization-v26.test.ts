@@ -66,6 +66,30 @@ describe("V2.6 evidence-aware eval normalization",()=>{
     const result=normalizeEvalSuiteForProject(docProject,[],[tc("doc-use",[criterion.id],"检查用户能否按文字步骤完成",["步骤完整"])]);
     expect(result.hiddenCases[0]?.executionMode).toBe("artifact-runtime");
   });
+  it("routes a readable DOCX SOP requirement to local Candidate review",()=>{
+    const criterion={...project.acceptanceRubric[0]!,id:"DOC-CONFIG",title:"配置流程可理解性",requirement:"使用步骤编号、示例和注意事项",validationMethod:"user-scenario",artifactIds:["sop"]} as EvolveProject["acceptanceRubric"][number];
+    const docProject={...project,objectType:"document",semanticEvolution:undefined,sourceArtifacts:[{
+      id:"sop",role:"target",artifactKind:"document",name:"sop.docx",extension:"docx",textContent:"旧版配置流程",
+      artifactDescriptor:{adapterId:"document-docx-ooxml"},structuredContent:{parts:[{path:"word/document.xml",textRuns:[{index:0,text:"旧版配置流程"}]}]},
+    }],acceptanceRubric:[criterion]} as unknown as EvolveProject;
+    const hidden=tc("doc-config",[criterion.id],"检查文档中的配置步骤",["步骤编号","示例","注意事项"]);
+    expect(criterionCanUseLocalSnapshotEvidence(docProject,criterion)).toBe(true);
+    expect(criterionCanUseLocalSnapshotEvidence({...docProject,sourceArtifacts:docProject.sourceArtifacts.map((artifact)=>({...artifact,artifactDescriptor:undefined}))},criterion)).toBe(true);
+    expect(evidenceRouteForCriterion({...docProject,hiddenEvalSuite:[hidden]},criterion)).toBe("local");
+    const unparsedDoc={...docProject,sourceArtifacts:docProject.sourceArtifacts.map((artifact)=>({...artifact,structuredContent:undefined}))};
+    expect(evidenceRouteForCriterion({...unparsedDoc,hiddenEvalSuite:[hidden]},criterion)).toBe("capability");
+    expect(normalizeEvalSuiteForProject(docProject,[],[hidden]).hiddenCases[0]?.executionMode).toBe("artifact-runtime");
+  });
+  it("routes an uploaded HTML readability requirement to local Candidate review",()=>{
+    const criterion={...project.acceptanceRubric[0]!,id:"HTML-READ",title:"理解难度降低",requirement:"概念解释更直白，示例贴近实际",validationMethod:"user-scenario",artifactIds:["tutorial"]} as EvolveProject["acceptanceRubric"][number];
+    const htmlProject={...project,objectType:"document",semanticEvolution:undefined,sourceArtifacts:[{
+      id:"tutorial",role:"target",artifactKind:"document",name:"tutorial.html",extension:"html",mimeType:"text/html",
+      textContent:"<!doctype html><html><body><h1>旧教程</h1></body></html>",
+    }],acceptanceRubric:[criterion]} as unknown as EvolveProject;
+    const hidden=tc("html-read",[criterion.id],"检查教程概念和示例",["解释直白","示例贴近实际"]);
+    expect(criterionCanUseLocalSnapshotEvidence(htmlProject,criterion)).toBe(true);
+    expect(evidenceRouteForCriterion({...htmlProject,hiddenEvalSuite:[hidden]},criterion)).toBe("local");
+  });
   it("removes neighbouring tool expectations from a single-criterion case",()=>{
     const toolProject={...project,objectType:"document",sourceArtifacts:[],semanticEvolution:undefined,acceptanceRubric:[
       {...project.acceptanceRubric[0]!,id:"GIT",title:"Git 配置零起点可达",requirement:"Git 从账号注册到首次 push 可执行",evidenceExpected:["Git 注册、安装、SSH、push 步骤完整"]},

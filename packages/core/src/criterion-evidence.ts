@@ -1,7 +1,21 @@
 import type { AcceptanceCriterion, EvolveProject } from "@evolution/contracts";
 
-const LOCAL_SNAPSHOT_TEXT_EXTENSION = /^(txt|md|markdown|mdx)$/i;
+const LOCAL_SNAPSHOT_TEXT_EXTENSION = /^(txt|md|markdown|mdx|html|htm)$/i;
 const LOCAL_SNAPSHOT_ARTIFACT_KINDS = new Set(["document", "knowledge", "generic"]);
+
+function readableDocumentSource(artifact: EvolveProject["sourceArtifacts"][number]) {
+  if (!LOCAL_SNAPSHOT_ARTIFACT_KINDS.has(artifact.artifactKind) || !(artifact.textContent || artifact.textExcerpt)) return false;
+  if (LOCAL_SNAPSHOT_TEXT_EXTENSION.test(artifact.extension)) return true;
+  if (artifact.extension.toLowerCase() !== "docx" || (artifact.artifactDescriptor && artifact.artifactDescriptor.adapterId !== "document-docx-ooxml")) return false;
+  const structured = artifact.structuredContent as { parts?: unknown } | undefined;
+  return Array.isArray(structured?.parts) && structured.parts.length > 0;
+}
+
+/** A local document evaluator can inspect the exact Candidate text or DOCX run blueprint. */
+export function projectSupportsLocalDocumentSnapshot(project: EvolveProject) {
+  const targets = project.sourceArtifacts.filter((artifact) => artifact.role === "target");
+  return targets.length > 0 && targets.every(readableDocumentSource);
+}
 
 function isCodebaseProject(project: EvolveProject) {
   return project.sourceArtifacts.some((artifact) => artifact.role === "target" && artifact.artifactKind === "codebase")
@@ -16,7 +30,5 @@ export function criterionCanUseLocalSnapshotEvidence(project: EvolveProject, cri
     ? project.sourceArtifacts.filter((artifact) => criterion.artifactIds.includes(artifact.id))
     : project.sourceArtifacts.filter((artifact) => artifact.role === "target");
   if (!targets.length) return false;
-  return targets.every((artifact) => LOCAL_SNAPSHOT_ARTIFACT_KINDS.has(artifact.artifactKind)
-    && LOCAL_SNAPSHOT_TEXT_EXTENSION.test(artifact.extension)
-    && Boolean(artifact.textContent || artifact.textExcerpt));
+  return targets.every(readableDocumentSource);
 }

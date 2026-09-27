@@ -147,7 +147,7 @@ function sourceForAi(artifact: SourceArtifact, query = "", contextChars?: number
     structuredContent: compactStructuredContent(artifact),
     warnings: artifact.warnings,
     length: text.length,
-    context: retrieveTextContext(text, query || `${artifact.name} ${artifact.summary || ""}`, { maxChars: contextChars ?? (artifact.role === "target" ? 18000 : 7000) }),
+    context: contextChars === 0 ? undefined : retrieveTextContext(text, query || `${artifact.name} ${artifact.summary || ""}`, { maxChars: contextChars ?? (artifact.role === "target" ? 18000 : 7000) }),
   };
 }
 
@@ -250,9 +250,19 @@ export async function buildCandidateArtifacts(project: EvolveProject, candidate:
   // Slow path only when patch cannot be applied deterministically. Put common current-version
   // source context before candidate-specific data to improve provider prefix-cache hit rate.
   const query = `${candidate.title || candidate.name} ${candidate.change} ${candidate.patches.map((patch) => `${patch.target} ${patch.rationale}`).join(" ")} ${project.evolutionCommand}`;
-  const targetContexts = await Promise.all(targets.map(async (artifact) => ({ ...sourceForAi(artifact, query, 8000), adaptiveContext: await retrieveArtifactContext(artifact, query, 18000) })));
+  // A long text target used to send the same source twice (8k overview + 18k adaptive excerpt),
+  // often together with the entire project graph. This made small HTML edits a large generation
+  // request and exhausted slower reasoning models before they could emit the JSON blueprint.
+  const largeTextTarget = targets.some((artifact) => /^(html?|xhtml|md|markdown|txt|css|js|ts|tsx|jsx|json|yaml|yml|svg)$/i.test(artifact.extension) && (artifact.textContent?.length ?? 0) > 32000);
+  const targetContexts = await Promise.all(targets.map(async (artifact) => ({
+    ...sourceForAi(artifact, query, largeTextTarget ? 0 : 8000),
+    adaptiveContext: await retrieveArtifactContext(artifact, query, largeTextTarget ? 12000 : 18000),
+  })));
   const references = baseProject.sourceArtifacts.filter((artifact) => artifact.role === "reference");
-  const referenceContexts = await Promise.all(references.map(async (artifact) => ({ ...sourceForAi(artifact, candidate.hypothesis || candidate.change, 4000), adaptiveContext: await retrieveArtifactContext(artifact, candidate.hypothesis || candidate.change, 6000) })));
+  const referenceContexts = await Promise.all(references.map(async (artifact) => ({
+    ...sourceForAi(artifact, candidate.hypothesis || candidate.change, largeTextTarget ? 0 : 4000),
+    adaptiveContext: await retrieveArtifactContext(artifact, candidate.hypothesis || candidate.change, largeTextTarget ? 4000 : 6000),
+  })));
   const anchorHints = targets.map((artifact) => {
     const source = artifact.textContent ?? "";
     const candidates = [
@@ -277,10 +287,10 @@ export async function buildCandidateArtifacts(project: EvolveProject, candidate:
       editableItems: project.editableItems,
       acceptanceRubric: candidateRubric(project, candidate),
       sourceUnderstanding: compactSourceUnderstanding(project),
-      artifactGraph: project.artifactGraph,
-      semanticEvolution: project.semanticEvolution,
-      semanticObject: project.semanticEvolution?.semanticObject,
-      evolutionIntentModel: project.semanticEvolution?.intent,
+      artifactGraph: largeTextTarget ? undefined : project.artifactGraph,
+      semanticEvolution: largeTextTarget ? undefined : project.semanticEvolution,
+      semanticObject: largeTextTarget ? undefined : project.semanticEvolution?.semanticObject,
+      evolutionIntentModel: largeTextTarget ? undefined : project.semanticEvolution?.intent,
       adaptiveStrategy: resolveProjectArtifactStrategy(project),
       existingSearchChampion: project.searchChampion ? { versionLabel: project.searchChampion.versionLabel, patches: project.searchChampion.patches } : undefined,
     },

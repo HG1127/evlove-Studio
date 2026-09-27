@@ -4,6 +4,75 @@ import { retrieveTextContext } from "./context-retrieval";
 
 const LOCALLY_ROUNDTRIPPABLE_TEXT = /^(txt|md|markdown|csv|json|yaml|yml|css|js|jsx|ts|tsx)$/i;
 
+function staticSnapshotText(content: string) {
+  try {
+    const parsed = JSON.parse(content) as { files?: Array<{ path?: unknown; content?: unknown }> };
+    if (parsed.files !== undefined) {
+      if (!Array.isArray(parsed.files) || !parsed.files.length) return undefined;
+      const paths = new Set<string>();
+      const files: string[] = [];
+      for (const item of parsed.files) {
+        if (typeof item?.path !== "string" || !item.path.trim() || typeof item?.content !== "string" || paths.has(item.path)) return undefined;
+        paths.add(item.path);
+        files.push(`FILE: ${item.path}\n${item.content}`);
+      }
+      return files.join("\n\n");
+    }
+  } catch {
+    // Plain-text and non-package snapshots are already directly reviewable.
+  }
+  return content;
+}
+
+function docxCandidateText(source: EvolveProject["sourceArtifacts"][number], content: string) {
+  try {
+    const original = source.structuredContent as { parts?: Array<{ path?: unknown; textRuns?: Array<{ index?: unknown; text?: unknown }> }> } | undefined;
+    const candidate = JSON.parse(content) as { parts?: Array<{ path?: unknown; textRuns?: Array<string | { index?: unknown; text?: unknown }> }> };
+    if (!Array.isArray(original?.parts) || !original.parts.length || !Array.isArray(candidate.parts) || !candidate.parts.length) return undefined;
+    const replacements = new Map<string, string[]>();
+    for (const part of candidate.parts) {
+      if (typeof part.path !== "string" || !part.path || !Array.isArray(part.textRuns) || replacements.has(part.path)) return undefined;
+      const sourcePart = original.parts.find((item) => item.path === part.path);
+      if (!sourcePart || !Array.isArray(sourcePart.textRuns)) return undefined;
+      const runs = sourcePart.textRuns.map((item) => item.text);
+      if (runs.some((item) => typeof item !== "string")) return undefined;
+      const updated = runs as string[];
+      const seen = new Set<number>();
+      for (const [position, run] of part.textRuns.entries()) {
+        const index = typeof run === "string" ? position : run.index;
+        const text = typeof run === "string" ? run : run.text;
+        if (typeof index !== "number" || !Number.isInteger(index) || index < 0 || index >= updated.length || typeof text !== "string" || seen.has(index)) return undefined;
+        seen.add(index);
+        updated[index] = text;
+      }
+      replacements.set(part.path, updated);
+    }
+    if (original.parts.some((part) => typeof part.path !== "string" || !Array.isArray(part.textRuns) || part.textRuns.some((run) => typeof run.text !== "string"))) return undefined;
+    const text = original.parts.map((part) => {
+      const path = part.path as string;
+      const runs = replacements.get(path) ?? part.textRuns!.map((run) => run.text as string);
+      return `PART: ${path}\n${runs.join("")}`;
+    }).join("\n\n");
+    return text.trim() ? text : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isCodebaseOverlay(content: string) {
+  try {
+    const parsed = JSON.parse(content) as { overlay?: unknown };
+    return parsed?.overlay === true;
+  } catch {
+    return false;
+  }
+}
+function htmlCandidateText(content: string) {
+  if (!/<html\b[^>]*>/i.test(content) || !/<\/html\s*>/i.test(content)
+    || !/<body\b[^>]*>/i.test(content) || !/<\/body\s*>/i.test(content)) return undefined;
+  return content;
+}
+
 /**
  * Bind locally provable validation evidence to the exact Candidate snapshot.
  *
@@ -133,7 +202,7 @@ export function normalizeLocallyVerifiableCandidateRuns(
     }
 
     if (
-      testCase.executionMode === "artifact-runtime"
+      (testCase.executionMode === "artifact-runtime" || testCase.executionMode === "static-evidence")
       && mapped.every((criterion) => criterion.validationMethod === "semantic-judge" || criterionCanUseLocalSnapshotEvidence(project, criterion))
       && candidate.artifactSnapshots.length > 0
     ) {
@@ -141,33 +210,52 @@ export function normalizeLocallyVerifiableCandidateRuns(
       const snapshots = candidate.artifactSnapshots.filter((snapshot) => !scopedIds.size || scopedIds.has(snapshot.sourceArtifactId));
       const query = `${project.evolutionCommand}\n${testCase.title}\n${testCase.input}\n${testCase.expected.join(" ")}`;
       const maxSideChars = 28_000;
-      const evidence = snapshots.filter((snapshot) => snapshot.content.length > 0).map((snapshot) => ({
-        name: snapshot.name,
-        sourceArtifactId: snapshot.sourceArtifactId,
-        length: snapshot.content.length,
-        complete: snapshot.content.length <= maxSideChars,
-        content: snapshot.content.length <= maxSideChars
-          ? snapshot.content
-          : retrieveTextContext(snapshot.content, query, { maxChars: maxSideChars, maxChunks: 6 }),
-      }));
+      const evidence = snapshots.filter((snapshot) => snapshot.content.length > 0).flatMap((snapshot) => {
+        const source = sources.get(snapshot.sourceArtifactId);
+        const docx = source?.extension.toLowerCase() === "docx"
+          && (!source.artifactDescriptor || source.artifactDescriptor.adapterId === "document-docx-ooxml");
+        const html = source && /^(html|htm)$/i.test(source.extension);
+        const reviewable = docx
+          ? docxCandidateText(source, snapshot.content)
+          : html ? htmlCandidateText(snapshot.content)
+          : testCase.executionMode === "static-evidence" ? staticSnapshotText(snapshot.content) : snapshot.content;
+        if (!reviewable) return [];
+        const overlay = source?.artifactKind === "codebase" && isCodebaseOverlay(snapshot.content);
+        return [{
+          name: snapshot.name,
+          sourceArtifactId: snapshot.sourceArtifactId,
+          length: reviewable.length,
+          complete: reviewable.length <= maxSideChars && !overlay,
+          overlay,
+          content: reviewable.length <= maxSideChars
+            ? reviewable
+            : retrieveTextContext(reviewable, query, { maxChars: maxSideChars, maxChunks: 6 }),
+        }];
+      });
       if (evidence.length) {
+        // A retrieved excerpt is useful context, but it cannot prove the complete Candidate.
         const complete = evidence.length === snapshots.length && evidence.every((item) => item.complete);
         return {
           ...run,
           output: [
-            "CURRENT CANDIDATE SNAPSHOT EVIDENCE",
+            testCase.executionMode === "static-evidence"
+              ? "CURRENT CANDIDATE STATIC SNAPSHOT EVIDENCE"
+              : "CURRENT CANDIDATE SNAPSHOT EVIDENCE",
             `验收目标：${testCase.title}`,
+
             ...evidence.flatMap((item) => [
-              `--- ${item.name} (${item.sourceArtifactId}) · ${item.length} chars${item.complete ? ", complete" : ", retrieved context"} ---`,
+              `--- ${item.name} (${item.sourceArtifactId}) · ${item.length} chars${item.overlay ? ", overlay only" : item.complete ? ", complete" : ", retrieved context"} ---`,
               item.content,
             ]),
-            "证据说明：以上内容直接来自当前 Candidate Artifact Snapshot；Runtime 只提供当前成果证据，是否满足验收要求仍由独立 Rubric evaluator 判定。",
+            "证据说明：以上内容直接来自当前 Candidate Artifact Snapshot；代码库 overlay 只包含候选修改，不能代替完整包验证。Runtime 只提供当前成果证据，是否满足验收要求仍由独立 Rubric evaluator 判定。",
           ].join("\n\n"),
           verificationStatus: complete ? "verified" : "partial",
           trace: [...run.trace, {
-            id: `candidate-semantic-snapshot-${testCase.id}`,
-            stage: "semantic-evidence",
-            summary: complete ? "已提供当前 Candidate 完整快照" : "已提供当前 Candidate 相关内容上下文",
+            id: `${testCase.executionMode === "static-evidence" ? "candidate-static" : "candidate-semantic"}-snapshot-${testCase.id}`,
+            stage: testCase.executionMode === "static-evidence" ? "candidate-static-evidence" : "semantic-evidence",
+            summary: testCase.executionMode === "static-evidence"
+              ? "已绑定当前 Candidate 的静态文件证据"
+              : complete ? "已提供当前 Candidate 可审阅内容" : "已提供当前 Candidate 相关内容上下文",
             status: complete ? "pass" : "warning",
             detail: evidence.map((item) => `${item.name}:${item.length}`).join("；"),
           }],

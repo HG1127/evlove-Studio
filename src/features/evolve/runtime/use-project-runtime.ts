@@ -43,6 +43,7 @@ import { buildSearchMemory, nextExploreRatio } from "./search-memory";
 import { baselineFingerprint, getVisibleBaseline, setVisibleBaseline } from "./round-cache";
 import { flagUngroundedCandidates } from "./plan-grounding";
 import { baselineRubricProblem, buildFocusedPlanPayload, focusedTask, focusedSourceContext, prioritizeProblems, limitPlanToTask } from "./focused-task";
+import { compactProblemAnalysisInput } from "./problem-analysis-input";
 import { baselineReadiness } from "./baseline-readiness";
 import { resolveEvidenceRefs } from "./evidence-provenance";
 import { acceptanceArtifacts, ensureAcceptanceRubric } from "./artifact-quality";
@@ -299,6 +300,21 @@ export function useProjectRuntime(initialProject: EvolveProject) {
     saveLocalProject(withTimestamp);
     setProjectState(withTimestamp);
   }, []);
+
+  // Repair local projects persisted by older builds with campaign=running after the task ended.
+  // On refresh the transient error text is gone, so the absence of both a live run and a
+  // resumable task registration is the reliable signal. Never touch a real in-flight task.
+  useEffect(() => {
+    if (productionRuntimeMode() !== "local" || status.busy || getLiveRun(projectId) || getRunTask(projectId)) return;
+    if (projectRef.current.campaign.status !== "running") return;
+    const candidateBuildFailed = /所选 \d+ 个 Candidate 均未生成可运行文件|build-candidate生成未完成/.test(status.error ?? "");
+    commit((current) => ({
+      ...current,
+      campaign: { ...current.campaign, status: "paused", stopReason: candidateBuildFailed
+        ? "候选文件构造未完成；已保留本轮断点。请检查模型连接后继续自主进化。"
+        : "上次本地进化已中断；已保留本轮断点。请检查运行记录后继续自主进化。" },
+    }));
+  }, [commit, projectId, status.busy, status.error]);
 
   const backgroundEvidenceKey = automaticEvidenceKey(project);
   useEffect(() => {
@@ -675,7 +691,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
   const analyzeProblems = useCallback(async () => {
     const readiness = baselineReadiness(project);
     if (!readiness.ready) throw new Error(`当前版本基线不足以诊断成果问题：${readiness.blockers.join("；")}`);
-    const result = ProblemAnalysisAiResultSchema.parse(await run("AI 分析问题", async () => { reportProgress("正在把失败 Trace 聚类成问题",0,1,"问题发现","problem-analysis"); const output=await runProjectAi("problem-analysis", {
+    const result = ProblemAnalysisAiResultSchema.parse(await run("AI 分析问题", async () => { reportProgress("正在把失败 Trace 聚类成问题",0,1,"问题发现","problem-analysis"); const output=await runProjectAi("problem-analysis", compactProblemAnalysisInput({
       project: {
         goal: project.goal,
         protectedItems: project.protectedItems,
@@ -684,7 +700,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
         baselineRun: project.baselineRun,
         ...sourceEvidence(project, "从当前成果和真实运行结果中找出最值得改的问题，优先读取失败相关内容、流程节点和用户目标证据"),
       },
-    }); reportProgress("问题地图已生成",1,1,"问题发现","problem-analysis"); return output; }));
+    })); reportProgress("问题地图已生成",1,1,"问题发现","problem-analysis"); return output; }));
     const problems = result.problems.map((problem) => ({ ...problem, evidenceRefs: resolveEvidenceRefs(projectAtSearchChampion(project), problem.evidence) }));
     commit((current) => ({ ...current, problems, selectedProblemId: prioritizeProblems(problems)[0]?.problem.id ?? result.recommendedProblemId, stage: "problem" }));
     setStage("problem");
@@ -1642,12 +1658,12 @@ export function useProjectRuntime(initialProject: EvolveProject) {
           phaseDone(`Round ${round} Baseline 已有明确 Rubric 失败 · 直接锁定问题，跳过泛化问题分析`);
         } else {
           phaseDone(`Round ${round} Baseline 完成 · 开始 AI 问题分析`);
-          const problemResult = ProblemAnalysisAiResultSchema.parse(await runProjectAi("problem-analysis", {
+          const problemResult = ProblemAnalysisAiResultSchema.parse(await runProjectAi("problem-analysis", compactProblemAnalysisInput({
             project: { goal: working.goal, metrics: working.metrics, protectedItems: working.protectedItems, editableItems: working.editableItems, ...sourceEvidence(working, "Campaign 本轮问题发现：读取当前最佳版本的真实成果、基线失败和用户目标证据") },
             baseline: working.baselineRun,
             previousRounds: working.roundHistory.slice(-8),
             archive: working.evolutionArchive.slice(-24),
-          }));
+          })));
           const groundedProblems = problemResult.problems.map((problem) => ({ ...problem, evidenceRefs: resolveEvidenceRefs(projectAtSearchChampion(working), problem.evidence) }));
           const recommendedId = prioritizeProblems(groundedProblems)[0]?.problem.id ?? (groundedProblems.some((item) => item.id === problemResult.recommendedProblemId)
             ? problemResult.recommendedProblemId
@@ -2069,18 +2085,38 @@ export function useProjectRuntime(initialProject: EvolveProject) {
     commit((current) => ({ ...current, campaign: { ...current.campaign, status: "running", executionMode: "auto-rounds", startedAt: current.campaign.startedAt ?? now(), stopReason: undefined } }));
     pushActivity("Campaign 自动运行开始", undefined, projectId);
     let guard = 0;
-    while (guard < 100) {
-      guard += 1;
-      const current = projectRef.current;
-      if (current.campaign.status === "paused" || current.campaign.status === "completed" || current.campaign.status === "stopped") break;
-      const result = await runCampaignRound();
-      // 用户暂停时 run() 会把打断收敛成 undefined（并在内部记「已暂停」）：按停止处理，断点已随阶段落盘。
-      if (!result || result.stopped) {
-        const paused = Boolean(result && "paused" in result && result.paused);
-        if (result && !paused && projectRef.current.searchChampion) await materializeOutputs();
-        break;
+    try {
+      while (guard < 100) {
+        guard += 1;
+        const current = projectRef.current;
+        if (current.campaign.status === "paused" || current.campaign.status === "completed" || current.campaign.status === "stopped") break;
+        const result = await runCampaignRound();
+        // 用户暂停时 run() 会把打断收敛成 undefined（并在内部记「已暂停」）：按停止处理，断点已随阶段落盘。
+        if (!result || result.stopped) {
+          const paused = Boolean(result && "paused" in result && result.paused);
+          if (result && !paused && projectRef.current.searchChampion) await materializeOutputs();
+          break;
+        }
+        if (projectRef.current.campaign.executionMode !== "auto-rounds") break;
       }
-      if (projectRef.current.campaign.executionMode !== "auto-rounds") break;
+    } catch (error) {
+      // A failed round must not leave a persisted "running" campaign behind. Otherwise the
+      // autonomy card shows a spinner beside a terminal error and cannot offer Resume.
+      const reason = error instanceof CandidateArtifactBuildError
+        ? "候选文件构造未完成；已保留本轮断点。请检查模型连接后继续自主进化。"
+        : `本轮执行失败，已保留断点：${error instanceof Error ? error.message : String(error)}`;
+      const failedBuilds = error instanceof CandidateArtifactBuildError
+        ? new Map(error.candidates.map((candidate) => [candidate.id, candidate.artifactBuildSummary]))
+        : undefined;
+      commit((current) => current.campaign.status === "running" ? {
+        ...current,
+        candidates: failedBuilds ? current.candidates.map((candidate) => failedBuilds.has(candidate.id)
+          ? { ...candidate, artifactBuildStatus: "failed" as const, artifactBuildSummary: failedBuilds.get(candidate.id) }
+          : candidate) : current.candidates,
+        campaign: { ...current.campaign, status: "paused", stopReason: reason },
+      } : current);
+      pushActivity(`Campaign 已暂停 · ${reason}`, undefined, projectId);
+      throw error;
     }
     const endedPaused = projectRef.current.campaign.status === "paused";
     pushActivity(endedPaused
@@ -2288,6 +2324,27 @@ export function useProjectRuntime(initialProject: EvolveProject) {
       pushActivity(`Harness Failure Router · ${failure.action} · ${failure.disposition.reason}：${message}`, undefined, projectId);
     }
   }, [commit, compileAcceptanceRubric, deepenUnderstanding, distill, executeValidation, finishAutonomousSuccess, generateEvalSuite, generateNextQueue, materializeOutputs, projectId, reconcileRelease, releaseAction, runCampaign, setStatus]);
+
+  /**
+   * Revalidate the current immutable Candidate once, then continue orchestration only when the
+   * evidence gap was actually settled. The previous UI chained requestValidation().then(runAutoPilot)
+   * unconditionally, so an unchanged UNVERIFIED result immediately triggered two more identical
+   * local reviews and looked like a dead button.
+   */
+  const revalidateAndContinue = useCallback(async () => {
+    const validation = await requestValidation();
+    if (!validation) return false;
+    const pendingIds = validation.evaluation?.unverifiedCriterionIds ?? [];
+    if (pendingIds.length) {
+      const titles = pendingIds.map((id) => projectRef.current.acceptanceRubric.find((criterion) => criterion.id === id)?.title ?? id);
+      const message = `重新验收已完成，但仍有 ${pendingIds.length} 项缺少与当前 Candidate 绑定的有效证据：${titles.join("、")}。请查看本次技术运行记录；重复点击不会生成新证据。`;
+      setStatus({ busy: false, message });
+      pushActivity(message, undefined, projectId);
+      return false;
+    }
+    await runAutoPilot();
+    return true;
+  }, [projectId, requestValidation, runAutoPilot, setStatus]);
 
 
   /**
@@ -2535,6 +2592,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
     runCampaignRound,
     runCampaign,
     runAutoPilot,
+    revalidateAndContinue,
     resumeAutonomousEvolution,
     deepenUnderstanding,
     answerClarification,

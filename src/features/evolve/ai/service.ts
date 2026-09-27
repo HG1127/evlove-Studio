@@ -216,6 +216,17 @@ function isBalanceError(error: unknown) {
 
 function isProviderQuotaError(error: unknown) { return isRateLimitedError(error) || isBalanceError(error); }
 
+function isContextWindowError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /context window exceeds limit|context length exceeded|maximum context length|prompt is too long|上下文.{0,12}(?:超限|过长)/i.test(message);
+}
+
+export function outputTokenBudgetForOperation(operation: AiOperation) {
+  if (["build-candidate", "repair-artifact", "materialize"].includes(operation)) return 24_000;
+  if (operation === "problem-analysis") return 6_000;
+  return 10_000;
+}
+
 function seconds(ms: number) { return Math.max(1, Math.round(ms / 1000)); }
 
 /**
@@ -327,6 +338,7 @@ export async function runEvolveAi(operation: AiOperation, payload: unknown, medi
           schemaRetries: profile.schemaRetries,
           schemaRetryTimeoutMs,
           promptCacheKey,
+          maxOutputTokens: outputTokenBudgetForOperation(operation),
           signal,
         }),signal);
         options?.validateResult?.(result);
@@ -361,6 +373,8 @@ export async function runEvolveAi(operation: AiOperation, payload: unknown, medi
       ? isBalanceError(lastError)
         ? "当前供应商账户余额不足，无法预扣本次调用费用。请充值该账户，或前往「AI 模型与连接」把当前节点切换到另一条已测试通过且有可用额度的连接后重试。"
         : "当前供应商返回 429，说明 API Key 有效但额度或频率受限。请前往「AI 模型与连接」切换当前节点到另一条已测试通过的连接，或等待该服务额度恢复后重试。"
+      : failures.some((failure) => isContextWindowError(failure))
+      ? "当前模型拒绝了超长上下文。问题分析输入现已限制为有界证据摘要；若仍出现此错误，请换用支持更长上下文的模型或拆分输入材料。"
       : isTimeoutError(lastError) || deadline.aborted
       ? "可直接再次生成；若仍超时，请在当前节点切换到响应更快的已测试模型后重试。"
       : "请检查连接配置后重试，系统不会用演示结果替代真实执行。";
@@ -390,7 +404,7 @@ export async function runEvolveAi(operation: AiOperation, payload: unknown, medi
       timeoutMs: profile.timeoutMs,
       reasoningEffort,
       promptCacheKey,
-      maxOutputTokens: ["build-candidate", "repair-artifact", "materialize"].includes(operation) ? 24000 : 10000,
+      maxOutputTokens: outputTokenBudgetForOperation(operation),
     });
     options?.validateResult?.(result);
     recordAiPerformance({ operation, provider: String(status.provider), model: status.model, durationMs: Math.round(performance.now() - started), inputChars, cached: false, routeAttempt: 1, status: "ok" });

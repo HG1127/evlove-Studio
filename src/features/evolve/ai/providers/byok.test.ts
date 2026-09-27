@@ -26,6 +26,30 @@ afterEach(() => {
 });
 
 describe("byok structured output recovery", () => {
+  it("uses the caller's bounded output budget for small structured tasks", async () => {
+    let requestedTokens = 0;
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+      requestedTokens = (JSON.parse(String(init?.body)) as { max_tokens: number }).max_tokens;
+      return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: '{"answer":"ok"}' } }] }) };
+    }));
+    await callByokStructured({ resolved, system: "s", user: "u", schema: { name: "t", schema: { type: "object" } }, parser, maxOutputTokens: 6000 });
+    expect(requestedTokens).toBe(6000);
+  });
+
+  it("reads text parts returned by OpenAI-compatible gateways", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ choices: [{ message: { content: [{ type: "text", text: '{"answer":"ok"}' }] } }] }) })));
+    const result = await callByokStructured({ resolved, system: "s", user: "u", schema: { name: "t", schema: { type: "object" } }, parser });
+    expect(result.answer).toBe("ok");
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports an exhausted output budget instead of a generic empty reply", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ choices: [{ finish_reason: "length", message: { content: "", reasoning_content: "thinking" } }], usage: { completion_tokens: 24000 } }) })));
+    await expect(callByokStructured({ resolved, system: "s", user: "u", schema: { name: "t", schema: { type: "object" } }, parser }))
+      .rejects.toThrow(/finish_reason=length.*24000/);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
   it("retries once with the validation error and succeeds", async () => {
     stubResponses(['{"wrong": 1}', '{"answer": "已按格式修正", "updatedCommand": "进化该文档专业性"}']);
     const result = await callByokStructured({ resolved, system: "s", user: "u", schema: { name: "command", schema: { type: "object" } }, parser });

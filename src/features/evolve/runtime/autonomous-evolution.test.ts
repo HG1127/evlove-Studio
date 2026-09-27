@@ -15,6 +15,19 @@ function project(patch: Partial<EvolveProject> = {}): EvolveProject {
 }
 
 describe("autonomous evolution policy", () => {
+  it("offers resume instead of a running spinner after a campaign is paused", () => {
+    for (const stopReason of [
+      "候选文件构造未完成；已保留本轮断点。请检查模型连接后继续自主进化。",
+      "上次本地进化已中断；已保留本轮断点。请检查运行记录后继续自主进化。",
+    ]) {
+      const paused = project({
+        inputUnderstanding: { status: "ready", intentRestatement: "优化文档", implicitRequirements: [], assumptions: [], acceptanceFocus: [], confidence: 0.9, clarifications: [] },
+        campaign: { ...demoProject.campaign, status: "paused", stopReason },
+      });
+      expect(autonomousEvolutionState(paused, false)).toBe("ready");
+    }
+  });
+
   it("auto-adopts a low-risk clarification with an explicit default", () => {
     const p = project({
       inputUnderstanding: {

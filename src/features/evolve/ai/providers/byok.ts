@@ -248,13 +248,24 @@ type ChatLikeJson = {
   message?: string;
   output_text?: string;
   output?: Array<{ content?: Array<{ type?: string; text?: string }> }>;
-  choices?: Array<{ message?: { content?: string } }>;
+  choices?: Array<{
+    message?: { content?: string | Array<{ type?: string; text?: string }>; reasoning_content?: string };
+    text?: string;
+    finish_reason?: string | null;
+  }>;
+  usage?: { completion_tokens?: number; output_tokens?: number };
 };
 
 function extractChatText(json: ChatLikeJson | null | undefined): string {
   if (!json) return "";
-  const fromChoices = (json.choices?.[0]?.message?.content ?? "").trim();
+  const content = json.choices?.[0]?.message?.content;
+  const fromChoices = typeof content === "string"
+    ? content.trim()
+    : Array.isArray(content)
+      ? content.filter((part) => part.type === "text" || part.type === "output_text" || !part.type).map((part) => part.text ?? "").join("").trim()
+      : "";
   if (fromChoices) return fromChoices;
+  if (json.choices?.[0]?.text?.trim()) return json.choices[0]!.text!.trim();
   if (json.output_text?.trim()) return json.output_text.trim();
   for (const item of json.output ?? []) {
     for (const content of item.content ?? []) {
@@ -262,6 +273,16 @@ function extractChatText(json: ChatLikeJson | null | undefined): string {
     }
   }
   return "";
+}
+
+function emptyChatReplyReason(json: ChatLikeJson): string {
+  if (json.error?.message) return `模型返回错误：${json.error.message}`;
+  const choice = json.choices?.[0];
+  const finish = choice?.finish_reason;
+  const outputTokens = json.usage?.completion_tokens ?? json.usage?.output_tokens;
+  if (finish === "length") return `响应中没有最终 content（finish_reason=length${outputTokens === undefined ? "" : `，已用输出 tokens=${outputTokens}`}；可能耗尽输出预算）。请缩小构造范围或切换模型。`;
+  if (choice?.message?.reasoning_content?.trim()) return "响应只有推理内容，没有最终 content；模型未完成结构化结果。请缩小构造范围或切换模型。";
+  return `响应中没有 content 文本${finish ? `（finish_reason=${finish}）` : ""}；请检查模型与中转的返回格式。`;
 }
 
 // 部分网关（opencode zen 等）只讲 Responses 协议：供应商标记或用户粘的地址以 /responses 结尾时，以此为协议偏好信号。
@@ -282,6 +303,7 @@ type StructuredCall = {
   correction?: string;
   timeoutMs?: number;
   promptCacheKey?: string;
+  maxOutputTokens?: number;
   /** 外部打断信号（暂停/取消）：与超时信号合并后挂到 fetch 上。 */
   signal?: AbortSignal;
 };
@@ -313,7 +335,7 @@ async function callOfficialOpenAIResponsesText(args: StructuredCall): Promise<st
         verbosity: "medium",
         format: { type: "json_schema", name: args.schema.name, strict: true, schema: args.schema.schema },
       },
-      max_output_tokens: 24000,
+      max_output_tokens: args.maxOutputTokens ?? 24000,
     }),
   }, true);
   const json = await response.json().catch(() => ({})) as {
@@ -349,8 +371,8 @@ async function openaiKindText(args: StructuredCall & { responseFormat?: unknown 
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${resolved.config.apiKey}` },
     body: JSON.stringify({
       model: resolved.config.model,
-      // 显式给足输出预算：部分兼容服务默认 max_tokens 很小，会把 JSON 拦腰截断
-      max_tokens: 24000,
+      // 节点各自决定输出预算；小 JSON 不应为大型 Artifact 预留同样的 24k tokens。
+      max_tokens: args.maxOutputTokens ?? 24000,
       messages: [
         { role: "system", content: `${args.system}\n\n${JSON_INSTRUCTION}${schemaBlock(args.schema.schema)}` },
         { role: "user", content },
@@ -361,7 +383,7 @@ async function openaiKindText(args: StructuredCall & { responseFormat?: unknown 
   const json = await response.json().catch(() => ({})) as ChatLikeJson;
   if (!response.ok) throw Object.assign(new Error(errorMessage(response.status, json)), { httpStatus: response.status });
   const text = extractChatText(json);
-  if (!text) throw new Error("响应中没有 content 文本");
+  if (!text) throw new Error(emptyChatReplyReason(json));
   return text;
 }
 
@@ -447,7 +469,7 @@ async function callAnthropicKindText(args: StructuredCall): Promise<string> {
     },
     body: JSON.stringify({
       model: resolved.config.model,
-      max_tokens: 16000,
+      max_tokens: args.maxOutputTokens ?? 16000,
       system: `${args.system}\n\n${JSON_INSTRUCTION}${schemaBlock(args.schema.schema)}`,
       messages: [{ role: "user", content }],
     }),
@@ -498,14 +520,14 @@ function zodIssueSummary(error: unknown): string {
 export async function callByokStructured<T>(args: {
   resolved: ResolvedByok; system: string; user: string;
   schema: { name: string; schema: Record<string, unknown> }; parser: ZodType<T>; imageDataUrls?: string[];
-  timeoutMs?: number; schemaRetries?: number; schemaRetryTimeoutMs?: number; promptCacheKey?: string; signal?: AbortSignal;
+  timeoutMs?: number; schemaRetries?: number; schemaRetryTimeoutMs?: number; promptCacheKey?: string; maxOutputTokens?: number; signal?: AbortSignal;
 }): Promise<T> {
   const imageDataUrls = args.resolved.preset.vision ? (args.imageDataUrls ?? []) : [];
   const kindText = async (correction?: string): Promise<string> => {
     // 格式修正只应处理已返回的短 JSON，不应再占用一次完整的深度推理时限；这样备用模型
     // 仍能拿到完整预算，而不是被一次格式修正吞掉整轮时间。
     const timeoutMs = correction ? (args.schemaRetryTimeoutMs ?? args.timeoutMs) : args.timeoutMs;
-    const callArgs: StructuredCall = { resolved: args.resolved, system: args.system, user: args.user, schema: args.schema, imageDataUrls, correction, timeoutMs, promptCacheKey: args.promptCacheKey, signal: args.signal };
+    const callArgs: StructuredCall = { resolved: args.resolved, system: args.system, user: args.user, schema: args.schema, imageDataUrls, correction, timeoutMs, promptCacheKey: args.promptCacheKey, maxOutputTokens: args.maxOutputTokens, signal: args.signal };
     if (args.resolved.preset.kind === "anthropic") return callAnthropicKindText(callArgs);
     if (args.resolved.preset.kind === "gemini") return callGeminiKindText(callArgs);
     if (args.resolved.preset.id === "openai") return callOfficialOpenAIResponsesText(callArgs);

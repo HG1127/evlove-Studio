@@ -17,7 +17,7 @@ import { buildCandidateArtifacts } from "./artifact-quality";
 import { mapTestsToRubric, normalizeAcceptanceRubric, rubricCoverage, rubricValidation } from "./acceptance-rubric";
 import { describeArtifact, resolveProjectArtifactStrategy } from "./artifact-strategy";
 import { buildArtifactGraph, compileSemanticEvolution } from "./semantic-evolution";
-import { canRetryHoldoutFailures, candidateWinnerDecision, computeGapAnalysis, gapHeadline, indexScopedAcceptanceResults, indexScopedTestCaseResults, indexUniqueById, projectHasOnlineReleaseTarget, reusableHoldoutBaseline, REGRESSION_TOLERANCE, validationDecision, validationHardRubricFailures as hardRubricFailures, validationRegression as coreValidationRegression, validationUnverifiedHardCriteria as unverifiedHardRubricCriteria } from "@evolution/core";
+import { canRetryHoldoutFailures, candidateWinnerDecision, computeGapAnalysis, gapHeadline, indexScopedAcceptanceResults, indexScopedTestCaseResults, indexUniqueById, projectHasOnlineReleaseTarget, projectSupportsLocalDocumentSnapshot, reusableHoldoutBaseline, REGRESSION_TOLERANCE, validationDecision, validationHardRubricFailures as hardRubricFailures, validationRegression as coreValidationRegression, validationUnverifiedHardCriteria as unverifiedHardRubricCriteria } from "@evolution/core";
 import { extractSource } from "../sources/source-loader";
 import { getArtifactBlob, putArtifactBlob } from "./artifact-blob-store";
 import { readFrozenArtifact } from "./frozen-artifact";
@@ -78,9 +78,14 @@ const TOTAL_CONCURRENCY = 6;
 export class CandidateArtifactBuildError extends Error {
   readonly candidates: Candidate[];
   constructor(candidates: Candidate[]) {
-    const details = candidates.slice(0, 4).map((candidate) => `${candidate.title || candidate.name}：${candidate.artifactBuildSummary || "未知构造错误"}`);
-    const remaining = candidates.length - details.length;
-    super(`所选 ${candidates.length} 个 Candidate 均未生成可运行文件。${details.join("；")}${remaining > 0 ? `；另有 ${remaining} 个失败` : ""}`);
+    const grouped = new Map<string, string[]>();
+    for (const candidate of candidates) {
+      const reason = candidate.artifactBuildSummary || "未知构造错误";
+      grouped.set(reason, [...(grouped.get(reason) ?? []), candidate.title || candidate.name]);
+    }
+    const details = [...grouped].slice(0, 4).map(([reason, names]) => `${names.join("、")}：${reason}`);
+    const remaining = grouped.size - details.length;
+    super(`所选 ${candidates.length} 个 Candidate 均未生成可运行文件。${details.join("；")}${remaining > 0 ? `；另有 ${remaining} 类失败` : ""}`);
     this.name = "CandidateArtifactBuildError";
     this.candidates = candidates;
   }
@@ -616,7 +621,7 @@ export async function executeCaseSet(args: { adapter: ReturnType<typeof getTarge
  * removes one LLM executor hop per semantic/roundtrip case without changing the independent judge.
  */
 export async function executeCandidateAwareCaseSet(args: Parameters<typeof executeCaseSet>[0]) {
-  if (!args.variant || !isSimpleLocalTextProject(args.project)) return executeCaseSet(args);
+  if (!args.variant || !projectSupportsLocalDocumentSnapshot(args.project)) return executeCaseSet(args);
   const repeatedCaseIds = indexUniqueById(args.testCases, (testCase) => testCase.id).duplicateIds;
   const seedRuns: TargetRunResult[] = args.testCases.map((testCase) => ({
     testCaseId: testCase.id, output: "LOCAL SNAPSHOT EVIDENCE PENDING", latencyMs: 0, cost: 0, trace: [], verificationStatus: "unverified",
@@ -783,8 +788,10 @@ export async function runExperiment(project: EvolveProject, inputCandidates: Can
   }
 
   onProgress?.(0,rawCandidates.length,"生成实际候选文件");
-  const hasLargeTextTarget = parsed.sourceArtifacts.some((artifact) => artifact.role === "target" && (artifact.textContent?.length ?? 0) > 32000);
-  rawCandidates=await pooled(rawCandidates,Math.min(hasLargeTextTarget ? 2 : policy.buildConcurrency,rawCandidates.length),async candidate=>{
+  const hasLargeTextTarget = parsed.sourceArtifacts.some((artifact) => artifact.role === "target" && /^(html?|xhtml|md|markdown|txt|css|js|ts|tsx|jsx|json|yaml|yml|svg)$/i.test(artifact.extension) && (artifact.textContent?.length ?? 0) > 32000);
+  // Long text/HTML builds can already occupy a provider for a full reasoning window. Avoid
+  // sending two heavyweight candidate requests to the same connection at once.
+  rawCandidates=await pooled(rawCandidates,Math.min(hasLargeTextTarget ? 1 : policy.buildConcurrency,rawCandidates.length),async candidate=>{
     try{return await buildCandidateArtifacts(parsed,candidate);}catch(error){return CandidateSchema.parse({...candidate,artifactBuildStatus:"failed",artifactBuildSummary:error instanceof Error ? error.message : String(error)});}
   },(done,total)=>onProgress?.(done,total,"生成实际候选文件"));
   const failedBuilds = rawCandidates.filter((candidate) => candidate.artifactBuildStatus === "failed");

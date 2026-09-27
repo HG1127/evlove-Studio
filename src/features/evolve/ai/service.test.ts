@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { OPERATION_PROFILES } from "./performance";
 import { EvaluateAiResultSchema } from "./schemas";
-import { getAiProviderStatus, reasoningEffortForOperation, resolveFallbackAiProvider, routedOperationDeadlineMs, selectDiverseAiRoutes, withProjectAiProfile } from "./service";
+import { getAiProviderStatus, outputTokenBudgetForOperation, reasoningEffortForOperation, resolveFallbackAiProvider, routedOperationDeadlineMs, selectDiverseAiRoutes, withProjectAiProfile } from "./service";
 import { saveProviderConnections, type ProviderConnection } from "./providers/registry";
 
 afterEach(() => localStorage.clear());
@@ -19,6 +19,11 @@ describe("browser AI fallback truthfulness",()=>{
 });
 
 describe("real AI route time budgets", () => {
+  it("does not reserve an artifact-sized output window for problem analysis", () => {
+    expect(outputTokenBudgetForOperation("problem-analysis")).toBe(6000);
+    expect(outputTokenBudgetForOperation("build-candidate")).toBe(24000);
+  });
+
   it("gives both plan routes their full call budget plus a bounded JSON correction", () => {
     const profile = OPERATION_PROFILES.plan;
     const deadline = routedOperationDeadlineMs("plan", 2);

@@ -36,7 +36,7 @@ export function AttentionRequestPanel({
     }, 0);
   };
   const revalidateAndContinue = () => window.setTimeout(() => {
-    void runtime.requestValidation().then(() => runtime.runAutoPilot());
+    void runtime.revalidateAndContinue();
   }, 0);
 
   if (request.type === "clarification") {

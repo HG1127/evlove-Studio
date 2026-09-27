@@ -157,7 +157,7 @@ export function normalizeEvalSuiteForProject(project: EvolveProject, validationC
   };
 }
 
-export type CriterionEvidenceRoute = "visual" | "manual" | "runner" | "local";
+export type CriterionEvidenceRoute = "visual" | "manual" | "runner" | "local" | "capability";
 
 /**
  * Resolve the user-facing evidence action from the same normalized Hidden Test
@@ -173,7 +173,11 @@ export function evidenceRouteForCriterion(project: EvolveProject, criterion: Acc
   if (modes.includes("visual-review")) return "visual";
   if (modes.includes("manual")) return "manual";
   if (modes.includes("external-runner")) return "runner";
-  if (modes.length > 0 || criterionCanUseLocalSnapshotEvidence(project, criterion)) return "local";
+  if (criterionCanUseLocalSnapshotEvidence(project, criterion)) return "local";
+  // A document scenario with no reviewable source structure cannot be fixed by
+  // clicking the local recheck button; surface the missing capability instead.
+  if (criterion.validationMethod === "user-scenario" && !isCodebaseProject(project)) return "capability";
+  if (modes.length > 0) return "local";
 
   // Imported/legacy projects may temporarily have no mapped Hidden Test. Keep a
   // truthful fallback until suite repair creates the authoritative test case.

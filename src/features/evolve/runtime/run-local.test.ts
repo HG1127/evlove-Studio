@@ -5,9 +5,17 @@ import { getAiProviderStatus } from "../ai/service";
 import { getTargetAdapter } from "../target/registry";
 import type { TestCase } from "@evolution/contracts";
 import { runIntake, runBaseline, runAi, runValidation } from "./api";
-import { effectiveExperimentPolicy, executeCandidateAwareCaseSet, executeCaseSet, fastGateCaseLimit, isSimpleLocalTextProject, normalizeLocallyVerifiableCandidateRuns, reusableScreeningRuns, visibleBaselineEvaluationReusable } from "./run-local";
+import { CandidateArtifactBuildError, effectiveExperimentPolicy, executeCandidateAwareCaseSet, executeCaseSet, fastGateCaseLimit, isSimpleLocalTextProject, normalizeLocallyVerifiableCandidateRuns, reusableScreeningRuns, visibleBaselineEvaluationReusable } from "./run-local";
 
 describe("experiment performance policy", () => {
+  it("groups identical candidate build failures into one actionable error", () => {
+    const failed = ["A", "B"].map((name) => CandidateSchema.parse({ id: name, name, change: "Improve HTML", artifactBuildStatus: "failed", artifactBuildSummary: "模型没有返回最终 content" }));
+    const error = new CandidateArtifactBuildError(failed);
+    expect(error.message).toContain("A、B：模型没有返回最终 content");
+    expect(error.message.match(/模型没有返回最终 content/g)).toHaveLength(1);
+    expect(error.candidates).toHaveLength(2);
+  });
+
   it("upgrades only the legacy automatic defaults", () => {
     const legacy = { ...demoProject, campaign: { ...demoProject.campaign, executionMode: "auto-rounds" as const }, experimentPolicy: { mode:"adaptive" as const, finalistCount:3, screeningCaseCount:3, batchSize:4, buildConcurrency:3, batchArtifactRuntime:true } };
     expect(effectiveExperimentPolicy(legacy).finalistCount).toBe(2);
@@ -101,6 +109,54 @@ describe("local Target execution identity", () => {
     expect(runs).toHaveLength(2);
     expect(runs.every((run) => run.verificationStatus === "unverified")).toBe(true);
     expect(runs.every((run) => !run.error)).toBe(true);
+  });
+
+  it("validates a DOCX SOP from its Candidate blueprint without an executor call", async () => {
+    const criterion = AcceptanceCriterionSchema.parse({ id:"DOC-CONFIG", title:"配置流程可理解性", requirement:"配置步骤编号、示例和注意事项清晰", source:"user-command", weight:100, hardGate:true, judgeType:"llm", validationMethod:"user-scenario", minScore:85, evidenceExpected:["步骤编号","示例","注意事项"], protectedConstraint:false, artifactIds:["sop"], category:"outcome" });
+    const project = { ...demoProject, objectType:"document" as const, sourceArtifacts:[{
+      ...demoProject.sourceArtifacts[0]!, id:"sop", name:"sop.docx", extension:"docx", mimeType:"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      artifactKind:"document" as const, textContent:"旧版配置流程", artifactDescriptor:{adapterId:"document-docx-ooxml"},
+      structuredContent:{kind:"document",subtype:"docx",parts:[{path:"word/document.xml",textRuns:[{index:0,text:"旧版配置流程"}]}]},
+    }], acceptanceRubric:[criterion] } as unknown as typeof demoProject;
+    const candidate = CandidateSchema.parse({ id:"DOC-C", name:"SOP 新版", change:"补齐配置流程", artifactSnapshots:[{
+      id:"doc-snapshot", sourceArtifactId:"sop", name:"sop.docx", mimeType:"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      content:JSON.stringify({kind:"document",subtype:"docx",parts:[{path:"word/document.xml",textRuns:[{index:0,text:"1. 填写地址。示例：输入项目地址。注意事项：保存后检查。"}]}]}),
+      createdAt:"2026-09-27T00:00:00.000Z",
+    }] });
+    const testCase = { id:"H-DOC-CONFIG", title:"配置流程可理解性", input:"检查文档配置说明", expected:["步骤编号","示例","注意事项"], tags:[], hidden:true, criterionIds:[criterion.id], executionMode:"artifact-runtime" as const, evidenceScope:"product-behavior" as const };
+    const adapter = { run: async () => { throw new Error("DOCX 内容检查不应调用外部执行器"); } } as unknown as ReturnType<typeof getTargetAdapter>;
+    const runs = await executeCandidateAwareCaseSet({ adapter, project, testCases:[testCase], variant:candidate, batchSize:1 });
+    expect(runs[0]?.verificationStatus).toBe("verified");
+    expect(runs[0]?.output).toContain("1. 填写地址");
+  });
+  it("validates the current HTML Candidate content without an executor call", async () => {
+    const criterion = AcceptanceCriterionSchema.parse({ id:"HTML-READ", title:"理解难度降低", requirement:"概念解释直白、示例贴近实际", source:"user-command", weight:100, hardGate:true, judgeType:"llm", validationMethod:"user-scenario", minScore:85, evidenceExpected:["直白解释","具体示例"], protectedConstraint:false, artifactIds:["tutorial"], category:"outcome" });
+    const project = { ...demoProject, objectType:"document" as const, sourceArtifacts:[{
+      ...demoProject.sourceArtifacts[0]!, id:"tutorial", name:"tutorial.html", extension:"html", mimeType:"text/html", artifactKind:"document" as const,
+      textContent:"<!doctype html><html><body><h1>旧教程</h1></body></html>",
+    }], acceptanceRubric:[criterion] } as typeof demoProject;
+    const candidate = CandidateSchema.parse({ id:"HTML-C", name:"教程新版", change:"降低理解难度", artifactSnapshots:[{
+      id:"html-snapshot", sourceArtifactId:"tutorial", name:"tutorial.html", mimeType:"text/html",
+      content:"<!doctype html><html><body><h1>概念解释</h1><p>用一个实际项目举例说明。</p></body></html>",
+      createdAt:"2026-09-27T00:00:00.000Z",
+    }] });
+    const testCase = { id:"H-HTML-READ", title:"理解难度降低", input:"检查教程的解释和示例", expected:["解释直白","示例贴近实际"], tags:[], hidden:true, criterionIds:[criterion.id], executionMode:"artifact-runtime" as const, evidenceScope:"product-behavior" as const };
+    const adapter = { run: async () => { throw new Error("HTML 内容检查不应调用外部执行器"); } } as unknown as ReturnType<typeof getTargetAdapter>;
+    const runs = await executeCandidateAwareCaseSet({ adapter, project, testCases:[testCase], variant:candidate, batchSize:1 });
+    expect(runs[0]?.verificationStatus).toBe("verified");
+    expect(runs[0]?.output).toContain("用一个实际项目举例");
+    expect(runs[0]?.output).not.toContain("旧教程");
+
+    const pendingProject = {
+      ...project,
+      candidates:[candidate],
+      evalSuite:[testCase], hiddenEvalSuite:[testCase],
+      experimentRun:{...demoProject.experimentRun,status:"completed" as const,pendingEvidenceCandidateId:candidate.id,candidateResults:[]},
+    };
+    const validation = await runValidation(pendingProject,candidate);
+    expect(validation.status).toBe("completed");
+    expect(validation.runs.find((run)=>run.testCaseId===testCase.id)?.verificationStatus).toBe("verified");
+    expect(validation.evaluation?.unverifiedCriterionIds).not.toContain(criterion.id);
   });
 });
 

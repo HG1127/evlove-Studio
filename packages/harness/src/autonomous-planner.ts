@@ -222,6 +222,11 @@ export function deriveAttentionRequest(project: EvolveProject): AttentionRequest
   // budget/safety limit. The orchestrator can clear this pause and continue into validation itself.
   if (project.campaign.status === "paused" && looksLikeEvidencePause(project)) return undefined;
 
+  // Candidate construction failure is a retryable execution failure, not a budget or safety
+  // boundary. Keep the checkpoint and show Resume; the failed build still needs a real model
+  // result and must never be treated as an accepted artifact.
+  if (project.campaign.status === "paused" && /^(?:候选文件构造未完成|上次本地进化已中断)；已保留本轮断点/.test(project.campaign.stopReason ?? "")) return undefined;
+
   if (project.campaign.status === "paused" && project.campaign.stopReason && !/用户暂停|重新验收已经排队/.test(project.campaign.stopReason)) {
     return attention({
       type: "limit",
