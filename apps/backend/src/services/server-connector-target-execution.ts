@@ -52,17 +52,33 @@ function connectorBinding(project:EvolveProject){
   return {binding,snapshot};
 }
 
-function currentBaseVersion(project:EvolveProject){
+function currentBaseBinding(project:EvolveProject){
   const target=connectorBinding(project);
   if(!target)throw new Error("Connector Target exact snapshot is not available");
-  const champion=trustedServerBaselineChampion(project)?.connectorBinding;
-  if(champion){
-    if(champion.connectorId!==target.binding.connectorId||champion.targetId!==target.binding.targetId){
-      throw new Error("Search Champion Connector binding does not match current Target");
-    }
-    return champion.versionRef;
+  if(!project.searchChampion)return{
+    versionRef:target.snapshot.versionRef,
+    snapshotRef:target.snapshot.snapshotRef,
+    artifactFingerprint:undefined as string|undefined,
+    candidateId:undefined as string|undefined,
+  };
+  const champion=trustedServerBaselineChampion(project);
+  if(!champion)throw new Error("Search Champion lacks completed validation and exact Artifact acceptance");
+  const binding=champion.connectorBinding;
+  if(!binding)throw new Error("Search Champion has no exact Connector staged version binding");
+  if(binding.connectorId!==target.binding.connectorId||binding.targetId!==target.binding.targetId){
+    throw new Error("Search Champion Connector binding does not match current Target");
   }
-  return target.snapshot.versionRef;
+  const fingerprint=connectorCandidateArtifactFingerprint(project,champion);
+  if(fingerprint!==binding.artifactFingerprint){
+    throw new Error("Search Champion Connector binding does not match current Artifact Fingerprint");
+  }
+  if(!binding.versionRef)throw new Error("Search Champion Connector versionRef is missing");
+  return{
+    versionRef:binding.versionRef,
+    snapshotRef:binding.snapshotRef,
+    artifactFingerprint:fingerprint,
+    candidateId:champion.id,
+  };
 }
 
 function targetSnapshots(project:EvolveProject,candidate:Candidate){
@@ -94,13 +110,14 @@ export async function stageServerConnectorCandidate(
   if(!target)return candidate;
   assertIsolation(target.binding.connectorId);
   const fingerprint=connectorCandidateArtifactFingerprint(project,candidate);
+  const baseVersionRef=currentBaseBinding(project).versionRef;
   if(candidate.connectorBinding
     &&candidate.connectorBinding.connectorId===target.binding.connectorId
     &&candidate.connectorBinding.targetId===target.binding.targetId
+    &&candidate.connectorBinding.baseVersionRef===baseVersionRef
     &&candidate.connectorBinding.artifactFingerprint===fingerprint){
     return candidate;
   }
-  const baseVersionRef=currentBaseVersion(project);
   const snapshots=targetSnapshots(project,candidate);
   const idempotencyKey="connector-mutate-"+createHash("sha256")
     .update([project.id,candidate.id,baseVersionRef,fingerprint].join("|"))
@@ -213,9 +230,10 @@ export async function runServerConnectorTargetBatch(
 ){
   const target=connectorBinding(project);
   if(!target)return testCases.map((testCase)=>unavailable(testCase,"Mission 未连接 Connector Target exact snapshot。"));
-  let versionRef=target.snapshot.versionRef;
-  let snapshotRef=target.snapshot.snapshotRef;
+  let versionRef:string;
+  let snapshotRef:string|undefined;
   let artifactFingerprint:string|undefined;
+  let currentCandidateId:string|undefined;
   if(candidate){
     const binding=candidate.connectorBinding;
     if(!binding
@@ -230,6 +248,18 @@ export async function runServerConnectorTargetBatch(
     versionRef=binding.versionRef;
     snapshotRef=binding.snapshotRef;
     artifactFingerprint=binding.artifactFingerprint;
+    currentCandidateId=candidate.id;
+  }else{
+    try{
+      const current=currentBaseBinding(project);
+      versionRef=current.versionRef;
+      snapshotRef=current.snapshotRef;
+      artifactFingerprint=current.artifactFingerprint;
+      currentCandidateId=current.candidateId;
+    }catch(error){
+      const message=error instanceof Error?error.message:String(error);
+      return testCases.map((testCase)=>unavailable(testCase,message));
+    }
   }
   const response=await execute({
     connectorId:target.binding.connectorId,
@@ -238,7 +268,7 @@ export async function runServerConnectorTargetBatch(
     targetId:target.binding.targetId,
     expectedVersionRef:versionRef,
     payload:{
-      candidateId:candidate?.id,
+      candidateId:currentCandidateId,
       snapshotRef,
       artifactFingerprint,
       testCases:testCases.map((testCase)=>({

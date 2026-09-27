@@ -34,6 +34,20 @@ function candidate(){
   } as unknown as Candidate;
 }
 
+function acceptedChampion(p:EvolveProject){
+  const champion=candidate();
+  const fingerprint=connectorCandidateArtifactFingerprint(p,champion);
+  champion.connectorBinding={
+    connectorId:"workflow-main",targetId:"workflow-42",baseVersionRef:"v42",versionRef:"v43",
+    artifactFingerprint:fingerprint,snapshotRef:"snap43",evidenceRefs:["champion-evidence"],observedAt:"now",
+  };
+  p.searchChampion={
+    versionLabel:"C1",candidate:champion,
+    validation:{status:"completed",recommendation:"release"},
+    artifactAcceptance:{status:"passed",candidateId:champion.id},
+  } as unknown as EvolveProject["searchChampion"];
+  return champion;
+}
 const cases=[{
   id:"T1",title:"runs",input:"run workflow",expected:["ok"],tags:[],hidden:false,criterionIds:[],
   executionMode:"external-runner",evidenceScope:"product-behavior",
@@ -110,6 +124,22 @@ describe("server Connector Target execution",()=>{
     expect(execute).toHaveBeenCalledTimes(1);
   });
 
+  it("restages a Candidate when its prior binding uses an older baseline version",async()=>{
+    const p=project();
+    acceptedChampion(p);
+    const next=candidate();
+    next.id="C2";
+    next.connectorBinding={
+      connectorId:"workflow-main",targetId:"workflow-42",baseVersionRef:"v42",versionRef:"v42-c2",
+      artifactFingerprint:connectorCandidateArtifactFingerprint(p,next),snapshotRef:"old-snapshot",
+      evidenceRefs:[],observedAt:"now",
+    };
+    const execute=vi.fn(async(input:ConnectorActionRequest)=>response(input,{versionRef:"v44",snapshotRef:"snap44"}));
+    const staged=await stageServerConnectorCandidate(p,next,execute,()=>undefined);
+    expect(staged).not.toBe(next);
+    expect(staged.connectorBinding).toMatchObject({baseVersionRef:"v43",versionRef:"v44"});
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({operation:"mutate",expectedVersionRef:"v43"}));
+  });
   it("does not invent verified evidence when Connector omits a requested test result",async()=>{
     const execute=vi.fn(async(input:ConnectorActionRequest)=>response(input,{output:{runs:[]}}));
     const runs=await runServerConnectorTargetBatch(project(),cases,undefined,execute);
@@ -153,5 +183,53 @@ describe("server Connector Target execution",()=>{
     const runs=await runServerConnectorTargetBatch(project(),cases,undefined,execute);
     expect(runs[0]).toMatchObject({verificationStatus:"unverified",latencyMs:0,cost:0});
     expect(runs[0]?.output).toContain("unavailable");
+  });
+  it("validates the accepted Champion Connector version as the next Baseline",async()=>{
+    const p=project();
+    const champion=acceptedChampion(p);
+    const execute=vi.fn(async(input:ConnectorActionRequest)=>response(input));
+    const runs=await runServerConnectorTargetBatch(p,cases,undefined,execute);
+    expect(runs[0]?.verificationStatus).toBe("verified");
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({
+      operation:"validate",expectedVersionRef:"v43",
+      payload:expect.objectContaining({
+        candidateId:champion.id,snapshotRef:"snap43",
+        artifactFingerprint:champion.connectorBinding?.artifactFingerprint,
+      }),
+    }));
+  });
+
+  it("does not fall back to the original Connector snapshot when Champion evidence is missing",async()=>{
+    const p=project();
+    const champion=acceptedChampion(p);
+    const execute=vi.fn();
+    p.searchChampion!.artifactAcceptance!.status="unverified";
+    const untrusted=await runServerConnectorTargetBatch(p,cases,undefined,execute);
+    expect(untrusted[0]?.verificationStatus).toBe("unverified");
+    expect(untrusted[0]?.output).toContain("Search Champion");
+    p.searchChampion!.artifactAcceptance!.status="passed";
+    champion.connectorBinding=undefined;
+    const unbound=await runServerConnectorTargetBatch(p,cases,undefined,execute);
+    expect(unbound[0]?.verificationStatus).toBe("unverified");
+    expect(unbound[0]?.output).toContain("no exact Connector staged version");
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("rejects stale Champion Artifact fingerprints and stages the next Candidate from the accepted version",async()=>{
+    const p=project();
+    const champion=acceptedChampion(p);
+    const execute=vi.fn(async(input:ConnectorActionRequest)=>response(input,{versionRef:"v44",snapshotRef:"snap44"}));
+    champion.artifactSnapshots[0]!.content="changed after acceptance";
+    const stale=await runServerConnectorTargetBatch(p,cases,undefined,execute);
+    expect(stale[0]?.verificationStatus).toBe("unverified");
+    expect(stale[0]?.output).toContain("Artifact Fingerprint");
+    expect(execute).not.toHaveBeenCalled();
+    champion.artifactSnapshots[0]!.content='{"nodes":[{"id":"start"}]}';
+    const next=candidate();
+    next.id="C2";
+    await stageServerConnectorCandidate(p,next,execute,()=>undefined);
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({
+      operation:"mutate",expectedVersionRef:"v43",
+    }));
   });
 });
