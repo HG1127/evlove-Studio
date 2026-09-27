@@ -108,6 +108,23 @@ describe("server HTTP target gateway",()=>{
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({testCaseId:"T1",output:"wrong",latencyMs:1,cost:0,verificationStatus:"verified",artifactHash:"wrong",trace:[]}),{status:200}));
     await expect(runHttpTarget(input)).rejects.toThrow("submitted Artifact SHA-256");
   });
+  it("accepts a zero-byte file only when its empty SHA-256 receipt matches",async()=>{
+    process.env.EVOLUTION_TARGET_RUN_URL="https://runner.internal/run";
+    process.env.EVOLUTION_TARGET_RELEASE_URL="https://runner.internal/release";
+    const emptyHash=createHash("sha256").update(Buffer.alloc(0)).digest("hex");
+    const candidate={id:"C1",name:"empty",change:"x",patches:[],artifactSnapshots:[{id:"s",sourceArtifactId:"source",name:"empty.bin",mimeType:"application/octet-stream",content:"",contentHash:"snapshot-empty",createdAt:"now"}]};
+    const file={sourceArtifactId:"source",snapshotHash:"snapshot-empty",name:"empty.bin",mimeType:"application/octet-stream",sha256:emptyHash,size:0,contentBase64:""};
+    const fetchMock=vi.fn(async(url:string|URL|Request)=>new Response(JSON.stringify(String(url).endsWith("/run")
+      ?{testCaseId:"T1",output:"empty verified",latencyMs:1,cost:0,verificationStatus:"verified",artifactHash:emptyHash,trace:[]}
+      :{ok:true,trafficPercent:0,note:"empty deployed",healthy:true,kpis:[],evidenceMode:"live",artifactByteHashes:[{sourceArtifactId:"source",sha256:emptyHash}]}),{status:200}));
+    vi.stubGlobal("fetch",fetchMock);
+    await expect(runHttpTarget({projectId:"p",connectionId:"c",variant:candidate,file,
+      testCase:{id:"T1",title:"empty",input:"inspect",expected:[],tags:[],hidden:false,criterionIds:[],executionMode:"external-runner",evidenceScope:"product-behavior"}}))
+      .resolves.toMatchObject({artifactHash:emptyHash,verificationStatus:"verified"});
+    await expect(releaseHttpTarget({projectId:"p",connectionId:"c",candidate,action:"shadow",frozenArtifacts:[file]}))
+      .resolves.toMatchObject({artifactByteHashes:[{sourceArtifactId:"source",sha256:emptyHash}]});
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
   it("proxies rollback with server-only credentials without resending Candidate bytes",async()=>{
     process.env.EVOLUTION_TARGET_RELEASE_URL="https://runner.internal/release";
     process.env.EVOLUTION_TARGET_BEARER_TOKEN="secret-server-token";

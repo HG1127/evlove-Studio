@@ -365,6 +365,18 @@ describe("server HTTP Target execution",()=>{
     expect(getArtifact).toHaveBeenCalledWith("office-blob");
   });
 
+  it("keeps a zero-byte binary Source bound to its real empty-file SHA-256",async()=>{
+    const p=project();
+    p.sourceArtifacts=[{...p.sourceArtifacts[0]!,id:"empty-source",name:"empty.bin",extension:"bin",mimeType:"application/octet-stream",storageRef:"empty-blob"}];
+    const emptyHash=createHash("sha256").update(Buffer.alloc(0)).digest("hex");
+    const runTarget=vi.fn(async(raw:unknown)=>{
+      expect((raw as {file?:{size:number;contentBase64:string;sha256:string}}).file).toMatchObject({size:0,contentBase64:"",sha256:emptyHash});
+      return{testCaseId:"T1",output:"empty checked",latencyMs:1,cost:0,verificationStatus:"verified",artifactHash:emptyHash,trace:[]} as TargetRunResult;
+    });
+    const [result]=await runServerHttpTargetBatch(p,[testCase],undefined,{runTarget,getArtifact:async()=>new Blob([]),attachVisual:async(_p,_t,runs)=>runs});
+    expect(result?.verificationStatus).toBe("verified");
+    expect(runTarget).toHaveBeenCalledOnce();
+  });
   it("reads only a frozen PDF Candidate and rejects changed bytes before remote execution",async()=>{
     const p=project();
     p.sourceArtifacts=[{...p.sourceArtifacts[0]!,id:"pdf-source",name:"report.pdf",extension:"pdf",mimeType:"application/pdf",storageRef:"old-pdf"}];

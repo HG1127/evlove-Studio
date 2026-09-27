@@ -13,7 +13,7 @@ export const TargetRunFileSchema=z.object({
   mimeType:z.string().min(1),
   sha256:z.string().regex(/^[a-f0-9]{64}$/),
   size:z.number().int().nonnegative(),
-  contentBase64:z.string().min(1),
+  contentBase64:z.string(),
 });
 export type TargetRunFile=z.infer<typeof TargetRunFileSchema>;
 export const TargetRunProxyRequestSchema=z.object({
@@ -35,7 +35,7 @@ export const TargetReleaseArtifactSchema=z.object({
   mimeType:z.string().min(1),
   sha256:z.string().regex(/^[a-f0-9]{64}$/),
   size:z.number().int().nonnegative(),
-  contentBase64:z.string().min(1),
+  contentBase64:z.string(),
 });
 export type TargetReleaseArtifact=z.infer<typeof TargetReleaseArtifactSchema>;
 export const TargetReleaseProxyRequestSchema=z.object({

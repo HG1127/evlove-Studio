@@ -22,6 +22,11 @@ describe("browser HTTP generic file binding",()=>{
     expect(get).toHaveBeenCalledWith("pdf-upload");
   });
 
+  it("preserves exact zero-byte uploads",async()=>{
+    const emptyHash=createHash("sha256").update(Buffer.alloc(0)).digest("hex");
+    const file=await prepareBrowserHttpRunFile(source,undefined,{get:async()=>new Blob([]),read:vi.fn()});
+    expect(file).toMatchObject({size:0,sha256:emptyHash,contentBase64:""});
+  });
   it("uses the Candidate frozen PDF and rejects changed bytes",async()=>{
     const candidate=variant();
     const get=vi.fn();
