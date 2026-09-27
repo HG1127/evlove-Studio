@@ -1,8 +1,9 @@
-import type {EvolveProject,ReleaseAdapterResult,ReleaseOutcomeTelemetryStatus} from "@evolution/contracts";
+import type {ArtifactStorePort,EvolveProject,ReleaseAdapterResult,ReleaseOutcomeTelemetryStatus} from "@evolution/contracts";
 import {currentReleaseCandidate,projectUsesConnectorRelease,projectUsesHttpRelease} from "@evolution/core";
 import {runServerReleaseOrchestration,type ServerReleasePorts} from "@evolution/harness";
 import {executeConnectorReleaseAction} from "./connector-release";
 import {releaseHttpTarget} from "./http-target-gateway";
+import {prepareServerHttpReleaseArtifacts} from "./server-http-release-artifacts";
 import {getActiveReleaseApprovalGrant} from "./release-approval-store";
 import {recordConnectorReleaseOutcomeObservation,recordHttpReleaseOutcomeObservation} from "./release-outcome-telemetry";
 import {captureReleaseOutcomeTelemetry} from "./release-outcome-status";
@@ -11,6 +12,7 @@ import {executeVercelReleaseAction} from "./vercel-release";
 export async function executeServerReleaseProvider(
   project:EvolveProject,
   args:Parameters<ServerReleasePorts["execute"]>[0],
+  artifactStore?:Pick<ArtifactStorePort,"get">,
 ){
   if(projectUsesConnectorRelease(project)){
     return executeConnectorReleaseAction(project,{
@@ -25,10 +27,14 @@ export async function executeServerReleaseProvider(
     if(!candidate)throw new Error("HTTP Release 找不到 exact Candidate");
     const connectionId=project.releaseTarget?.connectionId;
     if(!connectionId)throw new Error("HTTP Release 缺少独立 releaseTarget.connectionId");
+    const prepared=args.action==="rollback"
+      ?{candidate,frozenArtifacts:undefined}
+      :await prepareServerHttpReleaseArtifacts(project,candidate,artifactStore);
     return releaseHttpTarget({
       projectId:project.id,
       connectionId,
-      candidate,
+      candidate:prepared.candidate,
+      frozenArtifacts:prepared.frozenArtifacts,
       action:args.action,
     });
   }
@@ -40,7 +46,7 @@ export async function executeServerReleaseProvider(
   });
 }
 
-export async function runServerMissionRelease(project:EvolveProject){
+export async function runServerMissionRelease(project:EvolveProject,artifactStore?:Pick<ArtifactStorePort,"get">){
   let adapterReceipt:ReleaseAdapterResult|undefined;
   const outcome=await runServerReleaseOrchestration(project,{
     authorize:async({candidateId})=>{
@@ -50,7 +56,7 @@ export async function runServerMissionRelease(project:EvolveProject){
         :{ok:false,reason:"当前 Candidate 没有未过期且未撤销的 durable Release Approval grant。"};
     },
     execute:async(args)=>{
-      const receipt=await executeServerReleaseProvider(project,args);
+      const receipt=await executeServerReleaseProvider(project,args,artifactStore);
       if(projectUsesHttpRelease(project)||projectUsesConnectorRelease(project))adapterReceipt=receipt;
       return receipt;
     },

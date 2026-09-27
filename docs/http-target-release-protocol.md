@@ -1,0 +1,11 @@
+# HTTP Target Release byte contract
+
+The durable Server Release path reads the exact Gate F frozen Blob for every Target. It rejects a missing or changed Blob before calling the external Release endpoint. Browser-local Release reads the corresponding frozen file from local Artifact storage. Both send the accepted Candidate and a `frozenArtifacts` array with one entry per Target:
+
+- `sourceArtifactId`, `snapshotHash`, `name`, and `mimeType` bind the payload to the accepted Candidate Snapshot.
+- `size` and `sha256` describe the frozen bytes.
+- `contentBase64` carries those exact bytes. The proxy decodes and rechecks length and SHA-256 before forwarding.
+
+For `shadow`, each canary step, and `promote`, the Release provider must deploy or confirm those same bytes and return `artifactByteHashes` with the deployed SHA-256 for every Target. A missing, duplicate, or different byte hash causes the proxy to reject the receipt; the Mission does not record it as a successful release. The existing `artifactHashes` field still reports each Candidate Snapshot `contentHash`, and the normal Release state machine verifies it separately. `rollback` does not resend Candidate files.
+
+The external HTTP Runner must be updated to understand `frozenArtifacts` and return `artifactByteHashes` before file-backed HTTP Release can succeed. No connected production Runner has yet exercised this protocol. The request currently embeds base64 bytes; large Artifact delivery needs a measured streaming or time-limited fetch design. The read-only HTTP Observe/Reconcile path still checks Snapshot hashes rather than Gate F byte hashes and needs follow-up before it can independently confirm a deployed file after an uncertain Release response.

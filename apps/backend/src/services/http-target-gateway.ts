@@ -61,7 +61,39 @@ export async function runHttpTarget(raw:unknown){
 
 export async function releaseHttpTarget(raw:unknown){
   const input=TargetReleaseProxyRequestSchema.parse(raw);
-  return TargetReleaseProxyResponseSchema.parse(await post(getServerTargetProxyConfig().releaseUrl,input,"Target Release"));
+  const frozen=input.frozenArtifacts??[];
+  if(input.action==="rollback"&&frozen.length)throw new Error("HTTP Rollback 不应重新提交 Candidate Artifact。");
+  if(input.action!=="rollback"&&(!input.candidate.artifactSnapshots.length||!frozen.length)){
+    throw new Error("HTTP Release 缺少 Gate F 冻结文件载荷，不能执行无文件绑定的发布。");
+  }
+  if(frozen.length){
+    const snapshots=new Map(input.candidate.artifactSnapshots.map((item)=>[item.sourceArtifactId,item]));
+    if(frozen.length!==snapshots.size||snapshots.size!==input.candidate.artifactSnapshots.length
+      ||new Set(frozen.map((item)=>item.sourceArtifactId)).size!==frozen.length){
+      throw new Error("HTTP Release 冻结文件未唯一覆盖 Candidate Snapshot。");
+    }
+    for(const item of frozen){
+      const snapshot=snapshots.get(item.sourceArtifactId);
+      if(!snapshot||snapshot.contentHash!==item.snapshotHash||snapshot.name!==item.name||snapshot.mimeType!==item.mimeType){
+        throw new Error("HTTP Release 冻结文件与 Candidate Snapshot 身份不一致。");
+      }
+      const bytes=Buffer.from(item.contentBase64,"base64");
+      if(bytes.toString("base64")!==item.contentBase64||bytes.byteLength!==item.size
+        ||createHash("sha256").update(bytes).digest("hex")!==item.sha256){
+        throw new Error("HTTP Release 冻结文件字节与 SHA-256 凭证不一致。");
+      }
+    }
+  }
+  const result=TargetReleaseProxyResponseSchema.parse(await post(getServerTargetProxyConfig().releaseUrl,input,"Target Release"));
+  if(frozen.length){
+    const received=result.artifactByteHashes??[];
+    if(received.length!==frozen.length
+      ||new Set(received.map((item)=>item.sourceArtifactId)).size!==received.length
+      ||frozen.some((item)=>!received.some((receipt)=>receipt.sourceArtifactId===item.sourceArtifactId&&receipt.sha256===item.sha256))){
+      throw new Error("HTTP Release 回执未确认 Gate F 冻结 Artifact 的实际字节 SHA-256。");
+    }
+  }
+  return result;
 }
 
 export async function observeHttpTarget(raw:unknown){

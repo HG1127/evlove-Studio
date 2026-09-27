@@ -715,6 +715,7 @@ export const ReleaseAdapterResultSchema = z.object({
   deploymentId: z.string().optional(),
   artifactHash: z.string().optional(),
   artifactHashes: z.array(z.object({ sourceArtifactId: z.string(), contentHash: z.string() })).optional(),
+  artifactByteHashes: z.array(z.object({sourceArtifactId:z.string(),sha256:z.string()})).optional(),
   environment: z.string().optional(),
   observedAt: z.string().optional(),
   latencyMs: z.number().nonnegative().optional(),

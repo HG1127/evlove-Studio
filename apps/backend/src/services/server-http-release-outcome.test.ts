@@ -1,4 +1,5 @@
 // @vitest-environment node
+import {createHash} from "node:crypto";
 import {afterEach,describe,expect,it,vi} from "vitest";
 import type {Candidate,EvolveProject,ReleaseAdapterResult} from "@evolution/contracts";
 
@@ -13,6 +14,9 @@ vi.mock("./release-outcome-telemetry",()=>({recordHttpReleaseOutcomeObservation:
 import {runServerMissionRelease} from "./server-release-orchestration";
 
 const previousUrl=process.env.EVOLUTION_TARGET_RELEASE_URL;
+const byteSha=createHash("sha256").update("new").digest("hex");
+const frozen={sourceArtifactId:"source",snapshotHash:"hash-c1",blobId:"frozen-source",name:"a.txt",mimeType:"text/plain",sha256:byteSha,size:3,verifiedAt:"now",checks:["byte-readback"],limitations:[]};
+const artifactStore={get:async(id:string)=>id==="frozen-source"?new Blob(["new"]):undefined};
 
 afterEach(()=>{
   if(previousUrl===undefined)delete process.env.EVOLUTION_TARGET_RELEASE_URL;
@@ -32,7 +36,8 @@ function fixture(){
     id:"http-release-outcome",version:"V12",currentVersionId:"V12",appliedPatches:[],versions:[],
     targetConnection:{adapter:"artifact",connectionId:"artifact-runtime",status:"connected",label:"Artifact Target"},
     releaseTarget:{provider:"http",mode:"preview-promote",status:"connected",label:"HTTP Release",connectionId:"release-http",healthPath:"/"},
-    experimentRun:{winnerId:"C1"},candidates:[candidate],searchChampion:{candidate},
+    sourceArtifacts:[{id:"source",role:"target",name:"a.txt"}],
+    experimentRun:{winnerId:"C1"},candidates:[candidate],searchChampion:{candidate,artifactAcceptance:{status:"passed",candidateId:"C1",frozenArtifacts:[frozen]}},
     gates:[{id:"release-ready",status:"approved"}],
     campaign:{status:"running",schedule:{enabled:false}},
     release:{status:"idle",candidateId:"C1",trafficPercent:0,kpis:[],evidenceMode:"none",history:[]},
@@ -46,9 +51,10 @@ describe("server HTTP release outcome persistence",()=>{
       ok:true,trafficPercent:0,note:"shadow healthy",healthy:true,kpis:[],evidenceMode:"live",
       effectiveAction:"shadow",observationStatus:"healthy",deploymentId:"http-candidate",stableDeploymentId:"http-stable",
       artifactHashes:[{sourceArtifactId:"source",contentHash:"hash-c1"}],
+      artifactByteHashes:[{sourceArtifactId:"source",sha256:byteSha}],
       environment:"preview",observedAt:"2026-09-22T02:00:00Z",latencyMs:25,sampleSize:2,windowMinutes:1,
     }),{status:200,headers:{"Content-Type":"application/json"}})));
-    const outcome=await runServerMissionRelease(fixture());
+    const outcome=await runServerMissionRelease(fixture(),artifactStore);
     expect(outcome.project.release.observedAt).toBe("2026-09-22T02:00:00Z");
     expect(record).toHaveBeenCalledTimes(1);
     expect(record.mock.calls[0]?.[0].release.deploymentId).toBe("http-candidate");
@@ -62,9 +68,10 @@ describe("server HTTP release outcome persistence",()=>{
       ok:true,trafficPercent:0,note:"wrong artifact",healthy:true,kpis:[],evidenceMode:"live",
       effectiveAction:"shadow",observationStatus:"healthy",deploymentId:"http-candidate",
       artifactHashes:[{sourceArtifactId:"source",contentHash:"wrong"}],
+      artifactByteHashes:[{sourceArtifactId:"source",sha256:byteSha}],
       environment:"preview",observedAt:"2026-09-22T02:01:00Z",
     }),{status:200,headers:{"Content-Type":"application/json"}})));
-    const outcome=await runServerMissionRelease(fixture());
+    const outcome=await runServerMissionRelease(fixture(),artifactStore);
     expect(outcome.control).toBe("stop");
     expect(outcome.project.campaign.stopReason).toContain("server-release-receipt-invalid");
     expect(record).not.toHaveBeenCalled();
@@ -77,12 +84,13 @@ describe("server HTTP release outcome persistence",()=>{
       ok:true,trafficPercent:0,note:"shadow healthy",healthy:true,kpis:[],evidenceMode:"live",
       effectiveAction:"shadow",observationStatus:"healthy",deploymentId:"http-candidate",stableDeploymentId:"http-stable",
       artifactHashes:[{sourceArtifactId:"source",contentHash:"hash-c1"}],
+      artifactByteHashes:[{sourceArtifactId:"source",sha256:byteSha}],
       environment:"preview",observedAt:"2026-09-22T02:02:00Z",latencyMs:25,sampleSize:2,windowMinutes:1,
     }),{status:200,headers:{"Content-Type":"application/json"}})));
     record.mockRejectedValueOnce(new Error("private database error"));
     const warn=vi.spyOn(console,"warn").mockImplementation(()=>undefined);
     try{
-      const outcome=await runServerMissionRelease(fixture());
+      const outcome=await runServerMissionRelease(fixture(),artifactStore);
       expect(outcome.control).toBe("continue");
       expect(outcome.project.release.observedAt).toBe("2026-09-22T02:02:00Z");
       expect(outcome.outcomeTelemetry).toMatchObject({status:"failed"});

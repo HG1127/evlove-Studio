@@ -88,13 +88,13 @@ describe("server HTTP target gateway",()=>{
     })).resolves.toMatchObject({artifactHash:archiveDigest});
   });
 
-  it("proxies release with server-only credentials",async()=>{
+  it("proxies rollback with server-only credentials without resending Candidate bytes",async()=>{
     process.env.EVOLUTION_TARGET_RELEASE_URL="https://runner.internal/release";
     process.env.EVOLUTION_TARGET_BEARER_TOKEN="secret-server-token";
     const fetchMock=vi.fn(async(_input:RequestInfo|URL,init?:RequestInit)=>{
       expect((init?.headers as Record<string,string>).Authorization).toBe("Bearer secret-server-token");
       return new Response(JSON.stringify({
-        ok:true,trafficPercent:100,note:"ok",healthy:true,kpis:[],evidenceMode:"live",observationStatus:"healthy",
+        ok:true,trafficPercent:0,note:"ok",healthy:true,kpis:[],evidenceMode:"live",observationStatus:"healthy",
       }),{status:200,headers:{"Content-Type":"application/json"}});
     });
     vi.stubGlobal("fetch",fetchMock);
@@ -102,10 +102,32 @@ describe("server HTTP target gateway",()=>{
       id:"C1",name:"c",change:"x",patches:[],addressesAdvice:[],riskLevel:"low",risks:[],
       accuracy:90,evidence:90,riskCoverage:90,costDelta:0,speedDelta:0,safety:"PASS",recommended:true,status:"passed",notes:[],artifactSnapshots:[],
     };
-    const result=await releaseHttpTarget({projectId:"p",connectionId:"c",candidate,action:"promote"});
+    const result=await releaseHttpTarget({projectId:"p",connectionId:"c",candidate,action:"rollback"});
     expect(result.ok).toBe(true);
   });
 
+  it("checks frozen Release bytes before POST and requires the remote byte-hash receipt",async()=>{
+    process.env.EVOLUTION_TARGET_RELEASE_URL="https://runner.internal/release";
+    const content="exact frozen bytes";
+    const digest=createHash("sha256").update(content).digest("hex");
+    const candidate={
+      id:"C1",name:"accepted",change:"x",patches:[],artifactSnapshots:[{
+        id:"snapshot",sourceArtifactId:"source",name:"index.html",mimeType:"text/html",content,
+        contentHash:"snapshot-hash",createdAt:"now",
+      }],
+    };
+    const artifact={sourceArtifactId:"source",snapshotHash:"snapshot-hash",name:"index.html",mimeType:"text/html",sha256:digest,size:Buffer.byteLength(content),contentBase64:Buffer.from(content).toString("base64")};
+    const input={projectId:"p",connectionId:"c",candidate,action:"shadow",frozenArtifacts:[artifact]};
+    const fetchMock=vi.fn(async()=>new Response(JSON.stringify({ok:true,trafficPercent:0,note:"ok",healthy:true,kpis:[],evidenceMode:"live",artifactByteHashes:[{sourceArtifactId:"source",sha256:digest}]}),{status:200}));
+    vi.stubGlobal("fetch",fetchMock);
+    await expect(releaseHttpTarget({...input,frozenArtifacts:undefined})).rejects.toThrow("缺少 Gate F 冻结文件载荷");
+    await expect(releaseHttpTarget({...input,frozenArtifacts:[{...artifact,contentBase64:Buffer.from("wrong frozen bytes").toString("base64")}] })).rejects.toThrow("字节与 SHA-256");
+    expect(fetchMock).not.toHaveBeenCalled();
+    await expect(releaseHttpTarget(input)).resolves.toMatchObject({artifactByteHashes:[{sourceArtifactId:"source",sha256:digest}]});
+    expect(fetchMock).toHaveBeenCalledOnce();
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ok:true,trafficPercent:0,note:"wrong byte receipt",healthy:true,kpis:[],evidenceMode:"live",artifactByteHashes:[{sourceArtifactId:"source",sha256:"wrong"}]}),{status:200}));
+    await expect(releaseHttpTarget(input)).rejects.toThrow("回执未确认 Gate F");
+  });
   it("proxies a read-only observe receipt with strict live release identity",async()=>{
     process.env.EVOLUTION_TARGET_OBSERVE_URL="https://runner.internal/observe";
     process.env.EVOLUTION_TARGET_BEARER_TOKEN="secret-server-token";

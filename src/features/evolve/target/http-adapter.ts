@@ -1,6 +1,7 @@
 import {getArtifactBlob} from "../runtime/artifact-blob-store";
 import {readFrozenArtifact,sha256} from "../runtime/frozen-artifact";
 import {artifactTargetAdapter} from "./artifact-adapter";
+import {prepareBrowserHttpReleaseArtifacts} from "./http-release-artifacts";
 import {runVisualCase} from "../runtime/visual-case";
 import {textDigest} from "../runtime/frozen-artifact";
 import { ReleaseAdapterResultSchema, TargetRunResultSchema } from "../schemas";
@@ -55,11 +56,16 @@ export const httpTargetAdapter: TargetAdapter = {
   },
   async release({ project, candidate, action }) {
     const url = SERVER_RELEASE_URL;
+    const connectionId=project.releaseTarget?.provider==="http"&&project.releaseTarget.status==="connected"
+      ?project.releaseTarget.connectionId:undefined;
+    if(!connectionId)throw new Error("HTTP 发布缺少独立 Release Target connectionId。");
+    const prepared=action==="rollback"?{candidate,frozenArtifacts:undefined}
+      :await prepareBrowserHttpReleaseArtifacts(project,candidate);
     const res = await fetch(url, {
       method: "POST",
       headers: headers(),
       signal: AbortSignal.timeout(SERVER_PROXY_TIMEOUT_MS),
-      body: JSON.stringify({ projectId: project.id, connectionId: project.targetConnection.connectionId, candidate, action }),
+      body: JSON.stringify({ projectId: project.id, connectionId, candidate:prepared.candidate, frozenArtifacts:prepared.frozenArtifacts, action }),
     });
     if (!res.ok) throw await executionError(res, "发布执行");
     return ReleaseAdapterResultSchema.parse(await res.json());

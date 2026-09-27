@@ -17,10 +17,21 @@ export const TargetRunProxyRequestSchema=z.object({
 export type TargetRunProxyRequest=z.infer<typeof TargetRunProxyRequestSchema>;
 export const TargetRunProxyResponseSchema=TargetRunResultSchema;
 
+export const TargetReleaseArtifactSchema=z.object({
+  sourceArtifactId:z.string().min(1),
+  snapshotHash:z.string().min(1),
+  name:z.string().min(1),
+  mimeType:z.string().min(1),
+  sha256:z.string().regex(/^[a-f0-9]{64}$/),
+  size:z.number().int().nonnegative(),
+  contentBase64:z.string().min(1),
+});
+export type TargetReleaseArtifact=z.infer<typeof TargetReleaseArtifactSchema>;
 export const TargetReleaseProxyRequestSchema=z.object({
   projectId:z.string().min(1),
   connectionId:z.string().min(1),
   candidate:CandidateSchema,
+  frozenArtifacts:z.array(TargetReleaseArtifactSchema).optional(),
   action:z.enum(["shadow","canary-5","canary-20","canary-50","promote","rollback"]),
 });
 export type TargetReleaseProxyRequest=z.infer<typeof TargetReleaseProxyRequestSchema>;
