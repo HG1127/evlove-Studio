@@ -1,10 +1,18 @@
 // @vitest-environment node
+import {createHash} from "node:crypto";
 import {describe,expect,it,vi} from "vitest";
 import type {Candidate,EvolveProject,TargetRunResult,TestCase} from "@evolution/contracts";
 import {runServerHttpTargetBatch,serverHttpTargetEnabled} from "./server-http-target-execution";
 
 const testCase={id:"T1",title:"真实 Target",input:"run",expected:["ok"],tags:[],hidden:false,criterionIds:[],executionMode:"external-runner",evidenceScope:"product-behavior"} as TestCase;
 
+function frozenHtml(content:string,sourceArtifactId:string,blobId:string,snapshotHash:string){
+  return{
+    sourceArtifactId,snapshotHash,blobId,name:"index.html",mimeType:"text/html",
+    sha256:createHash("sha256").update(content).digest("hex"),size:Buffer.byteLength(content),
+    verifiedAt:"2026-09-22T00:01:00.000Z",checks:["html"],limitations:[],
+  };
+}
 function project():EvolveProject{
   return{
     id:"http-mission",
@@ -21,7 +29,7 @@ function acceptedChampion(p:EvolveProject){
   const candidate={
     id:"C-accepted",name:"accepted",change:"x",patches:[],addressesAdvice:[],riskLevel:"low",risks:[],
     accuracy:90,evidence:90,riskCoverage:90,costDelta:0,speedDelta:0,safety:"PASS",recommended:true,status:"winner",notes:[],artifactBuildStatus:"ready",
-    artifactSnapshots:[{id:"snap-accepted",sourceArtifactId:"html-source",name:"index.html",mimeType:"text/html",content:"<html>ACCEPTED</html>",contentHash:"accepted-hash",buildMode:"ai-full",notes:[],createdAt:"2026-09-22T00:01:00.000Z"}],
+    artifactSnapshots:[{id:"snap-accepted",sourceArtifactId:"html-source",name:"index.html",mimeType:"text/html",content:"<html>ACCEPTED</html>",contentHash:"accepted-hash",buildMode:"ai-full",notes:[],createdAt:"2026-09-22T00:01:00.000Z",frozenArtifact:frozenHtml("<html>ACCEPTED</html>","html-source","accepted-html","accepted-hash")}],
   } as Candidate;
   const evaluation={accuracy:90,evidence:90,riskCoverage:90,completeness:90,safety:"PASS" as const,averageCost:0,averageLatencyMs:1,notes:[],failures:[]};
   p.searchChampion={
@@ -46,9 +54,11 @@ describe("server HTTP Target execution",()=>{
       const artifactHash=[...new Uint8Array(hash)].map((v)=>v.toString(16).padStart(2,"0")).join("");
       return{testCaseId:"T1",output:"ok",latencyMs:1,cost:0,verificationStatus:"verified",artifactHash,trace:[]} as TargetRunResult;
     });
-    const result=await runServerHttpTargetBatch(p,[testCase],undefined,{runTarget,getArtifact:async()=>undefined,attachVisual:async(_p,_t,runs)=>runs});
+    const getArtifact=vi.fn(async(id:string)=>id==="accepted-html"?new Blob(["<html>ACCEPTED</html>"],{type:"text/html"}):undefined);
+    const result=await runServerHttpTargetBatch(p,[testCase],undefined,{runTarget,getArtifact,attachVisual:async(_p,_t,runs)=>runs});
     expect(result[0]?.verificationStatus).toBe("verified");
     expect(runTarget).toHaveBeenCalledTimes(1);
+    expect(getArtifact).toHaveBeenCalledWith("accepted-html");
   });
 
   it("binds candidate HTML execution to the exact candidate snapshot",async()=>{
@@ -56,7 +66,7 @@ describe("server HTTP Target execution",()=>{
     const candidate={
       id:"C1",name:"candidate",change:"x",patches:[],addressesAdvice:[],riskLevel:"low",risks:[],
       accuracy:0,evidence:0,riskCoverage:0,costDelta:0,speedDelta:0,safety:"REVIEW",recommended:true,status:"draft",notes:[],artifactBuildStatus:"ready",
-      artifactSnapshots:[{id:"snap-c1",sourceArtifactId:"html-source",name:"index.html",mimeType:"text/html",content:"<html>CANDIDATE</html>",contentHash:"c1",buildMode:"ai-full",notes:[],createdAt:"2026-09-22T00:03:00.000Z"}],
+      artifactSnapshots:[{id:"snap-c1",sourceArtifactId:"html-source",name:"index.html",mimeType:"text/html",content:"<html>CANDIDATE</html>",contentHash:"c1",buildMode:"ai-full",notes:[],createdAt:"2026-09-22T00:03:00.000Z",frozenArtifact:frozenHtml("<html>CANDIDATE</html>","html-source","candidate-html","c1")}],
     } as Candidate;
     const runTarget=vi.fn(async(raw:unknown)=>{
       const input=raw as {artifact?:{content:string};variant?:Candidate};
@@ -64,9 +74,73 @@ describe("server HTTP Target execution",()=>{
       expect(input.variant?.id).toBe("C1");
       return{testCaseId:"T1",output:"runner omitted hash",latencyMs:1,cost:0,verificationStatus:"verified",trace:[]} as TargetRunResult;
     });
-    const [result]=await runServerHttpTargetBatch(p,[testCase],candidate,{runTarget,getArtifact:async()=>undefined,attachVisual:async(_p,_t,runs)=>runs});
+    const [result]=await runServerHttpTargetBatch(p,[testCase],candidate,{runTarget,getArtifact:async(id)=>id==="candidate-html"?new Blob(["<html>CANDIDATE</html>"]):undefined,attachVisual:async(_p,_t,runs)=>runs});
     expect(result?.verificationStatus).toBe("unverified");
     expect(result?.output).toContain("Artifact 指纹不一致");
+  });
+
+  it("uses the uploaded HTML storageRef bytes instead of stale parsed Source text",async()=>{
+    const p=project();
+    p.sourceArtifacts=[{...p.sourceArtifacts[0]!,storageRef:"uploaded-html",textContent:"<html>STALE</html>"}];
+    const expected="<html>UPLOADED</html>";
+    const runTarget=vi.fn(async(raw:unknown)=>{
+      expect((raw as {artifact?:{content:string}}).artifact?.content).toBe(expected);
+      return{testCaseId:"T1",output:"ok",latencyMs:1,cost:0,verificationStatus:"verified",artifactHash:createHash("sha256").update(expected).digest("hex"),trace:[]} as TargetRunResult;
+    });
+    const getArtifact=vi.fn(async(id:string)=>id==="uploaded-html"?new Blob([expected]):undefined);
+    const [result]=await runServerHttpTargetBatch(p,[testCase],undefined,{runTarget,getArtifact,attachVisual:async(_p,_t,runs)=>runs});
+    expect(result?.verificationStatus).toBe("verified");
+    expect(getArtifact).toHaveBeenCalledWith("uploaded-html");
+    expect(runTarget).toHaveBeenCalledOnce();
+  });
+
+  it("does not use parsed HTML text when a referenced upload is missing",async()=>{
+    const p=project();
+    p.sourceArtifacts=[{...p.sourceArtifacts[0]!,storageRef:"missing-upload"}];
+    const runTarget=vi.fn();
+    const getArtifact=vi.fn(async()=>undefined);
+    const [result]=await runServerHttpTargetBatch(p,[testCase],undefined,{runTarget,getArtifact,attachVisual:async(_p,_t,runs)=>runs});
+    expect(result?.verificationStatus).toBe("unverified");
+    expect(result?.output).toContain("missing-upload");
+    expect(getArtifact).toHaveBeenCalledWith("missing-upload");
+    expect(runTarget).not.toHaveBeenCalled();
+  });
+
+  it("rejects tampered frozen Champion HTML before invoking the remote Target",async()=>{
+    const p=project();
+    acceptedChampion(p);
+    const runTarget=vi.fn();
+    const getArtifact=vi.fn(async()=>new Blob(["<html>TAMPERED</html>"]));
+    const [result]=await runServerHttpTargetBatch(p,[testCase],undefined,{runTarget,getArtifact,attachVisual:async(_p,_t,runs)=>runs});
+    expect(result?.verificationStatus).toBe("unverified");
+    expect(result?.output).toContain("冻结凭证不一致");
+    expect(runTarget).not.toHaveBeenCalled();
+  });
+
+  it("rejects a frozen HTML receipt bound to a different Snapshot before reading bytes",async()=>{
+    const p=project();
+    const candidate=acceptedChampion(p);
+    candidate.artifactSnapshots[0]!.frozenArtifact={...candidate.artifactSnapshots[0]!.frozenArtifact!,snapshotHash:"other-snapshot"};
+    const runTarget=vi.fn();
+    const getArtifact=vi.fn(async()=>new Blob(["<html>ACCEPTED</html>"]));
+    const [result]=await runServerHttpTargetBatch(p,[testCase],candidate,{runTarget,getArtifact,attachVisual:async(_p,_t,runs)=>runs});
+    expect(result?.verificationStatus).toBe("unverified");
+    expect(result?.output).toContain("身份不一致");
+    expect(getArtifact).not.toHaveBeenCalled();
+    expect(runTarget).not.toHaveBeenCalled();
+  });
+  it("rejects a Candidate HTML snapshot with no frozen receipt",async()=>{
+    const p=project();
+    const candidate=acceptedChampion(p);
+    p.searchChampion=undefined;
+    candidate.artifactSnapshots[0]!.frozenArtifact=undefined;
+    const runTarget=vi.fn();
+    const getArtifact=vi.fn(async()=>undefined);
+    const [result]=await runServerHttpTargetBatch(p,[testCase],candidate,{runTarget,getArtifact,attachVisual:async(_p,_t,runs)=>runs});
+    expect(result?.verificationStatus).toBe("unverified");
+    expect(result?.output).toContain("尚未冻结真实文件");
+    expect(getArtifact).not.toHaveBeenCalled();
+    expect(runTarget).not.toHaveBeenCalled();
   });
 
   it("fails closed when a current accepted version lacks the exact target snapshot",async()=>{

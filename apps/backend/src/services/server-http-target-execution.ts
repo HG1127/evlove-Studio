@@ -69,9 +69,37 @@ async function bindingFor(
     if(current&&snapshots.length!==1){
       throw new Error(`当前版本 ${current.id} 没有唯一的 HTML Target ${html.id} exact Artifact Snapshot，不能回退原版。`);
     }
-    const content=snapshot?.content??html.textContent;
-    if(!content?.trim())throw new Error(`HTML Target ${html.id} 没有可执行的完整内容。`);
-    return{artifact:{name:snapshot?.name??html.name,content},expectedHash:digest(content)};
+    let content:string|undefined;
+    let expectedHash:string|undefined;
+    if(snapshot){
+      const frozen=snapshot.frozenArtifact;
+      if(!frozen)throw new Error(`当前版本 ${current?.id??"candidate"} 的 HTML Target 尚未冻结真实文件。`);
+      if(frozen.sourceArtifactId!==html.id||frozen.snapshotHash!==snapshot.contentHash||frozen.name!==snapshot.name||frozen.mimeType!==snapshot.mimeType){
+        throw new Error("HTTP Target HTML 冻结凭证与 Candidate Snapshot 身份不一致。");
+      }
+      const blob=await getArtifact(frozen.blobId);
+      if(!blob)throw new Error(`找不到 HTTP Target 冻结 HTML Blob ${frozen.blobId}。`);
+      const bytes=new Uint8Array(await blob.arrayBuffer());
+      if(bytes.byteLength!==frozen.size)throw new Error("HTTP Target HTML 大小与冻结凭证不一致。");
+      if(digest(bytes)!==frozen.sha256)throw new Error("HTTP Target HTML SHA-256 与冻结凭证不一致。");
+      content=new TextDecoder().decode(bytes);
+      if(content!==snapshot.content||digest(content)!==frozen.sha256){
+        throw new Error("HTTP Target HTML 冻结字节与 Candidate Snapshot 不一致。");
+      }
+      expectedHash=frozen.sha256;
+    }else if(html.storageRef?.trim()){
+      const blob=await getArtifact(html.storageRef.trim());
+      if(!blob)throw new Error(`找不到 HTTP Target 原始 HTML Blob ${html.storageRef.trim()}。`);
+      const bytes=new Uint8Array(await blob.arrayBuffer());
+      content=new TextDecoder().decode(bytes);
+      if(digest(content)!==digest(bytes))throw new Error("HTTP Target 原始 HTML 不是可逐字节还原的 UTF-8 文本。");
+      expectedHash=digest(bytes);
+    }else{
+      content=html.textContent;
+      expectedHash=content?digest(content):undefined;
+    }
+    if(!content?.trim()||!expectedHash)throw new Error(`HTML Target ${html.id} 没有可执行的完整内容。`);
+    return{artifact:{name:snapshot?.name??html.name,content},expectedHash};
   }
 
   const archive=archiveTarget(project);
