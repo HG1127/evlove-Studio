@@ -45,6 +45,18 @@ describe("server baseline codebase binding",()=>{
     expect(resolveServerBaselineCodebaseBinding(project)).toMatchObject({blobId:"source-zip",candidateId:undefined});
   });
 
+  it("reads the source ZIP from storageRef when its metadata ID differs",()=>{
+    const project=codebaseProject();
+    project.sourceArtifacts[0]!.storageRef="raw-zip";
+    expect(resolveServerBaselineCodebaseBinding(project)).toMatchObject({blobId:"raw-zip",candidateId:undefined});
+  });
+
+  it("keeps the accepted champion's frozen ZIP ahead of the source storageRef",()=>{
+    const project=codebaseProject();
+    project.sourceArtifacts[0]!.storageRef="raw-zip";
+    acceptedChampion(project,true);
+    expect(resolveServerBaselineCodebaseBinding(project)).toMatchObject({blobId:"champion-blob",candidateId:"candidate-s1"});
+  });
   it("refuses to fall back to the source ZIP when the accepted champion is not frozen",()=>{
     const project=codebaseProject();
     acceptedChampion(project,false);

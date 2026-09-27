@@ -35,7 +35,7 @@ export function resolveServerBaselineCodebaseBinding(project: EvolveProject) {
   }
   return {
     source,
-    blobId: snapshot?.frozenArtifact?.blobId ?? source.id,
+    blobId: snapshot?.frozenArtifact?.blobId ?? (source.storageRef?.trim() || source.id),
     candidateId: snapshot ? champion?.id : undefined,
     sha256: snapshot?.frozenArtifact?.sha256,
     size: snapshot?.frozenArtifact?.size,

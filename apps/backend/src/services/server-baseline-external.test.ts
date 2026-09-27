@@ -33,6 +33,27 @@ beforeEach(()=>{
 });
 
 describe("server baseline frozen ZIP readback",()=>{
+  it("runs the first-cycle source ZIP from its storageRef",async()=>{
+    const project={id:"mission",sourceArtifacts:[{id:"source",storageRef:"raw-zip",role:"target",artifactKind:"codebase",extension:"zip"}]} as unknown as EvolveProject;
+    const bytes=new TextEncoder().encode("source archive");
+    getBlob.mockResolvedValue(new Blob([bytes]));
+    const [result]=await executeServerBaselineExternal(project,[testCase]);
+    expect(result?.verificationStatus).toBe("verified");
+    expect(getBlob).toHaveBeenCalledOnce();
+    expect(getBlob).toHaveBeenCalledWith("raw-zip");
+    expect(runSandbox).toHaveBeenCalledWith(expect.objectContaining({id:"mission-baseline-source",archive:bytes,testCases:[testCase]}));
+  });
+
+  it("does not substitute the source metadata ID for a missing storageRef blob",async()=>{
+    const project={id:"mission",sourceArtifacts:[{id:"source",storageRef:"raw-zip",role:"target",artifactKind:"codebase",extension:"zip"}]} as unknown as EvolveProject;
+    getBlob.mockResolvedValue(undefined);
+    const [result]=await executeServerBaselineExternal(project,[testCase]);
+    expect(result?.verificationStatus).toBe("unverified");
+    expect(result?.output).toContain("raw-zip");
+    expect(getBlob).toHaveBeenCalledOnce();
+    expect(getBlob).toHaveBeenCalledWith("raw-zip");
+    expect(runSandbox).not.toHaveBeenCalled();
+  });
   it("refuses a different byte size before starting Sandbox",async()=>{
     const bytes=new TextEncoder().encode("accepted archive");
     const {project}=acceptedProject(bytes);
