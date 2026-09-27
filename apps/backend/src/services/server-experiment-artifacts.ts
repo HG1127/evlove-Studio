@@ -10,6 +10,7 @@ import {
 import { trustedServerBaselineChampion } from "@evolution/harness";
 import { runServerAi } from "./ai-gateway";
 import { getServerArtifactStore } from "./artifact-runtime";
+import { renderSnapshot, verifyRendered } from "./server-artifact-renderer";
 
 const TEXT_FAMILY = /^(txt|md|markdown|mdx|csv|tsv|json|yaml|yml|css|js|jsx|ts|tsx|html|htm|xml|svg)$/i;
 type CodebaseOverlay = { files: Array<{ path: string; content: string }>; deletions: string[] };
@@ -270,9 +271,24 @@ async function materializeSnapshot(
     || source.extension.toLowerCase() === "zip"
     || source.artifactDescriptor?.family === "codebase"
     || source.artifactDescriptor?.family === "package";
-  const built = code
-    ? await materializeCodebase(project, source, materializationContent)
-    : await materializeText(source, snapshot);
+  const office = source.artifactDescriptor?.adapterId === "document-docx-ooxml"
+    || source.artifactDescriptor?.adapterId === "presentation-pptx-ooxml"
+    || source.artifactDescriptor?.family === "spreadsheet"
+    || source.artifactKind === "spreadsheet";
+  let built: {blob:Blob;checks:string[];limitations:string[]};
+  if(code){
+    built=await materializeCodebase(project,source,materializationContent);
+  }else if(office){
+    const store=getServerArtifactStore();
+    const base=project.searchChampion||source.storageRef?.trim()
+      ?await currentBaseBlob(project,source)
+      :await store.get(source.id);
+    const rendered=await renderSnapshot(source,snapshot,store,base);
+    const verification=await verifyRendered(source,snapshot,rendered.blob,store,base);
+    built={blob:rendered.blob,checks:["验收前原格式物化",...verification.checks],limitations:verification.limitations};
+  }else{
+    built=await materializeText(source,snapshot);
+  }
   const frozenArtifact = await persistFrozenArtifact(source, snapshot, built.blob, built.checks, built.limitations);
   return { ...snapshot, frozenArtifact };
 }

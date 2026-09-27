@@ -44,16 +44,16 @@ function binaryBlob(bytes:Uint8Array,type:string){
   copy.set(bytes);
   return new Blob([copy.buffer],{type});
 }
-async function originalBlob(source:SourceArtifact,store:ArtifactStorePort){return source.storageRef?store.get(source.storageRef):undefined;}
+async function originalBlob(source:SourceArtifact,store:ArtifactStorePort){return store.get(source.storageRef?.trim()||source.id);}
 
-export async function renderSnapshot(source:SourceArtifact,snapshot:CandidateArtifactSnapshot,store:ArtifactStorePort){
+export async function renderSnapshot(source:SourceArtifact,snapshot:CandidateArtifactSnapshot,store:ArtifactStorePort,baseBlob?:Blob){
   const descriptor=source.artifactDescriptor??describeArtifact(source);
   const extension=source.extension.toLowerCase();
   if(!descriptor.capabilities.materialize||descriptor.preservationMode==="external-required"||["rtf","odt","odp","doc","ppt"].includes(extension)){
     throw new Error(source.name+" 需要外部 "+descriptor.adapterId+" Renderer；Server 不会用文本伪造同格式成果。");
   }
   if(descriptor.adapterId==="presentation-pptx-ooxml"){
-    const original=await originalBlob(source,store);
+    const original=baseBlob??await originalBlob(source,store);
     const blueprint=parseJson<PresentationBlueprint>(snapshot.content);
     if(!original||!blueprint?.slides)throw new Error("PPTX Server Renderer 需要原始 package 与 slides/textRuns blueprint。");
     const zip=await JSZip.loadAsync(new Uint8Array(await original.arrayBuffer()));
@@ -66,7 +66,7 @@ export async function renderSnapshot(source:SourceArtifact,snapshot:CandidateArt
     return {blob:binaryBlob(await zip.generateAsync({type:"uint8array"}),source.mimeType),name:evolvedName(source,"pptx"),note:"Server 在原 PPTX OOXML package 上回写已验收 text runs；主题、版式、图片和未修改对象保留。"};
   }
   if(descriptor.adapterId==="document-docx-ooxml"){
-    const original=await originalBlob(source,store);
+    const original=baseBlob??await originalBlob(source,store);
     const blueprint=parseJson<DocumentBlueprint>(snapshot.content);
     if(!original||!blueprint?.parts)throw new Error("DOCX Server Renderer 需要原始 package 与 parts/textRuns blueprint。");
     const zip=await JSZip.loadAsync(new Uint8Array(await original.arrayBuffer()));
@@ -79,7 +79,7 @@ export async function renderSnapshot(source:SourceArtifact,snapshot:CandidateArt
     return {blob:binaryBlob(await zip.generateAsync({type:"uint8array"}),source.mimeType),name:evolvedName(source,"docx"),note:"Server 在原 DOCX OOXML package 上回写已验收 text runs；样式、图片、关系与未修改内容保留。"};
   }
   if(descriptor.family==="codebase"||descriptor.family==="package"){
-    const original=await originalBlob(source,store);
+    const original=baseBlob??await originalBlob(source,store);
     const blueprint=parseJson<PackageBlueprint>(snapshot.content);
     if(!original||!blueprint?.files)throw new Error("ZIP/Code package Server Renderer 需要原始 package 与 files blueprint。");
     const zip=await JSZip.loadAsync(new Uint8Array(await original.arrayBuffer()));
@@ -109,7 +109,7 @@ export async function renderSnapshot(source:SourceArtifact,snapshot:CandidateArt
       const text=XLSX.utils.sheet_to_csv(ws,{FS:extension==="tsv"?"\t":","});
       return {blob:new Blob([text],{type:extension==="tsv"?"text/tab-separated-values":"text/csv"}),name:evolvedName(source,extension),note:"Server 按已验收 Sheet/Cell Blueprint 输出同格式 ."+extension+"。"};
     }
-    const original=await originalBlob(source,store);
+    const original=baseBlob??await originalBlob(source,store);
     const workbook=original?XLSX.read(await original.arrayBuffer(),{type:"array",cellFormula:true,cellStyles:true,cellDates:true,bookVBA:true}):XLSX.utils.book_new();
     for(const sheet of blueprint.sheets){
       const safeName=sheet.name.slice(0,31);
@@ -137,14 +137,14 @@ export async function renderSnapshot(source:SourceArtifact,snapshot:CandidateArt
   return {blob:new Blob([snapshot.content],{type:snapshot.mimeType||source.mimeType||"text/plain;charset=utf-8"}),name:evolvedName(source,source.extension),note:"Server 直接物化已通过验收的 exact text/structured snapshot。"};
 }
 
-export async function verifyRendered(source:SourceArtifact,snapshot:CandidateArtifactSnapshot,blob:Blob,store:ArtifactStorePort){
+export async function verifyRendered(source:SourceArtifact,snapshot:CandidateArtifactSnapshot,blob:Blob,store:ArtifactStorePort,baseBlob?:Blob){
   const descriptor=source.artifactDescriptor??describeArtifact(source);
   const checks:string[]=["实际文件已生成"];
   const limitations:string[]=[];
   if(!blob.size)throw new Error("Server Renderer 生成了空文件。");
   if(descriptor.adapterId==="presentation-pptx-ooxml"||descriptor.adapterId==="document-docx-ooxml"||descriptor.family==="codebase"||descriptor.family==="package"){
     const rendered=await JSZip.loadAsync(new Uint8Array(await blob.arrayBuffer()),{checkCRC32:true});
-    const original=await originalBlob(source,store);
+    const original=baseBlob??await originalBlob(source,store);
     if(!original)throw new Error("原始 package 不可用，无法验证条目完整性。");
     const originalZip=await JSZip.loadAsync(new Uint8Array(await original.arrayBuffer()));
     if(Object.keys(originalZip.files).some((path)=>!rendered.files[path]))throw new Error("Server Renderer 丢失原 package 条目。");
