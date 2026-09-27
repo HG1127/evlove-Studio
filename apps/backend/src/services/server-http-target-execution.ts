@@ -207,7 +207,7 @@ export async function runServerHttpTargetBatch(
         connectionId:project.targetConnection.connectionId,
         testCase,
         ...(binding.artifact?{artifact:binding.artifact}:{}),
-        ...(binding.archiveBase64?{archiveBase64:binding.archiveBase64}:{}),
+        ...(binding.archiveBase64!==undefined?{archiveBase64:binding.archiveBase64}:{}),
         ...(binding.file?{file:binding.file}:{}),
         variant:candidate??null,
       });

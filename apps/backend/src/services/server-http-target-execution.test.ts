@@ -213,6 +213,19 @@ describe("server HTTP Target execution",()=>{
     expect(getArtifact).toHaveBeenCalledWith("raw-zip");
   });
 
+  it("keeps an empty ZIP explicitly bound to its source bytes",async()=>{
+    const p=project();
+    p.sourceArtifacts=[{...p.sourceArtifacts[0]!,id:"zip-source",storageRef:"raw-zip",name:"repo.zip",artifactKind:"codebase",mimeType:"application/zip",extension:"zip"}];
+    const emptyHash=createHash("sha256").update(Buffer.alloc(0)).digest("hex");
+    const runTarget=vi.fn(async(raw:unknown)=>{
+      expect(raw).toHaveProperty("archiveBase64","");
+      return{testCaseId:"T1",output:"empty",latencyMs:1,cost:0,verificationStatus:"unverified",artifactHash:emptyHash,trace:[]} as TargetRunResult;
+    });
+    const [result]=await runServerHttpTargetBatch(p,[testCase],undefined,{runTarget,
+      getArtifact:async()=>new Blob([],{type:"application/zip"}),attachVisual:async(_p,_t,runs)=>runs});
+    expect(result?.verificationStatus).toBe("unverified");
+    expect(runTarget).toHaveBeenCalledOnce();
+  });
   it("does not fall back to the Source metadata ID when its storageRef Blob is missing",async()=>{
     const p=project();
     p.sourceArtifacts=[{...p.sourceArtifacts[0]!,id:"zip-source",storageRef:"raw-zip",name:"repo.zip",artifactKind:"codebase",mimeType:"application/zip",extension:"zip"}];

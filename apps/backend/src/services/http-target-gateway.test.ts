@@ -88,6 +88,30 @@ describe("server HTTP target gateway",()=>{
     })).resolves.toMatchObject({artifactHash:archiveDigest});
   });
 
+  it("rejects ambiguous or noncanonical legacy Run bytes before contacting a Runner",async()=>{
+    process.env.EVOLUTION_TARGET_RUN_URL="https://runner.internal/run";
+    const fetchMock=vi.fn();vi.stubGlobal("fetch",fetchMock);
+    const input={projectId:"p",connectionId:"c",variant:null,
+      testCase:{id:"T1",title:"t",input:"i",expected:[],tags:[],hidden:false,criterionIds:[],executionMode:"external-runner" as const,evidenceScope:"product-behavior" as const}};
+    await expect(runHttpTarget({...input,artifact:{name:"index.html",content:"exact"},archiveBase64:""}))
+      .rejects.toThrow("HTML 与 ZIP");
+    await expect(runHttpTarget({...input,archiveBase64:"!!!!"})).rejects.toThrow("标准 base64");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("requires a matching SHA-256 receipt for an explicitly empty legacy archive",async()=>{
+    process.env.EVOLUTION_TARGET_RUN_URL="https://runner.internal/run";
+    const emptyHash=createHash("sha256").update(Buffer.alloc(0)).digest("hex");
+    const input={projectId:"p",connectionId:"c",variant:null,archiveBase64:"",
+      testCase:{id:"T1",title:"t",input:"i",expected:[],tags:[],hidden:false,criterionIds:[],executionMode:"external-runner" as const,evidenceScope:"product-behavior" as const}};
+    const receipt={testCaseId:"T1",output:"checked",latencyMs:1,cost:0,verificationStatus:"verified",trace:[]};
+    const fetchMock=vi.fn(async()=>new Response(JSON.stringify({...receipt,artifactHash:"wrong"}),{status:200}));
+    vi.stubGlobal("fetch",fetchMock);
+    await expect(runHttpTarget(input)).rejects.toThrow("submitted Artifact SHA-256");
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({...receipt,artifactHash:emptyHash}),{status:200}));
+    await expect(runHttpTarget(input)).resolves.toMatchObject({artifactHash:emptyHash});
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
   it("checks generic file bytes and Candidate identity before accepting a Runner verdict",async()=>{
     process.env.EVOLUTION_TARGET_RUN_URL="https://runner.internal/run";
     const bytes=Buffer.from([0x25,0x50,0x44,0x46,0,255]);

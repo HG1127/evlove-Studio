@@ -47,7 +47,12 @@ export function getHttpTargetGatewayCapabilities(){
 
 export async function runHttpTarget(raw:unknown){
   const input=TargetRunProxyRequestSchema.parse(raw);
-  if(input.file&&(input.artifact||input.archiveBase64))throw new Error("Target Run 文件载荷不能与旧 HTML/ZIP 载荷同时提交。");
+  if(input.file&&(input.artifact||input.archiveBase64!==undefined))throw new Error("Target Run 文件载荷不能与旧 HTML/ZIP 载荷同时提交。");
+  if(input.artifact&&input.archiveBase64!==undefined)throw new Error("Target Run HTML 与 ZIP 载荷不能同时提交。");
+  if(input.archiveBase64!==undefined){
+    const archive=Buffer.from(input.archiveBase64,"base64");
+    if(archive.toString("base64")!==input.archiveBase64)throw new Error("Target Run ZIP 必须使用标准 base64 字节编码。");
+  }
   if(input.file){
     const file=input.file;
     if(input.variant){
@@ -66,9 +71,9 @@ export async function runHttpTarget(raw:unknown){
   }
   const result=ExplicitTargetRunResponseSchema.parse(await post(getServerTargetProxyConfig().runUrl,input,"Target Run"));
   if(result.testCaseId!==input.testCase.id)throw new Error("Target Run result belongs to another Test Case");
-  if(result.verificationStatus!=="unverified"&&(input.file||input.artifact||input.archiveBase64)){
+  if(result.verificationStatus!=="unverified"&&(input.file||input.artifact||input.archiveBase64!==undefined)){
     const bytes=input.file?Buffer.from(input.file.contentBase64,"base64")
-      :input.archiveBase64?Buffer.from(input.archiveBase64,"base64"):Buffer.from(input.artifact!.content,"utf8");
+      :input.archiveBase64!==undefined?Buffer.from(input.archiveBase64,"base64"):Buffer.from(input.artifact!.content,"utf8");
     const expected=createHash("sha256").update(bytes).digest("hex");
     if(result.artifactHash?.toLowerCase()!==expected){
       throw new Error("Target Run result does not match the submitted Artifact SHA-256");
