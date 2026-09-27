@@ -125,6 +125,12 @@ async function bindingFor(
     if(snapshot&&!snapshot.frozenArtifact){
       throw new Error(`当前版本 ${current?.id??"candidate"} 的 ZIP Target 尚未冻结真实文件，不能回退原 Source ZIP。`);
     }
+    if(snapshot?.frozenArtifact){
+      const frozen=snapshot.frozenArtifact;
+      if(frozen.sourceArtifactId!==archive.id||frozen.snapshotHash!==snapshot.contentHash||frozen.name!==snapshot.name||frozen.mimeType!==snapshot.mimeType){
+        throw new Error("HTTP Target ZIP 冻结凭证与 Candidate Snapshot 身份不一致。");
+      }
+    }
     const blobId=snapshot?.frozenArtifact?.blobId??(archive.storageRef?.trim()||archive.id);
     const blob=await getArtifact(blobId);
     if(!blob)throw new Error(`找不到 HTTP Target Artifact Blob ${blobId}。`);

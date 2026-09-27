@@ -217,6 +217,47 @@ describe("server HTTP Target execution",()=>{
     expect(runTarget).not.toHaveBeenCalled();
   });
 
+  it("sends the accepted frozen ZIP bytes to the HTTP Runner",async()=>{
+    const p=project();
+    p.sourceArtifacts=[{...p.sourceArtifacts[0]!,id:"zip-source",storageRef:"raw-zip",name:"repo.zip",artifactKind:"codebase",mimeType:"application/zip",extension:"zip"}];
+    const champion=acceptedChampion(p);
+    const bytes="frozen-zip-bytes";
+    const sha256=createHash("sha256").update(bytes).digest("hex");
+    champion.artifactSnapshots=[{
+      ...champion.artifactSnapshots[0]!,sourceArtifactId:"zip-source",name:"repo.zip",mimeType:"application/zip",
+      frozenArtifact:{sourceArtifactId:"zip-source",snapshotHash:"accepted-hash",blobId:"frozen-zip",name:"repo.zip",mimeType:"application/zip",sha256,size:Buffer.byteLength(bytes),verifiedAt:"2026-09-22T00:01:00.000Z",checks:["zip"],limitations:[]},
+    }];
+    const getArtifact=vi.fn(async(id:string)=>id==="frozen-zip"?new Blob([bytes]):undefined);
+    const runTarget=vi.fn(async(raw:unknown)=>{
+      const input=raw as {archiveBase64?:string};
+      expect(Buffer.from(input.archiveBase64??"","base64").toString()).toBe(bytes);
+      return{testCaseId:"T1",output:"ok",latencyMs:1,cost:0,verificationStatus:"verified",artifactHash:sha256,trace:[]} as TargetRunResult;
+    });
+    const [result]=await runServerHttpTargetBatch(p,[testCase],undefined,{runTarget,getArtifact,attachVisual:async(_p,_t,runs)=>runs});
+    expect(result?.verificationStatus).toBe("verified");
+    expect(getArtifact).toHaveBeenCalledWith("frozen-zip");
+    expect(getArtifact).not.toHaveBeenCalledWith("raw-zip");
+    expect(runTarget).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a frozen ZIP receipt belonging to another Target or Snapshot",async()=>{
+    for(const identity of [{sourceArtifactId:"other",snapshotHash:"accepted-hash"},{sourceArtifactId:"zip-source",snapshotHash:"old-snapshot"}]){
+      const p=project();
+      p.sourceArtifacts=[{...p.sourceArtifacts[0]!,id:"zip-source",storageRef:"raw-zip",name:"repo.zip",artifactKind:"codebase",mimeType:"application/zip",extension:"zip"}];
+      const champion=acceptedChampion(p);
+      champion.artifactSnapshots=[{
+        ...champion.artifactSnapshots[0]!,sourceArtifactId:"zip-source",name:"repo.zip",mimeType:"application/zip",
+        frozenArtifact:{...identity,blobId:"frozen-zip",name:"repo.zip",mimeType:"application/zip",sha256:"any",size:10,verifiedAt:"2026-09-22T00:01:00.000Z",checks:["zip"],limitations:[]},
+      }];
+      const getArtifact=vi.fn(async()=>new Blob(["untrusted"]));
+      const runTarget=vi.fn();
+      const [result]=await runServerHttpTargetBatch(p,[testCase],undefined,{runTarget,getArtifact,attachVisual:async(_p,_t,runs)=>runs});
+      expect(result?.verificationStatus).toBe("unverified");
+      expect(result?.output).toContain("身份不一致");
+      expect(getArtifact).not.toHaveBeenCalled();
+      expect(runTarget).not.toHaveBeenCalled();
+    }
+  });
   it("rejects a frozen current-version ZIP with a mismatched byte size",async()=>{
     const p=project();
     p.sourceArtifacts=[{...p.sourceArtifacts[0]!,id:"zip-source",storageRef:"raw-zip",name:"repo.zip",artifactKind:"codebase",mimeType:"application/zip",extension:"zip"}];
