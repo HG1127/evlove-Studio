@@ -160,6 +160,14 @@ describe("server experiment materialization",()=>{
     expect(binding.blobId).toBeUndefined();
     expect(binding.reason).toContain("可信 Artifact Snapshot");
   });
+  it("refuses ambiguous accepted Champion snapshots as a Candidate parent",()=>{
+    const project=projectWithChampion(true);
+    const candidate=project.searchChampion!.candidate!;
+    candidate.artifactSnapshots.push({...candidate.artifactSnapshots[0]!,id:"duplicate-parent"});
+    const binding=resolveServerExperimentParentBinding(project,project.sourceArtifacts[0]!);
+    expect(binding.blobId).toBeUndefined();
+    expect(binding.reason).toContain("唯一可信");
+  });
   it("never falls back to the original Source when the accepted Champion is not frozen",()=>{
     const project=projectWithChampion(false);
     const binding=resolveServerExperimentParentBinding(project,project.sourceArtifacts[0]!);

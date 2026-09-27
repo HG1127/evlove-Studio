@@ -73,7 +73,16 @@ describe("server baseline codebase binding",()=>{
     project.searchChampion!.validation!.recommendation="hold";
     const binding=resolveServerBaselineCodebaseBinding(project);
     expect(binding.blobId).toBeUndefined();
-    expect(binding.reason).toContain("可信 Artifact Snapshot");
+    expect(binding.reason).toContain("唯一可信");
+  });
+  it("refuses ambiguous accepted Champion snapshots for one codebase Target",()=>{
+    const project=codebaseProject();
+    acceptedChampion(project,true);
+    const candidate=project.searchChampion!.candidate!;
+    candidate.artifactSnapshots.push({...candidate.artifactSnapshots[0]!,id:"snapshot-duplicate"});
+    const binding=resolveServerBaselineCodebaseBinding(project);
+    expect(binding.blobId).toBeUndefined();
+    expect(binding.reason).toContain("唯一可信");
   });
   it("refuses to fall back to the source ZIP when the accepted champion is not frozen",()=>{
     const project=codebaseProject();

@@ -24,13 +24,14 @@ export function resolveServerBaselineCodebaseBinding(project: EvolveProject) {
   const source = codebaseTarget(project);
   if (!source) return { source: undefined, blobId: undefined, candidateId: undefined, reason: "当前 Mission 没有 codebase/package Target。" };
   const champion = trustedServerBaselineChampion(project);
-  const snapshot = champion?.artifactSnapshots.find((item) => item.sourceArtifactId === source.id);
-  if (project.searchChampion && !snapshot) {
+  const snapshots = champion?.artifactSnapshots.filter((item) => item.sourceArtifactId === source.id) ?? [];
+  const snapshot = snapshots[0];
+  if (project.searchChampion && snapshots.length !== 1) {
     return {
       source,
       blobId: undefined,
       candidateId: champion?.id,
-      reason: "当前 Search Champion 缺少该 codebase Target 的可信 Artifact Snapshot，不能回退原 Source ZIP 代替执行。",
+      reason: "当前 Search Champion 缺少唯一可信的 codebase Target Artifact Snapshot，不能回退原 Source ZIP 代替执行。",
     };
   }
   if (snapshot && !snapshot.frozenArtifact) {

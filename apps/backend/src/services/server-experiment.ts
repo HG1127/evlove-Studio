@@ -51,7 +51,9 @@ async function executeServerCandidateExternal(project: EvolveProject, candidate:
   if (serverHttpTargetEnabled(project)) return runServerHttpTargetBatch(project, testCases, candidate);
   const source = codebaseTarget(project);
   if (!source) return testCases.map((testCase) => unavailableExternal(testCase, "当前 Server External Runner 仅支持 codebase/package ZIP Target。"));
-  const snapshot = candidate.artifactSnapshots.find((item) => item.sourceArtifactId === source.id);
+  const snapshots = candidate.artifactSnapshots.filter((item) => item.sourceArtifactId === source.id);
+  if (snapshots.length !== 1) return testCases.map((testCase) => unavailableExternal(testCase, "Candidate codebase Target 缺少唯一 Artifact Snapshot。"));
+  const snapshot = snapshots[0]!;
   if (!snapshot?.frozenArtifact) return testCases.map((testCase) => unavailableExternal(testCase, "Candidate codebase 尚未冻结实际 ZIP。"));
   try {
     const blob = await getServerArtifactStore().get(snapshot.frozenArtifact.blobId);

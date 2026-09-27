@@ -64,9 +64,10 @@ async function bindingFor(
   const html=htmlTarget(project);
   const current=candidate??exactCurrentCandidate(project);
   if(html){
-    const snapshot=current?.artifactSnapshots.find((item)=>item.sourceArtifactId===html.id);
-    if(current&&!snapshot){
-      throw new Error(`当前版本 ${current.id} 没有 HTML Target ${html.id} 的 exact Artifact Snapshot，不能回退原版。`);
+    const snapshots=current?.artifactSnapshots.filter((item)=>item.sourceArtifactId===html.id)??[];
+    const snapshot=snapshots[0];
+    if(current&&snapshots.length!==1){
+      throw new Error(`当前版本 ${current.id} 没有唯一的 HTML Target ${html.id} exact Artifact Snapshot，不能回退原版。`);
     }
     const content=snapshot?.content??html.textContent;
     if(!content?.trim())throw new Error(`HTML Target ${html.id} 没有可执行的完整内容。`);
@@ -75,9 +76,10 @@ async function bindingFor(
 
   const archive=archiveTarget(project);
   if(archive){
-    const snapshot=current?.artifactSnapshots.find((item)=>item.sourceArtifactId===archive.id);
-    if(current&&!snapshot){
-      throw new Error(`当前版本 ${current.id} 没有 ZIP Target ${archive.id} 的 exact Artifact Snapshot，不能回退原版。`);
+    const snapshots=current?.artifactSnapshots.filter((item)=>item.sourceArtifactId===archive.id)??[];
+    const snapshot=snapshots[0];
+    if(current&&snapshots.length!==1){
+      throw new Error(`当前版本 ${current.id} 没有唯一的 ZIP Target ${archive.id} exact Artifact Snapshot，不能回退原版。`);
     }
     if(snapshot&&!snapshot.frozenArtifact){
       throw new Error(`当前版本 ${current?.id??"candidate"} 的 ZIP Target 尚未冻结真实文件，不能回退原 Source ZIP。`);

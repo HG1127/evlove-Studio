@@ -54,6 +54,17 @@ describe("server hidden holdout frozen ZIP readback",()=>{
     expect(runSandbox).not.toHaveBeenCalled();
   });
 
+  it("refuses duplicate Candidate snapshots for one codebase Target",async()=>{
+    const bytes=new TextEncoder().encode("accepted archive");
+    const {project,candidate}=acceptedProject(bytes);
+    candidate.artifactSnapshots.push({...candidate.artifactSnapshots[0]!,id:"duplicate"});
+    const ports=await externalPorts(project);
+    const [result]=await ports.candidate.executeExternalBatch({project,candidate,testCases:[testCase]});
+    expect(result?.verificationStatus).toBe("unverified");
+    expect(result?.output).toContain("唯一 Artifact Snapshot");
+    expect(getBlob).not.toHaveBeenCalled();
+    expect(runSandbox).not.toHaveBeenCalled();
+  });
   it("refuses a changed Candidate ZIP size before Sandbox",async()=>{
     const bytes=new TextEncoder().encode("accepted archive");
     const {project,candidate}=acceptedProject(bytes);

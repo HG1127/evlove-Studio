@@ -38,6 +38,16 @@ beforeEach(()=>{
 });
 
 describe("server experiment frozen Candidate ZIP readback",()=>{
+  it("refuses duplicate Candidate snapshots for one codebase Target",async()=>{
+    const bytes=new TextEncoder().encode("accepted archive");
+    const {project,candidate}=frozenCandidate(bytes);
+    candidate.artifactSnapshots.push({...candidate.artifactSnapshots[0]!,id:"duplicate"});
+    const [result]=await execute(project,candidate);
+    expect(result?.verificationStatus).toBe("unverified");
+    expect(result?.output).toContain("唯一 Artifact Snapshot");
+    expect(getBlob).not.toHaveBeenCalled();
+    expect(runSandbox).not.toHaveBeenCalled();
+  });
   it("refuses a changed ZIP byte size before Sandbox",async()=>{
     const bytes=new TextEncoder().encode("accepted archive");
     const {project,candidate}=frozenCandidate(bytes);

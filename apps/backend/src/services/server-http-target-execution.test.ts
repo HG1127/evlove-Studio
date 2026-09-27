@@ -80,6 +80,31 @@ describe("server HTTP Target execution",()=>{
     expect(runTarget).not.toHaveBeenCalled();
   });
 
+  it("refuses duplicate accepted HTML snapshots before calling the remote Target",async()=>{
+    const p=project();
+    const champion=acceptedChampion(p);
+    champion.artifactSnapshots.push({...champion.artifactSnapshots[0]!,id:"duplicate-html"});
+    const runTarget=vi.fn();
+    const [result]=await runServerHttpTargetBatch(p,[testCase],undefined,{runTarget,getArtifact:async()=>undefined,attachVisual:async(_p,_t,runs)=>runs});
+    expect(result?.verificationStatus).toBe("unverified");
+    expect(result?.output).toContain("唯一");
+    expect(runTarget).not.toHaveBeenCalled();
+  });
+
+  it("refuses duplicate accepted ZIP snapshots before reading a Blob",async()=>{
+    const p=project();
+    p.sourceArtifacts=[{...p.sourceArtifacts[0]!,id:"zip-source",storageRef:"raw-zip",name:"repo.zip",artifactKind:"codebase",mimeType:"application/zip",extension:"zip"}];
+    const champion=acceptedChampion(p);
+    champion.artifactSnapshots=[{...champion.artifactSnapshots[0]!,sourceArtifactId:"zip-source"}];
+    champion.artifactSnapshots.push({...champion.artifactSnapshots[0]!,id:"duplicate-zip"});
+    const runTarget=vi.fn();
+    const getArtifact=vi.fn(async()=>undefined);
+    const [result]=await runServerHttpTargetBatch(p,[testCase],undefined,{runTarget,getArtifact,attachVisual:async(_p,_t,runs)=>runs});
+    expect(result?.verificationStatus).toBe("unverified");
+    expect(result?.output).toContain("唯一");
+    expect(getArtifact).not.toHaveBeenCalled();
+    expect(runTarget).not.toHaveBeenCalled();
+  });
   it("reads a ZIP target from the server Artifact Store and binds the remote result to its SHA-256",async()=>{
     const p=project();
     p.sourceArtifacts=[{
