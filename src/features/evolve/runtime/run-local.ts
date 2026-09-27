@@ -17,7 +17,7 @@ import { buildCandidateArtifacts } from "./artifact-quality";
 import { mapTestsToRubric, normalizeAcceptanceRubric, rubricCoverage, rubricValidation } from "./acceptance-rubric";
 import { describeArtifact, resolveProjectArtifactStrategy } from "./artifact-strategy";
 import { buildArtifactGraph, compileSemanticEvolution } from "./semantic-evolution";
-import { canRetryHoldoutFailures, candidateWinnerDecision, computeGapAnalysis, gapHeadline, indexScopedTestCaseResults, indexUniqueById, projectHasOnlineReleaseTarget, reusableHoldoutBaseline, REGRESSION_TOLERANCE, validationRegression as coreValidationRegression } from "@evolution/core";
+import { canRetryHoldoutFailures, candidateWinnerDecision, computeGapAnalysis, gapHeadline, indexScopedAcceptanceResults, indexScopedTestCaseResults, indexUniqueById, projectHasOnlineReleaseTarget, reusableHoldoutBaseline, REGRESSION_TOLERANCE, validationHardRubricFailures as hardRubricFailures, validationRegression as coreValidationRegression, validationUnverifiedHardCriteria as unverifiedHardRubricCriteria } from "@evolution/core";
 import { extractSource } from "../sources/source-loader";
 import { getArtifactBlob, putArtifactBlob } from "./artifact-blob-store";
 import { readFrozenArtifact } from "./frozen-artifact";
@@ -430,27 +430,6 @@ export async function runBaseline(project: EvolveProject, onProgress?: (done: nu
 }
 
 // ===== POST /api/v1/runner/experiment =====
-
-function hardRubricFailures(project: EvolveProject, evaluation: EvaluationResult) {
-  const byId = new Map((evaluation.criterionScores ?? []).map((item) => [item.criterionId, item]));
-  // 只有“已经获得真实证据且明确低于门槛”才算产品失败。
-  // Runner / 视觉 / 人工能力缺失导致的 unverified/partial 不能被伪装成 FAIL，
-  // 但会在 Release Gate 单独作为“证据未完成”阻止上线。
-  return project.acceptanceRubric.filter((criterion) => {
-    if (!criterion.hardGate) return false;
-    const result = byId.get(criterion.id);
-    return Boolean(result && result.verificationStatus === "verified" && result.pass !== true);
-  });
-}
-
-function unverifiedHardRubricCriteria(project: EvolveProject, evaluation: EvaluationResult) {
-  const byId = new Map((evaluation.criterionScores ?? []).map((item) => [item.criterionId, item]));
-  return project.acceptanceRubric.filter((criterion) => {
-    if (!criterion.hardGate) return false;
-    const result = byId.get(criterion.id);
-    return !result || result.verificationStatus !== "verified";
-  });
-}
 
 function missingEvidenceAction(criterion: EvolveProject["acceptanceRubric"][number]) {
   switch (criterion.validationMethod) {
@@ -1076,7 +1055,7 @@ async function runValidationUnbound(project: EvolveProject, inputCandidate: Cand
         const fastUnverified=unverifiedHardRubricCriteria(parsed,candidateEval);
         const externalUnverified=fastUnverified.filter((criterion)=>!criterionCanUseLocalSnapshotEvidence(parsed,criterion));
         if(candidateEval.safety==="FAIL"||fastHard.length||externalUnverified.length){
-          const scoreByCriterion=new Map((candidateEval.criterionScores??[]).map((score)=>[score.criterionId,score]));
+          const scoreByCriterion=indexScopedAcceptanceResults([{requestedCriterionIds:parsed.acceptanceRubric.map((criterion)=>criterion.id),results:candidateEval.criterionScores??[]}]).byId;
           const checks=[...fastHard.map((criterion)=>{const score=scoreByCriterion.get(criterion.id);const evidence=score?.evidence[0]||score?.gaps[0]||criterion.requirement;return {label:`Hard Gate · ${criterion.title}`,status:"fail" as const,detail:`AI 语义/文件证据已定位未通过内容：${evidence}`};}),...fastUnverified.map((criterion)=>{const score=scoreByCriterion.get(criterion.id);const judgeMissing=score?.gaps.some((gap)=>gap.includes("评审模型未返回"));return {label:`${judgeMissing?"待补评审":"待真实验证"} · ${criterion.title}`,status:"warning" as const,detail:judgeMissing?"测试已经执行，但评审模型漏返逐题/逐标准判断；系统保持未验证，不再按 0 分误判。":`缺少「${criterion.title}」所需证据。下一步：${missingEvidenceAction(criterion)}。该状态不是成果失败，也不会被伪装成通过。`};}),{label:"Safety",status:candidateEval.safety==="FAIL"?"fail" as const:"pass" as const,detail:candidateEval.safety}];
           return {id:`validation-fast-${Date.now()}`,status:"completed",validationMode:"fast-gate",plannedCases:suite.length,executedCases:critical.length,candidateId:candidate.id,evaluation:{...candidateEval,notes:["Candidate-first Fast Gate 已提前定位阻断，不再重复运行原版关键题。",...candidateEval.notes]},runs:candidateFast,baselineRuns:[],checks,recommendation:"hold",summary:`Candidate-first Fast Gate 已执行 ${critical.length}/${suite.length} 题：${fastHard.length} 个已证实 Hard Criterion 失败${externalUnverified.length?`；${externalUnverified.length} 个外部证据 Hard Criterion 待补证`:""}。`};
         }
@@ -1206,7 +1185,7 @@ async function runValidationUnbound(project: EvolveProject, inputCandidate: Cand
   const rubricStatus = (evaluation.verifiedRubricCoverage ?? 100) < 100
     ? "warning" as const
     : (evaluation.rubricScore ?? 0) >= rubricTarget ? "pass" as const : "fail" as const;
-  const criterionScoreById = new Map((evaluation.criterionScores ?? []).map((score) => [score.criterionId, score]));
+  const criterionScoreById = indexScopedAcceptanceResults([{ requestedCriterionIds: parsed.acceptanceRubric.map((criterion) => criterion.id), results: evaluation.criterionScores ?? [] }]).byId;
   const checks = [
     ...(parsed.acceptanceRubric.length ? [{ label: "Project-specific Rubric", status: rubricStatus, detail: `Rubric ${evaluation.rubricScore ?? "待评"} / ${rubricTarget}；真实证据覆盖 ${evaluation.verifiedRubricCoverage ?? 100}%。未验证项不计为产品失败，但 Release 前必须补齐。` }] : []),
     ...hardCriterionFailures.map((criterion) => ({ label: `Hard Gate · ${criterion.title}`, status: "fail" as const, detail: `Criterion ${criterion.id} 已有真实证据且未达到最低 ${criterion.minScore} 分；${criterion.requirement}` })),
@@ -1333,7 +1312,7 @@ export async function runFocusedRepairValidation(project: EvolveProject, inputCa
   const runs = await executeCandidateAwareCaseSet({ adapter, project: parsed, testCases: suite, variant: candidate, batchSize: policy.batchArtifactRuntime ? policy.batchSize : 1, concurrency: 2, onProgress: (done,total)=>onProgress?.(done,total,"定向复核 · 只检查已修复标准") });
   const focusedProject = { ...parsed, acceptanceRubric: focusedRubric };
   const evaluation = applySupplementalEvidenceToEvaluation(focusedProject, candidate, await evaluateRuns({ testCases: suite, runs, context: { mode: "repair-focus", candidate, project: evaluationProjectContext(focusedProject) } }));
-  const byId = new Map((evaluation.criterionScores ?? []).map((score) => [score.criterionId, score]));
+  const byId = indexScopedAcceptanceResults([{ requestedCriterionIds: focusedRubric.map((criterion) => criterion.id), results: evaluation.criterionScores ?? [] }]).byId;
   const failedCriterionIds = focusedRubric.filter((criterion) => { const score=byId.get(criterion.id); return score?.verificationStatus === "verified" && score.pass !== true; }).map((criterion)=>criterion.id);
   const unverifiedCriterionIds = focusedRubric.filter((criterion) => byId.get(criterion.id)?.verificationStatus !== "verified").map((criterion)=>criterion.id);
   return { passed: evaluation.safety !== "FAIL" && failedCriterionIds.length === 0 && unverifiedCriterionIds.length === 0, failedCriterionIds, unverifiedCriterionIds, evaluation, runs };
