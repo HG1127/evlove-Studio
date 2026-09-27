@@ -49,6 +49,32 @@ async function officeText(bytes: Uint8Array, kind: "docx" | "pptx") {
   return blocks.join("\n\n");
 }
 
+async function pdfText(bytes: Uint8Array) {
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const task = pdfjs.getDocument({ data: bytes, useWorkerFetch: false, stopAtErrors: true, disableFontFace: true });
+  try {
+    const document = await task.promise;
+    if (!document.numPages || document.numPages > 100) throw new Error("PDF 页数为空或超出静态索引范围。");
+    const pages: string[] = [];
+    let totalChars = 0;
+    for (let index = 1; index <= document.numPages; index += 1) {
+      const page = await document.getPage(index);
+      try {
+        const text = await page.getTextContent();
+        if (text.items.length > 10_000) throw new Error("PDF 单页文本项超出静态索引范围。");
+        const content = text.items.map((item) => "str" in item ? item.str : "").join(" ").trim();
+        totalChars += content.length;
+        if (totalChars > 180_000) throw new Error("PDF 文本超出静态索引范围。");
+        if (content) pages.push(`page-${index}: ${content}`);
+      } finally {
+        page.cleanup();
+      }
+    }
+    return pages.join("\n\n");
+  } finally {
+    await task.destroy();
+  }
+}
 function spreadsheetText(bytes: Uint8Array) {
   const workbook = XLSX.read(bytes, { type: "array", cellFormula: true, cellDates: true });
   if (!workbook.SheetNames.length || workbook.SheetNames.length > 100) throw new Error("工作簿没有工作表或超出静态索引范围。");
@@ -78,6 +104,7 @@ export async function extractServerStaticArtifactText(extension: string, bytes: 
   if (bytes.byteLength > MAX_FILE_BYTES) throw new Error("冻结文件超出静态索引范围。");
   if (TEXT_EXTENSION.test(extension)) return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   if (extension === "docx" || extension === "pptx") return officeText(bytes, extension);
+  if (extension === "pdf") return pdfText(bytes);
   if (["xlsx", "xls", "ods"].includes(extension)) return spreadsheetText(bytes);
   return undefined;
 }

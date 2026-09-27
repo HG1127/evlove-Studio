@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CandidateSchema, TestCaseSchema, type EvolveProject } from "@evolution/contracts";
 import { serverArtifactSha256 } from "./server-experiment-artifacts";
 import { runServerFrozenArtifactStaticEvidence } from "./server-static-artifact-evidence";
+import { minimalTextPdf } from "./pdf-test-fixture";
 
 const blobs = vi.hoisted(() => new Map<string, Blob>());
 const reads = vi.hoisted(() => ({ count: 0, second: undefined as Blob | undefined }));
@@ -95,7 +96,18 @@ describe("Server frozen Artifact static evidence", () => {
     expect(cross.verificationStatus).toBe("unverified");
     expect(cross.output).toContain("跨成果证据");
   });
-  it("keeps product behavior partial and unsupported PDF unverified", async () => {
+  it("reads actual frozen PDF text and rejects image-only or corrupt PDFs", async () => {
+    const bytes = minimalTextPdf("ACTUAL FROZEN PDF");
+    const variant = await candidate("pdf", new NodeBlob([bytes], { type: "application/pdf" }) as Blob);
+    const run = await runServerFrozenArtifactStaticEvidence({ project: project("pdf"), candidate: variant, testCase });
+    expect(run.verificationStatus, run.output).toBe("verified");
+    expect(run.output).toContain("ACTUAL FROZEN PDF");
+    expect(run.output).not.toContain("BLUEPRINT ONLY");
+    const corrupt = await candidate("pdf", new NodeBlob(["%PDF-1.4 invalid"], { type: "application/pdf" }) as Blob);
+    expect((await runServerFrozenArtifactStaticEvidence({ project: project("pdf"), candidate: corrupt, testCase })).verificationStatus).toBe("unverified");
+  });
+
+  it("keeps product behavior partial and unsupported empty PDF unverified", async () => {
     const variant = await candidate("md", new NodeBlob(["REAL FINAL GUIDE"], { type: "text/markdown" }) as Blob, "REAL FINAL GUIDE");
     const behavior = TestCaseSchema.parse({ ...testCase, evidenceScope: "product-behavior" });
     expect((await runServerFrozenArtifactStaticEvidence({ project: project("md"), candidate: variant, testCase: behavior })).verificationStatus).toBe("partial");

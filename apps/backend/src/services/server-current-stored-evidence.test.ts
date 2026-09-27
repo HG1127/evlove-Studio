@@ -6,6 +6,7 @@ import type { EvolveProject, TestCase } from "@evolution/contracts";
 import { serverArtifactSha256 } from "./server-experiment-artifacts";
 import { runServerCurrentStoredEvidence } from "./server-current-stored-evidence";
 import { buildServerCurrentSemanticArtifactContext } from "./server-current-semantic-context";
+import { minimalTextPdf } from "./pdf-test-fixture";
 
 const blobs = vi.hoisted(() => new Map<string, Blob>());
 vi.mock("./artifact-runtime", () => ({ getServerArtifactStore: () => ({ get: async (id: string) => blobs.get(id) }) }));
@@ -89,6 +90,18 @@ describe("Server current-version stored evidence", () => {
     expect((await runServerCurrentStoredEvidence({ project: current, testCase: testCase("roundtrip") })).verificationStatus).toBe("unverified");
   });
 
+  it("extracts current PDF text from uploaded bytes for static and semantic evidence", async () => {
+    const current = project("pdf");
+    await storeSource(current, minimalTextPdf("ACTUAL PDF CONTENT"));
+    const staticRun = await runServerCurrentStoredEvidence({ project: current, testCase: testCase("static-evidence") });
+    expect(staticRun.verificationStatus, staticRun.output).toBe("verified");
+    expect(staticRun.output).toContain("ACTUAL PDF CONTENT");
+    const context = await buildServerCurrentSemanticArtifactContext({ project: current });
+    expect(context[0]?.content).toContain("ACTUAL PDF CONTENT");
+    expect((await runServerCurrentStoredEvidence({ project: current, testCase: testCase("roundtrip") })).verificationStatus).toBe("unverified");
+    await storeSource(current, "%PDF-1.4 invalid");
+    expect((await runServerCurrentStoredEvidence({ project: current, testCase: testCase("static-evidence") })).verificationStatus).toBe("unverified");
+  });
   it("extracts uploaded DOCX bytes but does not claim unsupported binary roundtrip", async () => {
     const current = project("docx");
     const zip = new JSZip();
