@@ -57,6 +57,24 @@ describe("server baseline codebase binding",()=>{
     acceptedChampion(project,true);
     expect(resolveServerBaselineCodebaseBinding(project)).toMatchObject({blobId:"champion-blob",candidateId:"candidate-s1"});
   });
+  it("refuses the source ZIP when an accepted champion lacks this Target snapshot",()=>{
+    const project=codebaseProject();
+    project.sourceArtifacts[0]!.storageRef="raw-zip";
+    acceptedChampion(project,true);
+    project.searchChampion!.candidate!.artifactSnapshots=[];
+    const binding=resolveServerBaselineCodebaseBinding(project);
+    expect(binding.blobId).toBeUndefined();
+    expect(binding.reason).toContain("不能回退原 Source ZIP");
+  });
+
+  it("refuses the source ZIP when the recorded champion is not trusted",()=>{
+    const project=codebaseProject();
+    acceptedChampion(project,true);
+    project.searchChampion!.validation!.recommendation="hold";
+    const binding=resolveServerBaselineCodebaseBinding(project);
+    expect(binding.blobId).toBeUndefined();
+    expect(binding.reason).toContain("可信 Artifact Snapshot");
+  });
   it("refuses to fall back to the source ZIP when the accepted champion is not frozen",()=>{
     const project=codebaseProject();
     acceptedChampion(project,false);

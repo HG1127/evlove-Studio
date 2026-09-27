@@ -144,6 +144,22 @@ describe("server experiment materialization",()=>{
     expect(getBlob).toHaveBeenCalledWith("champion-blob");
     expect(putBlob).not.toHaveBeenCalled();
   });
+  it("does not use the Source as a parent when the Champion lacks its Target snapshot",()=>{
+    const project=projectWithChampion(true);
+    project.sourceArtifacts[0]!.storageRef="raw-zip";
+    project.searchChampion!.candidate!.artifactSnapshots=[];
+    const binding=resolveServerExperimentParentBinding(project,project.sourceArtifacts[0]!);
+    expect(binding.blobId).toBeUndefined();
+    expect(binding.reason).toContain("不能回退原 Source");
+  });
+
+  it("does not use the Source as a parent when the Champion is untrusted",()=>{
+    const project=projectWithChampion(true);
+    project.searchChampion!.validation!.recommendation="hold";
+    const binding=resolveServerExperimentParentBinding(project,project.sourceArtifacts[0]!);
+    expect(binding.blobId).toBeUndefined();
+    expect(binding.reason).toContain("可信 Artifact Snapshot");
+  });
   it("never falls back to the original Source when the accepted Champion is not frozen",()=>{
     const project=projectWithChampion(false);
     const binding=resolveServerExperimentParentBinding(project,project.sourceArtifacts[0]!);

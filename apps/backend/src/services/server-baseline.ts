@@ -25,6 +25,14 @@ export function resolveServerBaselineCodebaseBinding(project: EvolveProject) {
   if (!source) return { source: undefined, blobId: undefined, candidateId: undefined, reason: "当前 Mission 没有 codebase/package Target。" };
   const champion = trustedServerBaselineChampion(project);
   const snapshot = champion?.artifactSnapshots.find((item) => item.sourceArtifactId === source.id);
+  if (project.searchChampion && !snapshot) {
+    return {
+      source,
+      blobId: undefined,
+      candidateId: champion?.id,
+      reason: "当前 Search Champion 缺少该 codebase Target 的可信 Artifact Snapshot，不能回退原 Source ZIP 代替执行。",
+    };
+  }
   if (snapshot && !snapshot.frozenArtifact) {
     return {
       source,

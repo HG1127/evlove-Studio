@@ -130,6 +130,15 @@ function currentParentSnapshot(project: EvolveProject, sourceArtifactId: string)
 
 export function resolveServerExperimentParentBinding(project: EvolveProject, source: SourceArtifact) {
   const parent = currentParentSnapshot(project, source.id);
+  if (!parent && project.searchChampion) {
+    return {
+      blobId: undefined,
+      candidateId: trustedServerBaselineChampion(project)?.id,
+      sha256: undefined,
+      size: undefined,
+      reason: `当前 Search Champion 缺少 ${source.name} 的可信 Artifact Snapshot，不能回退原 Source 作为 Candidate 父代。`,
+    };
+  }
   if (!parent) return { blobId: source.storageRef?.trim() || source.id, candidateId: undefined, sha256: undefined, size: undefined, reason: undefined };
   if (!parent.frozenArtifact) {
     return {
