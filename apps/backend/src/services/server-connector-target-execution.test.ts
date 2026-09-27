@@ -155,6 +155,48 @@ describe("server Connector Target execution",()=>{
     expect(staged.connectorBinding).toMatchObject({baseVersionRef:"v43",versionRef:"v44"});
     expect(execute).toHaveBeenCalledWith(expect.objectContaining({operation:"mutate",expectedVersionRef:"v43"}));
   });
+  it("rejects an explicitly staged Candidate based on an older Baseline",async()=>{
+    const p=project();
+    const c=candidate();
+    c.connectorBinding={
+      connectorId:"workflow-main",targetId:"workflow-42",baseVersionRef:"v41",versionRef:"v42-c1",
+      artifactFingerprint:connectorCandidateArtifactFingerprint(p,c),snapshotRef:"old-snapshot",
+      evidenceRefs:[],observedAt:"now",
+    };
+    const execute=vi.fn();
+    const runs=await runServerConnectorTargetBatch(p,cases,c,execute);
+    expect(runs[0]?.verificationStatus).toBe("unverified");
+    expect(runs[0]?.output).toContain("current Baseline version");
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("rejects a prior-cycle Candidate after an accepted Champion advances the Baseline",async()=>{
+    const p=project();
+    acceptedChampion(p);
+    const c=candidate();
+    c.id="C2";
+    c.connectorBinding={
+      connectorId:"workflow-main",targetId:"workflow-42",baseVersionRef:"v42",versionRef:"v42-c2",
+      artifactFingerprint:connectorCandidateArtifactFingerprint(p,c),snapshotRef:"old-snapshot",
+      evidenceRefs:[],observedAt:"now",
+    };
+    const execute=vi.fn();
+    const runs=await runServerConnectorTargetBatch(p,cases,c,execute);
+    expect(runs[0]?.verificationStatus).toBe("unverified");
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("can revalidate the exact accepted Champion staged version",async()=>{
+    const p=project();
+    const champion=acceptedChampion(p);
+    const execute=vi.fn(async(input:ConnectorActionRequest)=>response(input));
+    const runs=await runServerConnectorTargetBatch(p,cases,champion,execute);
+    expect(runs[0]?.verificationStatus).toBe("verified");
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({
+      operation:"validate",expectedVersionRef:"v43",
+      payload:expect.objectContaining({candidateId:champion.id}),
+    }));
+  });
   it("does not invent verified evidence when Connector omits a requested test result",async()=>{
     const execute=vi.fn(async(input:ConnectorActionRequest)=>response(input,{output:{runs:[]}}));
     const runs=await runServerConnectorTargetBatch(project(),cases,undefined,execute);

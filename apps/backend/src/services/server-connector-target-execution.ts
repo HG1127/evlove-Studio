@@ -250,6 +250,18 @@ export async function runServerConnectorTargetBatch(
     if(currentFingerprint!==binding.artifactFingerprint){
       return testCases.map((testCase)=>unavailable(testCase,"Candidate Connector binding 与当前 Artifact Fingerprint 不一致。"));
     }
+    let currentBase:ReturnType<typeof currentBaseBinding>;
+    try{currentBase=currentBaseBinding(project);}
+    catch(error){
+      const message=error instanceof Error?error.message:String(error);
+      return testCases.map((testCase)=>unavailable(testCase,message));
+    }
+    const isCurrentChampion=currentBase.candidateId===candidate.id;
+    if(isCurrentChampion
+      ?binding.versionRef!==currentBase.versionRef||currentFingerprint!==currentBase.artifactFingerprint
+      :binding.baseVersionRef!==currentBase.versionRef){
+      return testCases.map((testCase)=>unavailable(testCase,"Candidate Connector staged version is not based on the current Baseline version。"));
+    }
     versionRef=binding.versionRef;
     snapshotRef=binding.snapshotRef;
     artifactFingerprint=binding.artifactFingerprint;
