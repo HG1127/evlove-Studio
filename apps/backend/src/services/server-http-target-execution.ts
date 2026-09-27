@@ -25,16 +25,27 @@ function targetArtifacts(project:EvolveProject){
   return project.sourceArtifacts.filter((artifact)=>artifact.role==="target");
 }
 
-function htmlTarget(project:EvolveProject){
-  return targetArtifacts(project).find((artifact)=>/^(html|htm)$/i.test(artifact.extension));
+type TargetArtifact=EvolveProject["sourceArtifacts"][number];
+
+function targetForTest(project:EvolveProject,testCase:TestCase):TargetArtifact|undefined{
+  const targets=targetArtifacts(project);
+  if(!targets.length)return undefined;
+  const criteria=new Set(testCase.criterionIds);
+  const scopedIds=new Set((project.acceptanceRubric??[])
+    .filter((criterion)=>criteria.has(criterion.id))
+    .flatMap((criterion)=>criterion.artifactIds));
+  const selected=scopedIds.size?targets.filter((artifact)=>scopedIds.has(artifact.id)):targets;
+  if(selected.length!==1){
+    throw new Error(`HTTP Test Case ${testCase.id} 没有唯一的 Target Artifact 绑定，不能选用首个 Source。`);
+  }
+  return selected[0];
 }
 
-function archiveTarget(project:EvolveProject){
-  return targetArtifacts(project).find((artifact)=>
-    artifact.extension.toLowerCase()==="zip"
+function isArchiveTarget(artifact:TargetArtifact){
+  return artifact.extension.toLowerCase()==="zip"
     ||artifact.artifactKind==="codebase"
     ||artifact.artifactDescriptor?.family==="codebase"
-    ||artifact.artifactDescriptor?.family==="package");
+    ||artifact.artifactDescriptor?.family==="package";
 }
 
 function exactCurrentCandidate(project:EvolveProject){
@@ -59,11 +70,13 @@ function evidenceUnavailable(testCase:TestCase,detail:string):TargetRunResult{
 async function bindingFor(
   project:EvolveProject,
   candidate:Candidate|undefined,
+  target:TargetArtifact|undefined,
   getArtifact:(id:string)=>Promise<Blob|undefined>,
 ):Promise<TargetBinding>{
-  const html=htmlTarget(project);
   const current=candidate??exactCurrentCandidate(project);
-  if(html){
+  if(!target)return{};
+  if(/^(html|htm)$/i.test(target.extension)){
+    const html=target;
     const snapshots=current?.artifactSnapshots.filter((item)=>item.sourceArtifactId===html.id)??[];
     const snapshot=snapshots[0];
     if(current&&snapshots.length!==1){
@@ -102,8 +115,8 @@ async function bindingFor(
     return{artifact:{name:snapshot?.name??html.name,content},expectedHash};
   }
 
-  const archive=archiveTarget(project);
-  if(archive){
+  if(isArchiveTarget(target)){
+    const archive=target;
     const snapshots=current?.artifactSnapshots.filter((item)=>item.sourceArtifactId===archive.id)??[];
     const snapshot=snapshots[0];
     if(current&&snapshots.length!==1){
@@ -142,15 +155,21 @@ export async function runServerHttpTargetBatch(
   const runTarget=ports.runTarget??runHttpTarget;
   const getArtifact=ports.getArtifact??((id:string)=>getServerArtifactStore().get(id));
   const attachVisual=ports.attachVisual??attachServerVisualEvidence;
-  let binding:TargetBinding;
-  try{
-    binding=await bindingFor(project,candidate,getArtifact);
-  }catch(error){
-    const message=error instanceof Error?error.message:String(error);
-    return testCases.map((testCase)=>evidenceUnavailable(testCase,message));
-  }
-
+  const bindings=new Map<string,Promise<TargetBinding>>();
   const results=await Promise.all(testCases.map(async(testCase):Promise<TargetRunResult>=>{
+    let binding:TargetBinding;
+    try{
+      const target=targetForTest(project,testCase);
+      const key=target?.id??"no-target";
+      let pending=bindings.get(key);
+      if(!pending){
+        pending=bindingFor(project,candidate,target,getArtifact);
+        bindings.set(key,pending);
+      }
+      binding=await pending;
+    }catch(error){
+      return evidenceUnavailable(testCase,error instanceof Error?error.message:String(error));
+    }
     try{
       const result=await runTarget({
         projectId:project.id,

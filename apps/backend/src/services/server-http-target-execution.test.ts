@@ -235,6 +235,69 @@ describe("server HTTP Target execution",()=>{
     expect(getArtifact).toHaveBeenCalledWith("frozen-zip");
     expect(runTarget).not.toHaveBeenCalled();
   });
+  it("binds each Test Case to its scoped HTML Target and reuses that frozen Source read",async()=>{
+    const p=project();
+    p.sourceArtifacts=[
+      {...p.sourceArtifacts[0]!,storageRef:"blob-a",textContent:"stale A"},
+      {...p.sourceArtifacts[0]!,id:"html-b",name:"b.html",storageRef:"blob-b",textContent:"stale B"},
+    ];
+    p.acceptanceRubric=[{id:"A",artifactIds:["html-source"]},{id:"B",artifactIds:["html-b"]}] as unknown as EvolveProject["acceptanceRubric"];
+    const cases=[
+      {...testCase,id:"A1",criterionIds:["A"]},
+      {...testCase,id:"A2",criterionIds:["A"]},
+      {...testCase,id:"B1",criterionIds:["B"]},
+    ];
+    const getArtifact=vi.fn(async(id:string)=>id==="blob-a"?new Blob(["<html>A</html>"]):id==="blob-b"?new Blob(["<html>B</html>"]):undefined);
+    const runTarget=vi.fn(async(raw:unknown)=>{
+      const input=raw as {testCase:TestCase;artifact:{content:string}};
+      expect(input.artifact.content).toBe(input.testCase.id==="B1"?"<html>B</html>":"<html>A</html>");
+      return{testCaseId:input.testCase.id,output:"ok",latencyMs:1,cost:0,verificationStatus:"verified",artifactHash:createHash("sha256").update(input.artifact.content).digest("hex"),trace:[]} as TargetRunResult;
+    });
+    const results=await runServerHttpTargetBatch(p,cases,undefined,{runTarget,getArtifact,attachVisual:async(_p,_t,runs)=>runs});
+    expect(results.map((run)=>run.verificationStatus)).toEqual(["verified","verified","verified"]);
+    expect(getArtifact).toHaveBeenCalledTimes(2);
+    expect(getArtifact).toHaveBeenCalledWith("blob-a");
+    expect(getArtifact).toHaveBeenCalledWith("blob-b");
+  });
+
+  it("does not pick the first Target when a Test Case maps to multiple files",async()=>{
+    const p=project();
+    p.sourceArtifacts.push({...p.sourceArtifacts[0]!,id:"html-b",name:"b.html"});
+    p.acceptanceRubric=[{id:"BOTH",artifactIds:["html-source","html-b"]}] as unknown as EvolveProject["acceptanceRubric"];
+    const getArtifact=vi.fn();
+    const runTarget=vi.fn();
+    const [result]=await runServerHttpTargetBatch(p,[{...testCase,criterionIds:["BOTH"]}],undefined,{runTarget,getArtifact,attachVisual:async(_p,_t,runs)=>runs});
+    expect(result?.verificationStatus).toBe("unverified");
+    expect(result?.output).toContain("没有唯一的 Target Artifact 绑定");
+    expect(getArtifact).not.toHaveBeenCalled();
+    expect(runTarget).not.toHaveBeenCalled();
+  });
+
+  it("rejects duplicate Target metadata rows with the same ID",async()=>{
+    const p=project();
+    p.sourceArtifacts.push({...p.sourceArtifacts[0]!});
+    const runTarget=vi.fn();
+    const [result]=await runServerHttpTargetBatch(p,[testCase],undefined,{runTarget,getArtifact:async()=>undefined,attachVisual:async(_p,_t,runs)=>runs});
+    expect(result?.verificationStatus).toBe("unverified");
+    expect(result?.output).toContain("没有唯一的 Target Artifact 绑定");
+    expect(runTarget).not.toHaveBeenCalled();
+  });
+
+  it("routes a ZIP-scoped Test Case to the ZIP rather than an earlier HTML Target",async()=>{
+    const p=project();
+    p.sourceArtifacts.push({...p.sourceArtifacts[0]!,id:"zip-source",name:"repo.zip",storageRef:"zip-blob",extension:"zip",mimeType:"application/zip",artifactKind:"codebase"});
+    p.acceptanceRubric=[{id:"ZIP",artifactIds:["zip-source"]}] as unknown as EvolveProject["acceptanceRubric"];
+    const bytes="zip-bytes";
+    const runTarget=vi.fn(async(raw:unknown)=>{
+      const input=raw as {testCase:TestCase;artifact?:unknown;archiveBase64?:string};
+      expect(input.artifact).toBeUndefined();
+      expect(Buffer.from(input.archiveBase64??"","base64").toString()).toBe(bytes);
+      return{testCaseId:input.testCase.id,output:"ok",latencyMs:1,cost:0,verificationStatus:"verified",artifactHash:createHash("sha256").update(bytes).digest("hex"),trace:[]} as TargetRunResult;
+    });
+    const [result]=await runServerHttpTargetBatch(p,[{...testCase,criterionIds:["ZIP"]}],undefined,{runTarget,getArtifact:async(id)=>id==="zip-blob"?new Blob([bytes]):undefined,attachVisual:async(_p,_t,runs)=>runs});
+    expect(result?.verificationStatus).toBe("verified");
+    expect(runTarget).toHaveBeenCalledOnce();
+  });
   it("only activates for an explicitly connected HTTP Target",()=>{
     const p=project();
     expect(serverHttpTargetEnabled(p)).toBe(true);
