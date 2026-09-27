@@ -414,6 +414,7 @@ export async function runBaseline(project: EvolveProject, onProgress?: (done: nu
   const hiddenHardGateMissing = parsed.acceptanceRubric.filter((criterion) => criterion.hardGate && !parsed.hiddenEvalSuite.some((testCase) => testCase.criterionIds.includes(criterion.id)));
   if (coverage.uncovered.length || hiddenHardGateMissing.length) throw new Error(`Eval Suite does not execute the full Acceptance Rubric: uncovered=${coverage.uncovered.join(",") || "none"}; hidden hard gates=${hiddenHardGateMissing.map((item) => item.id).join(",") || "none"}`);
   const suite = parsed.evalSuite;
+  const startedAt = now();
   const adapter = getTargetAdapter(parsed);
   const batchSize = options?.retryIncompleteOnly ? 1 : parsed.experimentPolicy.batchArtifactRuntime ? parsed.experimentPolicy.batchSize : 1;
   const measurementFingerprint = baselineMeasurementFingerprint(parsed);
@@ -437,7 +438,7 @@ export async function runBaseline(project: EvolveProject, onProgress?: (done: nu
     measurementFingerprint,
     id: `baseline-${Date.now()}`,
     status: "completed",
-    startedAt: now(),
+    startedAt,
     completedAt: now(),
     suiteName: "Core Validation Suite",
     totalCases: suite.length,
