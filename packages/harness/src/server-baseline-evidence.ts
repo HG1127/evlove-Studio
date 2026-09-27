@@ -1,5 +1,5 @@
 import type { EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
-import { citesHistoricalEvidence, fastHash } from "@evolution/core";
+import { campaignScoringInputFingerprint, citesHistoricalEvidence, fastHash } from "@evolution/core";
 
 const TEXT_ROUNDTRIP = /^(txt|md|markdown|csv|json|yaml|yml|css|js|jsx|ts|tsx)$/i;
 
@@ -279,7 +279,8 @@ export function serverBaselineFingerprint(project: EvolveProject, scoringRouteFi
       ? champion.candidate
       : undefined;
   return fastHash({
-    version: "server-baseline-v1",
+    version: "server-baseline-v2",
+    scoringInputFingerprint: campaignScoringInputFingerprint(project),
     scoringRouteFingerprint,
     goal: project.goal,
     command: project.evolutionCommand,
@@ -288,7 +289,6 @@ export function serverBaselineFingerprint(project: EvolveProject, scoringRouteFi
     hiddenEvalSuite: project.hiddenEvalSuite,
     protectedItems: project.protectedItems,
     clarifications: project.inputClarifications,
-    targetConnection: project.targetConnection,
     metrics: project.metrics.map(({ key, target, direction }) => ({ key, target, direction })),
     targets: project.sourceArtifacts.map((artifact) => ({
       id: artifact.id,

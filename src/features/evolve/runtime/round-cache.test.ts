@@ -30,6 +30,8 @@ describe("campaign Baseline reuse", () => {
     expect(canReuseVisibleBaseline(demoProject, { ...verified, measurementFingerprint: undefined })).toBe(false);
     expect(canReuseVisibleBaseline(demoProject, { ...verified, measurementFingerprint: "old-target-and-suite" })).toBe(false);
     expect(canReuseVisibleBaseline({ ...demoProject, goal: "修改后的用户目标" }, verified)).toBe(false);
+    expect(canReuseVisibleBaseline({ ...demoProject, sourceArtifacts: [{ ...demoProject.sourceArtifacts[0]!, name: "renamed.md" }, ...demoProject.sourceArtifacts.slice(1)] }, verified)).toBe(false);
+    expect(canReuseVisibleBaseline({ ...demoProject, targetConnection: { ...demoProject.targetConnection, status: "error", label: "Renamed" } }, verified)).toBe(true);
     expect(canReuseVisibleBaseline({ ...demoProject, evalSuite: demoProject.evalSuite.map((testCase) => ({ ...testCase, input: testCase.input + " 新要求" })) }, verified)).toBe(false);
     expect(canReuseVisibleBaseline({ ...demoProject, aiProfile: { mode: "project", primary: { connectionId: "judge-2", model: "different", label: "new judge" } } }, verified)).toBe(false);
   });

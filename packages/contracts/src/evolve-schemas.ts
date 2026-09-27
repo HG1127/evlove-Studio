@@ -941,6 +941,8 @@ export const EvolutionCampaignSchema = z.object({
   rootBaseline: EvaluationResultSchema.optional(),
   /** Executor/Judge route contract used to score this Campaign. */
   scoringRouteFingerprint: z.string().min(1).optional(),
+  /** Goal, rubric, suite and original Target contract used to compare Campaign scores. */
+  scoringInputFingerprint: z.string().min(1).optional(),
   /** 最近一次未提升/未通过轮次的证据化建议；跨轮保留，直到产生新 Champion 或目标被重置。 */
   lastGapAdvice: z.object({
     overall: z.string(),

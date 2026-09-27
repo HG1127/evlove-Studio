@@ -1,4 +1,5 @@
 import { FatalError } from "workflow";
+import { campaignScoringInputBlocker } from "@evolution/core";
 import {
   EvolutionJobSchema,
   PRODUCTION_SCHEMA_VERSIONS,
@@ -6,10 +7,11 @@ import {
   type EvolutionWorkflowResult,
   type EvolutionWorkflowRunInput,
 } from "@evolution/contracts";
-import { advanceCampaignScheduleAfterServerRun, applyDeterministicRoundtripEvidence, applyProductionLearningGovernance, baselineReadiness, campaignGoalSatisfied, campaignStopReason, completeAutonomousMission, integrateDistilledLesson, mapTestsToRubric, materializeAcceptedChampionPackage, mergeGovernedNextQueue, normalizeAcceptanceRubric, normalizeEvalSuiteForProject, productionOutcomeFreshness, productionOutcomeTrend, projectHasStableHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, resetDownstream, rubricSuiteCoverage, rubricValidation } from "@evolution/core";
+import { advanceCampaignScheduleAfterServerRun, applyDeterministicRoundtripEvidence, applyProductionLearningGovernance, campaignGoalSatisfied, campaignStopReason, completeAutonomousMission, integrateDistilledLesson, mapTestsToRubric, materializeAcceptedChampionPackage, mergeGovernedNextQueue, normalizeAcceptanceRubric, normalizeEvalSuiteForProject, productionOutcomeFreshness, productionOutcomeTrend, projectHasStableHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, resetDownstream, rubricSuiteCoverage, rubricValidation } from "@evolution/core";
 import {
   advanceServerCampaignPreparation,
   serverCampaignScoringRouteBlocker,
+  canReuseServerBaseline,
   buildServerHarnessPlan,
   normalizeLocallyVerifiableCandidateRuns,
   reconcileAttentionRequest,
@@ -691,13 +693,14 @@ export async function executeServerControlStep(
 
     const scoringRouteFingerprint=serverAiScoringRouteFingerprint();
     const scoringRouteBlocker=serverCampaignScoringRouteBlocker(mission,scoringRouteFingerprint);
-    if(scoringRouteBlocker){
+    const scoringBlocker=campaignScoringInputBlocker(mission)??scoringRouteBlocker;
+    if(scoringBlocker){
       const updated={
         ...mission,
         campaign:{
           ...mission.campaign,
           status:"paused" as const,
-          stopReason:scoringRouteBlocker,
+          stopReason:scoringBlocker,
           schedule:{...mission.campaign.schedule,enabled:false,nextRunAt:undefined},
         },
         updatedAt:now,
@@ -706,21 +709,21 @@ export async function executeServerControlStep(
       await runtime.jobs.put(controlJob(input,{
         status:"waiting",
         startedAt:input.requestedAt,
-        progress:{percent:20,detail:scoringRouteBlocker.slice(0,240)},
+        progress:{percent:20,detail:scoringBlocker.slice(0,240)},
       }));
       await runtime.events.append(createEvolutionEvent({
-        id:"evt-"+input.controlJobId+"-campaign-scoring-route-"+iteration,
+        id:"evt-"+input.controlJobId+"-campaign-scoring-contract-"+iteration,
         missionId:input.missionId,jobId:input.controlJobId,checkpointId:plan.checkpoint.id,
         type:"JobProgress",source:"vercel-workflow-control",
-        payload:{action,serverNative:true,conditional:true,phase:"scoring-route",reason:scoringRouteBlocker},
+        payload:{action,serverNative:true,conditional:true,phase:"scoring-contract",reason:scoringBlocker},
       }));
       return {control:"stop",result:result(input,{
         status:"waiting-action",iterations:iteration+1,nextAction:action,
-        checkpointId:plan.checkpoint.id,reason:scoringRouteBlocker,
+        checkpointId:plan.checkpoint.id,reason:scoringBlocker,
       })};
     }
     let campaignMission=mission;
-    if(!baselineReadiness(campaignMission).ready || (campaignMission.campaign.currentRound===0 && Boolean(scoringRouteFingerprint) && campaignMission.campaign.scoringRouteFingerprint!==scoringRouteFingerprint)){
+    if(!canReuseServerBaseline(campaignMission,scoringRouteFingerprint)){
       const baselineOutcome=await runServerMissionBaseline(campaignMission);
       campaignMission=baselineOutcome.project;
       await runtime.missions.save(campaignMission);

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { EvaluateAiResult, EvolveProject, TargetRunResult } from "@evolution/contracts";
-import { runServerBaseline } from "./server-baseline";
+import { campaignScoringInputFingerprint } from "@evolution/core";
+import { canReuseServerBaseline, runServerBaseline } from "./server-baseline";
 import { serverBaselineFingerprint } from "./server-baseline-evidence";
 
 function fixture(): EvolveProject {
@@ -97,6 +98,13 @@ describe("server baseline",()=>{
     expect(outcome.project.stage).toBe("problem");
     expect(outcome.project.campaign.rootBaseline).toBeTruthy();
     expect(outcome.project.campaign.checkpoint).toMatchObject({round:1,completedPhase:"baseline"});
+    expect(canReuseServerBaseline(outcome.project)).toBe(true);
+    expect(canReuseServerBaseline(outcome.project, "other-route")).toBe(false);
+    expect(canReuseServerBaseline({ ...outcome.project, evalSuite: [{ ...outcome.project.evalSuite[0]!, input: "changed" }, ...outcome.project.evalSuite.slice(1)] })).toBe(false);
+    expect(canReuseServerBaseline({ ...outcome.project, sourceArtifacts: [{ ...outcome.project.sourceArtifacts[0]!, textContent: "changed" }] })).toBe(false);
+    expect(canReuseServerBaseline({ ...outcome.project, sourceArtifacts: [{ ...outcome.project.sourceArtifacts[0]!, name: "renamed.md" }] })).toBe(false);
+    expect(canReuseServerBaseline({ ...outcome.project, targetConnection: { ...outcome.project.targetConnection, status: "error", label: "Renamed" } })).toBe(true);
+    expect(canReuseServerBaseline({ ...outcome.project, baselineRun: { ...outcome.baseline, measurementFingerprint: undefined } })).toBe(false);
   });
 
   it("fails closed when the server judge cannot complete",async()=>{
@@ -185,6 +193,7 @@ describe("server baseline",()=>{
       parentVersionId:"V1",reason:"accepted",selectedAt:"2026-09-20T13:10:00.000Z",
     };
     project.campaign.currentRound=1;
+    project.campaign.scoringInputFingerprint=campaignScoringInputFingerprint(project);
     let observed="";
     const outcome=await runServerBaseline(project,{
       buildCurrentArtifactContext:async()=>[{id:"source",content:"S1 CURRENT CHAMPION：安装、验证、回滚均已完整。",truncated:false}],
@@ -213,6 +222,7 @@ describe("server Campaign scoring route binding", () => {
   it("stops an established Campaign before executing under a changed route", async () => {
     const project = fixture();
     project.campaign.currentRound = 1;
+    project.campaign.scoringInputFingerprint = campaignScoringInputFingerprint(project);
     project.campaign.scoringRouteFingerprint = "old-route";
     const outcome = await runServerBaseline(project, {
       scoringRouteFingerprint: "new-route",
@@ -226,6 +236,27 @@ describe("server Campaign scoring route binding", () => {
     expect(outcome.baseline).toBe(project.baselineRun);
   });
 
+  it("reanchors an incomplete first-round Baseline when a retry finally measures it", async () => {
+    const project = fixture();
+    project.campaign.scoringInputFingerprint = campaignScoringInputFingerprint(project);
+    project.campaign.rootBaseline = {
+      accuracy: 1, evidence: 1, riskCoverage: 1, completeness: 1, safety: "PASS",
+      averageCost: 0, averageLatencyMs: 1, notes: [], failures: [],
+    };
+    const outcome = await runServerBaseline(project, {
+      executeSemanticBatch: async ({ testCases }) => ({
+        results: testCases.map((testCase) => ({
+          testCaseId: testCase.id,
+          output: "当前说明包含安装步骤，但验证与回滚说明不足。",
+          trace: [],
+        })),
+      }),
+      judge: async () => judge(),
+    });
+    expect(outcome.ready).toBe(true);
+    expect(outcome.project.campaign.rootBaseline).toEqual(outcome.baseline.result);
+    expect(outcome.project.campaign.rootBaseline?.accuracy).not.toBe(1);
+  });
   it("remeasures and reanchors the first round after a scoring route change", async () => {
     const project = fixture();
     project.campaign.scoringRouteFingerprint = "old-route";

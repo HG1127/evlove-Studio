@@ -8,6 +8,9 @@ import type {
 } from "@evolution/contracts";
 import {
   baselineReadiness,
+  campaignRootBaselineForMeasurement,
+  campaignScoringInputBlocker,
+  campaignScoringInputFingerprint,
   criteriaRequiringJudge,
   rubricSuiteCoverage,
   rubricValidation,
@@ -25,13 +28,18 @@ import {
 } from "./server-baseline-evidence";
 import { indexUniqueBatchResults } from "./server-batch-results";
 
-export { trustedServerBaselineChampion } from "./server-baseline-evidence";
+export { trustedServerBaselineChampion, serverBaselineFingerprint } from "./server-baseline-evidence";
 
 /** Stop durable Campaign comparisons before a changed Server AI scoring route can reuse old scores. */
 export function serverCampaignScoringRouteBlocker(project: EvolveProject, routeFingerprint?: string): string | undefined {
   if (!routeFingerprint || project.campaign.currentRound === 0) return undefined;
   if (project.campaign.scoringRouteFingerprint === routeFingerprint) return undefined;
   return "[server-campaign-scoring-route-changed] 服务端执行或评审模型已变化，旧 Campaign 分数不可直接比较；请重置搜索后重新运行。生产发布状态不会被重置。";
+}
+/** A ready score is reusable only for the exact current Target, tests, Champion and Server AI route. */
+export function canReuseServerBaseline(project: EvolveProject, routeFingerprint?: string): boolean {
+  return baselineReadiness(project).ready
+    && project.baselineRun.measurementFingerprint === serverBaselineFingerprint(project, routeFingerprint);
 }
 export type ServerBaselinePorts = {
   scoringRouteFingerprint?: string;
@@ -68,19 +76,19 @@ export async function runServerBaseline(
 ): Promise<ServerBaselineOutcome> {
   const now = options?.now ?? (() => new Date().toISOString());
   const startedAt = now();
-  const routeBlocker = serverCampaignScoringRouteBlocker(inputProject, ports.scoringRouteFingerprint);
-  if (routeBlocker) {
+  const scoringBlocker = campaignScoringInputBlocker(inputProject) ?? serverCampaignScoringRouteBlocker(inputProject, ports.scoringRouteFingerprint);
+  if (scoringBlocker) {
     const paused: EvolveProject = {
       ...inputProject,
       campaign: {
         ...inputProject.campaign,
         status: "paused",
-        stopReason: routeBlocker,
+        stopReason: scoringBlocker,
         schedule: { ...inputProject.campaign.schedule, enabled: false, nextRunAt: undefined },
       },
       updatedAt: startedAt,
     };
-    return { project: paused, baseline: paused.baselineRun, ready: false, reason: routeBlocker, capabilityGaps: ["server-scoring-route"] };
+    return { project: paused, baseline: paused.baselineRun, ready: false, reason: scoringBlocker, capabilityGaps: ["server-scoring-contract"] };
   }
   const targetGate = inputProject.gates.find((gate) => gate.id === "target-ready");
   if (targetGate?.status !== "approved") throw new Error("Target Ready gate is not approved");
@@ -318,8 +326,9 @@ export async function runServerBaseline(
     baselineRun: baseline,
     campaign: {
       ...project.campaign,
-      rootBaseline: project.campaign.currentRound === 0 && ports.scoringRouteFingerprint && project.campaign.scoringRouteFingerprint !== ports.scoringRouteFingerprint ? evaluation : project.campaign.rootBaseline ?? evaluation,
+      rootBaseline: campaignRootBaselineForMeasurement(project, evaluation, ports.scoringRouteFingerprint, !baselineReadiness(project).ready),
       scoringRouteFingerprint: project.campaign.currentRound === 0 ? ports.scoringRouteFingerprint ?? project.campaign.scoringRouteFingerprint : project.campaign.scoringRouteFingerprint,
+      scoringInputFingerprint: project.campaign.currentRound === 0 ? campaignScoringInputFingerprint(project) : project.campaign.scoringInputFingerprint,
     },
     updatedAt: now(),
   };

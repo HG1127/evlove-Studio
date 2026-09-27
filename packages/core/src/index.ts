@@ -22,6 +22,7 @@ export * from "./evidence-provenance";
 export * from "./campaign-problem";
 export * from "./plan-grounding";
 export * from "./campaign-control";
+export * from "./campaign-scoring-input";
 export * from "./campaign-schedule";
 export * from "./evaluation-settlement";
 export * from "./experiment-winner";

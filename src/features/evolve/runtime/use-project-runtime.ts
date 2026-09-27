@@ -1,4 +1,4 @@
-import { applyProductionLearningGovernance, applyReleaseResultToProject, beginReleaseCycle, completeAutonomousMission, experimentNeedsEvidenceRepair, buildExperimentGapAdvicePayload, buildGapAdvicePayload, fallbackExperimentAdvice, integrateDistilledLesson, mergeGovernedNextQueue, nextDurableReleaseAction, prepareCampaignRetry, productionOutcomeFreshness, productionOutcomeTrend, projectHasStableHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, projectUsesConnectorRelease, projectUsesHttpRelease, projectUsesVercelRelease, transitionReleaseTarget } from "@evolution/core";
+import { campaignRootBaselineForMeasurement, campaignScoringInputBlocker, campaignScoringInputFingerprint, applyProductionLearningGovernance, applyReleaseResultToProject, beginReleaseCycle, completeAutonomousMission, experimentNeedsEvidenceRepair, buildExperimentGapAdvicePayload, buildGapAdvicePayload, fallbackExperimentAdvice, integrateDistilledLesson, mergeGovernedNextQueue, nextDurableReleaseAction, prepareCampaignRetry, productionOutcomeFreshness, productionOutcomeTrend, projectHasStableHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, projectUsesConnectorRelease, projectUsesHttpRelease, projectUsesVercelRelease, transitionReleaseTarget } from "@evolution/core";
 import { deliveryReadiness } from "./delivery-readiness";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -1538,6 +1538,8 @@ export function useProjectRuntime(initialProject: EvolveProject) {
         pushActivity(`${satisfied ? "Campaign 已满足停止条件" : "Campaign 启动前触发安全边界"}：${reason}`, undefined, projectId);
         return { round: working.campaign.currentRound, stopped: true, paused: !satisfied, stopReason: reason, champion: working.searchChampion };
       };
+      const scoringInputBlocker = campaignScoringInputBlocker(working);
+      if (scoringInputBlocker) return settleBeforeRound(scoringInputBlocker, true);
       const scoringRouteBlocker = campaignScoringRouteBlocker(working);
       if (scoringRouteBlocker) return settleBeforeRound(scoringRouteBlocker, true);
       const existingBoundary = campaignStopReason(working);
@@ -1627,7 +1629,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
         working = persist({
           ...working,
           baselineRun: baseline,
-          campaign: { ...working.campaign, rootBaseline: retryIncompleteBaseline ? baseline.result : working.campaign.rootBaseline ?? baseline.result, scoringRouteFingerprint: working.campaign.currentRound === 0 ? baselineScoringRouteFingerprint(working) : working.campaign.scoringRouteFingerprint },
+          campaign: { ...working.campaign, rootBaseline: campaignRootBaselineForMeasurement(working, baseline.result, baselineScoringRouteFingerprint(working), retryIncompleteBaseline), scoringRouteFingerprint: working.campaign.currentRound === 0 ? baselineScoringRouteFingerprint(working) : working.campaign.scoringRouteFingerprint, scoringInputFingerprint: working.campaign.currentRound === 0 ? campaignScoringInputFingerprint(working) : working.campaign.scoringInputFingerprint },
           stage: "baseline",
           problems: reusePriorDiagnosis ? working.problems : [],
           selectedProblemId: reusePriorDiagnosis ? working.selectedProblemId : undefined,
@@ -1640,8 +1642,8 @@ export function useProjectRuntime(initialProject: EvolveProject) {
         checkpointAt("baseline");
       }
 
-      if (working.campaign.currentRound === 0 && !working.campaign.scoringRouteFingerprint) {
-        working = persist({ ...working, campaign: { ...working.campaign, scoringRouteFingerprint: baselineScoringRouteFingerprint(working) } });
+      if (working.campaign.currentRound === 0 && (!working.campaign.scoringRouteFingerprint || !working.campaign.scoringInputFingerprint)) {
+        working = persist({ ...working, campaign: { ...working.campaign, scoringRouteFingerprint: baselineScoringRouteFingerprint(working), scoringInputFingerprint: campaignScoringInputFingerprint(working) } });
       }
       const campaignBaseline = baselineReadiness(working);
       if (!campaignBaseline.ready) {
@@ -2085,6 +2087,12 @@ export function useProjectRuntime(initialProject: EvolveProject) {
   }, [commit, generateEvalSuite, projectId, run, runProjectAi]);
 
   const runCampaign = useCallback(async () => {
+    const scoringBlocker = campaignScoringInputBlocker(projectRef.current) ?? campaignScoringRouteBlocker(projectRef.current);
+    if (scoringBlocker) {
+      commit((current) => ({ ...current, campaign: { ...current.campaign, status: "paused", stopReason: scoringBlocker, schedule: { ...current.campaign.schedule, enabled: false, nextRunAt: undefined } } }));
+      pushActivity("Campaign 未启动：" + scoringBlocker, undefined, projectId);
+      return;
+    }
     const before = projectRef.current;
     const preflight = campaignPreflightStopReason(before);
     if (preflight) {
@@ -2454,6 +2462,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
         bestScore: undefined,
         rootBaseline: undefined,
         scoringRouteFingerprint: undefined,
+        scoringInputFingerprint: undefined,
         lastGapAdvice: undefined,
         estimatedCost: 0,
         startedAt: undefined,

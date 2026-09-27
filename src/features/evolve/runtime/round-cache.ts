@@ -1,7 +1,7 @@
 import type { BaselineRun, EvaluationResult, EvolveProject, TargetRunResult } from "../schemas";
 import { fastHash } from "../ai/performance";
 import { searchBaseCandidate } from "./search-base";
-import { baselineReadiness } from "@evolution/core";
+import { baselineReadiness, campaignScoringInputFingerprint } from "@evolution/core";
 import { resolveProjectOperationConnections } from "../ai/providers/registry";
 import { getAiProviderStatus } from "../ai/service";
 
@@ -46,7 +46,7 @@ export function baselineFingerprint(project: EvolveProject): string {
   const searchPatches = trustedChampion ? project.searchAppliedPatches ?? [] : [];
   const patches = `${project.appliedPatches.length}:${fastHash(JSON.stringify(project.appliedPatches))}:${searchPatches.length}:${fastHash(JSON.stringify(searchPatches))}:${championBase}`;
   const scoringRouteFingerprint = baselineScoringRouteFingerprint(project);
-  const contract = JSON.stringify([project.evalSuite, project.goal, project.evolutionCommand, project.acceptanceRubric, project.protectedItems, project.inputClarifications, scoringRouteFingerprint, project.targetConnection, project.metrics?.map(({ key, target, direction }) => ({ key, target, direction }))]);
+  const contract = JSON.stringify([campaignScoringInputFingerprint(project), project.evalSuite, project.goal, project.evolutionCommand, project.acceptanceRubric, project.protectedItems, project.inputClarifications, scoringRouteFingerprint, project.metrics?.map(({ key, target, direction }) => ({ key, target, direction }))]);
   return fastHash([VALIDATION_CONTRACT_VERSION, suite, hidden, targets, policy, patches, contract].join("::"));
 }
 

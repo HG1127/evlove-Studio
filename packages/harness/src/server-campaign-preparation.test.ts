@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { EvolveProject } from "@evolution/contracts";
+import { campaignScoringInputFingerprint } from "@evolution/core";
 import { advanceServerCampaignPreparation } from "./server-campaign-preparation";
 
 function fixture(): EvolveProject {
@@ -70,6 +71,18 @@ describe("server campaign preparation",()=>{
     expect(outcome.project.campaign.executionMode).toBe("manual");
   });
 
+  it("pauses before goal settlement or AI planning when the scored Target contract changed",async()=>{
+    const project=fixture();
+    const original=campaignScoringInputFingerprint(project);
+    project.campaign.currentRound=1;
+    project.campaign.scoringInputFingerprint=original;
+    project.goal="Changed goal";
+    const never=async()=>{throw new Error("AI should not run");};
+    const outcome=await advanceServerCampaignPreparation(project,{problemAnalysis:never,diagnose:never,plan:never});
+    expect(outcome).toMatchObject({control:"stop",phase:"settled",completed:false});
+    expect(outcome.project.campaign.status).toBe("paused");
+    expect(outcome.reason).toContain("重置搜索");
+  });
   it("fails closed before planning when baseline evidence is not ready",async()=>{
     const project=fixture();
     project.baselineRun={...project.baselineRun,status:"idle",result:undefined,runs:[]};

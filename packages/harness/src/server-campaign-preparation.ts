@@ -6,6 +6,7 @@ import type {
 } from "@evolution/contracts";
 import {
   baselineReadiness,
+  campaignScoringInputBlocker,
   baselineRubricProblem,
   campaignGoalSatisfied,
   campaignPreflightStopReason,
@@ -151,6 +152,8 @@ export async function advanceServerCampaignPreparation(
   options?: { now?: () => string },
 ): Promise<ServerCampaignPreparationOutcome> {
   const now = options?.now?.() ?? new Date().toISOString();
+  const scoringInputBlocker = campaignScoringInputBlocker(inputProject);
+  if (scoringInputBlocker) return { control: "stop", phase: "settled", project: capabilityPause(inputProject, scoringInputBlocker, inputProject.stage, now), reason: scoringInputBlocker, completed: false };
   const preflight = campaignPreflightStopReason(inputProject);
   if (preflight) {
     const completed = campaignGoalSatisfied(inputProject);
