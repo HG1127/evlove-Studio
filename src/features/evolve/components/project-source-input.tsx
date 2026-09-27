@@ -36,7 +36,7 @@ const artifactKindOptions: Array<{value:ArtifactKind;label:string}> = [
 ];
 
 
-export function ProjectSourceInput({ runtime }: { runtime: ProjectRuntime }) {
+export function ProjectSourceInput({ runtime, onAutoRunStart }: { runtime: ProjectRuntime; onAutoRunStart: () => void }) {
   const [open, setOpen] = useState(true);
   const [files, setFiles] = useState<Pending[]>([]);
   const [command, setCommand] = useState("");
@@ -305,7 +305,10 @@ export function ProjectSourceInput({ runtime }: { runtime: ProjectRuntime }) {
       setError(e instanceof Error ? e.message : "更新进化输入失败");
     } finally {
       setBusy(false);
-      if (shouldAutoRun) window.setTimeout(() => void runtime.runAutoPilot(), 0);
+      if (shouldAutoRun) window.setTimeout(() => {
+        onAutoRunStart();
+        void runtime.runAutoPilot();
+      }, 0);
     }
   };
 

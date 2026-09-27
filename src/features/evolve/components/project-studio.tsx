@@ -172,16 +172,6 @@ export function ProjectStudio({ project: initialProject }: { project: EvolveProj
     // autostart is a one-shot handoff from project creation; later resume is governed by Campaign state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autostart, runtime.project.id, runtime.status.busy]);
-  // 从“输入任务”真正启动自主流程后，自动切到状态中心；后台预读材料不会触发这次跳转。
-  useEffect(() => {
-    if (view !== "source") return;
-    const label = `${runtime.status.label ?? ""} ${runtime.status.phase ?? ""}`;
-    const autonomousAction = runtime.status.busy && /(深度理解输入|Acceptance Rubric|Eval Suite|Evolution Search|Candidate|Hidden Validation|Artifact Acceptance)/i.test(label);
-    if (autonomousAction || project.campaign.status === "running") {
-      const timer = window.setTimeout(() => setView("flow"), 0);
-      return () => window.clearTimeout(timer);
-    }
-  }, [project.campaign.status, runtime.status.busy, runtime.status.label, runtime.status.phase, view]);
   const generator = resolveProjectOperationConnections("plan", project.aiProfile)[0];
   const evaluator = resolveProjectOperationConnections("evaluate", project.aiProfile)[0];
   const copilot = resolveProjectOperationConnections("copilot", project.aiProfile)[0];
@@ -270,7 +260,7 @@ export function ProjectStudio({ project: initialProject }: { project: EvolveProj
       </div>
 
       {view!=="flow"&&<div className="rounded-xl border border-indigo-100 bg-indigo-50/40 px-4 py-3 text-sm leading-6 text-slate-700"><b>{tabs.find(t=>t.id===view)?.label}</b><p>{view==="source"?"输入内容和进化指令后会直接启动自主进化；无需再逐步确认流程。":view==="outputs"?"这里只放已经通过验收的成果、版本与回滚记录。":view==="runtime"?"技术诊断入口：查看内部执行链路、Trace 和阻塞原因。":"高级控制入口；默认设置已经适合自主进化，一般无需调整。"}</p></div>}
-      {view === "source" && <Suspense fallback={<WorkspaceLoading label="材料解析" />}><div className="space-y-4">{project.sourceArtifacts.length>0?<><ParsingQualityPanel project={project} onReparse={runtime.refreshParsing} busy={runtime.status.busy} onSetTargetConnection={runtime.setTargetConnection}/><details className="rounded-2xl border bg-white p-4"><summary className="cursor-pointer font-semibold">补充材料、修正类型或修改原始要求</summary><div className="mt-3"><ProjectSourceInput runtime={runtime}/></div></details></>:<ProjectSourceInput runtime={runtime}/>}</div></Suspense>}
+      {view === "source" && <Suspense fallback={<WorkspaceLoading label="材料解析" />}><div className="space-y-4">{project.sourceArtifacts.length>0?<><ParsingQualityPanel project={project} onReparse={runtime.refreshParsing} busy={runtime.status.busy} onSetTargetConnection={runtime.setTargetConnection}/><details className="rounded-2xl border bg-white p-4"><summary className="cursor-pointer font-semibold">补充材料、修正类型或修改原始要求</summary><div className="mt-3"><ProjectSourceInput runtime={runtime} onAutoRunStart={()=>setView("flow")}/></div></details></>:<ProjectSourceInput runtime={runtime} onAutoRunStart={()=>setView("flow")}/>}</div></Suspense>}
       {view === "runtime" && <Suspense fallback={<WorkspaceLoading label="运行记录" />}><EvolutionRunConsole runtime={runtime} /></Suspense>}
       {view === "campaign" && <Suspense fallback={<WorkspaceLoading label="自动续跑设置" />}><EvolutionCampaignCenter runtime={runtime} onOpenAttention={openAttentionPanel} /></Suspense>}
       {view === "outputs" && <Suspense fallback={<WorkspaceLoading label="成果与版本" />}><ProjectOutputsPanel runtime={runtime} /></Suspense>}

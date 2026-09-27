@@ -31,4 +31,12 @@ test("user can upload a source artifact and create an evolve project", async ({ 
   await page.getByRole("button", { name: /1 · 输入任务/ }).click();
   await page.getByText("查看解析覆盖与证据详情").click();
   await expect(page.getByText("agent-prompt.md", { exact: true }).first()).toBeVisible();
+  await page.getByText("补充材料、修正类型或修改原始要求").click();
+  await page.getByPlaceholder(/告诉 AI 这次要怎么进化/).fill("请把每条结论绑定原始证据，并保留中文版输出。");
+  const update = page.getByRole("button", { name: "更新并自动进化" });
+  await expect(update).toBeEnabled();
+  await update.click();
+  await expect(page.getByRole("button", { name: /2 · 自动进化/ })).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: /1 · 输入任务/ }).click();
+  await expect(page.getByRole("button", { name: /1 · 输入任务/ })).toHaveAttribute("aria-pressed", "true");
 });
