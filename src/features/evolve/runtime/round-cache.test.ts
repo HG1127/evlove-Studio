@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { EvolveProject } from "../schemas";
-import { baselineFingerprint, baselineMeasurementFingerprint, canReuseVisibleBaseline, canReusePriorDiagnosis, clearRoundCaches, getHoldoutBaseline, getVisibleBaseline, setHoldoutBaseline, setVisibleBaseline } from "./round-cache";
+import { baselineFingerprint, baselineMeasurementFingerprint, baselineScoringRouteFingerprint, campaignScoringRouteBlocker, canReuseVisibleBaseline, canReusePriorDiagnosis, clearRoundCaches, getHoldoutBaseline, getVisibleBaseline, setHoldoutBaseline, setVisibleBaseline } from "./round-cache";
 import { demoProject } from "../data/mock-project";
 import { EvolutionRoundSchema } from "../schemas";
 import { buildRoundRecord } from "./evolution-search";
@@ -68,6 +68,43 @@ describe("repair-round diagnosis evidence", () => {
     expect(EvolutionRoundSchema.parse(record).baselineMeasurementFingerprint).toBe(fingerprint);
   });
 });
+describe("Campaign scoring route binding", () => {
+  const profile = { mode: "project" as const, primary: { connectionId: "judge-1", model: "model-a", label: "Judge" } };
+  const measured = {
+    ...demoProject,
+    aiProfile: profile,
+    campaign: {
+      ...demoProject.campaign,
+      currentRound: 1,
+      rootBaseline: demoProject.baselineRun.result,
+      scoringRouteFingerprint: baselineScoringRouteFingerprint({ ...demoProject, aiProfile: profile }),
+    },
+  };
+
+  it("allows the original scoring route and unrelated diagnosis or Champion changes", () => {
+    expect(campaignScoringRouteBlocker(measured)).toBeUndefined();
+    expect(campaignScoringRouteBlocker({
+      ...measured,
+      aiProfile: { ...profile, operationRoutes: { diagnose: { connectionId: "judge-1", model: "diagnosis-b", label: "Diagnosis" } } },
+    })).toBeUndefined();
+    expect(campaignScoringRouteBlocker({ ...measured, version: "V2" })).toBeUndefined();
+  });
+
+  it("pauses old and switched routes before another round can compare scores", () => {
+    expect(campaignScoringRouteBlocker({
+      ...measured,
+      aiProfile: { ...profile, primary: { ...profile.primary, model: "model-b" } },
+    })).toContain("重置搜索");
+    expect(campaignScoringRouteBlocker({
+      ...measured,
+      campaign: { ...measured.campaign, scoringRouteFingerprint: undefined },
+    })).toContain("重置搜索");
+    expect(campaignScoringRouteBlocker({
+      ...measured,
+      campaign: { ...measured.campaign, currentRound: 0, scoringRouteFingerprint: undefined },
+    })).toBeUndefined();
+  });
+});
 describe("round-cache · 跨轮 Baseline 复用", () => {
   it("同 ID 隐藏题内容、模型与用户目标变化使缓存失效", () => {
     const base = baselineFingerprint(project());
@@ -92,8 +129,10 @@ describe("round-cache · 跨轮 Baseline 复用", () => {
       });
       localStorage.setItem(routingKey, JSON.stringify(policy("gpt-5.6-sol")));
       const first = baselineFingerprint(project());
+      const scoringRoute = baselineScoringRouteFingerprint(project());
       localStorage.setItem(routingKey, JSON.stringify(policy("gpt-5.6-terra")));
       expect(baselineFingerprint(project())).not.toBe(first);
+      expect(baselineScoringRouteFingerprint(project())).not.toBe(scoringRoute);
     } finally {
       if (originalConnection === null) localStorage.removeItem(connectionKey);
       else localStorage.setItem(connectionKey, originalConnection);

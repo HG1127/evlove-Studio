@@ -40,7 +40,7 @@ import {
 } from "./run-manager";
 import { advanceCampaignScheduleAfterRun, buildRoundArchive, buildRoundRecord, campaignGoalSatisfied, campaignPreflightStopReason, campaignScheduleIssue, campaignStopReason, computeFitness, estimateRoundCost, materializeChampionOutputs, maybeUpdateSearchChampion, nextScheduledAt, selectDiverseCandidates, selectParentPool } from "./evolution-search";
 import { buildSearchMemory, nextExploreRatio } from "./search-memory";
-import { baselineFingerprint, canReuseVisibleBaseline, canReusePriorDiagnosis, getVisibleBaseline, setVisibleBaseline } from "./round-cache";
+import { baselineFingerprint, baselineScoringRouteFingerprint, campaignScoringRouteBlocker, canReuseVisibleBaseline, canReusePriorDiagnosis, getVisibleBaseline, setVisibleBaseline } from "./round-cache";
 import { flagUngroundedCandidates } from "./plan-grounding";
 import { baselineRubricProblem, buildFocusedPlanPayload, focusedTask, focusedSourceContext, prioritizeProblems, limitPlanToTask } from "./focused-task";
 import { compactProblemAnalysisInput } from "./problem-analysis-input";
@@ -1521,8 +1521,8 @@ export function useProjectRuntime(initialProject: EvolveProject) {
   const runCampaignRound = useCallback(async () => {
     return run("运行一轮 Evolution Search", async () => {
       let working = projectRef.current;
-      const settleBeforeRound = (reason: string) => {
-        const satisfied = campaignGoalSatisfied(working);
+      const settleBeforeRound = (reason: string, forcePause = false) => {
+        const satisfied = !forcePause && campaignGoalSatisfied(working);
         const settled: EvolveProject = {
           ...working,
           campaign: {
@@ -1538,6 +1538,8 @@ export function useProjectRuntime(initialProject: EvolveProject) {
         pushActivity(`${satisfied ? "Campaign 已满足停止条件" : "Campaign 启动前触发安全边界"}：${reason}`, undefined, projectId);
         return { round: working.campaign.currentRound, stopped: true, paused: !satisfied, stopReason: reason, champion: working.searchChampion };
       };
+      const scoringRouteBlocker = campaignScoringRouteBlocker(working);
+      if (scoringRouteBlocker) return settleBeforeRound(scoringRouteBlocker, true);
       const existingBoundary = campaignStopReason(working);
       if (existingBoundary) return settleBeforeRound(existingBoundary);
       const initialSuiteCoverage = rubricSuiteCoverage(working.acceptanceRubric, working.evalSuite, working.hiddenEvalSuite);
@@ -1625,7 +1627,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
         working = persist({
           ...working,
           baselineRun: baseline,
-          campaign: { ...working.campaign, rootBaseline: retryIncompleteBaseline ? baseline.result : working.campaign.rootBaseline ?? baseline.result },
+          campaign: { ...working.campaign, rootBaseline: retryIncompleteBaseline ? baseline.result : working.campaign.rootBaseline ?? baseline.result, scoringRouteFingerprint: working.campaign.currentRound === 0 ? baselineScoringRouteFingerprint(working) : working.campaign.scoringRouteFingerprint },
           stage: "baseline",
           problems: reusePriorDiagnosis ? working.problems : [],
           selectedProblemId: reusePriorDiagnosis ? working.selectedProblemId : undefined,
@@ -1638,6 +1640,9 @@ export function useProjectRuntime(initialProject: EvolveProject) {
         checkpointAt("baseline");
       }
 
+      if (working.campaign.currentRound === 0 && !working.campaign.scoringRouteFingerprint) {
+        working = persist({ ...working, campaign: { ...working.campaign, scoringRouteFingerprint: baselineScoringRouteFingerprint(working) } });
+      }
       const campaignBaseline = baselineReadiness(working);
       if (!campaignBaseline.ready) {
         const reason = `当前版本基线不足以进入自动诊断：${campaignBaseline.blockers.join("；")}`;
@@ -2448,6 +2453,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
         noImprovementRounds: 0,
         bestScore: undefined,
         rootBaseline: undefined,
+        scoringRouteFingerprint: undefined,
         lastGapAdvice: undefined,
         estimatedCost: 0,
         startedAt: undefined,

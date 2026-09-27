@@ -7,6 +7,27 @@ import { getAiProviderStatus } from "../ai/service";
 
 const VALIDATION_CONTRACT_VERSION = "criterion-scope-v2";
 
+/** Stable scoring-route identity: Champion content may change between rounds, but the Judge/Executor contract may not. */
+export function baselineScoringRouteFingerprint(project: EvolveProject): string {
+  // Baseline 只依赖执行与评审模型。诊断、方案、交付等节点的模型切换不能让已建立的
+  // Baseline 缓存失效，否则会把“切换当前节点模型”变成无意义的整轮重跑。
+  const aiProfile = project.aiProfile ?? { mode: "global" as const };
+  const baselineProfile = aiProfile.mode === "project" ? {
+    mode: aiProfile.mode,
+    primary: aiProfile.primary,
+    builder: aiProfile.builder,
+    judge: aiProfile.judge,
+    operationRoutes: Object.fromEntries(["execute-artifact", "execute-artifact-batch", "evaluate", "evaluate-population"].flatMap((operation) => aiProfile.operationRoutes?.[operation] ? [[operation, aiProfile.operationRoutes[operation]]] : [])),
+  } : aiProfile;
+  const liveRoutes = (["execute-artifact", "execute-artifact-batch", "evaluate", "evaluate-population"] as const).map((operation) => {
+    const routed = resolveProjectOperationConnections(operation, aiProfile)[0];
+    if (routed) return [operation, routed.connection.id, routed.connection.providerId, routed.model, routed.resolved.baseUrl];
+    const fallback = getAiProviderStatus(operation, { aiProfile });
+    return [operation, fallback.connectionId ?? fallback.providerId, fallback.model, fallback.routeSource];
+  });
+  return fastHash(JSON.stringify([baselineProfile, liveRoutes]));
+}
+
 // 跨轮 Baseline 复用：同一项目里只要「考卷 + 进化对象 + 执行配置 + 已上线补丁」没变，
 // 缓存表示同一条件下的一次历史观测，不表示随机模型每次输出必然相同。每轮重跑整份可见卷
 // 和盲测对照卷，等于把最贵的执行/评审时间重复支付。指纹是唯一复用依据：
@@ -24,23 +45,8 @@ export function baselineFingerprint(project: EvolveProject): string {
     : "root";
   const searchPatches = trustedChampion ? project.searchAppliedPatches ?? [] : [];
   const patches = `${project.appliedPatches.length}:${fastHash(JSON.stringify(project.appliedPatches))}:${searchPatches.length}:${fastHash(JSON.stringify(searchPatches))}:${championBase}`;
-  // Baseline 只依赖执行与评审模型。诊断、方案、交付等节点的模型切换不能让已建立的
-  // Baseline 缓存失效，否则会把“切换当前节点模型”变成无意义的整轮重跑。
-  const aiProfile = project.aiProfile ?? { mode: "global" as const };
-  const baselineProfile = aiProfile.mode === "project" ? {
-    mode: aiProfile.mode,
-    primary: aiProfile.primary,
-    builder: aiProfile.builder,
-    judge: aiProfile.judge,
-    operationRoutes: Object.fromEntries(["execute-artifact", "execute-artifact-batch", "evaluate", "evaluate-population"].flatMap((operation) => aiProfile.operationRoutes?.[operation] ? [[operation, aiProfile.operationRoutes[operation]]] : [])),
-  } : aiProfile;
-  const liveRoutes = (["execute-artifact", "execute-artifact-batch", "evaluate", "evaluate-population"] as const).map((operation) => {
-    const routed = resolveProjectOperationConnections(operation, aiProfile)[0];
-    if (routed) return [operation, routed.connection.id, routed.connection.providerId, routed.model, routed.resolved.baseUrl];
-    const fallback = getAiProviderStatus(operation, { aiProfile });
-    return [operation, fallback.connectionId ?? fallback.providerId, fallback.model, fallback.routeSource];
-  });
-  const contract = JSON.stringify([project.evalSuite, project.goal, project.evolutionCommand, project.acceptanceRubric, project.protectedItems, project.inputClarifications, baselineProfile, liveRoutes, project.targetConnection, project.metrics?.map(({ key, target, direction }) => ({ key, target, direction }))]);
+  const scoringRouteFingerprint = baselineScoringRouteFingerprint(project);
+  const contract = JSON.stringify([project.evalSuite, project.goal, project.evolutionCommand, project.acceptanceRubric, project.protectedItems, project.inputClarifications, scoringRouteFingerprint, project.targetConnection, project.metrics?.map(({ key, target, direction }) => ({ key, target, direction }))]);
   return fastHash([VALIDATION_CONTRACT_VERSION, suite, hidden, targets, policy, patches, contract].join("::"));
 }
 
@@ -77,6 +83,12 @@ function remember<K, V>(map: Map<K, V>, key: K, value: V, cap = 8) {
 export function canReuseVisibleBaseline(project: EvolveProject, baseline: BaselineRun): boolean {
   return baseline.measurementFingerprint === baselineMeasurementFingerprint(project)
     && baselineReadiness({ ...project, baselineRun: baseline }).ready;
+}
+/** Existing Campaign scores are comparable only under their original Executor/Judge routes. */
+export function campaignScoringRouteBlocker(project: EvolveProject): string | undefined {
+  if (project.campaign.currentRound === 0) return undefined;
+  if (project.campaign.scoringRouteFingerprint === baselineScoringRouteFingerprint(project)) return undefined;
+  return "执行或评审模型路由已变化，旧 Campaign 的 Baseline、Champion 与轮次分数不可直接比较；请在自主进化中心点击「重置搜索」，再重新运行。生产发布状态不会被重置。";
 }
 /** A repair round may reuse a root cause only for the exact evidence and Target it analyzed. */
 export function canReusePriorDiagnosis(project: EvolveProject): boolean {

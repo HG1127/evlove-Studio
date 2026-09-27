@@ -18,7 +18,7 @@ export function resetDownstream(
     searchChampion:undefined,
     searchAppliedPatches:[],
     evolutionArchive:[],
-    campaign:{...current.campaign,status:"idle",currentRound:0,noImprovementRounds:0,bestScore:undefined,rootBaseline:undefined,checkpoint:undefined,startedAt:undefined,completedAt:undefined,stopReason:undefined,estimatedCost:0,schedule:{...current.campaign.schedule,enabled:false,nextRunAt:undefined}},
+    campaign:{...current.campaign,status:"idle",currentRound:0,noImprovementRounds:0,bestScore:undefined,rootBaseline:undefined,scoringRouteFingerprint:undefined,checkpoint:undefined,startedAt:undefined,completedAt:undefined,stopReason:undefined,estimatedCost:0,schedule:{...current.campaign.schedule,enabled:false,nextRunAt:undefined}},
     evalSuite:[],hiddenEvalSuite:[],problems:[],selectedProblemId:undefined,diagnosis:undefined,
     candidates:[],selectedCandidateIds:[],
     baselineRun:{id:`baseline-${nowMs}`,status:"idle" as const,suiteName:"Core Validation Suite",totalCases:0,runs:[]},
