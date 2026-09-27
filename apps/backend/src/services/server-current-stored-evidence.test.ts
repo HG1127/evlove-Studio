@@ -26,6 +26,13 @@ async function storeSource(project: EvolveProject, bytes: string | Uint8Array) {
   blobs.set("raw-guide", blob);
   return blob;
 }
+async function codebaseZip(label: string) {
+  const zip = new JSZip();
+  zip.file("package.json", JSON.stringify({ name: "source-or-champion" }));
+  zip.file("src/config.ts", `export const configuration = "configuration setup ${label}";`);
+  zip.file("src/setup.ts", `export const setup = "setup configuration ${label}";`);
+  return new Uint8Array(await zip.generateAsync({ type: "uint8array" }));
+}
 async function acceptChampion(project: EvolveProject, content: string) {
   const blob = new NodeBlob([content], { type: "text/markdown" }) as Blob;
   const sha256 = await serverArtifactSha256(await blob.arrayBuffer());
@@ -90,6 +97,52 @@ describe("Server current-version stored evidence", () => {
     expect((await runServerCurrentStoredEvidence({ project: current, testCase: testCase("roundtrip") })).verificationStatus).toBe("unverified");
   });
 
+  it("reads current Source ZIP bytes for static and bounded semantic code evidence", async () => {
+    const current = project("zip");
+    current.sourceArtifacts[0]!.artifactKind = "codebase";
+    current.evolutionCommand = "Improve configuration setup";
+    current.acceptanceRubric[0]!.requirement = "configuration setup implementation";
+    const zipCase = { ...testCase("static-evidence"), title: "Configuration setup", input: "Check configuration setup implementation" };
+    await storeSource(current, await codebaseZip("ACTUAL SOURCE ZIP"));
+    const run = await runServerCurrentStoredEvidence({ project: current, testCase: zipCase });
+    expect(run.verificationStatus, run.output).toBe("verified");
+    expect(run.output).toContain("ACTUAL SOURCE ZIP");
+    expect(run.output).not.toContain("STALE PARSED INDEX");
+    const context = await buildServerCurrentSemanticArtifactContext({ project: current });
+    expect(context[0]?.content).toContain("ACTUAL SOURCE ZIP");
+    expect(context[0]?.truncated).toBe(true);
+    blobs.delete("raw-guide");
+    expect((await runServerCurrentStoredEvidence({ project: current, testCase: zipCase })).verificationStatus).toBe("unverified");
+  });
+
+  it("uses accepted Champion ZIP bytes instead of its overlay or Source ZIP", async () => {
+    const current = project("zip");
+    current.sourceArtifacts[0]!.artifactKind = "codebase";
+    current.evolutionCommand = "Improve configuration setup";
+    current.acceptanceRubric[0]!.requirement = "configuration setup implementation";
+    await storeSource(current, await codebaseZip("OLD SOURCE ZIP"));
+    const bytes = await codebaseZip("ACTUAL CHAMPION ZIP");
+    const blob = new NodeBlob([bytes], { type: "application/zip" }) as Blob;
+    const sha256 = await serverArtifactSha256(bytes);
+    const content = '{"kind":"codebase-patch","files":[{"path":"src/config.ts","content":"OVERLAY ONLY"}]}';
+    const contentHash = await serverArtifactSha256(new TextEncoder().encode(content));
+    blobs.set("champion-guide", blob);
+    current.searchChampion = {
+      id: "champion", versionLabel: "S1", validation: { status: "completed", recommendation: "release" }, artifactAcceptance: { status: "passed", candidateId: "C1" },
+      candidate: { id: "C1", artifactSnapshots: [{ id: "S1", sourceArtifactId: "guide", name: "guide.zip", content, contentHash,
+        frozenArtifact: { sourceArtifactId: "guide", snapshotHash: contentHash, blobId: "champion-guide", name: "guide.zip", sha256, size: blob.size } }] },
+    } as unknown as EvolveProject["searchChampion"];
+    const context = await buildServerCurrentSemanticArtifactContext({ project: current });
+    expect(context[0]?.content).toContain("ACTUAL CHAMPION ZIP");
+    expect(JSON.stringify(context)).not.toContain("OLD SOURCE ZIP");
+    expect(JSON.stringify(context)).not.toContain("OVERLAY ONLY");
+    const zipCase = { ...testCase("static-evidence"), title: "Configuration setup", input: "Check configuration setup implementation" };
+    const run = await runServerCurrentStoredEvidence({ project: current, testCase: zipCase });
+    expect(run.verificationStatus, run.output).toBe("verified");
+    expect(run.output).toContain("ACTUAL CHAMPION ZIP");
+    blobs.set("champion-guide", new NodeBlob(["tampered bytes"]) as Blob);
+    await expect(buildServerCurrentSemanticArtifactContext({ project: current })).rejects.toThrow();
+  });
   it("extracts current PDF text from uploaded bytes for static and semantic evidence", async () => {
     const current = project("pdf");
     await storeSource(current, minimalTextPdf("ACTUAL PDF CONTENT"));

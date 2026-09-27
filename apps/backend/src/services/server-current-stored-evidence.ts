@@ -3,6 +3,8 @@ import { trustedServerBaselineChampion } from "@evolution/harness";
 import { getServerArtifactStore } from "./artifact-runtime";
 import { serverArtifactSha256, verifyServerCandidateFrozenArtifact } from "./server-experiment-artifacts";
 import { extractServerStaticArtifactText, runServerFrozenArtifactStaticEvidence, serverStaticTextExtension } from "./server-static-artifact-evidence";
+import { indexServerCodebaseZip } from "./server-codebase-zip-index";
+import { buildServerCodebaseStaticRun } from "./server-static-codebase-evidence";
 
 const MAX_FILE_BYTES = 12_000_000;
 const MAX_OUTPUT_CHARS = 28_000;
@@ -40,7 +42,7 @@ export async function runServerCurrentStoredEvidence({ project, testCase }: { pr
   try {
     if (snapshot && !await verifyServerCandidateFrozenArtifact(snapshot)) return unavailable(testCase, "当前 Search Champion 冻结文件校验失败。");
     const blob = await getServerArtifactStore().get(blobId);
-    if (!blob || blob.size > MAX_FILE_BYTES || blob.size !== (receipt?.size ?? source.size)) return unavailable(testCase, "当前文件缺失、大小不一致或超出索引范围。");
+    if (!blob || blob.size > (extension === "zip" ? 25_000_000 : MAX_FILE_BYTES) || blob.size !== (receipt?.size ?? source.size)) return unavailable(testCase, "当前文件缺失、大小不一致或超出索引范围。");
     const bytes = new Uint8Array(await blob.arrayBuffer());
     if (bytes.byteLength !== blob.size) return unavailable(testCase, "当前文件读取大小发生变化。");
     const sha256 = await serverArtifactSha256(bytes);
@@ -58,6 +60,10 @@ export async function runServerCurrentStoredEvidence({ project, testCase }: { pr
       };
     }
     if (testCase.executionMode !== "static-evidence") return unavailable(testCase, "此执行模式不支持当前文件静态证据。");
+    if (extension === "zip") {
+      const index = await indexServerCodebaseZip(bytes);
+      return buildServerCodebaseStaticRun({ index, project, testCase, sha256, currentSource: true });
+    }
     const text = await extractServerStaticArtifactText(extension, bytes);
     if (!text?.trim()) return unavailable(testCase, "当前文件没有受支持的静态文本索引。");
     const complete = text.length <= MAX_OUTPUT_CHARS;

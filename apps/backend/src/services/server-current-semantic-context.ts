@@ -3,10 +3,22 @@ import { trustedServerBaselineChampion } from "@evolution/harness";
 import { getServerArtifactStore } from "./artifact-runtime";
 import { serverArtifactSha256, verifyServerCandidateFrozenArtifact } from "./server-experiment-artifacts";
 import { extractServerStaticArtifactText } from "./server-static-artifact-evidence";
+import { indexServerCodebaseZip, rankServerCodebaseFiles } from "./server-codebase-zip-index";
 
 const MAX_FILE_BYTES = 12_000_000;
 const MAX_TOTAL_CHARS = 56_000;
 const MAX_ARTIFACT_CHARS = 18_000;
+async function codebaseSemanticText(bytes: Uint8Array, project: EvolveProject) {
+  const index = await indexServerCodebaseZip(bytes);
+  const query = [project.goal, project.evolutionCommand, ...project.acceptanceRubric.map((criterion) => criterion.requirement)].join(" ");
+  const selected = rankServerCodebaseFiles(index, query).filter((entry) => entry.code).slice(0, 12);
+  if (!selected.length) throw new Error("当前代码 ZIP 没有可定位的实现文件。");
+  return [
+    `CODEBASE ZIP STATIC CONTEXT: ${index.fileCount} entries, ${index.textFiles.length} fully indexed text files.`,
+    ...selected.map((entry) => `--- ${entry.path} · relevance=${entry.score} ---\n${entry.content.slice(0, 3_600)}`),
+    "这是实际 ZIP 的静态源码摘录，不能证明构建或运行行为。",
+  ].join("\n\n");
+}
 
 /** Construct AI context from the same current bytes used by deterministic evidence. */
 export async function buildServerCurrentSemanticArtifactContext({ project }: { project: EvolveProject }): Promise<Array<Record<string, unknown>>> {
@@ -33,12 +45,14 @@ export async function buildServerCurrentSemanticArtifactContext({ project }: { p
     if (blobId) {
       if (snapshot && !await verifyServerCandidateFrozenArtifact(snapshot)) throw new Error(`${source.name} 的 Champion 冻结凭证与文件不一致。`);
       const blob = await store.get(blobId);
-      if (!blob || blob.size > MAX_FILE_BYTES || blob.size !== (receipt?.size ?? source.size)) throw new Error(`${source.name} 的当前文件缺失、大小不一致或超出索引范围。`);
+      if (!blob || blob.size > (source.extension.toLowerCase() === "zip" ? 25_000_000 : MAX_FILE_BYTES) || blob.size !== (receipt?.size ?? source.size)) throw new Error(`${source.name} 的当前文件缺失、大小不一致或超出索引范围。`);
       const bytes = new Uint8Array(await blob.arrayBuffer());
       if (bytes.byteLength !== blob.size) throw new Error(`${source.name} 的当前文件读取大小已变化。`);
       sha256 = await serverArtifactSha256(bytes);
       if (receipt && sha256 !== receipt.sha256) throw new Error(`${source.name} 的当前 Champion Blob 已变化。`);
-      const extracted = await extractServerStaticArtifactText(source.extension.toLowerCase(), bytes);
+      const extracted = source.extension.toLowerCase() === "zip"
+        ? await codebaseSemanticText(bytes, project)
+        : await extractServerStaticArtifactText(source.extension.toLowerCase(), bytes);
       if (!extracted?.trim()) throw new Error(`${source.name} 尚无可读取的当前文件语义索引。`);
       content = extracted;
     } else {
@@ -53,7 +67,7 @@ export async function buildServerCurrentSemanticArtifactContext({ project }: { p
       artifactKind: source.artifactKind, extension: source.extension, content: bounded,
       currentVersion: snapshot ? (project.searchChampion?.versionLabel ?? champion?.id) : project.version,
       snapshotHash: snapshot?.contentHash, artifactSha256: sha256,
-      originalChars: content.length, truncated: bounded.length < content.length,
+      originalChars: content.length, truncated: bounded.length < content.length || source.extension.toLowerCase() === "zip",
     });
   }
   return context;

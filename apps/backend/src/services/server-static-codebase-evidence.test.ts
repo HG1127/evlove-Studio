@@ -27,12 +27,13 @@ function project(): EvolveProject {
   } as unknown as EvolveProject;
 }
 
-async function candidate(configText = "NEW CANDIDATE CONFIGURATION") {
+async function candidate(configText = "NEW CANDIDATE CONFIGURATION", extraCodeFiles = 0) {
   const zip = new JSZip();
   zip.file("package.json", JSON.stringify({ name: "candidate-config", version: "1.0.0" }));
   zip.file("src/config.ts", `export function configureProject() { return "configuration setup ${configText}"; }`);
   zip.file("src/setup.ts", `export function setupProject() { return "setup configuration ${configText}"; }`);
   zip.file("README.md", `Configuration setup steps: ${configText}`);
+  for (let index = 0; index < extraCodeFiles; index += 1) zip.file(`src/config-${index}.ts`, `export const setup${index} = "configuration setup ${configText}";`);
   const blob = new NodeBlob([new Uint8Array(await zip.generateAsync({ type: "uint8array" }))], { type: "application/zip" });
   const content = JSON.stringify({ kind: "codebase", overlay: true, files: [{ path: "src/config.ts", content: "overlay only" }] });
   const contentHash = await serverArtifactSha256(new TextEncoder().encode(content));
@@ -65,6 +66,18 @@ describe("Server frozen codebase static evidence", () => {
     expect(run.output).not.toContain("overlay only");
   });
 
+  it("keeps clipped relevant source excerpts partial", async () => {
+    const { variant } = await candidate("CONFIGURATION".repeat(400));
+    const run = await runServerFrozenCodebaseStaticEvidence({ project: project(), candidate: variant, testCase });
+    expect(run.verificationStatus).toBe("partial");
+    expect(run.output).toContain("已截断");
+  });
+  it("keeps evidence partial when more relevant implementation files exist than the output cap", async () => {
+    const { variant } = await candidate("MANY CONFIGURATION FILES", 13);
+    const run = await runServerFrozenCodebaseStaticEvidence({ project: project(), candidate: variant, testCase });
+    expect(run.verificationStatus).toBe("partial");
+    expect(run.output).toContain("已截断");
+  });
   it("rejects changed Blob bytes and a Candidate Snapshot whose content changed", async () => {
     const { variant, blobId } = await candidate();
     blobs.set(blobId, new NodeBlob(["tampered bytes"]) as Blob);
