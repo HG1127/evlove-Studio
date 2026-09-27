@@ -45,6 +45,6 @@ export default defineEventHandler(async(event)=>{
     renderedCount:rendered.receipts.length,
     receipts:rendered.receipts,
     observedAt:new Date().toISOString(),
-    note:"Rendered and structurally verified Gate F accepted artifacts into Server Artifact Store.",
+    note:"Bound the exact Gate F frozen Artifact blobs after size and SHA-256 readback; no post-acceptance bytes were regenerated.",
   });
 });

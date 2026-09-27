@@ -2,7 +2,7 @@ import {createHash} from "node:crypto";
 import JSZip from "jszip";
 import * as XLSX from "xlsx";
 import type {ArtifactStorePort,CandidateArtifactSnapshot,EvolveProject,OutputArtifact,SourceArtifact} from "@evolution/contracts";
-import {describeArtifact} from "@evolution/core";
+import {describeArtifact,hasExactFrozenArtifactSet} from "@evolution/core";
 import {getServerArtifactStore} from "./artifact-runtime";
 
 type TextRun=string|{index:number;text:string};
@@ -46,7 +46,7 @@ function binaryBlob(bytes:Uint8Array,type:string){
 }
 async function originalBlob(source:SourceArtifact,store:ArtifactStorePort){return source.storageRef?store.get(source.storageRef):undefined;}
 
-async function renderSnapshot(source:SourceArtifact,snapshot:CandidateArtifactSnapshot,store:ArtifactStorePort){
+export async function renderSnapshot(source:SourceArtifact,snapshot:CandidateArtifactSnapshot,store:ArtifactStorePort){
   const descriptor=source.artifactDescriptor??describeArtifact(source);
   const extension=source.extension.toLowerCase();
   if(!descriptor.capabilities.materialize||descriptor.preservationMode==="external-required"||["rtf","odt","odp","doc","ppt"].includes(extension)){
@@ -137,7 +137,7 @@ async function renderSnapshot(source:SourceArtifact,snapshot:CandidateArtifactSn
   return {blob:new Blob([snapshot.content],{type:snapshot.mimeType||source.mimeType||"text/plain;charset=utf-8"}),name:evolvedName(source,source.extension),note:"Server 直接物化已通过验收的 exact text/structured snapshot。"};
 }
 
-async function verifyRendered(source:SourceArtifact,snapshot:CandidateArtifactSnapshot,blob:Blob,store:ArtifactStorePort){
+export async function verifyRendered(source:SourceArtifact,snapshot:CandidateArtifactSnapshot,blob:Blob,store:ArtifactStorePort){
   const descriptor=source.artifactDescriptor??describeArtifact(source);
   const checks:string[]=["实际文件已生成"];
   const limitations:string[]=[];
@@ -192,31 +192,63 @@ export async function renderAcceptedProjectArtifacts(
   store:ArtifactStorePort=getServerArtifactStore(),
 ){
   const champion=project.searchChampion;
-  if(!champion?.candidate||champion.artifactAcceptance?.status!=="passed")throw new Error("Server Renderer 只允许 Gate F 已通过的 Search Champion。");
-  const sourceById=new Map(project.sourceArtifacts.map((source)=>[source.id,source]));
-  const snapshotBySource=new Map(champion.candidate.artifactSnapshots.map((snapshot)=>[snapshot.sourceArtifactId,snapshot]));
-  const frozenBySource=new Map((champion.artifactAcceptance.frozenArtifacts??[]).map((item)=>[item.sourceArtifactId,item]));
+  const candidate=champion?.candidate;
+  const acceptance=champion?.artifactAcceptance;
+  if(!candidate||!acceptance||acceptance.status!=="passed"||acceptance.candidateId!==candidate.id
+    ||!hasExactFrozenArtifactSet(project,candidate,acceptance)){
+    throw new Error("Server Renderer 只允许 Gate F 已通过且冻结身份完整的 Search Champion。");
+  }
+  const targets=project.sourceArtifacts.filter((source)=>source.role==="target");
+  const primary=artifacts.filter((artifact)=>artifact.kind==="primary");
+  if(primary.length!==targets.length)throw new Error("Primary artifact 集合未完整覆盖 Gate F Target。");
+  const sourceById=new Map(targets.map((source)=>[source.id,source]));
+  const snapshotBySource=new Map(candidate.artifactSnapshots.map((snapshot)=>[snapshot.sourceArtifactId,snapshot]));
+  const frozenBySource=new Map(acceptance.frozenArtifacts!.map((item)=>[item.sourceArtifactId,item]));
+  const seen=new Set<string>();
+  for(const artifact of primary){
+    const sourceId=artifact.sourceArtifactIds[0];
+    if(!artifact.accepted||artifact.projectId!==project.id||artifact.candidateId!==candidate.id
+      ||artifact.sourceArtifactIds.length!==1||!sourceId||seen.has(sourceId)||!sourceById.has(sourceId)){
+      throw new Error("Primary artifact 无法唯一绑定当前已验收 Target/Candidate。");
+    }
+    seen.add(sourceId);
+  }
   const receipts:Array<{sourceArtifactId:string;artifactRef:string;sha256:string;size:number;name:string}>=[];
   const rendered:OutputArtifact[]=[];
   for(const artifact of artifacts){
     if(artifact.kind!=="primary"){rendered.push(artifact);continue;}
-    if(!artifact.accepted)throw new Error("Primary artifact "+artifact.name+" 未通过验收。");
-    const sourceId=artifact.sourceArtifactIds[0];
-    const source=sourceId?sourceById.get(sourceId):undefined;
-    const snapshot=sourceId?snapshotBySource.get(sourceId):undefined;
-    if(!source||!snapshot)throw new Error("Primary artifact "+artifact.name+" 无法绑定原始 Source/Snapshot。");
-    const frozen=frozenBySource.get(source.id);
-    if(!frozen)throw new Error("Primary artifact "+artifact.name+" 缺少 Gate F FrozenArtifact 绑定。");
+    const sourceId=artifact.sourceArtifactIds[0]!;
+    const snapshot=snapshotBySource.get(sourceId)!;
+    const frozen=frozenBySource.get(sourceId)!;
     if(snapshot.contentHash&&frozen.snapshotHash!==snapshot.contentHash){
       throw new Error("Primary artifact "+artifact.name+" Candidate Snapshot 已偏离 Gate F frozen hash。");
     }
-    const output=await renderSnapshot(source,snapshot,store);
-    const verification=await verifyRendered(source,snapshot,output.blob,store);
-    const sha256=await digest(output.blob);
-    const ref="rendered-"+project.id+"-"+champion.candidate.id+"-"+source.id+"-"+sha256.slice(0,16);
-    await store.put(ref,output.blob);
-    receipts.push({sourceArtifactId:source.id,artifactRef:ref,sha256,size:output.blob.size,name:output.name});
-    rendered.push({...artifact,name:output.name,renderedArtifactRef:ref,renderedSha256:sha256,renderedSize:output.blob.size,renderedMimeType:output.blob.type||source.mimeType,renderedAt:new Date().toISOString(),renderNote:output.note,renderChecks:verification.checks,renderLimitations:verification.limitations});
+    if(artifact.frozenArtifact&&(
+      artifact.frozenArtifact.sourceArtifactId!==frozen.sourceArtifactId
+      ||artifact.frozenArtifact.snapshotHash!==frozen.snapshotHash
+      ||artifact.frozenArtifact.blobId!==frozen.blobId
+      ||artifact.frozenArtifact.sha256!==frozen.sha256
+      ||artifact.frozenArtifact.size!==frozen.size
+      ||artifact.frozenArtifact.name!==frozen.name
+      ||artifact.frozenArtifact.mimeType!==frozen.mimeType
+    ))throw new Error("Primary artifact "+artifact.name+" 的冻结引用与 Gate F 不一致。");
+    const blob=await store.get(frozen.blobId);
+    if(!blob)throw new Error("找不到 Gate F 冻结 Artifact Blob "+frozen.blobId+"。");
+    if(blob.size!==frozen.size)throw new Error("Gate F 冻结 Artifact Blob 大小与凭证不一致。");
+    if(await digest(blob)!==frozen.sha256)throw new Error("Gate F 冻结 Artifact Blob SHA-256 与凭证不一致。");
+    receipts.push({sourceArtifactId:sourceId,artifactRef:frozen.blobId,sha256:frozen.sha256,size:frozen.size,name:artifact.name});
+    rendered.push({
+      ...artifact,
+      frozenArtifact:frozen,
+      renderedArtifactRef:frozen.blobId,
+      renderedSha256:frozen.sha256,
+      renderedSize:frozen.size,
+      renderedMimeType:frozen.mimeType,
+      renderedAt:new Date().toISOString(),
+      renderNote:"交付 Gate F 已验收并回读校验的同一份冻结 Artifact；未重新生成字节。",
+      renderChecks:["Gate F 冻结身份与 Target 一一对应","Storage Blob 大小与 SHA-256 回读一致"],
+      renderLimitations:[],
+    });
   }
   return {outputArtifacts:rendered,receipts};
 }
