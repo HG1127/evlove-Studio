@@ -83,7 +83,7 @@ describe("server HTTP Target execution",()=>{
   it("reads a ZIP target from the server Artifact Store and binds the remote result to its SHA-256",async()=>{
     const p=project();
     p.sourceArtifacts=[{
-      id:"zip-source",name:"repo.zip",role:"target",artifactKind:"codebase",mimeType:"application/zip",size:8,extension:"zip",
+      id:"zip-source",storageRef:"raw-zip",name:"repo.zip",role:"target",artifactKind:"codebase",mimeType:"application/zip",size:8,extension:"zip",
       inputMode:"upload",parseStatus:"ready",textContent:"",textExcerpt:"",structure:[],warnings:[],createdAt:"2026-09-22T00:00:00.000Z",
       artifactDescriptor:{family:"codebase",adapterId:"codebase-zip",preservationMode:"preserve-package",capabilities:{parse:true,mutate:true,materialize:true,roundtrip:true}},
     }] as unknown as EvolveProject["sourceArtifacts"];
@@ -97,11 +97,45 @@ describe("server HTTP Target execution",()=>{
       expect(Buffer.from(input.archiveBase64??"","base64").toString()).toBe("zip-bytes");
       return{testCaseId:"T1",output:"zip verified",latencyMs:1,cost:0,verificationStatus:"verified",artifactHash:expectedHash,trace:[]} as TargetRunResult;
     });
-    const [result]=await runServerHttpTargetBatch(p,[testCase],undefined,{runTarget,getArtifact:async(id)=>id==="zip-source"?blob:undefined,attachVisual:async(_p,_t,runs)=>runs});
+    const getArtifact=vi.fn(async(id:string)=>id==="raw-zip"?blob:undefined);
+    const [result]=await runServerHttpTargetBatch(p,[testCase],undefined,{runTarget,getArtifact,attachVisual:async(_p,_t,runs)=>runs});
     expect(result?.verificationStatus).toBe("verified");
     expect(runTarget).toHaveBeenCalledTimes(1);
+    expect(getArtifact).toHaveBeenCalledOnce();
+    expect(getArtifact).toHaveBeenCalledWith("raw-zip");
   });
 
+  it("does not fall back to the Source metadata ID when its storageRef Blob is missing",async()=>{
+    const p=project();
+    p.sourceArtifacts=[{...p.sourceArtifacts[0]!,id:"zip-source",storageRef:"raw-zip",name:"repo.zip",artifactKind:"codebase",mimeType:"application/zip",extension:"zip"}];
+    const getArtifact=vi.fn(async()=>undefined);
+    const runTarget=vi.fn();
+    const [result]=await runServerHttpTargetBatch(p,[testCase],undefined,{runTarget,getArtifact,attachVisual:async(_p,_t,runs)=>runs});
+    expect(result?.verificationStatus).toBe("unverified");
+    expect(result?.output).toContain("raw-zip");
+    expect(getArtifact).toHaveBeenCalledOnce();
+    expect(getArtifact).toHaveBeenCalledWith("raw-zip");
+    expect(runTarget).not.toHaveBeenCalled();
+  });
+
+  it("rejects a frozen current-version ZIP with a mismatched byte size",async()=>{
+    const p=project();
+    p.sourceArtifacts=[{...p.sourceArtifacts[0]!,id:"zip-source",storageRef:"raw-zip",name:"repo.zip",artifactKind:"codebase",mimeType:"application/zip",extension:"zip"}];
+    const candidate=acceptedChampion(p);
+    candidate.artifactSnapshots=[{
+      ...candidate.artifactSnapshots[0]!,sourceArtifactId:"zip-source",name:"repo.zip",mimeType:"application/zip",
+      frozenArtifact:{sourceArtifactId:"zip-source",snapshotHash:"accepted-hash",blobId:"frozen-zip",
+        name:"repo.zip",mimeType:"application/zip",sha256:"sha256-accepted",size:100,
+        verifiedAt:"2026-09-22T00:01:00.000Z",checks:["zip"],limitations:[]},
+    }];
+    const getArtifact=vi.fn(async()=>new Blob(["short"]));
+    const runTarget=vi.fn();
+    const [result]=await runServerHttpTargetBatch(p,[testCase],undefined,{runTarget,getArtifact,attachVisual:async(_p,_t,runs)=>runs});
+    expect(result?.verificationStatus).toBe("unverified");
+    expect(result?.output).toContain("大小与冻结凭证不一致");
+    expect(getArtifact).toHaveBeenCalledWith("frozen-zip");
+    expect(runTarget).not.toHaveBeenCalled();
+  });
   it("only activates for an explicitly connected HTTP Target",()=>{
     const p=project();
     expect(serverHttpTargetEnabled(p)).toBe(true);

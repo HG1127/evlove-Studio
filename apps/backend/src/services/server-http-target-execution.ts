@@ -82,10 +82,11 @@ async function bindingFor(
     if(snapshot&&!snapshot.frozenArtifact){
       throw new Error(`当前版本 ${current?.id??"candidate"} 的 ZIP Target 尚未冻结真实文件，不能回退原 Source ZIP。`);
     }
-    const blobId=snapshot?.frozenArtifact?.blobId??archive.id;
+    const blobId=snapshot?.frozenArtifact?.blobId??(archive.storageRef?.trim()||archive.id);
     const blob=await getArtifact(blobId);
     if(!blob)throw new Error(`找不到 HTTP Target Artifact Blob ${blobId}。`);
     const bytes=new Uint8Array(await blob.arrayBuffer());
+    if(snapshot?.frozenArtifact&&bytes.byteLength!==snapshot.frozenArtifact.size)throw new Error("HTTP Target ZIP 大小与冻结凭证不一致。");
     const actualHash=digest(bytes);
     const expected=snapshot?.frozenArtifact?.sha256;
     if(expected&&actualHash!==expected)throw new Error("HTTP Target ZIP SHA-256 与冻结凭证不一致。");
