@@ -1,5 +1,6 @@
 import {describe,expect,it} from "vitest";
 import JSZip from "jszip";
+import * as XLSX from "xlsx";
 import {minimalTextPdf,minimalTextPdfPages} from "./pdf-test-fixture";
 import {parseServerSource,SERVER_SOURCE_PARSE_EXTENSIONS} from "./server-source-parser";
 
@@ -232,4 +233,49 @@ describe("server source parser",()=>{
     expect(artifact.parseStatus).toBe("unsupported");
     expect(artifact.storageRef).toBe("artifact-test");
     expect(artifact.warnings.join(" ")).toContain("CRC32");
+  });  it("indexes a small XLSX workbook and a legacy XLS workbook",async()=>{
+    const workbook=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook,XLSX.utils.aoa_to_sheet([["Name","Score"],["Alice",42]]),"Metrics");
+    const xlsx=await parse("metrics.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      new Uint8Array(XLSX.write(workbook,{type:"array",bookType:"xlsx"}) as ArrayBuffer));
+    expect(xlsx.parseStatus).toBe("ready");
+    expect(xlsx.textContent).toContain("Alice");
+    expect(xlsx.parsingProfile).toMatchObject({totalEntries:1,parsedEntries:1,deepIndexedEntries:1,deepIndexCoverage:1});
+    const xls=await parse("metrics.xls","application/vnd.ms-excel",
+      new Uint8Array(XLSX.write(workbook,{type:"array",bookType:"biff8"}) as ArrayBuffer));
+    expect(xls.parseStatus).toBe("ready");
+    expect(xls.textContent).toContain("Alice");
+  });
+
+  it("limits workbook rows before preview conversion and reports partial coverage",async()=>{
+    const workbook=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook,XLSX.utils.aoa_to_sheet(
+      Array.from({length:900},(_,index)=>[`ROW-${index+1}`,index])),"Large");
+    const artifact=await parse("large.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      new Uint8Array(XLSX.write(workbook,{type:"array",bookType:"xlsx"}) as ArrayBuffer));
+    expect(artifact.parseStatus).toBe("ready");
+    const structured=artifact.structuredContent as {sheets:Array<{rows:unknown[]}>};
+    expect(structured.sheets[0]?.rows.length).toBeLessThanOrEqual(600);
+    expect(artifact.textContent).not.toContain("ROW-900");
+    expect(artifact.parsingProfile).toMatchObject({parsedEntries:1,eligibleEntries:1,deepIndexedEntries:0,deepIndexCoverage:0});
+    expect(artifact.warnings.join(" ")).toContain("有界预览");
+  });
+
+  it("limits workbook sheet count and rejects an XML expansion bomb",async()=>{
+    const workbook=XLSX.utils.book_new();
+    for(let index=0;index<31;index+=1){
+      XLSX.utils.book_append_sheet(workbook,XLSX.utils.aoa_to_sheet([[`SHEET-${index+1}`]]),`S${index+1}`);
+    }
+    const artifact=await parse("many.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      new Uint8Array(XLSX.write(workbook,{type:"array",bookType:"xlsx"}) as ArrayBuffer));
+    expect(artifact.parseStatus).toBe("ready");
+    expect(artifact.parsingProfile?.totalEntries).toBe(31);
+    expect(artifact.parsingProfile?.parsedEntries).toBe(30);
+    expect(artifact.parsingProfile?.deepIndexCoverage).toBeLessThan(1);
+    const bomb=new JSZip();bomb.file("xl/worksheets/sheet1.xml","A".repeat(2_000_001));
+    const rejected=await parse("bomb.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      new Uint8Array(await bomb.generateAsync({type:"uint8array",compression:"DEFLATE"})));
+    expect(rejected.parseStatus).toBe("unsupported");
+    expect(rejected.storageRef).toBe("artifact-test");
+    expect(rejected.warnings.join(" ")).toContain("解压大小");
   });});

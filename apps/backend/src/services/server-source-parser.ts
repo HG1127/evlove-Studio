@@ -24,6 +24,11 @@ const MAX_OFFICE_XML_BYTES=2_000_000;
 const MAX_OFFICE_INDEX_BYTES=12_000_000;
 const MAX_OFFICE_PARTS=200;
 const MAX_OFFICE_TEXT_CHARS=300_000;
+const MAX_SPREADSHEET_FILE_BYTES=12_000_000;
+const MAX_SPREADSHEET_SHEETS=30;
+const MAX_SPREADSHEET_ROWS=600;
+const MAX_SPREADSHEET_COLUMNS=80;
+const MAX_SPREADSHEET_CELLS=7_000;
 const MAX_ZIP_TEXT_ENTRY_BYTES=250_000;
 const MAX_ZIP_INDEX_BYTES=8_000_000;
 const MAX_ZIP_MANIFEST_CHARS=200_000;
@@ -190,23 +195,66 @@ async function parsePptx(buffer:Uint8Array){
   return {text,structure:slides,structuredContent:{kind:"presentation",slides:rows}};
 }
 
-function parseSpreadsheet(buffer:Uint8Array){
-  const workbook=XLSX.read(buffer,{type:"array",cellFormula:true,cellStyles:true,cellDates:true,bookVBA:true});
-  const sheets=workbook.SheetNames.slice(0,30).map((name)=>{
+async function parseSpreadsheet(buffer:Uint8Array,ext:string){
+  if(!buffer.byteLength||buffer.byteLength>MAX_SPREADSHEET_FILE_BYTES)throw new Error("工作簿文件超出 Server Native 解析范围");
+  if(ext==="xlsx"){
+    const zip=await loadOfficeZip(buffer);
+    let xmlBytes=0;
+    for(const entry of Object.values(zip.files) as JSZipObject[]){
+      if(entry.dir||!entry.name.endsWith(".xml"))continue;
+      const size=(entry as JSZipObject&{_data?:{uncompressedSize?:number}})._data?.uncompressedSize;
+      if(!Number.isSafeInteger(size)||size!<0||size!>MAX_OFFICE_XML_BYTES||xmlBytes+size!>MAX_OFFICE_INDEX_BYTES){
+        throw new Error("工作簿 XML 解压大小超出安全索引范围");
+      }
+      xmlBytes+=size!;
+    }
+  }
+  const workbook=XLSX.read(buffer,{type:"array",cellFormula:true,cellDates:true,sheetRows:MAX_SPREADSHEET_ROWS+1});
+  if(!workbook.SheetNames.length)throw new Error("工作簿没有工作表");
+  const sheets:Array<{name:string;csv:string;rows:Array<Array<string|number|boolean|Date|null>>;cells:Array<{address:string;value:unknown;formula?:string;type?:string;format?:string|number}>}>=[];
+  const warnings:string[]=[];
+  let remainingCells=MAX_SPREADSHEET_CELLS;
+  let fullyIndexedSheets=0;
+  for(const name of workbook.SheetNames.slice(0,MAX_SPREADSHEET_SHEETS)){
     const sheet=workbook.Sheets[name];
-    const csv=sheet?XLSX.utils.sheet_to_csv(sheet).slice(0,40_000):"";
-    const rows=sheet?XLSX.utils.sheet_to_json<Array<string|number|boolean|Date|null>>(sheet,{header:1,defval:null,raw:true}).slice(0,600):[];
-    const cells=sheet?Object.entries(sheet).filter(([address])=>!address.startsWith("!")).slice(0,7000).map(([address,cell])=>{
+    if(!sheet)continue;
+    const reference=sheet["!fullref"]??sheet["!ref"];
+    if(!reference)continue;
+    const fullRange=XLSX.utils.decode_range(reference);
+    const parsedRange=XLSX.utils.decode_range(sheet["!ref"]??reference);
+    const range={s:parsedRange.s,e:{r:Math.min(fullRange.e.r,parsedRange.e.r,parsedRange.s.r+MAX_SPREADSHEET_ROWS-1),
+      c:Math.min(fullRange.e.c,parsedRange.e.c,parsedRange.s.c+MAX_SPREADSHEET_COLUMNS-1)}};
+    const boundedRef=XLSX.utils.encode_range(range);
+    const rows=XLSX.utils.sheet_to_json<Array<string|number|boolean|Date|null>>(sheet,
+      {header:1,defval:null,raw:true,range:boundedRef});
+    const originalRef=sheet["!ref"];
+    let csv:string;
+    try{sheet["!ref"]=boundedRef;csv=XLSX.utils.sheet_to_csv(sheet).slice(0,40_000);}
+    finally{sheet["!ref"]=originalRef;}
+    const cells:Array<{address:string;value:unknown;formula?:string;type?:string;format?:string|number}>=[];
+    let omittedCells=false;
+    for(const [address,cell] of Object.entries(sheet)){
+      if(address.startsWith("!"))continue;
+      const position=XLSX.utils.decode_cell(address);
+      if(position.r<range.s.r||position.r>range.e.r||position.c<range.s.c||position.c>range.e.c)continue;
+      if(!remainingCells){omittedCells=true;break;}
       const value=cell as XLSX.CellObject;
-      return {address,value:value.v??null,formula:value.f,type:value.t,format:value.z};
-    }):[];
-    return {name,csv,rows,cells};
-  });
-  return {
-    text:sheets.map((sheet)=>`===== SHEET: ${sheet.name} =====\n${sheet.csv}`).join("\n\n"),
-    structure:workbook.SheetNames,
-    structuredContent:{kind:"spreadsheet",sheets},
-  };
+      cells.push({address,value:value.v??null,formula:value.f,type:value.t,format:value.z});
+      remainingCells-=1;
+    }
+    const complete=range.e.r===fullRange.e.r&&range.e.c===fullRange.e.c&&!omittedCells&&csv.length<40_000;
+    if(complete)fullyIndexedSheets+=1;
+    sheets.push({name,csv,rows,cells});
+  }
+  const fullText=sheets.map((sheet)=>`===== SHEET: ${sheet.name} =====\n${sheet.csv}`).join("\n\n");
+  const text=fullText.slice(0,MAX_TEXT_CHARS);
+  if(fullyIndexedSheets<workbook.SheetNames.length||fullText.length>text.length){
+    warnings.push("工作簿仅建立有界预览；部分工作表、行列、单元格或文本未纳入完整索引。");
+  }
+  return {text,warnings,structure:workbook.SheetNames,structuredContent:{kind:"spreadsheet",sheets},
+    stats:{totalEntries:workbook.SheetNames.length,indexedEntries:sheets.length,parsedEntries:sheets.length,
+      eligibleEntries:workbook.SheetNames.length,deepIndexedEntries:fullText.length>text.length?0:fullyIndexedSheets,
+      codeFiles:0,documentFiles:0,officeFiles:workbook.SheetNames.length,imageFiles:0}};
 }
 
 async function parsePdf(buffer:Uint8Array){
@@ -344,7 +392,8 @@ export async function parseServerSource(args:{
     }else if(ext==="pptx"){
       ({text,structure,structuredContent}=await parsePptx(buffer));
     }else if(["xlsx","xls"].includes(ext)){
-      ({text,structure,structuredContent}=parseSpreadsheet(buffer));
+      const parsed=await parseSpreadsheet(buffer,ext);
+      ({text,structure,structuredContent}=parsed);stats=parsed.stats;warnings.push(...parsed.warnings);
     }else if(["odt","ods","odp"].includes(ext)){
       ({text,structure,structuredContent}=await parseOpenDocument(buffer,ext));
     }else if(ext==="rtf"){
@@ -375,7 +424,7 @@ export async function parseServerSource(args:{
   const artifactDescriptor=describeArtifact({
     name:args.name,mimeType:args.mimeType,extension:ext,artifactKind,structure,structuredContent,
   });
-  const bounded=ext==="zip"||ext==="pdf";
+  const bounded=ext==="zip"||ext==="pdf"||ext==="xlsx"||ext==="xls";
   const parsedEntries=bounded?stats.parsedEntries:stats.parsedEntries||(text?1:0);
   const totalEntries=bounded?stats.totalEntries:stats.totalEntries||(text?1:0);
   const eligibleEntries=bounded?stats.eligibleEntries:stats.eligibleEntries||parsedEntries;
