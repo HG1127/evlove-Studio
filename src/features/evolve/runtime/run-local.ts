@@ -394,6 +394,13 @@ export async function runAi<T>(operation: AiOperation, payload: unknown, onAttem
   return runEvolveAi(operation, payload, undefined, onAttemptNotice) as Promise<T>;
 }
 
+export class BaselineEvaluationError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = "BaselineEvaluationError";
+  }
+}
+
 // ===== POST /api/v1/runner/baseline =====
 
 export async function runBaseline(project: EvolveProject, onProgress?: (done: number, total: number, phase?: string) => void, options?: { retryIncompleteOnly?: boolean }): Promise<BaselineRun> {
@@ -420,7 +427,12 @@ export async function runBaseline(project: EvolveProject, onProgress?: (done: nu
   for (const run of fresh) reusable.set(run.testCaseId, run);
   const runs = suite.map((testCase) => reusable.get(testCase.id)!);
   onProgress?.(suite.length, suite.length, "评审基线答卷");
-  const result = await evaluateRuns({ testCases: suite, runs, forceRefresh: options?.retryIncompleteOnly, context: { mode: "baseline", project: evaluationProjectContext(parsed) } });
+  let result: EvaluationResult;
+  try {
+    result = await evaluateRuns({ testCases: suite, runs, forceRefresh: options?.retryIncompleteOnly, context: { mode: "baseline", project: evaluationProjectContext(parsed) } });
+  } catch (cause) {
+    throw new BaselineEvaluationError(cause);
+  }
   return {
     measurementFingerprint,
     id: `baseline-${Date.now()}`,

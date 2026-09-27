@@ -15,7 +15,7 @@ import {
   type CopilotAiResult,
 } from "../ai/schemas";
 import type { AcceptanceCriterion, ArtifactAcceptance, Candidate, CampaignCheckpointPhase, EvolveProject, EvolvedVersion, GateId, Stage, SupplementalValidationEvidence, TestCase } from "../schemas";
-import { CandidateArtifactBuildError, runAi as runAiRaw, runBaseline, runExperiment, runRelease, retryFailedExperimentCases, runValidation } from "./api";
+import { BaselineEvaluationError, CandidateArtifactBuildError, runAi as runAiRaw, runBaseline, runExperiment, runRelease, retryFailedExperimentCases, runValidation } from "./api";
 import { abortRunScope, beginRunScope, endRunScope, isRunScopeAborted } from "./abort-scope";
 
 import { resetDownstream, resetForProblem } from "./downstream";
@@ -61,7 +61,7 @@ import { evidenceFingerprint } from "./evidence-binding";
 import { getVisualEvidence } from "./visual-evidence";
 import { LOCAL_REVIEW_CONTRACT_VERSION, reconcileAttentionRequest } from "./autonomous-orchestrator";
 import { evolutionHarness, type HarnessPlan } from "./evolution-harness";
-import { createHarnessActionExecutor, isLocalBaselineEvidencePause, isLocalDemoBaselinePause } from "@evolution/harness";
+import { createHarnessActionExecutor, isLocalBaselineEvidencePause, isLocalBaselineJudgePause, isLocalDemoBaselinePause } from "@evolution/harness";
 import { getProductionRuntime, productionRuntimeMode } from "./production-runtime";
 import { localProductionPorts } from "./local-production-adapters";
 import { shouldUseServerAutoPilot, startServerEvolutionWorkflow } from "./server-workflow-client";
@@ -2110,9 +2110,11 @@ export function useProjectRuntime(initialProject: EvolveProject) {
     } catch (error) {
       // A failed round must not leave a persisted "running" campaign behind. Otherwise the
       // autonomy card shows a spinner beside a terminal error and cannot offer Resume.
-      const reason = error instanceof CandidateArtifactBuildError
-        ? "候选文件构造未完成；已保留本轮断点。请检查模型连接后继续自主进化。"
-        : `本轮执行失败，已保留断点：${error instanceof Error ? error.message : String(error)}`;
+      const reason = error instanceof BaselineEvaluationError
+        ? "Baseline 评审未完成，已保留断点：" + error.message
+        : error instanceof CandidateArtifactBuildError
+          ? "候选文件构造未完成；已保留本轮断点。请检查模型连接后继续自主进化。"
+          : "本轮执行失败，已保留断点：" + (error instanceof Error ? error.message : String(error));
       const failedBuilds = error instanceof CandidateArtifactBuildError
         ? new Map(error.candidates.map((candidate) => [candidate.id, candidate.artifactBuildSummary]))
         : undefined;
@@ -2363,8 +2365,10 @@ export function useProjectRuntime(initialProject: EvolveProject) {
   const resumeAutonomousEvolution = useCallback(async () => {
     if (status.busy) return false;
     const current = projectRef.current;
-    if (isLocalDemoBaselinePause(current) && !getAiProviderStatus("evaluate", { aiProfile: current.aiProfile }).live) {
-      const message = "当前基线仍只有演示评审。请先在「AI 模型与连接」配置并测试真实评审模型，再重新测量 Baseline。";
+    if (isLocalBaselineJudgePause(current) && !getAiProviderStatus("evaluate", { aiProfile: current.aiProfile }).live) {
+      const message = isLocalDemoBaselinePause(current)
+        ? "当前基线仍只有演示评审。请先在「AI 模型与连接」配置并测试真实评审模型，再重新测量 Baseline。"
+        : "Baseline 评审连接仍不可用。请先在「AI 模型与连接」配置并测试真实评审模型，再从断点重测。";
       setStatus({ busy: false, message });
       pushActivity(`基线重测未启动 · ${message}`, undefined, projectId);
       return false;
@@ -2377,7 +2381,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
       pushActivity(`继续自主进化被 Harness Budget/Policy 阻塞：${harnessPlan.policy.reason}`, undefined, projectId);
       return false;
     }
-    if (decision.action === "wait-human" && decision.attention && decision.attention.type !== "limit" && !isLocalBaselineEvidencePause(current)) {
+    if (decision.action === "wait-human" && decision.attention && decision.attention.type !== "limit" && !isLocalBaselineEvidencePause(current) && !isLocalBaselineJudgePause(current)) {
       setStage(decision.stage);
       setStatus({ busy: false, message: `请先处理当前阻塞：${decision.attention.title}` });
       pushActivity(`继续自主进化被阻塞：${decision.attention.title}`, undefined, projectId);

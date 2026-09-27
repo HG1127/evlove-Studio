@@ -10,6 +10,7 @@ import {
 import type {AiAttemptNotice} from "../ai/service";
 import type {ProjectAiProfile} from "../schemas";
 import {
+  BaselineEvaluationError,
   CandidateArtifactBuildError,
   getRunnerStatus,
   ingestSources as ingestLocalSources,
@@ -169,6 +170,7 @@ export async function runIntake(formData:FormData):Promise<{intake:IntakeAiResul
 }
 
 export {
+  BaselineEvaluationError,
   CandidateArtifactBuildError,
   getRunnerStatus,
   retryFailedExperimentCases,

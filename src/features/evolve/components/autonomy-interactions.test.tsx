@@ -98,6 +98,32 @@ describe("autonomous interaction routing", () => {
     host.remove();
   });
 
+  it("shows a model recovery action for a failed Baseline Judge instead of budget controls", async () => {
+    const project = readyProject({
+      stage: "target",
+      campaign: { ...demoProject.campaign, status: "paused", stopReason: "Baseline 评审未完成，已保留断点：模型连接断开" },
+    });
+    const attention = autonomousAttention(project);
+    expect(attention?.kind).toBe("model");
+    const resume = vi.fn().mockResolvedValue(false);
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    await act(async () => root.render(<AttentionRequestPanel runtime={runtimeFor(project, { resumeAutonomousEvolution: resume })} attention={attention!} onOpenSource={vi.fn()} onOpenAdvanced={vi.fn()} />));
+    expect(host.textContent).toContain("Baseline 评审未完成");
+    expect(host.textContent).toContain("真实评审调用未完成");
+    expect(host.textContent).not.toContain("调整轮数、预算");
+    expect(host.querySelector('a[href="#/settings"]')?.textContent).toContain("AI 模型与连接");
+    const button = [...host.querySelectorAll("button")].find((item) => item.textContent?.includes("配置完成，重新测量基线"));
+    expect(button).toBeTruthy();
+    await act(async () => {
+      button!.click();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+    expect(resume).toHaveBeenCalledTimes(1);
+    await act(async () => root.unmount());
+    host.remove();
+  });
   it("shows a visible reason when retry cannot pass the current boundary", async () => {
     const project = readyProject({
       campaign: { ...demoProject.campaign, status: "paused", stopReason: "已达到设定的最大进化轮数 5" },

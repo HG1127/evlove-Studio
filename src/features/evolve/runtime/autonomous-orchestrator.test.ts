@@ -46,6 +46,19 @@ describe("autonomous orchestrator", () => {
     expect(request?.title).toContain("可靠验证证据");
     expect(request?.suggestedAction).toContain("Target Runner");
   });
+  it("classifies a failed Baseline Judge call as a model capability even before a new result persists", () => {
+    const p = project({
+      stage: "target",
+      inputUnderstanding: { status: "ready", intentRestatement: "优化", implicitRequirements: [], assumptions: [], acceptanceFocus: [], confidence: 0.9, clarifications: [] },
+      campaign: { ...demoProject.campaign, status: "paused", stopReason: "Baseline 评审未完成，已保留断点：模型返回无效结果" },
+      attentionRequests: [],
+    });
+    const request = deriveAttentionRequest(p);
+    expect(request?.type).toBe("capability");
+    expect(request?.stage).toBe("baseline");
+    expect(request?.title).toContain("评审连接");
+    expect(request?.suggestedAction).toContain("真实 AI 评审");
+  });
   it("asks the engine to understand input before any downstream workflow", () => {
     const p = project({ inputUnderstanding: undefined, attentionRequests: [] });
     expect(deriveAutonomousDecision(p).action).toBe("understand");

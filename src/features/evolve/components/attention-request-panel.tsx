@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import type { AutonomousAttention } from "../runtime/autonomous-evolution";
 import type { ProjectRuntime } from "../runtime/use-project-runtime";
 import { PendingEvidencePanel } from "./stage-panels";
-import { isLocalBaselineEvidencePause, isLocalDemoBaselinePause } from "@evolution/harness";
+import { isLocalBaselineEvidencePause, isLocalBaselineJudgePause, isLocalDemoBaselinePause } from "@evolution/harness";
 
 export function AttentionRequestPanel({
   runtime,
@@ -65,16 +65,19 @@ export function AttentionRequestPanel({
     return <section id="evolve-attention-request" tabIndex={-1} className="rounded-3xl border border-amber-200 bg-white p-5 outline-none soft-shadow sm:p-6"><h3 className="font-bold text-slate-950">需要补充输入后才能继续</h3><p className="mt-2 text-sm leading-6 text-slate-600">{request.reason}</p><p className="mt-1 text-xs text-slate-400">修正材料或重新上传后，系统会自动重新理解并继续，不需要重新走前面的流程。</p><div className="mt-4"><Button onClick={onOpenSource}>补充或修正材料 <ArrowRight className="size-4"/></Button></div></section>;
   }
 
-  if (request.type === "capability" && isLocalBaselineEvidencePause(runtime.project)) {
+  if (request.type === "capability" && (isLocalBaselineEvidencePause(runtime.project) || isLocalBaselineJudgePause(runtime.project))) {
+    const judgeIssue = isLocalBaselineJudgePause(runtime.project);
     const demoJudge = isLocalDemoBaselinePause(runtime.project);
     return <section id="evolve-attention-request" tabIndex={-1} className="rounded-3xl border border-amber-200 bg-white p-5 outline-none soft-shadow sm:p-6">
-      <h3 className="font-bold text-slate-950">{demoJudge ? "当前基线需要真实 AI 评审" : "当前基线需要补齐可靠验证证据"}</h3>
+      <h3 className="font-bold text-slate-950">{demoJudge ? "当前基线需要真实 AI 评审" : judgeIssue ? "Baseline 评审未完成" : "当前基线需要补齐可靠验证证据"}</h3>
       <p className="mt-2 text-sm leading-6 text-slate-600">{request.reason}</p>
       <p className="mt-1 text-xs leading-5 text-slate-500">{demoJudge
         ? "演示评审不能用于诊断或验收。配置并测试真实评审模型后，系统会保留已核验的题目结果，并重新测量当前 Baseline。"
-        : "请检查 Target Runner 或文件验证能力。恢复后系统会复用已核验的题目结果，只补测缺少证据的 Baseline 题目。"}</p>
+        : judgeIssue
+          ? "真实评审调用未完成。请检查并测试 AI 模型连接；本轮断点已保留，恢复后重新测量 Baseline。"
+          : "请检查 Target Runner 或文件验证能力。恢复后系统会复用已核验的题目结果，只补测缺少证据的 Baseline 题目。"}</p>
       {error && <p role="alert" className="mt-3 text-xs text-rose-700">{error}</p>}
-      <div className="mt-4 flex flex-wrap gap-2"><a href="#/settings" className="inline-flex h-9 items-center rounded-xl border bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"><Settings2 className="mr-2 size-4"/>{demoJudge ? "AI 模型与连接" : "验证能力设置"}</a><Button variant="secondary" disabled={runtime.status.busy || retrying} onClick={() => retryCampaign(demoJudge ? "请先配置并测试真实评审模型，再重新测量基线。" : "请先检查真实评审或 Runner 验证能力，并确认运行边界允许继续。")}>{retrying ? "正在重新测量…" : "配置完成，重新测量基线"}</Button></div>
+      <div className="mt-4 flex flex-wrap gap-2"><a href="#/settings" className="inline-flex h-9 items-center rounded-xl border bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"><Settings2 className="mr-2 size-4"/>{judgeIssue ? "AI 模型与连接" : "验证能力设置"}</a><Button variant="secondary" disabled={runtime.status.busy || retrying} onClick={() => retryCampaign(judgeIssue ? "请先配置并测试真实评审模型，再重新测量基线。" : "请先检查真实评审或 Runner 验证能力，并确认运行边界允许继续。")}>{retrying ? "正在重新测量…" : "配置完成，重新测量基线"}</Button></div>
     </section>;
   }
   if (request.type === "capability" && /评审|judge/i.test(`${request.title} ${request.reason}`)) {

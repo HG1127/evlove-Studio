@@ -97,6 +97,11 @@ export function isLocalDemoBaselinePause(project: EvolveProject): boolean {
   return isLocalBaselineEvidencePause(project) && project.baselineRun.result?.demoJudged === true;
 }
 
+/** A Baseline Judge error may occur before a new Baseline result is persisted. */
+export function isLocalBaselineJudgePause(project: EvolveProject): boolean {
+  return isLocalDemoBaselinePause(project)
+    || (project.campaign.status === "paused" && (project.campaign.stopReason ?? "").startsWith("Baseline 评审未完成，已保留断点："));
+}
 export function deriveAttentionRequest(project: EvolveProject): AttentionRequest | undefined {
   const clarificationPlan = autonomousClarificationPlan(project);
   if (clarificationPlan.human.length) {
@@ -229,6 +234,16 @@ export function deriveAttentionRequest(project: EvolveProject): AttentionRequest
     });
   }
 
+  if (isLocalBaselineJudgePause(project) && !isLocalBaselineEvidencePause(project)) {
+    return attention({
+      type: "capability",
+      title: "Baseline 评审连接未能完成",
+      reason: project.campaign.stopReason ?? "当前版本的 Baseline 评审未完成。",
+      stage: "baseline", riskLevel: "medium", blocking: true, questions: [],
+      suggestedAction: "检查并测试真实 AI 评审连接，再从保留的断点重新测量 Baseline。",
+      criterionIds: [],
+    });
+  }
   if (isLocalBaselineEvidencePause(project)) {
     const demoJudge = isLocalDemoBaselinePause(project);
     return attention({
