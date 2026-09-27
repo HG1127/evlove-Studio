@@ -17,7 +17,7 @@ import { buildCandidateArtifacts } from "./artifact-quality";
 import { mapTestsToRubric, normalizeAcceptanceRubric, rubricCoverage, rubricValidation } from "./acceptance-rubric";
 import { describeArtifact, resolveProjectArtifactStrategy } from "./artifact-strategy";
 import { buildArtifactGraph, compileSemanticEvolution } from "./semantic-evolution";
-import { canRetryHoldoutFailures, candidateWinnerDecision, computeGapAnalysis, gapHeadline, indexScopedAcceptanceResults, indexScopedTestCaseResults, indexUniqueById, projectHasOnlineReleaseTarget, reusableHoldoutBaseline, REGRESSION_TOLERANCE, validationHardRubricFailures as hardRubricFailures, validationRegression as coreValidationRegression, validationUnverifiedHardCriteria as unverifiedHardRubricCriteria } from "@evolution/core";
+import { canRetryHoldoutFailures, candidateWinnerDecision, computeGapAnalysis, gapHeadline, indexScopedAcceptanceResults, indexScopedTestCaseResults, indexUniqueById, projectHasOnlineReleaseTarget, reusableHoldoutBaseline, REGRESSION_TOLERANCE, validationDecision, validationHardRubricFailures as hardRubricFailures, validationRegression as coreValidationRegression, validationUnverifiedHardCriteria as unverifiedHardRubricCriteria } from "@evolution/core";
 import { extractSource } from "../sources/source-loader";
 import { getArtifactBlob, putArtifactBlob } from "./artifact-blob-store";
 import { readFrozenArtifact } from "./frozen-artifact";
@@ -1179,8 +1179,8 @@ async function runValidationUnbound(project: EvolveProject, inputCandidate: Cand
   const qualityTarget = parsed.metrics.find((m) => m.key === "quality" || m.key === "accuracy")?.target;
   const successTarget = parsed.metrics.find((m) => m.key === "success" || m.key === "completeness")?.target;
 
-  const hardCriterionFailures = hardRubricFailures(parsed, evaluation);
-  const unverifiedHardCriteria = unverifiedHardRubricCriteria(parsed, evaluation);
+  const holdoutDecision = validationDecision(parsed, evaluation, baselineHoldout);
+  const { hardCriterionFailures, unverifiedHardCriteria, comparisonEvidenceGaps } = holdoutDecision;
   const rubricTarget = 85;
   const rubricStatus = (evaluation.verifiedRubricCoverage ?? 100) < 100
     ? "warning" as const
@@ -1190,6 +1190,7 @@ async function runValidationUnbound(project: EvolveProject, inputCandidate: Cand
     ...(parsed.acceptanceRubric.length ? [{ label: "Project-specific Rubric", status: rubricStatus, detail: `Rubric ${evaluation.rubricScore ?? "待评"} / ${rubricTarget}；真实证据覆盖 ${evaluation.verifiedRubricCoverage ?? 100}%。未验证项不计为产品失败，但 Release 前必须补齐。` }] : []),
     ...hardCriterionFailures.map((criterion) => ({ label: `Hard Gate · ${criterion.title}`, status: "fail" as const, detail: `Criterion ${criterion.id} 已有真实证据且未达到最低 ${criterion.minScore} 分；${criterion.requirement}` })),
     ...unverifiedHardCriteria.map((criterion) => { const judgeMissing=criterionScoreById.get(criterion.id)?.gaps.some((gap)=>gap.includes("评审模型未返回")); return { label: `${judgeMissing?"待补评审":"待真实验证"} · ${criterion.title}`, status: "warning" as const, detail: judgeMissing?`Criterion ${criterion.id} 的测试已经执行，但评审模型漏返逐题/逐标准判断；保持未验证，不按 0 分失败处理。`:`Criterion ${criterion.id} 缺少与其验证方式匹配的证据。下一步：${missingEvidenceAction(criterion)}。该状态阻止 Release，但不代表成果质量 FAIL。` }; }),
+    ...comparisonEvidenceGaps.map((criterion) => ({ label: `同卷对照待补证 · ${criterion.title}`, status: "warning" as const, detail: `当前版本在同一道盲测题上缺少已验证的 Criterion ${criterion.id} 基线证据；请恢复执行或评审能力后重新运行完整验证。候选分数不能替代同卷对照。` })),
     { label: "Safety", status: evaluation.safety === "PASS" ? "pass" as const : evaluation.safety === "FAIL" ? "fail" as const : "warning" as const, detail: evaluation.safety },
     { label: "关键能力回归", status: validationRegression(parsed, evaluation, baselineHoldout) ? "fail" as const : "pass" as const, detail: `回归结论基于双方已验证的同一标准；以下总分仅供参考。同一套盲测卷：候选 准确 ${evaluation.accuracy}% / 完成 ${evaluation.completeness}% vs 当前版本 ${baselineHoldout.accuracy}% / ${baselineHoldout.completeness}%（容差 ${regressionTolerance} 分）${regressionHeadline ? `；主因：${regressionHeadline}` : ""}` },
     ...(qualityTarget !== undefined ? [{ label: "目标质量", status: evaluation.accuracy >= qualityTarget ? "pass" as const : "warning" as const, detail: `质量 ${evaluation.accuracy}% / 目标 ${qualityTarget}%` }] : []),
@@ -1203,7 +1204,7 @@ async function runValidationUnbound(project: EvolveProject, inputCandidate: Cand
     ? { ...evaluation, notes: [`评审留痕：${failedCases} 题执行失败（对照卷与候选卷合计），该题按未完成任务计分`, ...evaluation.notes] }
     : evaluation;
   const hardFail = checks.some((check) => check.status === "fail");
-  const evidenceIncomplete = unverifiedHardCriteria.length > 0 || (evaluation.verifiedRubricCoverage ?? 100) < 100;
+  const evidenceIncomplete = holdoutDecision.evidenceIncomplete;
   // 评审同时看到可见卷基线与同卷盲测对照，避免「不同考卷比总分」造成误判
   onProgress?.(totalRuns, totalRuns, hardFail ? "Hard Gate 已失败 · 提前停止" : evidenceIncomplete ? "证据未完成 · 等待对应验证渠道补证" : "Release Review");
   // 发布审查同时看到实验阶段的失败题与补考历史，避免对「分数来路」信息不对称做出乐观判断。
@@ -1215,7 +1216,7 @@ async function runValidationUnbound(project: EvolveProject, inputCandidate: Cand
   // V2.3：验证主路径只做“是否可发布”的必要工作。过去这里无论成功失败都会
   // 额外自动生成 Gap Advice，导致每次 Hidden Validation 固定多一次 LLM 调用。
   // 现在 Hard Gate 已失败时直接 hold；通过时只调用 Release Review。优化建议改为按需点击生成。
-  let review: unknown = { recommendation: "hold", summary: hardFail ? "存在已证实的 Hard Gate 失败，已跳过 Release Judge。" : "当前仍有 Hard Gate 缺少真实证据，不能进入 Release。" };
+  let review: unknown = { recommendation: "hold", summary: hardFail ? "存在已证实的 Hard Gate 失败，已跳过 Release Judge。" : "候选或同卷基线 Hard Gate 仍缺少真实证据，不能进入 Release。" };
   let recommendation: "release" | "hold" | "reject" = "hold";
   if (!hardFail && !evidenceIncomplete) {
     review = await runEvolveAi("release-review", { baseline, holdoutBaseline: baselineHoldout, candidate, holdout: evaluationWithNotes, checks, experimentHistory, evolutionCommand: parsed.evolutionCommand, sourceUnderstanding: parsed.sourceUnderstanding, acceptanceRubric: parsed.acceptanceRubric, criterionScores: evaluationWithNotes.criterionScores, rubricScore: evaluationWithNotes.rubricScore, aiProfile: parsed.aiProfile });
@@ -1291,7 +1292,7 @@ async function runValidationUnbound(project: EvolveProject, inputCandidate: Cand
     previousEvaluation: options?.retryFailedOnly ? prior.evaluation : undefined,
     checks,
     recommendation,
-    summary: hardFail ? "存在已有 AI 语义、文件或运行证据的 Hard Gate 失败项，不能进入发布。" : evidenceIncomplete ? `当前成果未被判失败，但仍有 ${unverifiedHardCriteria.length} 个 Hard Gate 缺少与各自验证方式匹配的证据；请在验收页按项补证后重新验收。` : ((review as { summary?: string }).summary || "完整隐藏验证已通过。"),
+    summary: hardFail ? "存在已有 AI 语义、文件或运行证据的 Hard Gate 失败项，不能进入发布。" : evidenceIncomplete ? `当前成果未被判失败，但有 ${unverifiedHardCriteria.length} 个候选 Hard Gate 和 ${comparisonEvidenceGaps.length} 个同卷基线对照项缺少已验证证据；请补证后重新验证。` : ((review as { summary?: string }).summary || "完整隐藏验证已通过。"),
   };
 }
 
