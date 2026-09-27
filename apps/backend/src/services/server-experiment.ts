@@ -53,15 +53,19 @@ async function executeServerCandidateExternal(project: EvolveProject, candidate:
   if (!source) return testCases.map((testCase) => unavailableExternal(testCase, "当前 Server External Runner 仅支持 codebase/package ZIP Target。"));
   const snapshot = candidate.artifactSnapshots.find((item) => item.sourceArtifactId === source.id);
   if (!snapshot?.frozenArtifact) return testCases.map((testCase) => unavailableExternal(testCase, "Candidate codebase 尚未冻结实际 ZIP。"));
-  const blob = await getServerArtifactStore().get(snapshot.frozenArtifact.blobId);
-  if (!blob) return testCases.map((testCase) => unavailableExternal(testCase, `找不到 Candidate Blob ${snapshot.frozenArtifact!.blobId}。`));
-  if (await serverArtifactSha256(await blob.arrayBuffer()) !== snapshot.frozenArtifact.sha256) {
-    return testCases.map((testCase) => unavailableExternal(testCase, "Candidate ZIP SHA-256 与冻结凭证不一致。"));
-  }
   try {
+    const blob = await getServerArtifactStore().get(snapshot.frozenArtifact.blobId);
+    if (!blob) return testCases.map((testCase) => unavailableExternal(testCase, `找不到 Candidate Blob ${snapshot.frozenArtifact!.blobId}。`));
+    const archive = await blob.arrayBuffer();
+    if (archive.byteLength !== snapshot.frozenArtifact.size) {
+      return testCases.map((testCase) => unavailableExternal(testCase, "Candidate ZIP 大小与冻结凭证不一致。"));
+    }
+    if (await serverArtifactSha256(archive) !== snapshot.frozenArtifact.sha256) {
+      return testCases.map((testCase) => unavailableExternal(testCase, "Candidate ZIP SHA-256 与冻结凭证不一致。"));
+    }
     const result = await runVercelSandboxCodebaseValidation({
       id: `${project.id}-experiment-${candidate.id}`,
-      archive: new Uint8Array(await blob.arrayBuffer()),
+      archive: new Uint8Array(archive),
       expectedSha256: snapshot.frozenArtifact.sha256,
       testCases,
     });
