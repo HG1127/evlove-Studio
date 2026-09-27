@@ -94,6 +94,15 @@ describe("server HTTP Target execution",()=>{
     expect(runTarget).toHaveBeenCalledOnce();
   });
 
+  it("refuses a known truncated HTML Source when no original Blob reference exists",async()=>{
+    const p=project();
+    p.sourceArtifacts=[{...p.sourceArtifacts[0]!,textContent:"<html>[...truncated by Evolve Studio...]</html>"}];
+    const runTarget=vi.fn();
+    const [result]=await runServerHttpTargetBatch(p,[testCase],undefined,{runTarget,getArtifact:vi.fn(),attachVisual:async(_p,_t,runs)=>runs});
+    expect(result?.verificationStatus).toBe("unverified");
+    expect(result?.output).toContain("没有可执行的完整内容");
+    expect(runTarget).not.toHaveBeenCalled();
+  });
   it("does not use parsed HTML text when a referenced upload is missing",async()=>{
     const p=project();
     p.sourceArtifacts=[{...p.sourceArtifacts[0]!,storageRef:"missing-upload"}];
@@ -339,6 +348,46 @@ describe("server HTTP Target execution",()=>{
     expect(result?.verificationStatus).toBe("verified");
     expect(runTarget).toHaveBeenCalledOnce();
   });
+  it("sends a referenced DOCX Source as exact bytes and binds the remote verdict",async()=>{
+    const p=project();
+    p.sourceArtifacts=[{...p.sourceArtifacts[0]!,id:"office-source",name:"report.docx",extension:"docx",mimeType:"application/vnd.openxmlformats-officedocument.wordprocessingml.document",storageRef:"office-blob"}];
+    const bytes=Buffer.from([0x50,0x4b,0x03,0x04,0,255]);
+    const expectedHash=createHash("sha256").update(bytes).digest("hex");
+    const getArtifact=vi.fn(async(id:string)=>id==="office-blob"?new Blob([bytes]):undefined);
+    const runTarget=vi.fn(async(raw:unknown)=>{
+      const input=raw as {file?:{sourceArtifactId:string;name:string;sha256:string;contentBase64:string}};
+      expect(input.file).toMatchObject({sourceArtifactId:"office-source",name:"report.docx",sha256:expectedHash});
+      expect(Buffer.from(input.file!.contentBase64,"base64")).toEqual(bytes);
+      return{testCaseId:"T1",output:"docx checked",latencyMs:1,cost:0,verificationStatus:"verified",artifactHash:expectedHash,trace:[]} as TargetRunResult;
+    });
+    const [result]=await runServerHttpTargetBatch(p,[testCase],undefined,{runTarget,getArtifact,attachVisual:async(_p,_t,runs)=>runs});
+    expect(result?.verificationStatus).toBe("verified");
+    expect(getArtifact).toHaveBeenCalledWith("office-blob");
+  });
+
+  it("reads only a frozen PDF Candidate and rejects changed bytes before remote execution",async()=>{
+    const p=project();
+    p.sourceArtifacts=[{...p.sourceArtifacts[0]!,id:"pdf-source",name:"report.pdf",extension:"pdf",mimeType:"application/pdf",storageRef:"old-pdf"}];
+    const candidate=acceptedChampion(p);
+    const bytes=Buffer.from("%PDF-1.7 exact candidate");
+    const hash=createHash("sha256").update(bytes).digest("hex");
+    candidate.artifactSnapshots=[{...candidate.artifactSnapshots[0]!,sourceArtifactId:"pdf-source",name:"report.pdf",mimeType:"application/pdf",
+      frozenArtifact:{sourceArtifactId:"pdf-source",snapshotHash:"accepted-hash",blobId:"frozen-pdf",name:"report.pdf",mimeType:"application/pdf",sha256:hash,size:bytes.length,verifiedAt:"now",checks:[],limitations:[]}}];
+    const getArtifact=vi.fn(async(id:string)=>id==="frozen-pdf"?new Blob([bytes]):undefined);
+    const runTarget=vi.fn(async(raw:unknown)=>{
+      const file=(raw as {file?:{snapshotHash:string;contentBase64:string}}).file!;
+      expect(file.snapshotHash).toBe("accepted-hash");
+      expect(Buffer.from(file.contentBase64,"base64")).toEqual(bytes);
+      return{testCaseId:"T1",output:"pdf checked",latencyMs:1,cost:0,verificationStatus:"verified",artifactHash:hash,trace:[]} as TargetRunResult;
+    });
+    const [passed]=await runServerHttpTargetBatch(p,[testCase],candidate,{runTarget,getArtifact,attachVisual:async(_p,_t,runs)=>runs});
+    expect(passed?.verificationStatus).toBe("verified");
+    expect(getArtifact).not.toHaveBeenCalledWith("old-pdf");
+    const failed=await runServerHttpTargetBatch(p,[testCase],candidate,{runTarget,getArtifact:async()=>new Blob(["altered"]),attachVisual:async(_p,_t,runs)=>runs});
+    expect(failed[0]?.verificationStatus).toBe("unverified");
+    expect(failed[0]?.output).toContain("冻结凭证字节不一致");
+    expect(runTarget).toHaveBeenCalledOnce();
+  });
   it("does not accept remote verified evidence for an unsupported file Target without its bytes",async()=>{
     const p=project();
     p.sourceArtifacts=[{...p.sourceArtifacts[0]!,id:"office-source",name:"report.docx",extension:"docx",mimeType:"application/vnd.openxmlformats-officedocument.wordprocessingml.document",storageRef:"office-blob"}];
@@ -346,8 +395,8 @@ describe("server HTTP Target execution",()=>{
     const getArtifact=vi.fn();
     const [result]=await runServerHttpTargetBatch(p,[testCase],undefined,{runTarget,getArtifact,attachVisual:async(_p,_t,runs)=>runs});
     expect(result?.verificationStatus).toBe("unverified");
-    expect(result?.output).toContain("尚不能绑定真实文件执行");
-    expect(getArtifact).not.toHaveBeenCalled();
+    expect(result?.output).toContain("找不到 HTTP Target 文件 Blob");
+    expect(getArtifact).toHaveBeenCalledWith("office-blob");
     expect(runTarget).not.toHaveBeenCalled();
   });
 

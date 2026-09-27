@@ -1,9 +1,7 @@
-import {getArtifactBlob} from "../runtime/artifact-blob-store";
-import {readFrozenArtifact,sha256} from "../runtime/frozen-artifact";
 import {artifactTargetAdapter} from "./artifact-adapter";
 import {prepareBrowserHttpReleaseArtifacts} from "./http-release-artifacts";
+import {prepareBrowserHttpRunFile,prepareBrowserHttpRunHtml} from "./http-run-file";
 import {runVisualCase} from "../runtime/visual-case";
-import {textDigest} from "../runtime/frozen-artifact";
 import { ReleaseAdapterResultSchema, TargetRunResultSchema } from "../schemas";
 import type { TargetAdapter } from "./types";
 
@@ -27,30 +25,38 @@ export const httpTargetAdapter: TargetAdapter = {
   async run({ project, testCase, variant }) {
     if(!["external-runner","visual-review"].includes(testCase.executionMode))return artifactTargetAdapter.run({project,testCase,variant});
     const url = SERVER_RUN_URL;
-    const source=project.sourceArtifacts.find(a=>a.role==="target" && /^(html|htm)$/.test(a.extension));
-    const snapshot=variant?.artifactSnapshots.find(a=>a.sourceArtifactId===source?.id);
-    const artifact=source?{name:source.name,content:variant?snapshot?.content:source.textContent}:undefined;
-    if(source && !artifact?.content) throw new Error("候选实际 HTML 尚未生成，不能运行修改说明。");
-    if(artifact?.content?.includes("[...truncated by Evolve Studio...]") || (!variant && source?.warnings?.some(w=>/Studio 已截断进入|进入 AI 上下文的部分已截断/.test(w))))throw new Error("检测到旧版截断内容，请先重新深度解析原文件，不能把截断网页当作真实完整成果验证。");
-    const packageSource=project.sourceArtifacts.find(a=>a.role==="target"&&a.extension==="zip");
-    let archiveBase64:string|undefined;let archiveHash:string|undefined;
-    if(!source&&packageSource){const snap=variant?.artifactSnapshots.find(a=>a.sourceArtifactId===packageSource.id);const blob=variant?await readFrozenArtifact(snap?.frozenArtifact,snap?.content??""):await getArtifactBlob(packageSource.id);if(!blob)throw new Error("源码 ZIP 不在当前浏览器，请重新上传");const buffer=await blob.arrayBuffer();archiveHash=await sha256(buffer);const bytes=new Uint8Array(buffer);let binary="";for(let i=0;i<bytes.length;i+=32768)binary+=String.fromCharCode(...bytes.subarray(i,i+32768));archiveBase64=btoa(binary);}
+    const targets=project.sourceArtifacts.filter((item)=>item.role==="target");
+    const criteria=new Set(testCase.criterionIds);
+    const scopedIds=new Set((project.acceptanceRubric??[])
+      .filter((criterion)=>criteria.has(criterion.id)).flatMap((criterion)=>criterion.artifactIds));
+    const selected=scopedIds.size?targets.filter((item)=>scopedIds.has(item.id)):targets;
+    if(targets.length&&selected.length!==1)throw new Error(`HTTP Test Case ${testCase.id} 没有唯一的 Target Artifact 绑定。`);
+    const target=selected[0];
+    const source=target&&/^(html|htm)$/i.test(target.extension)?target:undefined;
+    const html=source?await prepareBrowserHttpRunHtml(source,variant):undefined;
+    const artifact=html?.artifact;
+    const packageSource=target?.extension.toLowerCase()==="zip"?target:undefined;
+    const archive=packageSource?await prepareBrowserHttpRunFile(packageSource,variant):undefined;
+    const archiveBase64=archive?.contentBase64;
+    const archiveHash=archive?.sha256;
+    const file=target&&!source&&!packageSource?await prepareBrowserHttpRunFile(target,variant):undefined;
     const res = await fetch(url, {
       method: "POST",
       headers: headers(),
-      signal: AbortSignal.timeout(archiveBase64?SERVER_PROXY_TIMEOUT_MS:90_000),
+      signal: AbortSignal.timeout(archiveBase64||file?SERVER_PROXY_TIMEOUT_MS:90_000),
       body: JSON.stringify({
         projectId: project.id,
         connectionId: project.targetConnection.connectionId,
-        testCase, artifact, archiveBase64,
+        testCase, artifact, archiveBase64, file,
         variant: variant ?? null,
       }),
     });
     if (!res.ok) throw await executionError(res, "真实验证");
     const result=TargetRunResultSchema.parse(await res.json());
     if(archiveHash&&result.verificationStatus!=="unverified"&&result.artifactHash!==archiveHash)throw new Error("构建证据与实际源码包指纹不一致");
+    if(file&&result.verificationStatus!=="unverified"&&result.artifactHash!==file.sha256)throw new Error("执行结果与真实 Target 文件指纹不一致");
     if(artifact?.content && result.verificationStatus!=="unverified"
-      && result.artifactHash!==await textDigest(artifact.content)) throw new Error("执行结果与提交文件指纹不一致");
+      && result.artifactHash!==html?.sha256) throw new Error("执行结果与提交文件指纹不一致");
     if(testCase.executionMode==="visual-review"&&result.screenshots?.length){const visual=await runVisualCase(project,testCase,variant,result.screenshots);return {...visual,screenshots:result.screenshots,artifactHash:result.artifactHash,trace:[...result.trace,...visual.trace],verificationStatus:result.verificationStatus==="failed"?"failed":"partial"};}
     return result;
   },

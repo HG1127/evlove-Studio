@@ -1,0 +1,9 @@
+# HTTP Target Run file contract
+
+A Target Test must resolve to one Target Artifact. Criteria `artifactIds` select that Target when a Mission has multiple files; ambiguous Test scope stays unverified before a Runner call. A genuinely fileless Target may still use the remote service without an Artifact payload.
+
+For HTML, the existing `artifact: {name, content}` field remains compatible. For ZIP, the existing `archiveBase64` field remains compatible. Both browser-local and durable Server paths now read the original upload or the Candidate's exact frozen Blob first and check the returned `artifactHash` against the bytes sent.
+
+For DOCX, PDF, PPTX, XLSX, and other non-HTML/ZIP files, `TargetRunProxyRequest.file` carries `sourceArtifactId`, optional Candidate `snapshotHash`, `name`, `mimeType`, `size`, `sha256`, and `contentBase64`. Candidate runs require one matching Snapshot and frozen receipt. The server proxy checks unique Snapshot identity when a Candidate is present, canonical base64, byte size, and SHA-256 before forwarding. A Runner verdict other than `unverified` must include `artifactHash` equal to the submitted file SHA-256; otherwise the proxy rejects it. Missing or changed local/remote Blob bytes remain unverified.
+
+The external HTTP Runner must implement the `file` field and calculate `artifactHash` from the bytes it actually evaluated. No configured production Runner has exercised this protocol. Base64 currently lives inside the JSON request; large files need a measured streaming or short-lived authenticated fetch protocol. Format-specific execution, Office rendering fidelity, PDF page interpretation, and visual evaluation remain Runner capabilities and must not be inferred from a matching hash alone.

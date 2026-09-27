@@ -1,5 +1,5 @@
 import {createHash} from "node:crypto";
-import type {Candidate,EvolveProject,TargetRunResult,TestCase} from "@evolution/contracts";
+import type {Candidate,EvolveProject,TargetRunFile,TargetRunResult,TestCase} from "@evolution/contracts";
 import {trustedServerBaselineChampion} from "@evolution/harness";
 import {getServerArtifactStore} from "./artifact-runtime";
 import {runHttpTarget} from "./http-target-gateway";
@@ -14,6 +14,7 @@ type ServerHttpTargetPorts={
 type TargetBinding={
   artifact?:{name:string;content:string};
   archiveBase64?:string;
+  file?:TargetRunFile;
   expectedHash?:string;
 };
 
@@ -111,7 +112,10 @@ async function bindingFor(
       content=html.textContent;
       expectedHash=content?digest(content):undefined;
     }
-    if(!content?.trim()||!expectedHash)throw new Error(`HTML Target ${html.id} 没有可执行的完整内容。`);
+    if(!content?.trim()||!expectedHash||content.includes("[...truncated by Evolve Studio...]")
+      ||(!snapshot&&html.warnings?.some((item)=>/Studio 已截断进入|进入 AI 上下文的部分已截断/.test(item)))){
+      throw new Error(`HTML Target ${html.id} 没有可执行的完整内容。`);
+    }
     return{artifact:{name:snapshot?.name??html.name,content},expectedHash};
   }
 
@@ -142,7 +146,28 @@ async function bindingFor(
     return{archiveBase64:Buffer.from(bytes).toString("base64"),expectedHash:actualHash};
   }
 
-  throw new Error(`HTTP Target Artifact ${target.id} 的格式 ${target.extension||target.mimeType} 尚不能绑定真实文件执行。`);
+  const snapshots=current?.artifactSnapshots.filter((item)=>item.sourceArtifactId===target.id)??[];
+  const snapshot=snapshots[0];
+  if(current&&snapshots.length!==1)throw new Error(`当前版本 ${current.id} 没有唯一的 Target ${target.id} exact Artifact Snapshot。`);
+  const frozen=snapshot?.frozenArtifact;
+  if(snapshot){
+    if(!frozen)throw new Error(`当前版本 ${current?.id??"candidate"} 的 Target ${target.id} 尚未冻结真实文件。`);
+    if(frozen.sourceArtifactId!==target.id||frozen.snapshotHash!==snapshot.contentHash
+      ||frozen.name!==snapshot.name||frozen.mimeType!==snapshot.mimeType){
+      throw new Error("HTTP Target 文件冻结凭证与 Candidate Snapshot 身份不一致。");
+    }
+  }
+  const blobId=frozen?.blobId??(target.storageRef?.trim()||target.id);
+  const blob=await getArtifact(blobId);
+  if(!blob)throw new Error(`找不到 HTTP Target 文件 Blob ${blobId}。`);
+  const bytes=new Uint8Array(await blob.arrayBuffer());
+  const actualHash=digest(bytes);
+  if(frozen&&(bytes.byteLength!==frozen.size||actualHash!==frozen.sha256)){
+    throw new Error(`HTTP Target 文件 ${target.id} 与冻结凭证字节不一致。`);
+  }
+  return{file:{sourceArtifactId:target.id,snapshotHash:snapshot?.contentHash,
+    name:snapshot?.name??target.name,mimeType:snapshot?.mimeType??target.mimeType,
+    sha256:actualHash,size:bytes.byteLength,contentBase64:Buffer.from(bytes).toString("base64")},expectedHash:actualHash};
 }
 
 export function serverHttpTargetEnabled(project:EvolveProject){
@@ -183,6 +208,7 @@ export async function runServerHttpTargetBatch(
         testCase,
         ...(binding.artifact?{artifact:binding.artifact}:{}),
         ...(binding.archiveBase64?{archiveBase64:binding.archiveBase64}:{}),
+        ...(binding.file?{file:binding.file}:{}),
         variant:candidate??null,
       });
       if(binding.expectedHash&&result.verificationStatus!=="unverified"&&result.artifactHash!==binding.expectedHash){

@@ -6,12 +6,23 @@ export const TargetProxyArtifactSchema=z.object({
   content:z.string(),
 });
 
+export const TargetRunFileSchema=z.object({
+  sourceArtifactId:z.string().min(1),
+  snapshotHash:z.string().min(1).optional(),
+  name:z.string().min(1),
+  mimeType:z.string().min(1),
+  sha256:z.string().regex(/^[a-f0-9]{64}$/),
+  size:z.number().int().nonnegative(),
+  contentBase64:z.string().min(1),
+});
+export type TargetRunFile=z.infer<typeof TargetRunFileSchema>;
 export const TargetRunProxyRequestSchema=z.object({
   projectId:z.string().min(1),
   connectionId:z.string().min(1),
   testCase:TestCaseSchema,
   artifact:TargetProxyArtifactSchema.optional(),
   archiveBase64:z.string().optional(),
+  file:TargetRunFileSchema.optional(),
   variant:CandidateSchema.nullable().optional(),
 });
 export type TargetRunProxyRequest=z.infer<typeof TargetRunProxyRequestSchema>;

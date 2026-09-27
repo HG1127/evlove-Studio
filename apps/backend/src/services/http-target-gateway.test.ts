@@ -88,6 +88,26 @@ describe("server HTTP target gateway",()=>{
     })).resolves.toMatchObject({artifactHash:archiveDigest});
   });
 
+  it("checks generic file bytes and Candidate identity before accepting a Runner verdict",async()=>{
+    process.env.EVOLUTION_TARGET_RUN_URL="https://runner.internal/run";
+    const bytes=Buffer.from([0x25,0x50,0x44,0x46,0,255]);
+    const digest=createHash("sha256").update(bytes).digest("hex");
+    const candidate={id:"C1",name:"pdf",change:"x",patches:[],artifactSnapshots:[{
+      id:"snapshot",sourceArtifactId:"pdf-source",name:"report.pdf",mimeType:"application/pdf",content:"snapshot",contentHash:"snapshot-hash",createdAt:"now",
+    }]};
+    const testCase={id:"T1",title:"PDF",input:"i",expected:[],tags:[],hidden:false,criterionIds:[],executionMode:"external-runner",evidenceScope:"product-behavior"};
+    const file={sourceArtifactId:"pdf-source",snapshotHash:"snapshot-hash",name:"report.pdf",mimeType:"application/pdf",sha256:digest,size:bytes.length,contentBase64:bytes.toString("base64")};
+    const input={projectId:"p",connectionId:"c",testCase,variant:candidate,file};
+    const fetchMock=vi.fn(async()=>new Response(JSON.stringify({testCaseId:"T1",output:"checked",latencyMs:1,cost:0,verificationStatus:"verified",artifactHash:digest,trace:[]}),{status:200}));
+    vi.stubGlobal("fetch",fetchMock);
+    await expect(runHttpTarget({...input,file:{...file,snapshotHash:"old"}})).rejects.toThrow("Snapshot 身份不一致");
+    await expect(runHttpTarget({...input,file:{...file,contentBase64:Buffer.from("other").toString("base64")}})).rejects.toThrow("字节与 SHA-256");
+    await expect(runHttpTarget({...input,artifact:{name:"other",content:"other"}})).rejects.toThrow("不能与旧 HTML/ZIP");
+    expect(fetchMock).not.toHaveBeenCalled();
+    await expect(runHttpTarget(input)).resolves.toMatchObject({artifactHash:digest,verificationStatus:"verified"});
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({testCaseId:"T1",output:"wrong",latencyMs:1,cost:0,verificationStatus:"verified",artifactHash:"wrong",trace:[]}),{status:200}));
+    await expect(runHttpTarget(input)).rejects.toThrow("submitted Artifact SHA-256");
+  });
   it("proxies rollback with server-only credentials without resending Candidate bytes",async()=>{
     process.env.EVOLUTION_TARGET_RELEASE_URL="https://runner.internal/release";
     process.env.EVOLUTION_TARGET_BEARER_TOKEN="secret-server-token";

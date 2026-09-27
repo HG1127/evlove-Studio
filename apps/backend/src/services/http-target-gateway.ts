@@ -47,10 +47,28 @@ export function getHttpTargetGatewayCapabilities(){
 
 export async function runHttpTarget(raw:unknown){
   const input=TargetRunProxyRequestSchema.parse(raw);
+  if(input.file&&(input.artifact||input.archiveBase64))throw new Error("Target Run 文件载荷不能与旧 HTML/ZIP 载荷同时提交。");
+  if(input.file){
+    const file=input.file;
+    if(input.variant){
+      const snapshots=input.variant.artifactSnapshots.filter((item)=>item.sourceArtifactId===file.sourceArtifactId);
+      const snapshot=snapshots[0];
+      if(snapshots.length!==1||!snapshot||snapshot.contentHash!==file.snapshotHash
+        ||snapshot.name!==file.name||snapshot.mimeType!==file.mimeType){
+        throw new Error("Target Run 文件与 Candidate Snapshot 身份不一致。");
+      }
+    }
+    const bytes=Buffer.from(file.contentBase64,"base64");
+    if(bytes.toString("base64")!==file.contentBase64||bytes.byteLength!==file.size
+      ||createHash("sha256").update(bytes).digest("hex")!==file.sha256){
+      throw new Error("Target Run 文件字节与 SHA-256 凭证不一致。");
+    }
+  }
   const result=ExplicitTargetRunResponseSchema.parse(await post(getServerTargetProxyConfig().runUrl,input,"Target Run"));
   if(result.testCaseId!==input.testCase.id)throw new Error("Target Run result belongs to another Test Case");
-  if(result.verificationStatus!=="unverified"&&(input.artifact||input.archiveBase64)){
-    const bytes=input.archiveBase64?Buffer.from(input.archiveBase64,"base64"):Buffer.from(input.artifact!.content,"utf8");
+  if(result.verificationStatus!=="unverified"&&(input.file||input.artifact||input.archiveBase64)){
+    const bytes=input.file?Buffer.from(input.file.contentBase64,"base64")
+      :input.archiveBase64?Buffer.from(input.archiveBase64,"base64"):Buffer.from(input.artifact!.content,"utf8");
     const expected=createHash("sha256").update(bytes).digest("hex");
     if(result.artifactHash?.toLowerCase()!==expected){
       throw new Error("Target Run result does not match the submitted Artifact SHA-256");
