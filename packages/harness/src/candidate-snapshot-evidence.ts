@@ -133,6 +133,26 @@ export function normalizeLocallyVerifiableCandidateRuns(
         trace: [...run.trace, { id: `server-frozen-binding-${testCase.id}`, stage: "format-roundtrip", summary: "冻结文件往返绑定失效", status: "warning" }],
       };
     }
+    if (testCase.executionMode === "static-evidence" && run.trace.some((step) => step.id === `server-frozen-static-${testCase.id}`)) {
+      if (run.verificationStatus === "unverified") return run;
+      const scopedIds = new Set(mapped.flatMap((criterion) => criterion.artifactIds));
+      const targets = project.sourceArtifacts.filter((source) => source.role === "target" && (!scopedIds.size || scopedIds.has(source.id)));
+      const snapshots = targets.length === 1 ? candidate.artifactSnapshots.filter((snapshot) => snapshot.sourceArtifactId === targets[0]!.id) : [];
+      const snapshot = snapshots.length === 1 ? snapshots[0] : undefined;
+      const receipt = snapshot?.frozenArtifact;
+      const signature = snapshot && receipt ? JSON.stringify([snapshot.sourceArtifactId, receipt.sha256, fastHash(snapshot.content)]) : "";
+      const bound = targets.length === 1 && (!scopedIds.size || scopedIds.size === 1)
+        && receipt?.sourceArtifactId === targets[0]?.id && run.artifactHash === receipt.sha256
+        && run.trace.some((step) => step.id === `server-frozen-static-${testCase.id}` && step.status === "pass" && step.detail === signature)
+        && (testCase.evidenceScope !== "product-behavior" || run.verificationStatus !== "verified");
+      return bound ? run : {
+        ...run,
+        output: "UNVERIFIED：Server 静态证据与当前冻结文件或 Target 不一致。",
+        verificationStatus: "unverified",
+        artifactHash: undefined,
+        trace: [...run.trace, { id: `server-frozen-static-binding-${testCase.id}`, stage: "server-frozen-static", summary: "冻结文件静态证据绑定失效", status: "warning" }],
+      };
+    }
     // The Target adapter has already read and hashed the materialized ZIP. Keep that exact
     // result instead of replacing it with the Candidate overlay's partial text evidence.
     if (testCase.executionMode === "static-evidence" && run.trace.some((step) => step.id === `candidate-zip-static-${testCase.id}` && step.stage === "candidate-static-evidence")) {

@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Candidate, EvaluateAiResult, EvolveProject, TargetRunResult } from "@evolution/contracts";
+import { fastHash } from "@evolution/core";
 import { runServerExperiment } from "./server-experiment";
 import { executeServerExperimentCandidate } from "./server-experiment-runner";
 import { normalizeLocallyVerifiableCandidateRuns } from "./candidate-snapshot-evidence";
+import { candidateLocalEvidence } from "./server-experiment-evidence";
 
 function fixture(executionMode:"artifact-runtime"|"external-runner"|"visual-review"="artifact-runtime"):EvolveProject{
   const now="2026-09-20T13:00:00.000Z";
@@ -237,22 +239,40 @@ describe("server frozen roundtrip recheck", () => {
   });
 });
 describe("server frozen codebase static routing", () => {
-  it("keeps a document-scoped static Test on the document path in a mixed Mission", async () => {
+  it("does not treat a Candidate modification blueprint as final static file evidence", () => {
+    const project = fixture();
+    const candidate = frozenCandidate(project.candidates[0]!, JSON.stringify({ parts: [{ path: "word/document.xml", textRuns: ["BLUEPRINT ONLY"] }] }));
+    const testCase = { ...project.evalSuite[0]!, executionMode: "static-evidence" as const, evidenceScope: "implementation" as const };
+    const local = candidateLocalEvidence(project, candidate, testCase);
+    expect(local?.verificationStatus).toBe("unverified");
+    expect(local?.output).toContain("修改蓝图不能证明最终文件内容");
+  });
+
+  it("binds a document-scoped static Test to frozen bytes in a mixed Mission", async () => {
     const project = fixture();
     project.sourceArtifacts[0]!.artifactKind = "codebase";
     project.sourceArtifacts[0]!.extension = "zip";
     project.sourceArtifacts.push({ ...project.sourceArtifacts[0]!, id: "document", name: "guide.md", extension: "md", artifactKind: "document", textContent: "Old guide" });
     project.acceptanceRubric.push({ ...project.acceptanceRubric[0]!, id: "DOC", artifactIds: ["document"], validationMethod: "static-structure" });
     const candidate = frozenCandidate(project.candidates[0]!);
-    candidate.artifactSnapshots.push({ ...candidate.artifactSnapshots[0]!, id: "doc-snapshot", sourceArtifactId: "document", name: "guide.md", content: "Complete new guide", frozenArtifact: undefined });
+    const content = "Complete new guide";
+    candidate.artifactSnapshots.push({ ...candidate.artifactSnapshots[0]!, id: "doc-snapshot", sourceArtifactId: "document", name: "guide.md", content,
+      frozenArtifact: { ...candidate.artifactSnapshots[0]!.frozenArtifact!, sourceArtifactId: "document", name: "guide.md", sha256: "doc-sha" } });
     const testCase = { ...project.evalSuite[0]!, id: "DOC-STATIC", criterionIds: ["DOC"], executionMode: "static-evidence" as const, evidenceScope: "implementation" as const };
-    const executeFrozenStatic = vi.fn(async () => { throw new Error("codebase port must not run"); });
-    const [run] = await executeServerExperimentCandidate(project, candidate, { executeSemanticBatch: async () => ({ results: [] }), executeFrozenStatic, judge: async () => judge(90) }, [testCase]);
-    expect(executeFrozenStatic).not.toHaveBeenCalled();
+    const executeFrozenStatic = vi.fn(async () => ({
+      testCaseId: testCase.id, output: "Complete new guide from frozen bytes", latencyMs: 1, cost: 0,
+      verificationStatus: "verified" as const, artifactHash: "doc-sha",
+      trace: [{ id: `server-frozen-static-${testCase.id}`, stage: "server-frozen-static", summary: "Read frozen document", status: "pass" as const, detail: JSON.stringify(["document", "doc-sha", fastHash(content)]) }],
+    }));
+    const ports = { executeSemanticBatch: async () => ({ results: [] }), executeFrozenStatic, judge: async () => judge(90) };
+    const [run] = await executeServerExperimentCandidate(project, candidate, ports, [testCase]);
+    expect(executeFrozenStatic).toHaveBeenCalledOnce();
     expect(run?.verificationStatus).toBe("verified");
     expect(run?.output).toContain("Complete new guide");
+    expect((await executeServerExperimentCandidate(project, candidate, { ...ports, executeFrozenStatic: undefined }, [testCase]))[0]?.verificationStatus).toBe("unverified");
+    const stale = { ...candidate, artifactSnapshots: candidate.artifactSnapshots.map((snapshot) => snapshot.sourceArtifactId === "document" ? { ...snapshot, content: "changed after validation" } : snapshot) } as Candidate;
+    expect(normalizeLocallyVerifiableCandidateRuns(project, stale, [testCase], [run!])[0]?.verificationStatus).toBe("unverified");
   });
-
   it("uses the injected frozen ZIP executor and preserves its exact byte-bound evidence", async () => {
     const project = fixture();
     project.sourceArtifacts[0]!.artifactKind = "codebase";

@@ -46,6 +46,10 @@ function unavailableFrozenStatic(testCase: TestCase, detail: string): TargetRunR
   const result = unavailableExperimentRun(testCase, detail);
   return { ...result, trace: [...result.trace, { id: `candidate-zip-static-${testCase.id}`, stage: "candidate-static-evidence", summary: "冻结代码包静态证据未完成", status: "warning", detail }] };
 }
+function unavailableFrozenDocumentStatic(testCase: TestCase, detail: string): TargetRunResult {
+  const result = unavailableExperimentRun(testCase, detail);
+  return { ...result, trace: [...result.trace, { id: `server-frozen-static-${testCase.id}`, stage: "server-frozen-static", summary: "冻结文件静态证据未完成", status: "warning", detail }] };
+}
 function unavailableFrozenRoundtrip(testCase: TestCase, detail: string): TargetRunResult {
   const result = unavailableExperimentRun(testCase, detail);
   return { ...result, trace: [...result.trace, { id: `server-frozen-roundtrip-${testCase.id}`, stage: "format-roundtrip", summary: "Server 冻结文件往返证据未完成", status: "warning", detail }] };
@@ -100,15 +104,16 @@ export async function executeServerExperimentCandidate(
       && project.sourceArtifacts.some((source) => source.role === "target"
         && (source.artifactKind === "codebase" || source.extension.toLowerCase() === "zip")
         && (!staticScope.size || staticScope.has(source.id)));
-    if (codebaseStaticCase) {
+    if (testCase.executionMode === "static-evidence") {
+      const unavailableStatic = codebaseStaticCase ? unavailableFrozenStatic : unavailableFrozenDocumentStatic;
       if (!ports.executeFrozenStatic) {
-        ordered.set(testCase.id, unavailableFrozenStatic(testCase, "Server 没有冻结代码包静态索引端口。"));
+        ordered.set(testCase.id, unavailableStatic(testCase, "Server 没有冻结 Artifact 静态索引端口。"));
       } else {
         try {
           const result = await ports.executeFrozenStatic({ project, candidate, testCase });
-          ordered.set(testCase.id, result.testCaseId === testCase.id ? result : unavailableFrozenStatic(testCase, "冻结代码包静态证据返回了错误的 Test Case ID。"));
+          ordered.set(testCase.id, result.testCaseId === testCase.id ? result : unavailableStatic(testCase, "冻结 Artifact 静态证据返回了错误的 Test Case ID。"));
         } catch (error) {
-          ordered.set(testCase.id, unavailableFrozenStatic(testCase, `冻结代码包静态索引失败：${error instanceof Error ? error.message : String(error)}`));
+          ordered.set(testCase.id, unavailableStatic(testCase, `冻结 Artifact 静态索引失败：${error instanceof Error ? error.message : String(error)}`));
         }
       }
       continue;

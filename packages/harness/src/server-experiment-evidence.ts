@@ -103,33 +103,8 @@ export function candidateLocalEvidence(
     return unavailableExperimentRun(testCase, `Candidate ${candidate.id} 的结构化成果尚未全部冻结为实际文件。`);
   }
   if (testCase.executionMode === "static-evidence") {
-    const snapshots = snapshotsForTest(project, candidate, testCase);
-    if (!snapshots.length) return unavailableExperimentRun(testCase, `Candidate ${candidate.id} 没有与本题绑定的 Artifact Snapshot。`);
-    const productBehavior = testCase.evidenceScope === "product-behavior";
-    const output = [
-      "SERVER CANDIDATE STATIC EVIDENCE",
-      `Candidate: ${candidate.id}`,
-      `验收目标：${testCase.title}`,
-      ...snapshots.map((snapshot) => `--- ${snapshot.name} · ${snapshot.contentHash ?? "hash-pending"} ---\n${snapshot.content.slice(0, 16_000)}`),
-      productBehavior
-        ? "说明：静态 Snapshot 能证明内容/实现存在，但不能单独证明真实交互行为已经通过。"
-        : "说明：以上证据直接来自本轮被实验的 Candidate Snapshot。",
-    ].join("\n\n");
-    return {
-      testCaseId: testCase.id,
-      output,
-      latencyMs: 0,
-      cost: 0,
-      verificationStatus: productBehavior ? "partial" : "verified",
-      trace: [{
-        id: `candidate-static-${candidate.id}-${testCase.id}`,
-        stage: "static-evidence",
-        summary: `读取 ${snapshots.length} 个 Candidate Snapshot`,
-        status: productBehavior ? "warning" : "pass",
-      }],
-    };
-  }
-  return undefined;
+    return unavailableExperimentRun(testCase, "Server 静态证据必须由冻结 Artifact 端口读取实际文件；Candidate 修改蓝图不能证明最终文件内容。");
+  }  return undefined;
 }
 
 export function candidateArtifactContext(project: EvolveProject, candidate: Candidate, budget = 64_000) {
