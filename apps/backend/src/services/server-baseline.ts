@@ -1,7 +1,7 @@
 import type { EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
 import { runVercelSandboxCodebaseValidation } from "@evolution/adapters/sandbox";
 import { runServerBaseline, trustedServerBaselineChampion } from "@evolution/harness";
-import { runServerAi } from "./ai-gateway";
+import { runServerAi, serverAiScoringRouteFingerprint } from "./ai-gateway";
 import { getServerArtifactStore } from "./artifact-runtime";
 import { attachServerVisualEvidence } from "./server-visual-evidence";
 import { runServerCurrentStoredEvidence } from "./server-current-stored-evidence";
@@ -121,6 +121,7 @@ export async function executeServerBaselineExternal(current:EvolveProject,testCa
 /** Composition root: wires Harness Baseline ports to production Server AI + Artifact Store + Vercel Sandbox. */
 export async function runServerMissionBaseline(project: EvolveProject) {
   return runServerBaseline(project, {
+    scoringRouteFingerprint: serverAiScoringRouteFingerprint(),
     executeSemanticBatch: async ({ project: current, testCases, artifactContext }) => runServerAi("execute-artifact-batch", {
       project: {
         name: current.name,

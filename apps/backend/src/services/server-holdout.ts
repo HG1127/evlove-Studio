@@ -1,7 +1,7 @@
 import type { Candidate, EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
 import { runVercelSandboxCodebaseValidation } from "@evolution/adapters/sandbox";
 import { runServerHoldout } from "@evolution/harness";
-import { runServerAi } from "./ai-gateway";
+import { runServerAi, serverAiScoringRouteFingerprint } from "./ai-gateway";
 import { getServerArtifactStore } from "./artifact-runtime";
 import { runServerFrozenArtifactStaticEvidence } from "./server-static-artifact-evidence";
 import { attachServerVisualEvidence } from "./server-visual-evidence";
@@ -91,6 +91,7 @@ async function executeCandidateExternal(project:EvolveProject,candidate:Candidat
 
 export async function runServerMissionHoldout(project:EvolveProject){
   return runServerHoldout(project,{
+    scoringRouteFingerprint:serverAiScoringRouteFingerprint(),
     current:{
       executeSemanticBatch:({project:current,testCases,artifactContext})=>runServerAi("execute-artifact-batch",{
         project:{name:current.name,objectType:current.objectType,goal:current.goal,evolutionCommand:current.evolutionCommand,protectedItems:current.protectedItems,editableItems:current.editableItems,sourceArtifacts:artifactContext},

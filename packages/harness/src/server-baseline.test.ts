@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { EvaluateAiResult, EvolveProject, TargetRunResult } from "@evolution/contracts";
 import { runServerBaseline } from "./server-baseline";
+import { serverBaselineFingerprint } from "./server-baseline-evidence";
 
 function fixture(): EvolveProject {
   const now="2026-09-20T13:00:00.000Z";
@@ -198,5 +199,54 @@ describe("server baseline",()=>{
     expect(outcome.baseline.runs.find((run)=>run.testCaseId==="V2")?.verificationStatus).toBe("unverified");
     expect(outcome.ready).toBe(false);
     expect(outcome.project.campaign.status).toBe("paused");
+  });
+});
+
+describe("server Baseline evidence provenance", () => {
+  it("includes the actual scoring route in the measurement fingerprint", () => {
+    const project = fixture();
+    expect(serverBaselineFingerprint(project, "route-a")).not.toBe(serverBaselineFingerprint(project, "route-b"));
+    expect(serverBaselineFingerprint(project, "route-a")).toBe(serverBaselineFingerprint(project, "route-a"));
+  });
+});
+describe("server Campaign scoring route binding", () => {
+  it("stops an established Campaign before executing under a changed route", async () => {
+    const project = fixture();
+    project.campaign.currentRound = 1;
+    project.campaign.scoringRouteFingerprint = "old-route";
+    const outcome = await runServerBaseline(project, {
+      scoringRouteFingerprint: "new-route",
+      executeSemanticBatch: async () => { throw new Error("must not execute"); },
+      judge: async () => { throw new Error("must not judge"); },
+    });
+    expect(outcome.ready).toBe(false);
+    expect(outcome.reason).toContain("重置搜索");
+    expect(outcome.project.campaign.status).toBe("paused");
+    expect(outcome.project.campaign.scoringRouteFingerprint).toBe("old-route");
+    expect(outcome.baseline).toBe(project.baselineRun);
+  });
+
+  it("remeasures and reanchors the first round after a scoring route change", async () => {
+    const project = fixture();
+    project.campaign.scoringRouteFingerprint = "old-route";
+    project.campaign.rootBaseline = {
+      accuracy: 1, evidence: 1, riskCoverage: 1, completeness: 1, safety: "PASS",
+      averageCost: 0, averageLatencyMs: 1, notes: [], failures: [],
+    };
+    const outcome = await runServerBaseline(project, {
+      scoringRouteFingerprint: "new-route",
+      executeSemanticBatch: async ({ testCases }) => ({
+        results: testCases.map((testCase) => ({
+          testCaseId: testCase.id,
+          output: "当前说明包含安装步骤，但验证与回滚说明不足。",
+          trace: [],
+        })),
+      }),
+      judge: async () => judge(),
+    });
+    expect(outcome.ready).toBe(true);
+    expect(outcome.project.campaign.scoringRouteFingerprint).toBe("new-route");
+    expect(outcome.project.campaign.rootBaseline).toEqual(outcome.baseline.result);
+    expect(outcome.project.campaign.rootBaseline?.accuracy).not.toBe(1);
   });
 });

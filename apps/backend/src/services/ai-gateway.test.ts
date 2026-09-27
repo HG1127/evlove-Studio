@@ -1,11 +1,11 @@
 // @vitest-environment node
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
-import {isServerAiUnavailable,runServerAi,serverAiUnavailableReason} from "./ai-gateway";
+import {isServerAiUnavailable,runServerAi,serverAiScoringRouteFingerprint,serverAiUnavailableReason} from "./ai-gateway";
 
 const KEYS=[
   "VERCEL","VERCEL_ENV","VERCEL_OIDC_TOKEN","EVOLUTION_AI_GATEWAY_ENABLED",
   "EVOLUTION_AI_API_KEY","OPENAI_API_KEY","EVOLUTION_AI_MODEL","OPENAI_MODEL",
-  "EVOLUTION_AI_BASE_URL","OPENAI_BASE_URL",
+  "EVOLUTION_AI_BASE_URL","OPENAI_BASE_URL","EVOLUTION_AI_TIMEOUT_MS",
 ] as const;
 const previous=new Map<string,string|undefined>();
 
@@ -39,6 +39,21 @@ describe("Server AI provider availability classification",()=>{
   });
 });
 
+describe("server AI scoring route identity",()=> {
+  it("changes with provider/model but excludes credentials and timeout",()=> {
+    process.env.EVOLUTION_AI_API_KEY="secret-first";
+    process.env.EVOLUTION_AI_MODEL="model-a";
+    process.env.EVOLUTION_AI_BASE_URL="https://ai.example.test/v1";
+    const first=serverAiScoringRouteFingerprint();
+    expect(first).toMatch(/^[a-f0-9]{64}$/);
+    expect(first).not.toContain("secret-first");
+    process.env.EVOLUTION_AI_API_KEY="secret-rotated";
+    process.env.EVOLUTION_AI_TIMEOUT_MS="120000";
+    expect(serverAiScoringRouteFingerprint()).toBe(first);
+    process.env.EVOLUTION_AI_MODEL="model-b";
+    expect(serverAiScoringRouteFingerprint()).not.toBe(first);
+  });
+});
 describe("server AI multimodal gateway",()=>{
   it("sends visual evidence as image input instead of embedding the data URL in text",async()=>{
     process.env.EVOLUTION_AI_API_KEY="test-key";

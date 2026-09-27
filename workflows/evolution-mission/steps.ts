@@ -9,13 +9,14 @@ import {
 import { advanceCampaignScheduleAfterServerRun, applyDeterministicRoundtripEvidence, applyProductionLearningGovernance, baselineReadiness, campaignGoalSatisfied, campaignStopReason, completeAutonomousMission, integrateDistilledLesson, mapTestsToRubric, materializeAcceptedChampionPackage, mergeGovernedNextQueue, normalizeAcceptanceRubric, normalizeEvalSuiteForProject, productionOutcomeFreshness, productionOutcomeTrend, projectHasStableHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, resetDownstream, rubricSuiteCoverage, rubricValidation } from "@evolution/core";
 import {
   advanceServerCampaignPreparation,
+  serverCampaignScoringRouteBlocker,
   buildServerHarnessPlan,
   normalizeLocallyVerifiableCandidateRuns,
   reconcileAttentionRequest,
   type ServerHarnessPlan,
 } from "@evolution/harness";
 import { getServerProductionRuntime } from "../../apps/backend/src/services/production-runtime";
-import { runServerAi } from "../../apps/backend/src/services/ai-gateway";
+import { runServerAi, serverAiScoringRouteFingerprint } from "../../apps/backend/src/services/ai-gateway";
 import { runServerMissionBaseline } from "../../apps/backend/src/services/server-baseline";
 import { runServerMissionExperiment } from "../../apps/backend/src/services/server-experiment";
 import { runServerMissionHoldout } from "../../apps/backend/src/services/server-holdout";
@@ -688,8 +689,38 @@ export async function executeServerControlStep(
       })};
     }
 
+    const scoringRouteFingerprint=serverAiScoringRouteFingerprint();
+    const scoringRouteBlocker=serverCampaignScoringRouteBlocker(mission,scoringRouteFingerprint);
+    if(scoringRouteBlocker){
+      const updated={
+        ...mission,
+        campaign:{
+          ...mission.campaign,
+          status:"paused" as const,
+          stopReason:scoringRouteBlocker,
+          schedule:{...mission.campaign.schedule,enabled:false,nextRunAt:undefined},
+        },
+        updatedAt:now,
+      };
+      await runtime.missions.save(updated);
+      await runtime.jobs.put(controlJob(input,{
+        status:"waiting",
+        startedAt:input.requestedAt,
+        progress:{percent:20,detail:scoringRouteBlocker.slice(0,240)},
+      }));
+      await runtime.events.append(createEvolutionEvent({
+        id:"evt-"+input.controlJobId+"-campaign-scoring-route-"+iteration,
+        missionId:input.missionId,jobId:input.controlJobId,checkpointId:plan.checkpoint.id,
+        type:"JobProgress",source:"vercel-workflow-control",
+        payload:{action,serverNative:true,conditional:true,phase:"scoring-route",reason:scoringRouteBlocker},
+      }));
+      return {control:"stop",result:result(input,{
+        status:"waiting-action",iterations:iteration+1,nextAction:action,
+        checkpointId:plan.checkpoint.id,reason:scoringRouteBlocker,
+      })};
+    }
     let campaignMission=mission;
-    if(!baselineReadiness(campaignMission).ready){
+    if(!baselineReadiness(campaignMission).ready || (campaignMission.campaign.currentRound===0 && Boolean(scoringRouteFingerprint) && campaignMission.campaign.scoringRouteFingerprint!==scoringRouteFingerprint)){
       const baselineOutcome=await runServerMissionBaseline(campaignMission);
       campaignMission=baselineOutcome.project;
       await runtime.missions.save(campaignMission);

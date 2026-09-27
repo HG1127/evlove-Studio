@@ -27,7 +27,14 @@ import { indexUniqueBatchResults } from "./server-batch-results";
 
 export { trustedServerBaselineChampion } from "./server-baseline-evidence";
 
+/** Stop durable Campaign comparisons before a changed Server AI scoring route can reuse old scores. */
+export function serverCampaignScoringRouteBlocker(project: EvolveProject, routeFingerprint?: string): string | undefined {
+  if (!routeFingerprint || project.campaign.currentRound === 0) return undefined;
+  if (project.campaign.scoringRouteFingerprint === routeFingerprint) return undefined;
+  return "[server-campaign-scoring-route-changed] 服务端执行或评审模型已变化，旧 Campaign 分数不可直接比较；请重置搜索后重新运行。生产发布状态不会被重置。";
+}
 export type ServerBaselinePorts = {
+  scoringRouteFingerprint?: string;
   executeSemanticBatch(args: {
     project: EvolveProject;
     testCases: TestCase[];
@@ -61,6 +68,20 @@ export async function runServerBaseline(
 ): Promise<ServerBaselineOutcome> {
   const now = options?.now ?? (() => new Date().toISOString());
   const startedAt = now();
+  const routeBlocker = serverCampaignScoringRouteBlocker(inputProject, ports.scoringRouteFingerprint);
+  if (routeBlocker) {
+    const paused: EvolveProject = {
+      ...inputProject,
+      campaign: {
+        ...inputProject.campaign,
+        status: "paused",
+        stopReason: routeBlocker,
+        schedule: { ...inputProject.campaign.schedule, enabled: false, nextRunAt: undefined },
+      },
+      updatedAt: startedAt,
+    };
+    return { project: paused, baseline: paused.baselineRun, ready: false, reason: routeBlocker, capabilityGaps: ["server-scoring-route"] };
+  }
   const targetGate = inputProject.gates.find((gate) => gate.id === "target-ready");
   if (targetGate?.status !== "approved") throw new Error("Target Ready gate is not approved");
   if (!inputProject.evalSuite.length) throw new Error("Project evalSuite is empty");
@@ -85,7 +106,7 @@ export async function runServerBaseline(
       totalCases: inputProject.evalSuite.length,
       runs: [],
       result: undefined,
-      measurementFingerprint: serverBaselineFingerprint(inputProject),
+      measurementFingerprint: serverBaselineFingerprint(inputProject, ports.scoringRouteFingerprint),
     },
     stage: "baseline",
     updatedAt: startedAt,
@@ -297,7 +318,8 @@ export async function runServerBaseline(
     baselineRun: baseline,
     campaign: {
       ...project.campaign,
-      rootBaseline: project.campaign.rootBaseline ?? evaluation,
+      rootBaseline: project.campaign.currentRound === 0 && ports.scoringRouteFingerprint && project.campaign.scoringRouteFingerprint !== ports.scoringRouteFingerprint ? evaluation : project.campaign.rootBaseline ?? evaluation,
+      scoringRouteFingerprint: project.campaign.currentRound === 0 ? ports.scoringRouteFingerprint ?? project.campaign.scoringRouteFingerprint : project.campaign.scoringRouteFingerprint,
     },
     updatedAt: now(),
   };

@@ -269,7 +269,7 @@ export function compactBaselineRunOutput(text: string, query: string, maxChars =
     .slice(0, maxChars);
 }
 
-export function serverBaselineFingerprint(project: EvolveProject) {
+export function serverBaselineFingerprint(project: EvolveProject, scoringRouteFingerprint?: string) {
   const champion = project.searchChampion;
   const trustedChampion = champion?.candidate
     && champion.validation?.status === "completed"
@@ -280,6 +280,7 @@ export function serverBaselineFingerprint(project: EvolveProject) {
       : undefined;
   return fastHash({
     version: "server-baseline-v1",
+    scoringRouteFingerprint,
     goal: project.goal,
     command: project.evolutionCommand,
     rubric: project.acceptanceRubric,

@@ -28,6 +28,7 @@ import { serverBaselineFingerprint } from "./server-baseline-evidence";
 import { exactServerHoldoutSuite, pauseServerHoldoutPreflight } from "./server-holdout-preflight";
 
 export type ServerHoldoutPorts = {
+  scoringRouteFingerprint?: string;
   current: ServerCurrentArtifactPorts;
   candidate: ServerExperimentExecutionPorts;
   releaseReview(payload: unknown): Promise<ReleaseReviewAiResult>;
@@ -186,7 +187,7 @@ export async function runServerHoldout(
     }
     throw error;
   }
-  const baseFingerprint = serverBaselineFingerprint({ ...inputProject, evalSuite: suite });
+  const baseFingerprint = serverBaselineFingerprint({ ...inputProject, evalSuite: suite }, ports.scoringRouteFingerprint);
 
   let baselineRuns:TargetRunResult[]=[];
   let runs:TargetRunResult[]=[];

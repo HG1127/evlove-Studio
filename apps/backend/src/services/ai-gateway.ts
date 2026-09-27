@@ -1,4 +1,5 @@
 import type { ZodType } from "zod";
+import { createHash } from "node:crypto";
 import {
   AiOperationSchema,
   ArtifactAcceptanceAiResultSchema,
@@ -55,6 +56,15 @@ import {
 import { getServerAiConfig } from "../server-env";
 
 export type ServerAiOperation=AiOperation;
+/** Public scoring-route identity; API keys and timeout settings are deliberately excluded. */
+export function serverAiScoringRouteFingerprint(): string | undefined {
+  const config = getServerAiConfig();
+  if (!config) return undefined;
+  const route = config.mode === "openai-compatible"
+    ? [config.mode, config.baseUrl, config.model]
+    : [config.mode, config.model];
+  return createHash("sha256").update(JSON.stringify(route)).digest("hex");
+}
 
 type StructuredSchema={name:string;schema:Record<string,unknown>};
 type Contract<T>={schema:StructuredSchema;parser:ZodType<T>;instruction:string};
