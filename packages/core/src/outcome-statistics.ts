@@ -157,9 +157,11 @@ export function analyzeOutcomeSamples(input:{
     kind:metric.metricKind,
     reason:`${metric.metricKey}/${metric.segment}: Candidate ${metric.candidate.mean} vs Stable ${metric.stable.mean}; p≈${metric.pValueApprox?.toFixed(4)}`,
   }));
-  const estimated=metrics.some((metric)=>metric.evidenceStatus==="estimated");
+  const incompleteScopes=metrics.filter((metric)=>metric.evidenceStatus==="insufficient")
+    .map((metric)=>`${metric.metricKey}/${metric.segment}: Stable ${metric.stable.count}, Candidate ${metric.candidate.count}`);
+  const insufficient=metrics.length===0||incompleteScopes.length>0;
   const drifting=driftRows.some((item)=>item.status==="drifting");
-  const verdict=!estimated?"insufficient":regressions.length?"regression":drifting?"watch":"healthy";
+  const verdict=regressions.length?"regression":drifting?"watch":insufficient?"insufficient":"healthy";
   return OutcomeAnalyticsResponseSchema.parse({
     missionId:input.missionId,
     candidateId,
@@ -177,6 +179,7 @@ export function analyzeOutcomeSamples(input:{
         :verdict==="watch"
           ?"未检测到显著回归，但 Candidate 时间漂移需要继续观察。"
           :"当前样本未检测到显著回归。")
+      +(incompleteScopes.length?` 证据不足：${incompleteScopes.slice(0,5).join("；")}${incompleteScopes.length>5?"；等更多分段":""}。`:"")
       +(dropped?` 已忽略 ${dropped} 个跨 Candidate、无效时间或超前时间样本。`:""),
   });
 }

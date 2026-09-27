@@ -29,6 +29,44 @@ describe("outcome statistics",()=>{
     expect(result.metrics[0]?.pValueApprox).toBeUndefined();
   });
 
+  it("does not report healthy while another observed metric lacks paired evidence",()=>{
+    const stable=Array.from({length:30},(_,i)=>0.5+(i%3)*0.001);
+    const candidate=Array.from({length:30},(_,i)=>0.6+(i%3)*0.001);
+    const rows=[
+      ...samples({metricKey:"conversion",kind:"business",direction:"higher",stable,candidate}),
+      ...samples({metricKey:"safety",kind:"safety",direction:"lower",stable:[0,0],candidate:[0,0]}),
+    ];
+    const result=analyzeOutcomeSamples({missionId:"m1",candidateId:"c1",minimumSamplesPerArm:30,samples:rows});
+    expect(result.metrics.find((metric)=>metric.metricKey==="conversion")?.evidenceStatus).toBe("estimated");
+    expect(result.metrics.find((metric)=>metric.metricKey==="safety")?.evidenceStatus).toBe("insufficient");
+    expect(result.verdict).toBe("insufficient");
+  });
+
+  it("retains a measured regression even when another metric is incomplete",()=>{
+    const stable=Array.from({length:30},(_,i)=>100+(i%3));
+    const candidate=Array.from({length:30},(_,i)=>135+(i%3));
+    const rows=[
+      ...samples({metricKey:"latency",kind:"latency",direction:"lower",stable,candidate}),
+      ...samples({metricKey:"safety",kind:"safety",direction:"lower",stable:[0],candidate:[0]}),
+    ];
+    const result=analyzeOutcomeSamples({missionId:"m1",candidateId:"c1",minimumSamplesPerArm:30,samples:rows});
+    expect(result.verdict).toBe("regression");
+    expect(result.regressions.map((item)=>item.metricKey)).toContain("latency");
+  });
+
+  it("does not call the whole metric healthy when a segment has no stable samples",()=>{
+    const stable=Array.from({length:30},()=>100);
+    const candidate=Array.from({length:30},()=>100);
+    const rows=[
+      ...samples({metricKey:"latency",kind:"latency",direction:"lower",stable,candidate}),
+      ...samples({metricKey:"latency",kind:"latency",direction:"lower",stable:[],candidate:[90],segment:"vip"}).map((row)=>({...row,id:row.id+"-vip"})),
+    ];
+    const result=analyzeOutcomeSamples({missionId:"m1",candidateId:"c1",minimumSamplesPerArm:30,samples:rows});
+    expect(result.metrics.find((metric)=>metric.segment==="all")?.evidenceStatus).toBe("estimated");
+    expect(result.metrics.find((metric)=>metric.segment==="vip")?.evidenceStatus).toBe("insufficient");
+    expect(result.verdict).toBe("insufficient");
+    expect(result.message).toContain("latency/vip: Stable 0, Candidate 1");
+  });
   it("detects a significant lower-is-better regression",()=>{
     const stable=Array.from({length:30},(_,i)=>100+(i%3));
     const candidate=Array.from({length:30},(_,i)=>135+(i%3));
