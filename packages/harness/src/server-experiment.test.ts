@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Candidate, EvaluateAiResult, EvolveProject, TargetRunResult } from "@evolution/contracts";
 import { runServerExperiment } from "./server-experiment";
 import { executeServerExperimentCandidate } from "./server-experiment-runner";
@@ -175,5 +175,44 @@ describe("server experiment",()=>{
     expect(outcome.project.candidates.find((candidate)=>candidate.id==="C2")).toMatchObject({
       status:"failed",artifactBuildStatus:"failed",artifactBuildSummary:"unsupported renderer",
     });
+  });
+});
+describe("server frozen roundtrip recheck", () => {
+  function scenario() {
+    const project = fixture();
+    project.sourceArtifacts[0]!.name = "repo.zip";
+    project.sourceArtifacts[0]!.extension = "zip";
+    project.sourceArtifacts[0]!.mimeType = "application/zip";
+    project.sourceArtifacts[0]!.artifactKind = "codebase";
+    project.acceptanceRubric[0]!.validationMethod = "format-roundtrip";
+    const testCase = { ...project.evalSuite[0]!, executionMode: "roundtrip" as const, evidenceScope: "format" as const };
+    const candidate = frozenCandidate(project.candidates[0]!, JSON.stringify({ kind: "codebase", overlay: true, files: [{ path: "src/app.ts", content: "export const app = true" }] }));
+    return { project, testCase, candidate };
+  }
+  function ports(verifyFrozenArtifact?: (snapshot: Candidate["artifactSnapshots"][number]) => Promise<boolean>) {
+    return { executeSemanticBatch: async () => ({ results: [] }), verifyFrozenArtifact, judge: async () => judge(90) };
+  }
+
+  it("verifies binary roundtrip only after the injected store rechecks the frozen bytes", async () => {
+    const { project, testCase, candidate } = scenario();
+    const verify = vi.fn(async () => true);
+    const [run] = await executeServerExperimentCandidate(project, candidate, ports(verify), [testCase]);
+    expect(verify).toHaveBeenCalledOnce();
+    expect(run?.verificationStatus).toBe("verified");
+    expect(run?.artifactHash).toBe(candidate.artifactSnapshots[0]!.frozenArtifact!.sha256);
+    expect(run?.trace.some((step) => step.id.startsWith("candidate-frozen-recheck-") && step.status === "pass")).toBe(true);
+  });
+
+  it("rejects a missing verifier, failed byte check, and ambiguous Target coverage", async () => {
+    const { project, testCase, candidate } = scenario();
+    const absent = await executeServerExperimentCandidate(project, candidate, ports(), [testCase]);
+    expect(absent[0]?.verificationStatus).toBe("unverified");
+    const bad = await executeServerExperimentCandidate(project, candidate, ports(async () => false), [testCase]);
+    expect(bad[0]?.verificationStatus).toBe("unverified");
+    const duplicate = { ...candidate, artifactSnapshots: [...candidate.artifactSnapshots, { ...candidate.artifactSnapshots[0]!, id: "duplicate" }] } as Candidate;
+    const verify = vi.fn(async () => true);
+    const ambiguous = await executeServerExperimentCandidate(project, duplicate, ports(verify), [testCase]);
+    expect(ambiguous[0]?.verificationStatus).toBe("unverified");
+    expect(verify).not.toHaveBeenCalled();
   });
 });

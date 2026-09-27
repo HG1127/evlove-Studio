@@ -1,5 +1,6 @@
 import type {
   Candidate,
+  CandidateArtifactSnapshot,
   EvaluateAiResult,
   ExecuteArtifactBatchAiResult,
   EvaluationResult,
@@ -15,6 +16,7 @@ import {
 import {
   candidateArtifactContext,
   candidateLocalEvidence,
+  snapshotsForTest,
   compactExperimentRunOutput,
   serverExperimentSemanticStatus,
   unavailableExperimentRun,
@@ -29,6 +31,7 @@ export type ServerExperimentExecutionPorts = {
     testCases: TestCase[];
     artifactContext: Array<Record<string, unknown>>;
   }): Promise<ExecuteArtifactBatchAiResult>;
+  verifyFrozenArtifact?(snapshot: CandidateArtifactSnapshot): Promise<boolean>;
   executeExternalBatch?(args: {
     project: EvolveProject;
     candidate: Candidate;
@@ -79,6 +82,33 @@ export async function executeServerExperimentCandidate(
   for (const testCase of testCases) {
     const local = candidateLocalEvidence(project, candidate, testCase);
     if (local) {
+      if (testCase.executionMode === "roundtrip" && local.trace.some((step) => step.id === `candidate-frozen-roundtrip-${candidate.id}-${testCase.id}`)) {
+        const snapshots = snapshotsForTest(project, candidate, testCase);
+        const mappedIds = new Set(testCase.criterionIds.flatMap((id) => project.acceptanceRubric.filter((criterion) => criterion.id === id).flatMap((criterion) => criterion.artifactIds)));
+        const targetIds = project.sourceArtifacts.filter((source) => source.role === "target").map((source) => source.id);
+        const expectedIds = mappedIds.size ? [...mappedIds] : targetIds;
+        const exactCoverage = expectedIds.length > 0
+          && new Set(targetIds).size === targetIds.length
+          && snapshots.length === expectedIds.length
+          && new Set(snapshots.map((snapshot) => snapshot.sourceArtifactId)).size === snapshots.length
+          && snapshots.every((snapshot) => expectedIds.includes(snapshot.sourceArtifactId) && snapshot.frozenArtifact?.sourceArtifactId === snapshot.sourceArtifactId);
+        let validated = false;
+        if (exactCoverage && ports.verifyFrozenArtifact) {
+          try {
+            validated = (await Promise.all(snapshots.map((snapshot) => ports.verifyFrozenArtifact!(snapshot)))).every(Boolean);
+          } catch {
+            validated = false;
+          }
+        }
+        ordered.set(testCase.id, validated ? {
+          ...local,
+          output: `CANDIDATE FROZEN ARTIFACT ROUNDTRIP VERIFIED\n${local.output}\n本轮已重新读取每份实际 Blob，并核对 Snapshot 绑定、大小及 SHA-256。`,
+          verificationStatus: "verified",
+          artifactHash: snapshots.length === 1 ? snapshots[0]!.frozenArtifact!.sha256 : undefined,
+          trace: [...local.trace, { id: `candidate-frozen-recheck-${candidate.id}-${testCase.id}`, stage: "format-roundtrip", summary: "本轮已重新核对冻结文件字节", status: "pass" }],
+        } : unavailableExperimentRun(testCase, "Candidate 冻结文件未通过本轮 Blob 回读、完整 Target 覆盖或 SHA-256 校验。"));
+        continue;
+      }
       ordered.set(testCase.id, local);
       continue;
     }

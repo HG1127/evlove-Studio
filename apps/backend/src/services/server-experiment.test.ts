@@ -1,8 +1,10 @@
 import JSZip from "jszip";
+import { Blob as NodeBlob } from "node:buffer";
+import { webcrypto } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import type { EvolveProject, SourceArtifact } from "@evolution/contracts";
+import type { CandidateArtifactSnapshot, EvolveProject, SourceArtifact } from "@evolution/contracts";
 import { applyServerCodebaseOverlay, composeServerCodebaseOverlay, resolveServerExperimentParentBinding } from "./server-experiment";
-import { materializeServerCandidateArtifacts } from "./server-experiment-artifacts";
+import { materializeServerCandidateArtifacts, serverArtifactSha256, verifyServerCandidateFrozenArtifact } from "./server-experiment-artifacts";
 
 const {getBlob,putBlob}=vi.hoisted(()=>({getBlob:vi.fn(),putBlob:vi.fn()}));
 vi.mock("./artifact-runtime",()=>({getServerArtifactStore:()=>({get:getBlob,put:putBlob})}));
@@ -180,5 +182,28 @@ describe("server experiment materialization",()=>{
     expect(resolveServerExperimentParentBinding(project,project.sourceArtifacts[0]!)).toMatchObject({
       blobId:"champion-blob",candidateId:"candidate-s1",sha256:"sha-champion",
     });
+  });
+});
+describe("server frozen receipt execution recheck", () => {
+  it("binds Snapshot content and persisted Blob bytes before claiming a binary roundtrip", async () => {
+    vi.stubGlobal("crypto", webcrypto);
+    const content = JSON.stringify({ kind: "codebase", overlay: true, files: [{ path: "src/app.ts", content: "v2" }] });
+    const blob = new NodeBlob(["actual materialized zip bytes"], { type: "application/zip" });
+    const sha256 = await serverArtifactSha256(await blob.arrayBuffer());
+    const snapshotHash = await serverArtifactSha256(new TextEncoder().encode(content));
+    const snapshot = {
+      id: "snap", sourceArtifactId: "repo", name: "repo.zip", mimeType: "application/zip", content,
+      contentHash: snapshotHash, buildMode: "ai-full", notes: [], createdAt: "2026-09-27T00:00:00.000Z",
+      frozenArtifact: { sourceArtifactId: "repo", snapshotHash, blobId: "server-candidate:sha", name: "repo.zip", mimeType: "application/zip", sha256, size: blob.size, verifiedAt: "2026-09-27T00:00:00.000Z", checks: [], limitations: [] },
+    } as CandidateArtifactSnapshot;
+    getBlob.mockReset().mockResolvedValue(blob);
+    expect(await verifyServerCandidateFrozenArtifact(snapshot)).toBe(true);
+    expect(getBlob).toHaveBeenCalledWith("server-candidate:sha");
+    expect(await verifyServerCandidateFrozenArtifact({ ...snapshot, content: content + "changed" })).toBe(false);
+    getBlob.mockResolvedValue(new NodeBlob(["tampered materialized bytes"], { type: "application/zip" }));
+    expect(await verifyServerCandidateFrozenArtifact(snapshot)).toBe(false);
+    getBlob.mockResolvedValue(undefined);
+    expect(await verifyServerCandidateFrozenArtifact(snapshot)).toBe(false);
+    vi.unstubAllGlobals();
   });
 });

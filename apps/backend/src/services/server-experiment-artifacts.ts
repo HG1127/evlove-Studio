@@ -200,6 +200,16 @@ async function persistFrozenArtifact(
   };
 }
 
+/** Recheck the persisted bytes at execution time, not just at materialization time. */
+export async function verifyServerCandidateFrozenArtifact(snapshot: CandidateArtifactSnapshot): Promise<boolean> {
+  const receipt = snapshot.frozenArtifact;
+  if (!receipt || receipt.sourceArtifactId !== snapshot.sourceArtifactId || receipt.size <= 0) return false;
+  const contentHash = await sha256Text(snapshot.content);
+  if (receipt.snapshotHash !== contentHash || (snapshot.contentHash && snapshot.contentHash !== contentHash)) return false;
+  const blob = await getServerArtifactStore().get(receipt.blobId);
+  if (!blob || blob.size !== receipt.size) return false;
+  return await serverArtifactSha256(await blob.arrayBuffer()) === receipt.sha256;
+}
 export async function applyServerCodebaseOverlay(baseBlob: Blob, content: string, mimeType = "application/zip") {
   const payload = parseCodebaseOverlay(content, true)!;
   const { files, deletions } = payload;

@@ -8,7 +8,7 @@ import { runServerHttpTargetBatch, serverHttpTargetEnabled } from "./server-http
 import {runServerConnectorTargetBatch} from "./server-connector-target-execution";
 import {serverConnectorTargetEnabled} from "./connector-target-source";
 import { resolveServerBaselineCodebaseBinding } from "./server-baseline";
-import { serverArtifactSha256 } from "./server-experiment-artifacts";
+import { serverArtifactSha256, verifyServerCandidateFrozenArtifact } from "./server-experiment-artifacts";
 
 function unavailable(testCase:TestCase,detail:string):TargetRunResult{
   return {
@@ -105,6 +105,7 @@ export async function runServerMissionHoldout(project:EvolveProject){
         evidenceInstruction:`Inspect only exact frozen Candidate ${candidate.id} on this hidden paper. Missing runtime evidence must be UNVERIFIED. Never use plan/designRationale as observed proof.`,
         variant:{id:candidate.id,artifactSnapshots:candidate.artifactSnapshots.map((snapshot)=>({id:snapshot.id,sourceArtifactId:snapshot.sourceArtifactId,name:snapshot.name,mimeType:snapshot.mimeType,contentHash:snapshot.contentHash,buildMode:snapshot.buildMode}))},
       }),
+      verifyFrozenArtifact:verifyServerCandidateFrozenArtifact,
       executeExternalBatch:({project:current,candidate,testCases})=>executeCandidateExternal(current,candidate,testCases),
       judge:(payload)=>runServerAi("evaluate",payload),
     },

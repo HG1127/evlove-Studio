@@ -26,7 +26,7 @@ export function serverExperimentSemanticStatus(output: string): TargetRunResult[
   return "verified";
 }
 
-function snapshotsForTest(project: EvolveProject, candidate: Candidate, testCase: TestCase) {
+export function snapshotsForTest(project: EvolveProject, candidate: Candidate, testCase: TestCase) {
   const criterionIds = new Set(testCase.criterionIds);
   const scoped = new Set(
     project.acceptanceRubric
@@ -82,21 +82,21 @@ export function candidateLocalEvidence(
     if (receipts.length === snapshots.length) {
       return {
         testCaseId: testCase.id,
-        output: `CANDIDATE FROZEN ARTIFACT ROUNDTRIP VERIFIED\n${JSON.stringify(receipts.map((receipt) => ({
+        output: `CANDIDATE FROZEN ARTIFACT RECEIPTS PRESENT\n${JSON.stringify(receipts.map((receipt) => ({
           sourceArtifactId: receipt!.sourceArtifactId,
           sha256: receipt!.sha256,
           size: receipt!.size,
           checks: receipt!.checks,
           limitations: receipt!.limitations,
-        })))}\n每个 Candidate Snapshot 已由 Server Materializer 生成实际文件、持久化并回读校验。`,
+        })))}\nCandidate Snapshot 带有 Server Materializer 冻结凭证；本轮仍需回读实际 Blob 并验证绑定、大小及 SHA-256。`,
         latencyMs: 0,
         cost: 0,
-        verificationStatus: "verified",
+        verificationStatus: "unverified",
         trace: [{
           id: `candidate-frozen-roundtrip-${candidate.id}-${testCase.id}`,
           stage: "format-roundtrip",
-          summary: "Candidate 实际文件已冻结并绑定 SHA-256",
-          status: "pass",
+          summary: "Candidate 冻结凭证待本轮回读校验",
+          status: "warning",
         }],
       };
     }

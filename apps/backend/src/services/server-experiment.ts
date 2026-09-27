@@ -10,6 +10,7 @@ import {serverConnectorTargetEnabled} from "./connector-target-source";
 import {
   buildServerExperimentCandidate,
   serverArtifactSha256,
+  verifyServerCandidateFrozenArtifact,
 } from "./server-experiment-artifacts";
 
 export {
@@ -118,6 +119,7 @@ export async function runServerMissionExperiment(project: EvolveProject) {
         })),
       },
     }),
+    verifyFrozenArtifact: verifyServerCandidateFrozenArtifact,
     executeExternalBatch: ({ project: current, candidate, testCases }) => executeServerCandidateExternal(current, candidate, testCases),
     judge: (payload) => runServerAi("evaluate", payload),
   });
