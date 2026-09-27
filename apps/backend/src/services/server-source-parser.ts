@@ -1,4 +1,4 @@
-import JSZip from "jszip";
+import JSZip, {type JSZipObject} from "jszip";
 import mammoth from "mammoth";
 import * as XLSX from "xlsx";
 import {
@@ -8,12 +8,18 @@ import {
   type SourceArtifact,
 } from "@evolution/contracts";
 import {describeArtifact} from "@evolution/core";
+import {assertServerZipEntryBudget,safeServerZipPath,serverZipCrc32} from "./server-codebase-zip-index";
 
 const MAX_TEXT_CHARS=160_000;
 const MAX_ZIP_FILES=2_000;
 const MAX_ZIP_TEXT_FILES=220;
 const MAX_ZIP_FILE_CHARS=24_000;
 const MAX_ZIP_TOTAL_CHARS=520_000;
+const MAX_ZIP_ARCHIVE_BYTES=25_000_000;
+const MAX_ZIP_TEXT_ENTRY_BYTES=250_000;
+const MAX_ZIP_INDEX_BYTES=8_000_000;
+const MAX_ZIP_MANIFEST_CHARS=200_000;
+const IGNORED_ZIP_PATH=/(^|\/)(?:node_modules|\.git|dist|build|coverage|vendor|\.next)\//i;
 const TEXT_EXTS=new Set([
   "txt","md","mdx","html","htm","css","scss","less","js","jsx","ts","tsx","mjs","cjs",
   "json","yaml","yml","xml","svg","csv","tsv","py","go","rs","java","kt","php","sql","vue","svelte",
@@ -179,55 +185,76 @@ async function parsePdf(buffer:Uint8Array){
 }
 
 async function parseZip(buffer:Uint8Array){
+  if(!buffer.byteLength||buffer.byteLength>MAX_ZIP_ARCHIVE_BYTES)throw new Error("ZIP 文件超出 Server Native 解析范围");
+  assertServerZipEntryBudget(buffer,MAX_ZIP_FILES);
   const zip=await JSZip.loadAsync(buffer);
-  const files=Object.values(zip.files).filter((file)=>!file.dir).slice(0,MAX_ZIP_FILES);
+  const files=(Object.values(zip.files) as JSZipObject[]).filter((file)=>!file.dir);
+  if(!files.length||files.length>MAX_ZIP_FILES)throw new Error("ZIP 文件数量超出 Server Native 解析范围");
+  let manifestChars=0;
+  for(const file of files){
+    const path=file.name;
+    const original=(file as JSZipObject&{unsafeOriginalName?:string}).unsafeOriginalName;
+    if(!safeServerZipPath(path)||(original&&!safeServerZipPath(original)))throw new Error("ZIP 包含不安全的文件路径");
+    manifestChars+=path.length+1;
+    if(path.length>1000||manifestChars>MAX_ZIP_MANIFEST_CHARS)throw new Error("ZIP 文件路径索引超出安全范围");
+  }
   const manifest=files.map((file)=>file.name);
   const entries:Array<{path:string;family:string;role:string;content?:string;sizeChars?:number}>=[];
   let totalChars=0;
+  let totalBytes=0;
+  let eligibleEntries=0;
+  let omittedEntries=0;
+  let truncatedEntries=0;
   for(const file of files){
-    if(entries.length>=MAX_ZIP_TEXT_FILES||totalChars>=MAX_ZIP_TOTAL_CHARS)break;
+    if(IGNORED_ZIP_PATH.test(file.name))continue;
     const ext=extension(file.name);
     if(!TEXT_EXTS.has(ext)&&!["package.json","pyproject.toml","go.mod","cargo.toml"].some((name)=>file.name.toLowerCase().endsWith(name)))continue;
-    try{
-      const raw=await file.async("string");
-      const content=raw.slice(0,Math.min(MAX_ZIP_FILE_CHARS,MAX_ZIP_TOTAL_CHARS-totalChars));
-      totalChars+=content.length;
-      entries.push({path:file.name,family:familyForPath(file.name),role:roleForPath(file.name),content,sizeChars:content.length});
-    }catch{/* one bad entry must not collapse package */}
+    eligibleEntries+=1;
+    if(entries.length>=MAX_ZIP_TEXT_FILES||totalChars>=MAX_ZIP_TOTAL_CHARS){omittedEntries+=1;continue;}
+    const data=(file as JSZipObject&{_data?:{uncompressedSize?:number;crc32?:number}})._data;
+    const size=data?.uncompressedSize;
+    if(!Number.isSafeInteger(size)||size!<0||size!>MAX_ZIP_TEXT_ENTRY_BYTES||totalBytes+size!>MAX_ZIP_INDEX_BYTES){
+      throw new Error("ZIP 文本条目解压大小超出安全范围");
+    }
+    totalBytes+=size!;
+    const extracted=await file.async("uint8array");
+    if(extracted.byteLength!==size||!Number.isInteger(data?.crc32)
+      ||serverZipCrc32(extracted)!==(data!.crc32!>>>0))throw new Error("ZIP 文本条目大小或 CRC32 校验失败");
+    const raw=new TextDecoder("utf-8",{fatal:true}).decode(extracted);
+    const content=raw.slice(0,Math.min(MAX_ZIP_FILE_CHARS,MAX_ZIP_TOTAL_CHARS-totalChars));
+    if(content.length<raw.length)truncatedEntries+=1;
+    totalChars+=content.length;
+    entries.push({path:file.name,family:familyForPath(file.name),role:roleForPath(file.name),content,sizeChars:content.length});
   }
   const inventory=manifest.reduce<Record<string,number>>((acc,path)=>{
     const family=familyForPath(path);acc[family]=(acc[family]??0)+1;return acc;
   },{});
   const digest=entries.slice(0,30).map((entry)=>`===== FILE: ${entry.path} =====\n${entry.content?.slice(0,5000)??""}`).join("\n\n");
+  const fullText=`ZIP PACKAGE MANIFEST (${manifest.length} files):\n${manifest.join("\n")}\n\nRETRIEVABLE SEMANTIC DIGEST:\n${digest}`;
+  const text=fullText.slice(0,MAX_TEXT_CHARS);
+  const warnings:string[]=[];
+  if(!eligibleEntries)warnings.push("ZIP 仅识别文件清单，未找到可索引的文本条目。");
+  if(omittedEntries||truncatedEntries||entries.length>30||fullText.length>text.length){
+    warnings.push("ZIP 仅建立有界文本预览；部分文件或内容未纳入语义摘要，不能据此证明完整代码行为。");
+  }
   return {
-    text:`ZIP PACKAGE MANIFEST (${manifest.length} files):\n${manifest.join("\n")}\n\nRETRIEVABLE SEMANTIC DIGEST:\n${digest}`,
-    structure:manifest,
+    text,warnings,structure:manifest,
     structuredContent:{
-      kind:"package",
-      manifest,
-      entries,
-      inventory,
-      selectedTextFiles:entries.length,
-      selectedTextChars:totalChars,
+      kind:"package",manifest,entries,inventory,
+      selectedTextFiles:entries.length,selectedTextChars:totalChars,
       semanticPrimaryPaths:entries.filter((entry)=>["implementation","configuration","content"].includes(entry.role)).map((entry)=>entry.path),
       evidenceOnlyPaths:entries.filter((entry)=>["test-evidence","reference-evidence"].includes(entry.role)).map((entry)=>entry.path),
       codeIndex:{files:[],importEdges:[],parseOk:0,parseFailed:0},
-      parserPolicy:"server-native deep text index; repository intelligence rebuilt on demand",
+      parserPolicy:"bounded server-native text preview; exact stored ZIP evidence indexed separately",
     },
     stats:{
-      totalEntries:manifest.length,
-      indexedEntries:manifest.length,
-      parsedEntries:entries.length,
-      eligibleEntries:entries.length,
-      deepIndexedEntries:entries.length,
-      codeFiles:inventory.code??0,
-      documentFiles:inventory.document??0,
-      officeFiles:(inventory.presentation??0)+(inventory.spreadsheet??0),
-      imageFiles:inventory.image??0,
+      totalEntries:manifest.length,indexedEntries:manifest.length,parsedEntries:entries.length,
+      eligibleEntries,deepIndexedEntries:entries.length-truncatedEntries,
+      codeFiles:inventory.code??0,documentFiles:inventory.document??0,
+      officeFiles:(inventory.presentation??0)+(inventory.spreadsheet??0),imageFiles:inventory.image??0,
     },
   };
 }
-
 export async function parseServerSource(args:{
   artifactId:string;
   name:string;
@@ -260,7 +287,7 @@ export async function parseServerSource(args:{
       ({text,structure,structuredContent}=await parsePdf(buffer));
     }else if(ext==="zip"){
       const parsed=await parseZip(buffer);
-      ({text,structure,structuredContent}=parsed);stats=parsed.stats;
+      ({text,structure,structuredContent}=parsed);stats=parsed.stats;warnings.push(...parsed.warnings);
     }else{
       const decoded=decode(buffer);
       if(TEXT_EXTS.has(ext)||args.mimeType.startsWith("text/")||!binaryLike(decoded)){
@@ -280,8 +307,11 @@ export async function parseServerSource(args:{
   const artifactDescriptor=describeArtifact({
     name:args.name,mimeType:args.mimeType,extension:ext,artifactKind,structure,structuredContent,
   });
-  const parsedEntries=stats.parsedEntries||(text?1:0);
-  const totalEntries=stats.totalEntries||(text?1:0);
+  const parsedEntries=ext==="zip"?stats.parsedEntries:stats.parsedEntries||(text?1:0);
+  const totalEntries=ext==="zip"?stats.totalEntries:stats.totalEntries||(text?1:0);
+  const eligibleEntries=ext==="zip"?stats.eligibleEntries:stats.eligibleEntries||parsedEntries;
+  const deepIndexedEntries=ext==="zip"?stats.deepIndexedEntries:stats.deepIndexedEntries||parsedEntries;
+  const deepIndexCoverage=eligibleEntries?Math.min(1,deepIndexedEntries/eligibleEntries):0;
   const now=new Date().toISOString();
   return SourceArtifactSchema.parse({
     id:args.artifactId,
@@ -303,14 +333,14 @@ export async function parseServerSource(args:{
       engine:"server-native",
       engineLabel:"Server Native Parser",
       confidence:text?0.9:0.45,
-      completeness:text?Math.min(1,Math.max(0.55,parsedEntries/Math.max(1,totalEntries))):0.15,
+      completeness:ext==="zip"?deepIndexCoverage:text?Math.min(1,Math.max(0.55,parsedEntries/Math.max(1,totalEntries))):0.15,
       structuralCoverage:structure.length?Math.min(1,structure.length/Math.max(1,totalEntries)):text?0.8:0.15,
       totalEntries,
       indexedEntries:stats.indexedEntries||structure.length||(text?1:0),
       parsedEntries,
-      eligibleEntries:stats.eligibleEntries||parsedEntries,
-      deepIndexedEntries:stats.deepIndexedEntries||parsedEntries,
-      deepIndexCoverage:parsedEntries?1:0,
+      eligibleEntries,
+      deepIndexedEntries,
+      deepIndexCoverage,
       codeFiles:stats.codeFiles,
       documentFiles:stats.documentFiles,
       officeFiles:stats.officeFiles,
