@@ -57,3 +57,32 @@ export async function prepareServerHttpReleaseArtifacts(
   }
   return{candidate:accepted,frozenArtifacts};
 }
+
+/** The accepted Gate F byte hashes are the read-only Observe expectations. */
+export function expectedServerHttpReleaseByteHashes(project:EvolveProject,selected:Candidate){
+  const champion=project.searchChampion;
+  const accepted=champion?.candidate;
+  const gate=champion?.artifactAcceptance;
+  if(!accepted||!gate||gate.status!=="passed"||gate.candidateId!==accepted.id
+    ||selected.id!==accepted.id||!hasExactFrozenArtifactSet(project,accepted,gate)){
+    throw new Error("HTTP Observe 缺少已通过 Gate F 的 exact Candidate 冻结凭证。");
+  }
+  const selectedBySource=new Map(selected.artifactSnapshots.map((item)=>[item.sourceArtifactId,item]));
+  if(selectedBySource.size!==accepted.artifactSnapshots.length
+    ||selected.artifactSnapshots.length!==accepted.artifactSnapshots.length
+    ||accepted.artifactSnapshots.some((snapshot)=>{
+      const current=selectedBySource.get(snapshot.sourceArtifactId);
+      return !current||!sameSnapshot(current,snapshot);
+    }))throw new Error("HTTP Observe Candidate 与 Gate F 验收 Snapshot 不一致。");
+  const snapshots=new Map(accepted.artifactSnapshots.map((item)=>[item.sourceArtifactId,item]));
+  const receipts=new Map(gate.frozenArtifacts!.map((item)=>[item.sourceArtifactId,item]));
+  return project.sourceArtifacts.filter((item)=>item.role==="target").map((source)=>{
+    const snapshot=snapshots.get(source.id)!;
+    const receipt=receipts.get(source.id)!;
+    if(!snapshot.contentHash||receipt.snapshotHash!==snapshot.contentHash
+      ||receipt.name!==snapshot.name||receipt.mimeType!==snapshot.mimeType){
+      throw new Error(`HTTP Observe Target ${source.id} 的冻结凭证与 Snapshot 身份不一致。`);
+    }
+    return{sourceArtifactId:source.id,sha256:receipt.sha256};
+  });
+}

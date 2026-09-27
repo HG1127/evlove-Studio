@@ -38,7 +38,8 @@ function fixture(provider:"http"|"connector"){
   } as unknown as Candidate;
   return{
     id:"release-reconciliation",version:"V12",currentVersionId:"V12",appliedPatches:[],versions:[],updatedAt:"old",stage:"release",
-    candidates:[candidate],experimentRun:{winnerId:"C1"},searchChampion:{candidate},
+    candidates:[candidate],experimentRun:{winnerId:"C1"},sourceArtifacts:[{id:"source",role:"target",name:"a.txt"}],
+    searchChampion:{candidate,artifactAcceptance:{status:"passed",candidateId:"C1",frozenArtifacts:[{sourceArtifactId:"source",snapshotHash:"hash-c1",blobId:"frozen-source",sha256:"a".repeat(64),size:3,name:"a.txt",mimeType:"text/plain"}]}},
     targetConnection:provider==="connector"
       ?{adapter:"connector",connectionId:"connector",status:"connected",label:"Connector"}
       :{adapter:"http",connectionId:"http",status:"connected",label:"HTTP"},
@@ -57,6 +58,7 @@ function receipt(action:"shadow"|"promote",hash="hash-c1"):ReleaseAdapterResult{
     ok:true,trafficPercent:action==="promote"?100:0,note:"observed",healthy:true,kpis:[],evidenceMode:"live",
     effectiveAction:action,observationStatus:"healthy",deploymentId:"candidate-deployment",stableDeploymentId:"stable-deployment",
     artifactHashes:[{sourceArtifactId:"source",contentHash:hash}],
+    artifactByteHashes:[{sourceArtifactId:"source",sha256:"a".repeat(64)}],
     environment:action==="shadow"?"preview":"production",observedAt:"2026-09-24T18:05:00Z",sampleSize:2,windowMinutes:1,
   };
 }
@@ -73,6 +75,15 @@ function vercelObservation(productionId:string):VercelReleaseObservation{
 }
 
 describe("server release reconciliation telemetry gate",()=>{
+  it("pauses HTTP recovery before Observe when the accepted Gate F byte set is missing",async()=>{
+    const project=fixture("http");
+    project.searchChampion!.artifactAcceptance=undefined;
+    const outcome=await runServerMissionReleaseReconciliation(project);
+    expect(outcome.disposition).toBe("manual-check");
+    expect(outcome.reason).toContain("Gate F");
+    expect(observeHttp).not.toHaveBeenCalled();
+    expect(recordHttp).not.toHaveBeenCalled();
+  });
   for(const provider of ["http","connector"] as const){
     it(`does not record or advertise an invalid ${provider} observation`,async()=>{
       const observe=provider==="http"?observeHttp:observeConnector;

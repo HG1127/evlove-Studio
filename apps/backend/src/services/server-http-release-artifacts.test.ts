@@ -2,7 +2,7 @@
 import {createHash} from "node:crypto";
 import {describe,expect,it,vi} from "vitest";
 import type {Candidate,EvolveProject} from "@evolution/contracts";
-import {prepareServerHttpReleaseArtifacts} from "./server-http-release-artifacts";
+import {expectedServerHttpReleaseByteHashes,prepareServerHttpReleaseArtifacts} from "./server-http-release-artifacts";
 
 function fixture(){
   const contents=["<html>accepted</html>","zip-frozen-bytes"];
@@ -41,6 +41,14 @@ describe("Server HTTP Release exact frozen bytes",()=>{
     expect(x.get).toHaveBeenCalledTimes(2);
   });
 
+  it("derives read-only Observe expectations only from the exact accepted Gate F set",()=>{
+    const x=fixture();
+    expect(expectedServerHttpReleaseByteHashes(x.project,x.candidate)).toEqual(x.frozen.map((item)=>({sourceArtifactId:item.sourceArtifactId,sha256:item.sha256})));
+    const drifted={...x.candidate,artifactSnapshots:x.candidate.artifactSnapshots.map((item,index)=>index?{...item,content:"changed"}:item)};
+    expect(()=>expectedServerHttpReleaseByteHashes(x.project,drifted)).toThrow("Snapshot 不一致");
+    x.project.searchChampion!.artifactAcceptance!.status="unverified";
+    expect(()=>expectedServerHttpReleaseByteHashes(x.project,x.candidate)).toThrow("Gate F");
+  });
   it("rejects a mutable Candidate copy that drifted from the Gate F Champion",async()=>{
     const x=fixture();
     const drifted={...x.candidate,artifactSnapshots:x.candidate.artifactSnapshots.map((snapshot,index)=>index?{...snapshot,content:"changed"}:snapshot)};

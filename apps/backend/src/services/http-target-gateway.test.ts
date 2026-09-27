@@ -133,14 +133,16 @@ describe("server HTTP target gateway",()=>{
     process.env.EVOLUTION_TARGET_BEARER_TOKEN="secret-server-token";
     const fetchMock=vi.fn(async(_input:RequestInfo|URL,init?:RequestInit)=>{
       expect((init?.headers as Record<string,string>).Authorization).toBe("Bearer secret-server-token");
-      const body=JSON.parse(String(init?.body)) as {candidate:{id:string};recoveryAction?:string;expectedArtifactHashes?:unknown[]};
+      const body=JSON.parse(String(init?.body)) as {candidate:{id:string};recoveryAction?:string;expectedArtifactHashes?:unknown[];expectedArtifactByteHashes?:unknown[]};
       expect(body.candidate.id).toBe("C1");
       expect(body.recoveryAction).toBe("promote");
       expect(body.expectedArtifactHashes).toHaveLength(1);
+      expect(body.expectedArtifactByteHashes).toEqual([{sourceArtifactId:"source",sha256:"a".repeat(64)}]);
       return new Response(JSON.stringify({
         ok:true,trafficPercent:100,note:"production observed",healthy:true,kpis:[],evidenceMode:"live",
         effectiveAction:"promote",observationStatus:"healthy",deploymentId:"http-candidate",stableDeploymentId:"http-stable",
         artifactHashes:[{sourceArtifactId:"source",contentHash:"hash-c1"}],
+        artifactByteHashes:[{sourceArtifactId:"source",sha256:"a".repeat(64)}],
         environment:"production",observedAt:"2026-09-22T01:10:00Z",sampleSize:2,windowMinutes:1,
       }),{status:200,headers:{"Content-Type":"application/json"}});
     });
@@ -152,9 +154,25 @@ describe("server HTTP target gateway",()=>{
     };
     const result=await observeHttpTarget({
       projectId:"p",connectionId:"c",candidate,deploymentId:"http-candidate",stableDeploymentId:"http-stable",
-      expectedArtifactHashes:[{sourceArtifactId:"source",contentHash:"hash-c1"}],recoveryAction:"promote",healthPath:"/",
+      expectedArtifactHashes:[{sourceArtifactId:"source",contentHash:"hash-c1"}],expectedArtifactByteHashes:[{sourceArtifactId:"source",sha256:"a".repeat(64)}],recoveryAction:"promote",healthPath:"/",
     });
     expect(result).toMatchObject({evidenceMode:"live",effectiveAction:"promote",deploymentId:"http-candidate"});
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({
+      ...result,artifactByteHashes:[{sourceArtifactId:"source",sha256:"b".repeat(64)}],
+    }),{status:200,headers:{"Content-Type":"application/json"}})));
+    await expect(observeHttpTarget({
+      projectId:"p",connectionId:"c",candidate,deploymentId:"http-candidate",stableDeploymentId:"http-stable",
+      expectedArtifactHashes:[{sourceArtifactId:"source",contentHash:"hash-c1"}],
+      expectedArtifactByteHashes:[{sourceArtifactId:"source",sha256:"a".repeat(64)}],recoveryAction:"promote",healthPath:"/",
+    })).rejects.toThrow("Gate F 字节 SHA-256");
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({
+      ...result,effectiveAction:"rollback",trafficPercent:0,artifactByteHashes:undefined,
+    }),{status:200,headers:{"Content-Type":"application/json"}})));
+    await expect(observeHttpTarget({
+      projectId:"p",connectionId:"c",candidate,deploymentId:"http-candidate",stableDeploymentId:"http-stable",
+      expectedArtifactHashes:[{sourceArtifactId:"source",contentHash:"hash-c1"}],
+      expectedArtifactByteHashes:[{sourceArtifactId:"source",sha256:"a".repeat(64)}],recoveryAction:"rollback",healthPath:"/",
+    })).resolves.toMatchObject({effectiveAction:"rollback"});
   });
 
   it("rejects an observe response that is successful HTTP but lacks a live deployment receipt",async()=>{

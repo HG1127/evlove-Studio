@@ -2,6 +2,7 @@ import type {EvolveProject} from "@evolution/contracts";
 import {projectUsesConnectorRelease,projectUsesHttpRelease,projectUsesVercelRelease} from "@evolution/core";
 import {runServerAdapterReleaseReconciliation,runServerHttpReleaseReconciliation,runServerReleaseReconciliation} from "@evolution/harness";
 import {observeHttpTarget} from "./http-target-gateway";
+import {expectedServerHttpReleaseByteHashes} from "./server-http-release-artifacts";
 import {observeConnectorReleaseReality} from "./connector-release";
 import {observeVercelReleaseReality} from "./vercel-release";
 import {recordConnectorReleaseOutcomeObservation,recordHttpReleaseOutcomeObservation,recordReleaseOutcomeObservation} from "./release-outcome-telemetry";
@@ -39,6 +40,7 @@ export async function runServerMissionReleaseReconciliation(project:EvolveProjec
         deploymentId,
         stableDeploymentId,
         expectedArtifactHashes,
+        expectedArtifactByteHashes:expectedServerHttpReleaseByteHashes(project,candidate),
         recoveryAction,
         healthPath,
       }),

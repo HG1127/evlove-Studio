@@ -44,6 +44,7 @@ export const TargetObserveProxyRequestSchema=z.object({
   deploymentId:z.string().optional(),
   stableDeploymentId:z.string().optional(),
   expectedArtifactHashes:z.array(z.object({sourceArtifactId:z.string(),contentHash:z.string()})).default([]),
+  expectedArtifactByteHashes:z.array(z.object({sourceArtifactId:z.string().min(1),sha256:z.string().regex(/^[a-f0-9]{64}$/)})).min(1),
   recoveryAction:z.enum(["shadow","canary-5","canary-20","canary-50","promote","rollback"]).optional(),
   healthPath:z.string().startsWith("/").max(300).optional(),
 });
