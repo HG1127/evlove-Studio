@@ -130,12 +130,13 @@ function currentParentSnapshot(project: EvolveProject, sourceArtifactId: string)
 
 export function resolveServerExperimentParentBinding(project: EvolveProject, source: SourceArtifact) {
   const parent = currentParentSnapshot(project, source.id);
-  if (!parent) return { blobId: source.id, candidateId: undefined, sha256: undefined, reason: undefined };
+  if (!parent) return { blobId: source.storageRef?.trim() || source.id, candidateId: undefined, sha256: undefined, size: undefined, reason: undefined };
   if (!parent.frozenArtifact) {
     return {
       blobId: undefined,
       candidateId: trustedServerBaselineChampion(project)?.id,
       sha256: undefined,
+      size: undefined,
       reason: `当前 Search Champion 的 ${source.name} 尚未冻结实际文件，不能回退原 Source 作为 Candidate 父代。`,
     };
   }
@@ -143,6 +144,7 @@ export function resolveServerExperimentParentBinding(project: EvolveProject, sou
     blobId: parent.frozenArtifact.blobId,
     candidateId: trustedServerBaselineChampion(project)?.id,
     sha256: parent.frozenArtifact.sha256,
+    size: parent.frozenArtifact.size,
     reason: undefined,
   };
 }
@@ -152,6 +154,7 @@ async function currentBaseBlob(project: EvolveProject, source: SourceArtifact) {
   if (!binding.blobId) throw new Error(binding.reason ?? "当前 Candidate 父代 Artifact 不可用。");
   const blob = await getServerArtifactStore().get(binding.blobId);
   if (!blob) throw new Error(`找不到 Candidate 父代 Artifact Blob ${binding.blobId}。`);
+  if (binding.size !== undefined && blob.size !== binding.size) throw new Error("Search Champion Artifact 大小校验失败。");
   if (binding.sha256 && await serverArtifactSha256(await blob.arrayBuffer()) !== binding.sha256) throw new Error("Search Champion Artifact SHA-256 校验失败。");
   return blob;
 }

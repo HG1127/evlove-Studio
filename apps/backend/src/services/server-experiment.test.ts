@@ -1,7 +1,11 @@
 import JSZip from "jszip";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { EvolveProject, SourceArtifact } from "@evolution/contracts";
 import { applyServerCodebaseOverlay, composeServerCodebaseOverlay, resolveServerExperimentParentBinding } from "./server-experiment";
+import { materializeServerCandidateArtifacts } from "./server-experiment-artifacts";
+
+const {getBlob,putBlob}=vi.hoisted(()=>({getBlob:vi.fn(),putBlob:vi.fn()}));
+vi.mock("./artifact-runtime",()=>({getServerArtifactStore:()=>({get:getBlob,put:putBlob})}));
 
 async function baseZip(){
   const zip=new JSZip();
@@ -83,6 +87,63 @@ describe("server experiment materialization",()=>{
     expect(new Set(composed.deletions)).toEqual(new Set(["src/deleted.ts","src/old.ts"]));
   });
 
+  it("binds a first-cycle Candidate parent to the Source storageRef",()=>{
+    const project=projectWithChampion(false);
+    delete project.searchChampion;
+    project.sourceArtifacts[0]!.storageRef="raw-zip";
+    expect(resolveServerExperimentParentBinding(project,project.sourceArtifacts[0]!)).toMatchObject({
+      blobId:"raw-zip",candidateId:undefined,
+    });
+  });
+
+  it("materializes a first-cycle Candidate from the referenced Source ZIP",async()=>{
+    const project=projectWithChampion(false);
+    const candidate=project.searchChampion!.candidate!;
+    delete project.searchChampion;
+    project.sourceArtifacts[0]!.storageRef="raw-zip";
+    const base=await baseZip();
+    const saved=new Map<string,Blob>();
+    getBlob.mockReset().mockImplementation(async(id:string)=>id==="raw-zip"?base:saved.get(id));
+    putBlob.mockReset().mockImplementation(async(id:string,blob:Blob)=>{saved.set(id,blob);});
+    const result=await materializeServerCandidateArtifacts(project,candidate,[{
+      sourceArtifactId:"source-zip",name:"repo.zip",mimeType:"application/zip",
+      content:JSON.stringify({kind:"codebase",overlay:true,files:[{path:"src/a.ts",content:"export const a = 2;\n"}]}),
+    }],"test");
+    expect(getBlob).toHaveBeenCalledWith("raw-zip");
+    const frozen=result.artifactSnapshots[0]?.frozenArtifact;
+    expect(frozen?.blobId).toMatch(/^server-candidate:/);
+    const zip=await JSZip.loadAsync(new Uint8Array(await saved.get(frozen!.blobId)!.arrayBuffer()),{checkCRC32:true});
+    expect(await zip.file("src/a.ts")?.async("string")).toBe("export const a = 2;\n");
+    expect(await zip.file("src/keep.ts")?.async("string")).toBe("export const keep = true;\n");
+  });
+
+  it("does not substitute a missing source storageRef with its metadata ID",async()=>{
+    const project=projectWithChampion(false);
+    const candidate=project.searchChampion!.candidate!;
+    delete project.searchChampion;
+    project.sourceArtifacts[0]!.storageRef="raw-zip";
+    getBlob.mockReset().mockResolvedValue(undefined);
+    putBlob.mockReset();
+    await expect(materializeServerCandidateArtifacts(project,candidate,[{
+      sourceArtifactId:"source-zip",name:"repo.zip",mimeType:"application/zip",
+      content:JSON.stringify({kind:"codebase",overlay:true,files:[{path:"src/a.ts",content:"export const a = 2;\n"}]}),
+    }],"test")).rejects.toThrow("raw-zip");
+    expect(getBlob).toHaveBeenCalledOnce();
+    expect(getBlob).toHaveBeenCalledWith("raw-zip");
+    expect(putBlob).not.toHaveBeenCalled();
+  });
+  it("rejects a frozen Champion parent whose stored size differs",async()=>{
+    const project=projectWithChampion(true);
+    const candidate=project.searchChampion!.candidate!;
+    getBlob.mockReset().mockResolvedValue(new Blob(["short"]));
+    putBlob.mockReset();
+    await expect(materializeServerCandidateArtifacts(project,candidate,[{
+      sourceArtifactId:"source-zip",name:"repo.zip",mimeType:"application/zip",
+      content:JSON.stringify({kind:"codebase",overlay:true,files:[{path:"src/a.ts",content:"export const a = 3;\n"}]}),
+    }],"test")).rejects.toThrow("大小校验失败");
+    expect(getBlob).toHaveBeenCalledWith("champion-blob");
+    expect(putBlob).not.toHaveBeenCalled();
+  });
   it("never falls back to the original Source when the accepted Champion is not frozen",()=>{
     const project=projectWithChampion(false);
     const binding=resolveServerExperimentParentBinding(project,project.sourceArtifacts[0]!);
