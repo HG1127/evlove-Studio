@@ -3,6 +3,7 @@ import { runVercelSandboxCodebaseValidation } from "@evolution/adapters/sandbox"
 import { runServerExperiment } from "@evolution/harness";
 import { runServerAi } from "./ai-gateway";
 import { getServerArtifactStore } from "./artifact-runtime";
+import { runServerFrozenCodebaseStaticEvidence } from "./server-static-codebase-evidence";
 import { attachServerVisualEvidence } from "./server-visual-evidence";
 import { runServerHttpTargetBatch, serverHttpTargetEnabled } from "./server-http-target-execution";
 import {runServerConnectorTargetBatch,stageServerConnectorCandidate} from "./server-connector-target-execution";
@@ -120,6 +121,7 @@ export async function runServerMissionExperiment(project: EvolveProject) {
       },
     }),
     verifyFrozenArtifact: verifyServerCandidateFrozenArtifact,
+    executeFrozenStatic: runServerFrozenCodebaseStaticEvidence,
     executeExternalBatch: ({ project: current, candidate, testCases }) => executeServerCandidateExternal(current, candidate, testCases),
     judge: (payload) => runServerAi("evaluate", payload),
   });

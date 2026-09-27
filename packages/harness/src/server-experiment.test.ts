@@ -216,3 +216,42 @@ describe("server frozen roundtrip recheck", () => {
     expect(verify).not.toHaveBeenCalled();
   });
 });
+describe("server frozen codebase static routing", () => {
+  it("keeps a document-scoped static Test on the document path in a mixed Mission", async () => {
+    const project = fixture();
+    project.sourceArtifacts[0]!.artifactKind = "codebase";
+    project.sourceArtifacts[0]!.extension = "zip";
+    project.sourceArtifacts.push({ ...project.sourceArtifacts[0]!, id: "document", name: "guide.md", extension: "md", artifactKind: "document", textContent: "Old guide" });
+    project.acceptanceRubric.push({ ...project.acceptanceRubric[0]!, id: "DOC", artifactIds: ["document"], validationMethod: "static-structure" });
+    const candidate = frozenCandidate(project.candidates[0]!);
+    candidate.artifactSnapshots.push({ ...candidate.artifactSnapshots[0]!, id: "doc-snapshot", sourceArtifactId: "document", name: "guide.md", content: "Complete new guide", frozenArtifact: undefined });
+    const testCase = { ...project.evalSuite[0]!, id: "DOC-STATIC", criterionIds: ["DOC"], executionMode: "static-evidence" as const, evidenceScope: "implementation" as const };
+    const executeFrozenStatic = vi.fn(async () => { throw new Error("codebase port must not run"); });
+    const [run] = await executeServerExperimentCandidate(project, candidate, { executeSemanticBatch: async () => ({ results: [] }), executeFrozenStatic, judge: async () => judge(90) }, [testCase]);
+    expect(executeFrozenStatic).not.toHaveBeenCalled();
+    expect(run?.verificationStatus).toBe("verified");
+    expect(run?.output).toContain("Complete new guide");
+  });
+
+  it("uses the injected frozen ZIP executor and preserves its exact byte-bound evidence", async () => {
+    const project = fixture();
+    project.sourceArtifacts[0]!.artifactKind = "codebase";
+    project.sourceArtifacts[0]!.extension = "zip";
+    const candidate = frozenCandidate(project.candidates[0]!, JSON.stringify({ kind: "codebase", overlay: true, files: [{ path: "src/app.ts", content: "changed" }] }));
+    const testCase = { ...project.evalSuite[0]!, executionMode: "static-evidence" as const, evidenceScope: "implementation" as const };
+    const executeFrozenStatic = vi.fn(async () => ({
+      testCaseId: testCase.id, output: "Frozen ZIP actual source", latencyMs: 1, cost: 0,
+      verificationStatus: "verified" as const, artifactHash: "sha-new",
+      trace: [{ id: `candidate-zip-static-${testCase.id}`, stage: "candidate-static-evidence", summary: "Indexed frozen ZIP", status: "pass" as const, detail: "sha-new" }],
+    }));
+    const ports = { executeSemanticBatch: async () => ({ results: [] }), executeFrozenStatic, judge: async () => judge(90) };
+    const [run] = await executeServerExperimentCandidate(project, candidate, ports, [testCase]);
+    expect(executeFrozenStatic).toHaveBeenCalledOnce();
+    expect(run?.verificationStatus).toBe("verified");
+    expect(run?.output).toBe("Frozen ZIP actual source");
+    const missing = await executeServerExperimentCandidate(project, candidate, { ...ports, executeFrozenStatic: undefined }, [testCase]);
+    expect(missing[0]?.verificationStatus).toBe("unverified");
+    const wrong = await executeServerExperimentCandidate(project, candidate, { ...ports, executeFrozenStatic: async () => ({ ...await executeFrozenStatic(), testCaseId: "other" }) }, [testCase]);
+    expect(wrong[0]?.verificationStatus).toBe("unverified");
+  });
+});

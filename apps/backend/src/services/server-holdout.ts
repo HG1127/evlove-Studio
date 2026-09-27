@@ -3,6 +3,7 @@ import { runVercelSandboxCodebaseValidation } from "@evolution/adapters/sandbox"
 import { runServerHoldout } from "@evolution/harness";
 import { runServerAi } from "./ai-gateway";
 import { getServerArtifactStore } from "./artifact-runtime";
+import { runServerFrozenCodebaseStaticEvidence } from "./server-static-codebase-evidence";
 import { attachServerVisualEvidence } from "./server-visual-evidence";
 import { runServerHttpTargetBatch, serverHttpTargetEnabled } from "./server-http-target-execution";
 import {runServerConnectorTargetBatch} from "./server-connector-target-execution";
@@ -106,6 +107,7 @@ export async function runServerMissionHoldout(project:EvolveProject){
         variant:{id:candidate.id,artifactSnapshots:candidate.artifactSnapshots.map((snapshot)=>({id:snapshot.id,sourceArtifactId:snapshot.sourceArtifactId,name:snapshot.name,mimeType:snapshot.mimeType,contentHash:snapshot.contentHash,buildMode:snapshot.buildMode}))},
       }),
       verifyFrozenArtifact:verifyServerCandidateFrozenArtifact,
+      executeFrozenStatic:runServerFrozenCodebaseStaticEvidence,
       executeExternalBatch:({project:current,candidate,testCases})=>executeCandidateExternal(current,candidate,testCases),
       judge:(payload)=>runServerAi("evaluate",payload),
     },

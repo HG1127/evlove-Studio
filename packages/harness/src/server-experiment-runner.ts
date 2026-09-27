@@ -32,6 +32,7 @@ export type ServerExperimentExecutionPorts = {
     artifactContext: Array<Record<string, unknown>>;
   }): Promise<ExecuteArtifactBatchAiResult>;
   verifyFrozenArtifact?(snapshot: CandidateArtifactSnapshot): Promise<boolean>;
+  executeFrozenStatic?(args: { project: EvolveProject; candidate: Candidate; testCase: TestCase }): Promise<TargetRunResult>;
   executeExternalBatch?(args: {
     project: EvolveProject;
     candidate: Candidate;
@@ -40,6 +41,10 @@ export type ServerExperimentExecutionPorts = {
   judge(payload: unknown): Promise<EvaluateAiResult>;
 };
 
+function unavailableFrozenStatic(testCase: TestCase, detail: string): TargetRunResult {
+  const result = unavailableExperimentRun(testCase, detail);
+  return { ...result, trace: [...result.trace, { id: `candidate-zip-static-${testCase.id}`, stage: "candidate-static-evidence", summary: "冻结代码包静态证据未完成", status: "warning", detail }] };
+}
 function average(values: number[]) {
   return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
 }
@@ -80,6 +85,25 @@ export async function executeServerExperimentCandidate(
   const semanticCases: TestCase[] = [];
   const externalCases: TestCase[] = [];
   for (const testCase of testCases) {
+    const criterionIds = new Set(testCase.criterionIds);
+    const staticScope = new Set(project.acceptanceRubric.filter((criterion) => criterionIds.has(criterion.id)).flatMap((criterion) => criterion.artifactIds));
+    const codebaseStaticCase = testCase.executionMode === "static-evidence"
+      && project.sourceArtifacts.some((source) => source.role === "target"
+        && (source.artifactKind === "codebase" || source.extension.toLowerCase() === "zip")
+        && (!staticScope.size || staticScope.has(source.id)));
+    if (codebaseStaticCase) {
+      if (!ports.executeFrozenStatic) {
+        ordered.set(testCase.id, unavailableFrozenStatic(testCase, "Server 没有冻结代码包静态索引端口。"));
+      } else {
+        try {
+          const result = await ports.executeFrozenStatic({ project, candidate, testCase });
+          ordered.set(testCase.id, result.testCaseId === testCase.id ? result : unavailableFrozenStatic(testCase, "冻结代码包静态证据返回了错误的 Test Case ID。"));
+        } catch (error) {
+          ordered.set(testCase.id, unavailableFrozenStatic(testCase, `冻结代码包静态索引失败：${error instanceof Error ? error.message : String(error)}`));
+        }
+      }
+      continue;
+    }
     const local = candidateLocalEvidence(project, candidate, testCase);
     if (local) {
       if (testCase.executionMode === "roundtrip" && local.trace.some((step) => step.id === `candidate-frozen-roundtrip-${candidate.id}-${testCase.id}`)) {
