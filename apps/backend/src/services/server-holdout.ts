@@ -34,12 +34,17 @@ async function executeCurrentExternal(project:EvolveProject,testCases:TestCase[]
   try{
     const blob=await getServerArtifactStore().get(binding.blobId);
     if(!blob)return testCases.map((testCase)=>unavailable(testCase,`找不到当前版本 Artifact Blob ${binding.blobId}。`));
-    if(binding.sha256&&await serverArtifactSha256(await blob.arrayBuffer())!==binding.sha256){
+    const archive=await blob.arrayBuffer();
+    if(binding.size!==undefined&&archive.byteLength!==binding.size){
+      return testCases.map((testCase)=>unavailable(testCase,"当前版本 ZIP 大小与冻结凭证不一致。"));
+    }
+    if(binding.sha256&&await serverArtifactSha256(archive)!==binding.sha256){
       return testCases.map((testCase)=>unavailable(testCase,"当前版本 ZIP SHA-256 与冻结凭证不一致。"));
     }
     const response=await runVercelSandboxCodebaseValidation({
       id:`${project.id}-holdout-baseline-${binding.candidateId??"source"}`,
-      archive:new Uint8Array(await blob.arrayBuffer()),
+      archive:new Uint8Array(archive),
+      expectedSha256:binding.sha256,
       testCases,
     });
     return attachServerVisualEvidence(project,testCases,response.results);
@@ -56,15 +61,19 @@ async function executeCandidateExternal(project:EvolveProject,candidate:Candidat
   if(!source)return testCases.map((testCase)=>unavailable(testCase,"Candidate External Runner 当前仅支持 codebase/package ZIP Target。"));
   const snapshot=candidate.artifactSnapshots.find((item)=>item.sourceArtifactId===source.id);
   if(!snapshot?.frozenArtifact)return testCases.map((testCase)=>unavailable(testCase,"Candidate 没有 frozen codebase ZIP。"));
-  const blob=await getServerArtifactStore().get(snapshot.frozenArtifact.blobId);
-  if(!blob)return testCases.map((testCase)=>unavailable(testCase,`找不到 Candidate Blob ${snapshot.frozenArtifact!.blobId}。`));
-  if(await serverArtifactSha256(await blob.arrayBuffer())!==snapshot.frozenArtifact.sha256){
-    return testCases.map((testCase)=>unavailable(testCase,"Candidate ZIP SHA-256 与冻结凭证不一致。"));
-  }
   try{
+    const blob=await getServerArtifactStore().get(snapshot.frozenArtifact.blobId);
+    if(!blob)return testCases.map((testCase)=>unavailable(testCase,`找不到 Candidate Blob ${snapshot.frozenArtifact!.blobId}。`));
+    const archive=await blob.arrayBuffer();
+    if(archive.byteLength!==snapshot.frozenArtifact.size){
+      return testCases.map((testCase)=>unavailable(testCase,"Candidate ZIP 大小与冻结凭证不一致。"));
+    }
+    if(await serverArtifactSha256(archive)!==snapshot.frozenArtifact.sha256){
+      return testCases.map((testCase)=>unavailable(testCase,"Candidate ZIP SHA-256 与冻结凭证不一致。"));
+    }
     const response=await runVercelSandboxCodebaseValidation({
       id:`${project.id}-holdout-${candidate.id}`,
-      archive:new Uint8Array(await blob.arrayBuffer()),
+      archive:new Uint8Array(archive),
       expectedSha256:snapshot.frozenArtifact.sha256,
       testCases,
     });
