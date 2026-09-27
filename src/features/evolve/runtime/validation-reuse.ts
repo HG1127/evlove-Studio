@@ -1,4 +1,5 @@
 import type { TestCase, TargetRunResult, EvolveProject, Candidate } from "../schemas";
+import { indexScopedTestCaseResults, indexUniqueById } from "@evolution/core";
 
 export function validationImpactPriority(project: EvolveProject, candidate: Candidate) {
   const changed = new Set(candidate.patches.map(patch => patch.target).filter(Boolean));
@@ -54,11 +55,18 @@ export function createValidationReuse(scope?: string) {
     return cache.get(k) ?? (scope ? sessionGet(k) : undefined);
   };
   return async (variant: string, cases: TestCase[], execute: (missing: TestCase[], progress: (done: number) => void) => Promise<TargetRunResult[]>, onProgress?: (done: number, total: number) => void) => {
-    const missing = cases.filter(test => !eligible(test) || !read(variant, test));
+    const duplicateCases = indexUniqueById(cases, (test) => test.id).duplicateIds;
+    const missing = cases.filter(test => !duplicateCases.has(test.id) && (!eligible(test) || !read(variant, test)));
     const reused = cases.length - missing.length;
     onProgress?.(reused, cases.length);
     const runs = missing.length ? await execute(missing, done => onProgress?.(reused + done, cases.length)) : [];
-    const fresh = new Map(runs.map(run => [run.testCaseId, run]));
+    const { byId: fresh, duplicateIds: duplicateRuns } = indexScopedTestCaseResults([
+      { requestedTestCaseIds: missing.map((test) => test.id), results: runs },
+    ]);
+    const unverified = (testCaseId: string, reason: string, retryable = true): TargetRunResult => ({
+      testCaseId, output: `UNVERIFIED：${reason}`, latencyMs: 0, cost: 0, trace: [],
+      ...(retryable ? { error: reason } : {}), verificationStatus: "unverified",
+    });
     for (const test of missing) {
       const run = fresh.get(test.id);
       // Scoped callers bind `variant` to exact source/candidate + contract/model fingerprints.
@@ -69,6 +77,10 @@ export function createValidationReuse(scope?: string) {
         if (scope) sessionSet(k, run);
       }
     }
-    return cases.map(test => fresh.get(test.id) ?? read(variant, test) ?? { testCaseId: test.id, output: "执行未返回结果", latencyMs: 0, cost: 0, trace: [], error: "missing result", verificationStatus: "failed" as const });
+    return cases.map(test => duplicateCases.has(test.id)
+      ? unverified(test.id, "验收题 ID 重复，需修正题目定义", false)
+      : duplicateRuns.has(test.id)
+        ? unverified(test.id, "执行返回重复 Test Case 结果，身份不明确")
+        : fresh.get(test.id) ?? read(variant, test) ?? unverified(test.id, "执行未返回 Test Case 结果"));
   };
 }
