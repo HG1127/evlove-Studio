@@ -18,6 +18,7 @@ import {
 } from "../runtime/evidence-job-store";
 import { getVisualEvidence, VISUAL_EVIDENCE_EVENT, type VisualEvidenceStore } from "../runtime/visual-evidence";
 import { repositoryGoalCoverageForProject } from "../sources/repository-intelligence";
+import {sourceParseState} from "../runtime/source-parse-presentation";
 
 function pct(value?: number) { return value === undefined ? "—" : `${Math.round(value * 100)}%`; }
 function avg(values: number[]) { return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0; }
@@ -140,7 +141,8 @@ export function ParsingQualityPanel({
   const visual = evidence.items.length > 0;
   const formatRoundtrip = targets.every((artifact) => artifact.artifactDescriptor?.capabilities.materialize !== false);
   const canJudgeStatic = staticAvailable || !hasCode;
-  const hasParseIssue = targets.some((artifact) => ["binary", "error", "unsupported"].includes(artifact.parseStatus));
+  const hasParseIssue=targets.some((artifact)=>sourceParseState(artifact)==="failed");
+  const hasPartialParse=targets.some((artifact)=>sourceParseState(artifact)==="partial");
 
   const runtimeJobs = jobs.filter((job) => ["build", "browser-smoke", "e2e"].includes(job.kind));
   const visualJobs = jobs.filter((job) => ["screenshot", "visual-judge"].includes(job.kind));
@@ -164,7 +166,7 @@ export function ParsingQualityPanel({
       {automaticEvidence.busy ? <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin text-indigo-600" /> : <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" />}
       <div className="min-w-0 flex-1"><div className="font-semibold">{automaticEvidence.busy ? "后台正在验证成果" : "后台验证已完成可用部分"}</div><div className="opacity-80">{automaticEvidence.summary}</div></div>
       {!automaticEvidence.busy && <Button size="sm" variant="secondary" onClick={() => { clearAutomaticEvidenceCache(project); setAutomaticEvidenceAttempt((value) => value + 1); }}><RefreshCcw className="size-3.5" />重试后台验证</Button>}
-    </div> : <div className="mt-3 flex items-center gap-1.5 text-[11px] text-emerald-700"><CheckCircle2 className="size-3.5" />材料解析与适用的后台证据任务已完成</div>}
+    </div> : hasParseIssue||hasPartialParse ? <div className="mt-3 flex items-center gap-1.5 text-[11px] text-amber-700"><AlertTriangle className="size-3.5" />{hasParseIssue?"部分材料未能解析；原文件已保留，请查看限制并修复。":"材料仅完成部分索引；请查看覆盖率和解析限制。"}</div> : <div className="mt-3 flex items-center gap-1.5 text-[11px] text-emerald-700"><CheckCircle2 className="size-3.5" />材料解析与适用的后台证据任务已完成</div>}
 
     <details className="mt-3 rounded-2xl border bg-white p-4">
       <summary className="cursor-pointer text-xs font-semibold text-slate-600">查看解析覆盖与证据详情</summary>

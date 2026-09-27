@@ -42,6 +42,7 @@ import {
 import { saveLocalProject } from "../runtime/local-store";
 import { getTemplate, recordTemplateUse } from "../runtime/template-store";
 import { assessFileReadiness } from "../sources/extract";
+import {sourceParseLabel,sourceParseState,type SourceParseState} from "../runtime/source-parse-presentation";
 import { normalizeAcceptanceRubric, rubricValidation } from "../runtime/acceptance-rubric";
 import { compileSemanticEvolution } from "../runtime/semantic-evolution";
 
@@ -55,6 +56,7 @@ type PendingFile = {
   recoveredJob?: EvolutionJob;
   sourceSize?: number;
   error?: string;
+  parseState?: SourceParseState;
 };
 type ChatLine = { id: string; role: "user" | "assistant"; content: string; files?: string[] };
 
@@ -273,7 +275,7 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
         }
         const nextArtifacts = mergeArtifactState(parsed);
         setFiles((current) => current.map((entry) => entry.id === item.id
-          ? { ...entry, status: "ready", artifactId: parsed!.id, serverJobId, error: undefined }
+          ? { ...entry, status: "ready", artifactId: parsed!.id, serverJobId, parseState:sourceParseState(parsed!), error: undefined }
           : entry));
         if (intakeRef.current) scheduleProgressiveIntake(nextArtifacts);
         return parsed;
@@ -367,6 +369,7 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
           serverJobId:record.job.id,
           recoveredJob:record.job,
           sourceSize:metadata.size,
+          parseState:record.artifact?sourceParseState(record.artifact):undefined,
           error: record.resultIssue??record.job.error??(record.job.status==="cancelled"?"Parse 已取消":undefined),
         };
         recoveredFiles.push(item);
@@ -445,7 +448,8 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
       }
       const next = artifactsRef.current.map((item) => (item.id === artifactId ? replacement : item));
       replaceArtifactState(next);
-      let summary = `附件已替换为「${file.name}」，${replacement.parseStatus === "binary" ? "但新文件仍未解析成功，可再检查格式或改为文字粘贴。" : "内容读取成功。"}`;
+      const replacementState=sourceParseState(replacement);
+      let summary = `附件已替换为「${file.name}」，${replacementState === "failed" ? "新文件仍未解析成功，可检查格式或重新上传。" : replacementState === "partial" ? "仅完成部分读取，请查看解析限制。" : "内容读取成功。"}`;
       if (intakeRef.current) {
         const result = await runIntakeFromArtifacts({
           command: `（系统说明）用户已重新上传替换文件「${file.name}」，请基于新内容更新对当前状态的理解；未在文件中出现的内容不要编造。`,
@@ -462,7 +466,7 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
         replaceArtifactState(result.artifacts);
         setIntakeState(result.intake);
         setProvider(result.provider);
-        summary = `附件已替换为「${file.name}」，我重新读取了内容：${replacement.parseStatus === "binary" ? "新文件仍未解析成功，建议另存为标准格式后重试。" : result.intake.currentStateSummary}`;
+        summary = `附件已替换为「${file.name}」，${replacementState === "failed" ? "新文件仍未解析成功，建议另存为标准格式后重试。" : replacementState === "partial" ? `仅完成部分读取；基于已读取内容更新理解：${result.intake.currentStateSummary}` : `我重新读取了内容：${result.intake.currentStateSummary}`}`;
       }
       setMessages((current) => {
         const updated = [...current, { id: `a-${Date.now()}`, role: "assistant" as const, content: summary }];
@@ -719,15 +723,43 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
               <div className="mt-3 grid gap-2 lg:grid-cols-2">{intake.acceptanceRubric.slice(0, 8).map((criterion) => <div key={criterion.id} className="rounded-xl border bg-slate-50 p-3"><div className="flex flex-wrap items-center gap-1.5"><span className="text-xs font-semibold text-slate-800">{criterion.title}</span>{criterion.hardGate && <Badge className="border-rose-200 bg-rose-50 text-rose-700">Hard Gate</Badge>}<Badge>{criterion.weight}%</Badge></div><p className="mt-1 text-[11px] leading-5 text-slate-500">{criterion.requirement}</p><div className="mt-2 text-[10px] text-slate-400">最低 {criterion.minScore} · {criterion.judgeType} · 证据：{criterion.evidenceExpected.slice(0,2).join(" / ")}</div></div>)}</div>
               {intake.acceptanceRubric.length > 8 && <div className="mt-2 text-[10px] text-slate-400">其余 {intake.acceptanceRubric.length - 8} 条将在项目 Target 页面完整展示并可编辑。</div>}
             </div>
-            {artifacts.length > 0 && <div className="mt-4 space-y-2"><div className="text-xs font-semibold text-slate-600">AI 读到的输入</div>{artifacts.map((artifact) => { const flagged = artifact.parseStatus === "binary" || artifact.parseStatus === "error" || artifact.warnings.some((warning) => /(解析失败|未能|无法|未解析|损坏|未找到|声明为|启发式|老版)/.test(warning)); return <div key={artifact.id} className={cn("flex items-start gap-3 rounded-xl border p-3", flagged ? "border-rose-200 bg-rose-50/60" : "bg-white")}><div className={cn("grid size-8 shrink-0 place-items-center rounded-lg", flagged ? "bg-rose-100 text-rose-600" : "bg-slate-50 text-slate-500")}><ArtifactGlyph artifact={artifact} /></div><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><div className={cn("truncate text-xs font-semibold", flagged ? "text-rose-800" : "text-slate-700")}>{artifact.name}</div><Badge className={flagged ? "border-rose-200 bg-rose-100 text-rose-700" : undefined}>{flagged ? "解析异常" : roleLabels[artifact.role]}</Badge>{flagged && <Badge className="border-slate-200 bg-white text-slate-500">{roleLabels[artifact.role]}</Badge>}</div><p className="mt-1 line-clamp-2 text-[11px] leading-5 text-slate-400">{artifact.summary || artifact.textExcerpt || (flagged ? "内容未能解析，AI 无法读取此文件正文。" : "已接收附件")}</p>{flagged && artifact.warnings.length > 0 && <div className="mt-1 space-y-0.5">{artifact.warnings.slice(0, 2).map((warning, index) => <p key={index} className="line-clamp-2 text-[10px] leading-4 text-rose-600">{warning}</p>)}</div>}{flagged && <div className="mt-1.5 flex gap-2"><button disabled={busy} onClick={() => { setReplacingId(artifact.id); replaceRef.current?.click(); }} className="rounded-lg border border-rose-300 bg-white px-2 py-1 text-[10px] font-semibold text-rose-600 transition hover:bg-rose-50 disabled:opacity-50">重新上传替换</button><button disabled={busy} onClick={() => removeArtifact(artifact.id)} className="rounded-lg px-2 py-1 text-[10px] text-slate-400 transition hover:text-rose-500 disabled:opacity-50">移除该附件</button></div>}</div></div>; })}</div>}
-            {intake.followUpQuestions.length > 0 && <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3"><div className="text-xs font-semibold text-amber-800">AI 还建议确认</div><ul className="mt-1 list-disc space-y-1 pl-4 text-xs text-amber-700">{intake.followUpQuestions.map((q) => <li key={q}>{q}</li>)}</ul></div>}
+            {artifacts.length > 0 && <div className="mt-4 space-y-2">
+              <div className="text-xs font-semibold text-slate-600">AI 读到的输入</div>
+              {artifacts.map((artifact) => {
+                const state=sourceParseState(artifact);
+                const failed=state==="failed";
+                const partial=state==="partial";
+                return <div key={artifact.id} className={cn("flex items-start gap-3 rounded-xl border p-3",failed?"border-rose-200 bg-rose-50/60":partial?"border-amber-200 bg-amber-50/60":"bg-white")}>
+                  <div className={cn("grid size-8 shrink-0 place-items-center rounded-lg",failed?"bg-rose-100 text-rose-600":partial?"bg-amber-100 text-amber-700":"bg-slate-50 text-slate-500")}><ArtifactGlyph artifact={artifact}/></div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2"><div className={cn("truncate text-xs font-semibold",failed?"text-rose-800":partial?"text-amber-900":"text-slate-700")}>{artifact.name}</div><Badge className={failed?"border-rose-200 bg-rose-100 text-rose-700":partial?"border-amber-200 bg-amber-100 text-amber-800":undefined}>{sourceParseLabel(artifact)}</Badge>{(failed||partial)&&<Badge className="border-slate-200 bg-white text-slate-500">{roleLabels[artifact.role]}</Badge>}</div>
+                    <p className="mt-1 line-clamp-2 text-[11px] leading-5 text-slate-400">{artifact.summary||artifact.textExcerpt||(failed?"内容未能解析，AI 无法读取此文件正文。":partial?"仅有部分内容可供 AI 使用。":"已接收附件")}</p>
+                    {(failed||partial)&&artifact.warnings.length>0&&<div className="mt-1 space-y-0.5">{artifact.warnings.slice(0,2).map((warning,index)=><p key={index} className={cn("line-clamp-2 text-[10px] leading-4",failed?"text-rose-600":"text-amber-700")}>{warning}</p>)}</div>}
+                    {failed&&<div className="mt-1.5 flex gap-2"><button disabled={busy} onClick={()=>{setReplacingId(artifact.id);replaceRef.current?.click();}} className="rounded-lg border border-rose-300 bg-white px-2 py-1 text-[10px] font-semibold text-rose-600 transition hover:bg-rose-50 disabled:opacity-50">重新上传替换</button><button disabled={busy} onClick={()=>removeArtifact(artifact.id)} className="rounded-lg px-2 py-1 text-[10px] text-slate-400 transition hover:text-rose-500 disabled:opacity-50">移除该附件</button></div>}
+                  </div>
+                </div>;
+              })}
+            </div>}            {intake.followUpQuestions.length > 0 && <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3"><div className="text-xs font-semibold text-amber-800">AI 还建议确认</div><ul className="mt-1 list-disc space-y-1 pl-4 text-xs text-amber-700">{intake.followUpQuestions.map((q) => <li key={q}>{q}</li>)}</ul></div>}
           </div>}
         </div>
 
         <div className={cn("bg-white px-5 pb-4 pt-1", dragging && "bg-indigo-50/70")} onDragOver={(e) => { e.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={(e) => { e.preventDefault(); setDragging(false); addFiles(e.dataTransfer.files); }}>
           {error && <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</div>}
-          {files.length > 0 && <div className="mb-3 flex flex-wrap gap-2">{files.map((item) => { const readiness = assessFileReadiness(item.file.name, item.file.type); const failed = item.status === "error"; const active = item.status === "queued" || item.status === "parsing"; const size=item.sourceSize??item.file.size; return <div key={item.id} className={cn("group flex max-w-full items-center gap-2 rounded-xl border px-2.5 py-2", failed || readiness.level === "blocked" ? "border-rose-200 bg-rose-50" : readiness.level === "caution" ? "border-amber-200 bg-amber-50" : item.status === "ready" ? "border-emerald-200 bg-emerald-50/50" : "bg-slate-50")}><div className={cn(failed || readiness.level === "blocked" ? "text-rose-500" : readiness.level === "caution" ? "text-amber-500" : item.status === "ready" ? "text-emerald-600" : "text-slate-500")}>{active ? <Loader2 className="size-4 animate-spin" /> : <FileGlyph file={item.file} />}</div><div className="min-w-0"><div className={cn("max-w-52 truncate text-[11px] font-semibold", failed ? "text-rose-700" : "text-slate-700")}>{item.file.name}</div><div className={cn("text-[9px]", failed ? "text-rose-500" : item.status === "ready" ? "text-emerald-600" : readiness.level === "caution" ? "text-amber-600" : "text-slate-400")}>{failed ? item.error : item.status === "ready" ? "已读取 · 后台解析完成" : active ? "正在后台读取并建立索引…" : readiness.level === "ok" ? formatBytes(size) : `${formatBytes(size)} · ${readiness.note}`}</div></div><Badge className={item.status === "ready" ? "border-emerald-200 bg-white text-emerald-700" : active ? "border-indigo-100 bg-white text-indigo-600" : undefined}>{item.status === "ready" ? "已读取" : active ? "解析中" : failed ? "异常" : roleLabels[item.role]}</Badge>{failed && <button onClick={() => { void retryPendingFile(item); }} className="rounded-lg border border-rose-200 bg-white px-2 py-1 text-[9px] font-semibold text-rose-600 hover:bg-rose-50">重试</button>}<button aria-label={`移除附件：${item.file.name}`} onClick={() => removePendingFile(item)} className="grid size-6 place-items-center rounded-lg text-slate-400 hover:bg-white hover:text-rose-500"><X className="size-3" /></button></div>; })}</div>}
-          {showPaste && <div className="mb-3 rounded-xl border bg-slate-50 p-3"><div className="mb-2 flex items-center justify-between"><div className="text-xs font-semibold text-slate-600">粘贴需要进化或参考的原始内容</div><button onClick={() => { setShowPaste(false); setPastedText(""); }} className="text-xs text-slate-400">关闭</button></div><Textarea value={pastedText} onChange={(e) => setPastedText(e.target.value)} className="min-h-32 bg-white font-mono text-xs" placeholder="例如：当前 System Prompt、Workflow JSON、报告模板、代码片段……" /></div>}
+          {files.length > 0 && <div className="mb-3 flex flex-wrap gap-2">{files.map((item) => {
+            const readiness=assessFileReadiness(item.file.name,item.file.type);
+            const parseFailed=item.status==="ready"&&item.parseState==="failed";
+            const partial=item.status==="ready"&&item.parseState==="partial";
+            const failed=item.status==="error"||parseFailed;
+            const active=item.status==="queued"||item.status==="parsing";
+            const size=item.sourceSize??item.file.size;
+            return <div key={item.id} className={cn("group flex max-w-full items-center gap-2 rounded-xl border px-2.5 py-2",failed||readiness.level==="blocked"?"border-rose-200 bg-rose-50":partial||readiness.level==="caution"?"border-amber-200 bg-amber-50":item.status==="ready"?"border-emerald-200 bg-emerald-50/50":"bg-slate-50")}>
+              <div className={cn(failed||readiness.level==="blocked"?"text-rose-500":partial||readiness.level==="caution"?"text-amber-600":item.status==="ready"?"text-emerald-600":"text-slate-500")}>{active?<Loader2 className="size-4 animate-spin"/>:<FileGlyph file={item.file}/>}</div>
+              <div className="min-w-0"><div className={cn("max-w-52 truncate text-[11px] font-semibold",failed?"text-rose-700":"text-slate-700")}>{item.file.name}</div><div className={cn("text-[9px]",failed?"text-rose-500":partial?"text-amber-700":item.status==="ready"?"text-emerald-600":readiness.level==="caution"?"text-amber-600":"text-slate-400")}>{item.status==="error"?item.error:parseFailed?"已保存原文件 · 正文未能解析":partial?"已保存原文件 · 仅完成部分解析":item.status==="ready"?"已读取 · 后台解析完成":active?"正在后台读取并建立索引…":readiness.level==="ok"?formatBytes(size):`${formatBytes(size)} · ${readiness.note}`}</div></div>
+              <Badge className={failed?"border-rose-200 bg-white text-rose-700":partial?"border-amber-200 bg-white text-amber-700":item.status==="ready"?"border-emerald-200 bg-white text-emerald-700":active?"border-indigo-100 bg-white text-indigo-600":undefined}>{parseFailed?"解析异常":partial?"部分解析":item.status==="ready"?"已读取":active?"解析中":failed?"异常":roleLabels[item.role]}</Badge>
+              {item.status==="error"&&<button onClick={()=>{void retryPendingFile(item);}} className="rounded-lg border border-rose-200 bg-white px-2 py-1 text-[9px] font-semibold text-rose-600 hover:bg-rose-50">重试</button>}
+              <button aria-label={`移除附件：${item.file.name}`} onClick={()=>removePendingFile(item)} className="grid size-6 place-items-center rounded-lg text-slate-400 hover:bg-white hover:text-rose-500"><X className="size-3"/></button>
+            </div>;
+          })}</div>}          {showPaste && <div className="mb-3 rounded-xl border bg-slate-50 p-3"><div className="mb-2 flex items-center justify-between"><div className="text-xs font-semibold text-slate-600">粘贴需要进化或参考的原始内容</div><button onClick={() => { setShowPaste(false); setPastedText(""); }} className="text-xs text-slate-400">关闭</button></div><Textarea value={pastedText} onChange={(e) => setPastedText(e.target.value)} className="min-h-32 bg-white font-mono text-xs" placeholder="例如：当前 System Prompt、Workflow JSON、报告模板、代码片段……" /></div>}
           <div className="composer-input rounded-xl bg-slate-100/80 p-2 focus-within:bg-slate-50 focus-within:ring-2 focus-within:ring-indigo-200">
             <Textarea value={command} onChange={(e) => setCommand(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(); } }} className="min-h-20 resize-none border-0 px-2 py-2 shadow-none outline-none focus:ring-0" placeholder={intake ? "继续补充要求，例如：保持现有格式，不允许改数据库结构……" : "告诉 AI 你要怎么进化。例如：把这个 Agent 的结论证据完整率提高到 90%，同时不要增加明显成本……"} />
             <div className="flex flex-wrap items-center gap-2 px-1 pt-2">
