@@ -88,6 +88,21 @@ describe("server Connector Target execution",()=>{
     expect(execute).toHaveBeenCalledTimes(1);
   });
 
+  it("rejects a locked Connector snapshot attached to another Artifact ID",async()=>{
+    const p=project();
+    p.targetConnection.connectorSnapshot!.artifactId="unrelated";
+    const execute=vi.fn();
+    await expect(stageServerConnectorCandidate(p,candidate(),execute,()=>undefined))
+      .rejects.toThrow(/Artifact ID does not match/);
+    expect(execute).not.toHaveBeenCalled();
+    expect(()=>connectorCandidateArtifactFingerprint(p,candidate())).not.toThrow();
+  });
+  it("rejects duplicated primary Target rows even when their IDs match",()=>{
+    const p=project();
+    p.sourceArtifacts.push({...p.sourceArtifacts[0]!});
+    expect(()=>connectorCandidateArtifactFingerprint(p,candidate()))
+      .toThrow(/exactly one primary Target Artifact snapshot/);
+  });
   it("validates the exact staged Candidate version and maps explicit test evidence",async()=>{
     const p=project();
     const c=candidate();

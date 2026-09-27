@@ -49,6 +49,10 @@ function connectorBinding(project:EvolveProject){
   if(binding.connectorId!==snapshot.connectorId||binding.targetId!==snapshot.targetId){
     throw new Error("Connector target binding does not match locked snapshot");
   }
+  const targets=project.sourceArtifacts.filter((artifact)=>artifact.role==="target");
+  if(targets.length!==1||targets[0]!.id!==snapshot.artifactId){
+    throw new Error("Connector locked snapshot Artifact ID does not match the single primary Target");
+  }
   return {binding,snapshot};
 }
 
@@ -82,9 +86,10 @@ function currentBaseBinding(project:EvolveProject){
 }
 
 function targetSnapshots(project:EvolveProject,candidate:Candidate){
-  const ids=new Set(project.sourceArtifacts.filter((artifact)=>artifact.role==="target").map((artifact)=>artifact.id));
+  const targets=project.sourceArtifacts.filter((artifact)=>artifact.role==="target");
+  const ids=new Set(targets.map((artifact)=>artifact.id));
   const snapshots=candidate.artifactSnapshots.filter((snapshot)=>ids.has(snapshot.sourceArtifactId));
-  if(ids.size!==1||snapshots.length!==1){
+  if(targets.length!==1||ids.size!==1||snapshots.length!==1){
     throw new Error("Connector Target requires exactly one primary Target Artifact snapshot");
   }
   return snapshots;
