@@ -389,4 +389,30 @@ export const VisualJudgeAiResultSchema = z.object({
 });
 export type VisualJudgeAiResult = z.infer<typeof VisualJudgeAiResultSchema>;
 
+export const AiResultSchemas = {
+  intake: IntakeAiResultSchema,
+  understand: UnderstandAiResultSchema,
+  command: CommandAiResultSchema,
+  target: TargetAiResultSchema,
+  "eval-suite": EvalSuiteAiResultSchema,
+  "problem-analysis": ProblemAnalysisAiResultSchema,
+  diagnose: DiagnosisAiResultSchema,
+  plan: PlanAiResultSchema,
+  rubric: RubricAiResultSchema,
+  "build-candidate": BuildCandidateAiResultSchema,
+  "execute-artifact": ExecuteArtifactAiResultSchema,
+  "execute-artifact-batch": ExecuteArtifactBatchAiResultSchema,
+  "evaluate-population": PopulationEvaluationAiResultSchema,
+  "artifact-acceptance": ArtifactAcceptanceAiResultSchema,
+  "repair-artifact": RepairArtifactAiResultSchema,
+  materialize: MaterializeAiResultSchema,
+  "release-review": ReleaseReviewAiResultSchema,
+  distill: DistillAiResultSchema,
+  "next-queue": NextQueueAiResultSchema,
+  copilot: CopilotAiResultSchema,
+  evaluate: EvaluateAiResultSchema,
+  "gap-cluster": GapClusterAiResultSchema,
+  "gap-advice": GapAdviceAiResultSchema,
+  "visual-judge": VisualJudgeAiResultSchema,
+} satisfies Record<AiOperation,{parse:(value:unknown)=>unknown}>;
 export const AiRequestSchema = z.object({ operation: AiOperationSchema, payload: z.unknown() });

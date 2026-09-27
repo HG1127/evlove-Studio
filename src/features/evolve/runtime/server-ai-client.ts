@@ -1,4 +1,4 @@
-import {AiOperationSchema,type AiOperation} from "@evolution/contracts";
+import {AiOperationSchema,AiResultSchemas,type AiOperation} from "@evolution/contracts";
 
 type ServerAiEnvelope={operation:AiOperation;result:unknown};
 
@@ -23,5 +23,5 @@ export async function runServerAiOperation<T>(operation:AiOperation,payload:unkn
     throw new Error(body.statusMessage??body.message??`Server AI HTTP ${response.status}`);
   }
   if(body.operation!==operation)throw new Error("Server AI response operation mismatch");
-  return body.result as T;
+  return AiResultSchemas[operation].parse(body.result) as T;
 }

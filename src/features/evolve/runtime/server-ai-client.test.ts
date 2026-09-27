@@ -45,4 +45,23 @@ describe("server AI degraded fallback classification",()=>{
     await expect(request).rejects.toThrow("Upstream service fault");
     await expect(request).rejects.not.toBeInstanceOf(ServerAiUnavailableError);
   });
+  it("validates a successful AI result against the requested operation",async()=>{
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({
+      operation:"gap-advice",result:{overall:"Needs one fix",actions:[]},
+    }),{status:200})));
+    await expect(runServerAiOperation("gap-advice",{project:{}}))
+      .resolves.toEqual({overall:"Needs one fix",actions:[]});
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({
+      operation:"gap-advice",result:{overall:17,actions:[]},
+    }),{status:200})));
+    await expect(runServerAiOperation("gap-advice",{project:{}})).rejects.toThrow();
+  });
+
+  it("does not accept a successful response for a different operation",async()=>{
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({
+      operation:"plan",result:{overall:"Valid for another operation",actions:[]},
+    }),{status:200})));
+    await expect(runServerAiOperation("gap-advice",{project:{}}))
+      .rejects.toThrow("Server AI response operation mismatch");
+  });
 });
