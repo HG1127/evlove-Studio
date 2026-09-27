@@ -19,7 +19,7 @@ describe("HTTP production adapter",()=>{
       const url=String(input);
       const method=init?.method??"GET";
       calls.push({url,method,body:typeof init?.body==="string"?init.body:undefined});
-      if(method==="PUT")return new Response(JSON.stringify({ok:true}),{status:200,headers:{"Content-Type":"application/json"}});
+      if(method==="PUT")return new Response(JSON.stringify({ok:true,jobId:"j1"}),{status:200,headers:{"Content-Type":"application/json"}});
       if(url.endsWith("/jobs/j1"))return new Response(JSON.stringify(job),{status:200,headers:{"Content-Type":"application/json"}});
       if(url.includes("/jobs?"))return new Response(JSON.stringify({items:[job]}),{status:200,headers:{"Content-Type":"application/json"}});
       throw new Error("unexpected "+method+" "+url);
@@ -96,7 +96,7 @@ describe("HTTP production adapter",()=>{
       }
       if(url.endsWith("/missions/mission-cas")&&method==="DELETE"){
         deleteIfMatch=new Headers(init?.headers).get("If-Match");
-        return new Response(JSON.stringify({ok:true}),{status:200,headers:{"Content-Type":"application/json"}});
+        return new Response(JSON.stringify({ok:true,missionId:"mission-cas"}),{status:200,headers:{"Content-Type":"application/json"}});
       }
       throw new Error("unexpected "+method+" "+url);
     }));
@@ -156,11 +156,11 @@ describe("HTTP production adapter",()=>{
     const calls:string[]=[];
     vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
       const url=String(input);const method=init?.method??"GET";calls.push(method+" "+url);
-      if(url.endsWith("/events")&&method==="POST")return new Response(JSON.stringify({ok:true}),{status:200});
+      if(url.endsWith("/events")&&method==="POST")return new Response(JSON.stringify({ok:true,eventId:"e1"}),{status:200});
       if(url.includes("/events?"))return new Response(JSON.stringify([event]),{status:200,headers:{"Content-Type":"application/json"}});
-      if(url.endsWith("/artifacts/a1")&&method==="PUT"){artifactText=await (init!.body as Blob).text();return new Response(JSON.stringify({ok:true}),{status:200});}
+      if(url.endsWith("/artifacts/a1")&&method==="PUT"){artifactText=await (init!.body as Blob).text();return new Response(JSON.stringify({ok:true,artifactId:"a1",size:7}),{status:200});}
       if(url.endsWith("/artifacts/a1")&&method==="GET")return new Response(artifactText,{status:200,headers:{"Content-Type":"text/plain"}});
-      if(url.endsWith("/artifacts/a1")&&method==="DELETE")return new Response(JSON.stringify({ok:true}),{status:200});
+      if(url.endsWith("/artifacts/a1")&&method==="DELETE")return new Response(JSON.stringify({ok:true,artifactId:"a1"}),{status:200});
       throw new Error("unexpected "+method+" "+url);
     }));
     const ports=createHttpProductionPorts("/api/evolution");
@@ -170,5 +170,80 @@ describe("HTTP production adapter",()=>{
     expect(await (await ports.artifacts.get("a1"))!.text()).toBe("changed");
     await ports.artifacts.delete("a1");
     expect(calls).toContain("DELETE /api/evolution/artifacts/a1");
+  });
+  it("rejects successful write responses with the wrong identity or byte count",async()=>{
+    const job=EvolutionJobSchema.parse({
+      schemaVersion:"job-v1",id:"job-expected",type:"parse",status:"queued",label:"Parse",
+      idempotencyKey:"parse:expected",createdAt:at,updatedAt:at,
+    });
+    const event=EvolutionEventSchema.parse({
+      schemaVersion:"event-v1",id:"event-expected",type:"JobCompleted",source:"test",payload:{},at,
+    });
+    const ports=createHttpProductionPorts("/api/evolution");
+    const reply=(value:unknown)=>vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(value),{status:200})));
+    reply({ok:true,jobId:"job-other"});
+    await expect(ports.jobs.put(job)).rejects.toThrow("Job save receipt identity mismatch");
+    reply({ok:true,eventId:"event-other"});
+    await expect(ports.events.append(event)).rejects.toThrow("Event append receipt identity mismatch");
+    reply({ok:true,artifactId:"artifact-expected",size:1});
+    await expect(ports.artifacts.put("artifact-expected",new Blob(["12345"]))).rejects.toThrow("Artifact upload receipt size mismatch");
+    reply({ok:true,artifactId:"artifact-other",size:5});
+    await expect(ports.artifacts.put("artifact-expected",new Blob(["12345"]))).rejects.toThrow("Artifact upload receipt identity mismatch");
+    reply({ok:true,artifactId:"artifact-other"});
+    await expect(ports.artifacts.delete("artifact-expected")).rejects.toThrow("Artifact delete receipt identity mismatch");
+    reply({ok:true});
+    await expect(ports.jobs.put(job)).rejects.toThrow();
+  });
+
+  it("rejects malformed Event lists instead of turning them into an empty ledger",async()=>{
+    const ports=createHttpProductionPorts("/api/evolution");
+    for(const value of [{},{items:null},{items:"invalid"}]){
+      vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(value),{status:200})));
+      await expect(ports.events.list("mission-1")).rejects.toThrow();
+    }
+  });
+
+  it("rejects mismatched Mission and cancel receipts",async()=>{
+    const project={...demoProject,id:"mission-expected"};
+    const ports=createHttpProductionPorts("/api/evolution");
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(missionEnvelope({...project,id:"mission-other"},1)),{status:200})));
+    await expect(ports.missions.get(project.id)).rejects.toThrow("Mission get receipt identity mismatch");
+    await expect(ports.missions.save(project)).rejects.toThrow("Mission save receipt identity mismatch");
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({ok:true,missionId:"mission-other"}),{status:200})));
+    await expect(ports.missions.delete(project.id)).rejects.toThrow("Mission delete receipt identity mismatch");
+    const workflow={runId:"run-1",bound:true,exists:true,statusBefore:"running",statusAfter:"cancelled",cancelIssued:true,reason:"workflow-run-cancelled"};
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({ok:true,jobId:"job-other",status:"cancelled",workflow}),{status:200})));
+    await expect(ports.jobs.cancel("job-expected")).rejects.toThrow("Job cancel receipt identity mismatch");
+  });
+  it("rejects mismatched read identities and empty continuation cursors",async()=>{
+    const project={...demoProject,id:"mission-expected"};
+    const wrongEnvelope={...missionEnvelope(project,1),missionId:"mission-other"};
+    const ports=createHttpProductionPorts("/api/evolution");
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({items:[wrongEnvelope]}),{status:200})));
+    await expect(ports.missions.list()).rejects.toThrow("Mission envelope identity mismatch");
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({items:[missionEnvelope(project,1)],nextCursor:""}),{status:200})));
+    await expect(ports.missions.list()).rejects.toThrow();
+    const job=EvolutionJobSchema.parse({
+      schemaVersion:"job-v1",id:"job-other",type:"parse",status:"queued",label:"Parse",
+      idempotencyKey:"parse:other",createdAt:at,updatedAt:at,
+    });
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(job),{status:200})));
+    await expect(ports.jobs.get("job-expected")).rejects.toThrow("Job get receipt identity mismatch");
+  });
+  it("rejects repeated identities across collection pages",async()=>{
+    const project={...demoProject,id:"mission-repeat"};
+    const envelope=missionEnvelope(project,1);
+    const job=EvolutionJobSchema.parse({
+      schemaVersion:"job-v1",id:"job-repeat",type:"parse",status:"queued",label:"Parse",
+      idempotencyKey:"parse:repeat",createdAt:at,updatedAt:at,
+    });
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
+      const url=new URL(String(input),"http://localhost");
+      const item=url.pathname.endsWith("/missions")?envelope:job;
+      return new Response(JSON.stringify({items:[item],nextCursor:url.searchParams.has("cursor")?undefined:"first"}),{status:200});
+    }));
+    const ports=createHttpProductionPorts("/api/evolution");
+    await expect(ports.missions.list()).rejects.toThrow("Duplicate missions page item mission-repeat");
+    await expect(ports.jobs.list()).rejects.toThrow("Duplicate jobs page item job-repeat");
   });
 });
