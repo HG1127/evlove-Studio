@@ -10,6 +10,7 @@ import {
   computeGapAnalysis,
   evidenceFingerprint,
   gapHeadline,
+  indexScopedAcceptanceResults,
   missingValidationEvidenceAction,
   validationDecision,
 } from "@evolution/core";
@@ -57,14 +58,14 @@ function holdoutChecks(
     baselineRuns,
     testCases: suite,
   });
-  const scoreById = new Map((candidateEvaluation.criterionScores ?? []).map((item) => [item.criterionId, item]));
+  const scoreById = indexScopedAcceptanceResults([{ requestedCriterionIds: project.acceptanceRubric.map((criterion) => criterion.id), results: candidateEvaluation.criterionScores ?? [] }]).byId;
   const checks: ValidationRun["checks"] = [
     ...(project.acceptanceRubric.length ? [{
       label: "Project-specific Rubric",
-      status: (candidateEvaluation.verifiedRubricCoverage ?? 100) < 100
+      status: decision.rubricCoverage < 100 || decision.unverifiedCriteria.length > 0
         ? "warning" as const
         : (candidateEvaluation.rubricScore ?? 0) >= 85 ? "pass" as const : "fail" as const,
-      detail: `Rubric ${candidateEvaluation.rubricScore ?? "待评"} / 85；真实证据覆盖 ${candidateEvaluation.verifiedRubricCoverage ?? 100}%。`,
+      detail: `Rubric ${candidateEvaluation.rubricScore ?? "待评"} / 85；真实证据覆盖 ${decision.rubricCoverage}%。`,
     }] : []),
     ...decision.hardCriterionFailures.map((criterion) => ({
       label: `Hard Gate · ${criterion.title}`,
@@ -72,6 +73,11 @@ function holdoutChecks(
       detail: `Criterion ${criterion.id} 已有真实证据且未达到最低 ${criterion.minScore} 分；${criterion.requirement}`,
     })),
     ...decision.unverifiedHardCriteria.map((criterion) => ({
+      label: `待真实验证 · ${criterion.title}`,
+      status: "warning" as const,
+      detail: `Criterion ${criterion.id} 尚未获得 VERIFIED 证据；${missingValidationEvidenceAction(criterion)}。这不是产品失败。`,
+    })),
+    ...decision.unverifiedCriteria.filter((criterion) => !criterion.hardGate).map((criterion) => ({
       label: `待真实验证 · ${criterion.title}`,
       status: "warning" as const,
       detail: `Criterion ${criterion.id} 尚未获得 VERIFIED 证据；${missingValidationEvidenceAction(criterion)}。这不是产品失败。`,

@@ -146,6 +146,19 @@ describe("server hidden holdout",()=>{
     expect(outcome.validation.recommendation).toBe("hold");
   });
 
+it("holds Release when a non-Hard Criterion has no independent judgment",async()=>{
+    const project=fixture();
+    project.acceptanceRubric.push({...project.acceptanceRubric[0]!,id:"SOFT",title:"可用性",hardGate:false,weight:10});
+    project.hiddenEvalSuite.push({...project.hiddenEvalSuite[0]!,id:"H2",title:"隐藏可用性",criterionIds:["SOFT"]});
+    const setup=semanticPorts();
+    const review=vi.fn(setup.ports.releaseReview);
+    setup.ports.releaseReview=review;
+    const outcome=await runServerHoldout(project,setup.ports);
+    expect(outcome.validation.recommendation).toBe("hold");
+    expect(outcome.validation.checks).toContainEqual(expect.objectContaining({label:"待真实验证 · 可用性",status:"warning"}));
+    expect(outcome.validation.checks.find((check)=>check.label==="Project-specific Rubric")?.status).toBe("warning");
+    expect(review).not.toHaveBeenCalled();
+  });
   it("detects same-paper regression and skips optimistic Release Review",async()=>{
     const setup=semanticPorts(96,90);
     const review=vi.fn(setup.ports.releaseReview);

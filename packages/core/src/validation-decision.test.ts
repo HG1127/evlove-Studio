@@ -78,3 +78,33 @@ describe("validation decision",()=>{
     expect(result.evidenceIncomplete).toBe(true);
   });
 });
+
+it("does not release when a soft criterion is missing despite reported full coverage", () => {
+  const scoped = project();
+  scoped.acceptanceRubric.push({
+    ...scoped.acceptanceRubric[0]!, id: "USABILITY", title: "可用性", hardGate: false, weight: 10,
+  });
+  const candidate = evaluation(90, 100);
+  candidate.verifiedRubricCoverage = 100;
+  candidate.rubricScore = 95;
+  const decision = validationDecision(scoped, candidate, evaluation(85, 100));
+  expect(decision.unverifiedHardCriteria).toEqual([]);
+  expect(decision.unverifiedCriteria.map((item) => item.id)).toContain("USABILITY");
+  expect(decision.rubricCoverage).toBeLessThan(100);
+  expect(decision.evidenceIncomplete).toBe(true);
+  expect(decision.hardFail).toBe(false);
+});
+
+it("treats duplicate soft scores as missing proof even when coverage rounds to 100", () => {
+  const scoped = project();
+  scoped.acceptanceRubric.push({
+    ...scoped.acceptanceRubric[0]!, id: "USABILITY", title: "可用性", hardGate: false, weight: 0,
+  });
+  const candidate = evaluation(90, 100);
+  const soft = { ...candidate.criterionScores![0]!, criterionId: "USABILITY" };
+  candidate.criterionScores!.push(soft, { ...soft });
+  candidate.verifiedRubricCoverage = 100;
+  const decision = validationDecision(scoped, candidate, evaluation(85, 100));
+  expect(decision.unverifiedCriteria.map((item) => item.id)).toContain("USABILITY");
+  expect(decision.evidenceIncomplete).toBe(true);
+});

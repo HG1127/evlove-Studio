@@ -1180,17 +1180,19 @@ async function runValidationUnbound(project: EvolveProject, inputCandidate: Cand
   const successTarget = parsed.metrics.find((m) => m.key === "success" || m.key === "completeness")?.target;
 
   const holdoutDecision = validationDecision(parsed, evaluation, baselineHoldout);
-  const { hardCriterionFailures, unverifiedHardCriteria, comparisonEvidenceGaps } = holdoutDecision;
+  const { hardCriterionFailures, unverifiedHardCriteria, unverifiedCriteria, comparisonEvidenceGaps } = holdoutDecision;
+  const unverifiedSoftCriteria = unverifiedCriteria.filter((criterion) => !criterion.hardGate);
   const rubricTarget = 85;
-  const rubricStatus = (evaluation.verifiedRubricCoverage ?? 100) < 100
+  const rubricStatus = holdoutDecision.rubricCoverage < 100 || unverifiedCriteria.length > 0
     ? "warning" as const
     : (evaluation.rubricScore ?? 0) >= rubricTarget ? "pass" as const : "fail" as const;
   const criterionScoreById = indexScopedAcceptanceResults([{ requestedCriterionIds: parsed.acceptanceRubric.map((criterion) => criterion.id), results: evaluation.criterionScores ?? [] }]).byId;
   const checks = [
-    ...(parsed.acceptanceRubric.length ? [{ label: "Project-specific Rubric", status: rubricStatus, detail: `Rubric ${evaluation.rubricScore ?? "待评"} / ${rubricTarget}；真实证据覆盖 ${evaluation.verifiedRubricCoverage ?? 100}%。未验证项不计为产品失败，但 Release 前必须补齐。` }] : []),
+    ...(parsed.acceptanceRubric.length ? [{ label: "Project-specific Rubric", status: rubricStatus, detail: `Rubric ${evaluation.rubricScore ?? "待评"} / ${rubricTarget}；真实证据覆盖 ${holdoutDecision.rubricCoverage}%。未验证项不计为产品失败，但 Release 前必须补齐。` }] : []),
     ...hardCriterionFailures.map((criterion) => ({ label: `Hard Gate · ${criterion.title}`, status: "fail" as const, detail: `Criterion ${criterion.id} 已有真实证据且未达到最低 ${criterion.minScore} 分；${criterion.requirement}` })),
     ...unverifiedHardCriteria.map((criterion) => { const judgeMissing=criterionScoreById.get(criterion.id)?.gaps.some((gap)=>gap.includes("评审模型未返回")); return { label: `${judgeMissing?"待补评审":"待真实验证"} · ${criterion.title}`, status: "warning" as const, detail: judgeMissing?`Criterion ${criterion.id} 的测试已经执行，但评审模型漏返逐题/逐标准判断；保持未验证，不按 0 分失败处理。`:`Criterion ${criterion.id} 缺少与其验证方式匹配的证据。下一步：${missingEvidenceAction(criterion)}。该状态阻止 Release，但不代表成果质量 FAIL。` }; }),
     ...comparisonEvidenceGaps.map((criterion) => ({ label: `同卷对照待补证 · ${criterion.title}`, status: "warning" as const, detail: `当前版本在同一道盲测题上缺少已验证的 Criterion ${criterion.id} 基线证据；请恢复执行或评审能力后重新运行完整验证。候选分数不能替代同卷对照。` })),
+    ...unverifiedSoftCriteria.map((criterion) => ({ label: `待真实验证 · ${criterion.title}`, status: "warning" as const, detail: `Criterion ${criterion.id} 缺少可确认的验收证据；下一步：${missingEvidenceAction(criterion)}。该状态阻止 Release，但不代表成果质量 FAIL。` })),
     { label: "Safety", status: evaluation.safety === "PASS" ? "pass" as const : evaluation.safety === "FAIL" ? "fail" as const : "warning" as const, detail: evaluation.safety },
     { label: "关键能力回归", status: validationRegression(parsed, evaluation, baselineHoldout) ? "fail" as const : "pass" as const, detail: `回归结论基于双方已验证的同一标准；以下总分仅供参考。同一套盲测卷：候选 准确 ${evaluation.accuracy}% / 完成 ${evaluation.completeness}% vs 当前版本 ${baselineHoldout.accuracy}% / ${baselineHoldout.completeness}%（容差 ${regressionTolerance} 分）${regressionHeadline ? `；主因：${regressionHeadline}` : ""}` },
     ...(qualityTarget !== undefined ? [{ label: "目标质量", status: evaluation.accuracy >= qualityTarget ? "pass" as const : "warning" as const, detail: `质量 ${evaluation.accuracy}% / 目标 ${qualityTarget}%` }] : []),
@@ -1292,7 +1294,7 @@ async function runValidationUnbound(project: EvolveProject, inputCandidate: Cand
     previousEvaluation: options?.retryFailedOnly ? prior.evaluation : undefined,
     checks,
     recommendation,
-    summary: hardFail ? "存在已有 AI 语义、文件或运行证据的 Hard Gate 失败项，不能进入发布。" : evidenceIncomplete ? `当前成果未被判失败，但有 ${unverifiedHardCriteria.length} 个候选 Hard Gate 和 ${comparisonEvidenceGaps.length} 个同卷基线对照项缺少已验证证据；请补证后重新验证。` : ((review as { summary?: string }).summary || "完整隐藏验证已通过。"),
+    summary: hardFail ? "存在已有 AI 语义、文件或运行证据的 Hard Gate 失败项，不能进入发布。" : evidenceIncomplete ? `当前成果未被判失败，但有 ${unverifiedHardCriteria.length} 个候选 Hard Gate、${unverifiedSoftCriteria.length} 个普通验收标准和 ${comparisonEvidenceGaps.length} 个同卷基线对照项缺少已验证证据；请补证后重新验证。` : ((review as { summary?: string }).summary || "完整隐藏验证已通过。"),
   };
 }
 
