@@ -1,7 +1,7 @@
 import type { BaselineRun, EvaluationResult, EvolveProject, TargetRunResult } from "../schemas";
 import { fastHash } from "../ai/performance";
 import { searchBaseCandidate } from "./search-base";
-import { baselineReadiness, campaignObservesLiveTarget, campaignScoringInputFingerprint } from "@evolution/core";
+import { baselineReadiness, campaignLiveObservationFresh, campaignObservesLiveTarget, campaignScoringInputFingerprint } from "@evolution/core";
 import { resolveProjectOperationConnections } from "../ai/providers/registry";
 import { getAiProviderStatus } from "../ai/service";
 
@@ -86,8 +86,9 @@ function remember<K, V>(map: Map<K, V>, key: K, value: V, cap = 8) {
 }
 
 /** Only a diagnosis-ready measurement may skip the next round's real Baseline run. */
-export function canReuseVisibleBaseline(project: EvolveProject, baseline: BaselineRun): boolean {
-  if (campaignObservesLiveTarget(project) && project.campaign.checkpoint?.round !== project.campaign.currentRound + 1) return false;
+export function canReuseVisibleBaseline(project: EvolveProject, baseline: BaselineRun, nowMs = Date.now()): boolean {
+  if (campaignObservesLiveTarget(project) && (project.campaign.checkpoint?.round !== project.campaign.currentRound + 1
+    || !campaignLiveObservationFresh(project, baseline.completedAt, nowMs))) return false;
   return baseline.measurementFingerprint === baselineMeasurementFingerprint(project)
     && baselineReadiness({ ...project, baselineRun: baseline }).ready;
 }
@@ -117,9 +118,10 @@ export function setVisibleBaseline(projectId: string, fingerprint: string, basel
   remember(VISIBLE_BASELINE, projectId, { fingerprint, baseline: structuredClone(baseline), cachedAt: Date.now() });
 }
 
-export function getHoldoutBaseline(projectId: string, fingerprint: string): HoldoutBaselineCache | undefined {
+export function getHoldoutBaseline(projectId: string, fingerprint: string, maxAgeMs = MAX_CACHE_AGE_MS): HoldoutBaselineCache | undefined {
   const hit = HOLDOUT_BASELINE.get(projectId);
-  return hit && Date.now() - hit.cachedAt < MAX_CACHE_AGE_MS && hit.fingerprint === fingerprint ? structuredClone(hit) : undefined;
+  const ageMs = hit ? Date.now() - hit.cachedAt : -1;
+  return hit && ageMs >= 0 && ageMs < maxAgeMs && hit.fingerprint === fingerprint ? structuredClone(hit) : undefined;
 }
 
 export function setHoldoutBaseline(projectId: string, cache: HoldoutBaselineCache) {

@@ -56,6 +56,14 @@ export function campaignObservesLiveTarget(project: EvolveProject): boolean {
     || (project.targetConnection.adapter === "connector" && !project.targetConnection.connectorSnapshot)
     || [...project.evalSuite, ...project.hiddenEvalSuite].some((testCase) => testCase.executionMode === "external-runner" || testCase.executionMode === "visual-review");
 }
+export const LIVE_TARGET_OBSERVATION_MAX_AGE_MS = 10 * 60_000;
+
+/** A same-round live observation is reusable only while its completed receipt is recent. */
+export function campaignLiveObservationFresh(project: EvolveProject, completedAt: string | undefined, nowMs: number): boolean {
+  if (!campaignObservesLiveTarget(project)) return true;
+  const observedAt = Date.parse(completedAt ?? "");
+  return Number.isFinite(observedAt) && nowMs >= observedAt && nowMs - observedAt < LIVE_TARGET_OBSERVATION_MAX_AGE_MS;
+}
 /** Old scores cannot be compared after the scoring input changes, including legacy rows without a binding. */
 export function campaignScoringInputBlocker(project: EvolveProject): string | undefined {
   if (project.campaign.currentRound === 0) return undefined;

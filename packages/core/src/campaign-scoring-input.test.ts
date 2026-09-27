@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { EvaluationResult, EvolveProject } from "@evolution/contracts";
-import { campaignRootBaselineForMeasurement, campaignScoringInputBlocker, campaignScoringInputFingerprint } from "./campaign-scoring-input";
+import { campaignLiveObservationFresh, LIVE_TARGET_OBSERVATION_MAX_AGE_MS, campaignRootBaselineForMeasurement, campaignScoringInputBlocker, campaignScoringInputFingerprint } from "./campaign-scoring-input";
 
 function project(): EvolveProject {
   return {
@@ -67,6 +67,17 @@ describe("Campaign scoring input identity", () => {
       ...firstRound,
       campaign: { ...firstRound.campaign, currentRound: 1 },
     }, measured, "route-a", true)).toBe(root);
+  });
+  it("expires same-round live observations after ten minutes while static evidence remains reusable", () => {
+    const original = project();
+    const live = { ...original, targetConnection: { ...original.targetConnection, adapter: "http" as const } };
+    const observedAt = "2026-09-28T00:00:00.000Z";
+    const at = Date.parse(observedAt);
+    expect(campaignLiveObservationFresh(live, observedAt, at + LIVE_TARGET_OBSERVATION_MAX_AGE_MS - 1)).toBe(true);
+    expect(campaignLiveObservationFresh(live, observedAt, at + LIVE_TARGET_OBSERVATION_MAX_AGE_MS)).toBe(false);
+    expect(campaignLiveObservationFresh(live, undefined, at)).toBe(false);
+    expect(campaignLiveObservationFresh(live, observedAt, at - 1)).toBe(false);
+    expect(campaignLiveObservationFresh(original, undefined, at)).toBe(true);
   });
   it("pauses old scored rounds but allows an unscored first round", () => {
     const original = project();

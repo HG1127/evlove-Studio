@@ -1629,7 +1629,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
         working = persist({
           ...working,
           baselineRun: baseline,
-          campaign: { ...working.campaign, rootBaseline: campaignRootBaselineForMeasurement(working, baseline.result, baselineScoringRouteFingerprint(working), retryIncompleteBaseline), scoringRouteFingerprint: working.campaign.currentRound === 0 ? baselineScoringRouteFingerprint(working) : working.campaign.scoringRouteFingerprint, scoringInputFingerprint: working.campaign.currentRound === 0 ? campaignScoringInputFingerprint(working) : working.campaign.scoringInputFingerprint },
+          campaign: { ...working.campaign, rootBaseline: campaignRootBaselineForMeasurement(working, baseline.result, baselineScoringRouteFingerprint(working), retryIncompleteBaseline || !cachedBaseline), scoringRouteFingerprint: working.campaign.currentRound === 0 ? baselineScoringRouteFingerprint(working) : working.campaign.scoringRouteFingerprint, scoringInputFingerprint: working.campaign.currentRound === 0 ? campaignScoringInputFingerprint(working) : working.campaign.scoringInputFingerprint },
           stage: "baseline",
           problems: reusePriorDiagnosis ? working.problems : [],
           selectedProblemId: reusePriorDiagnosis ? working.selectedProblemId : undefined,

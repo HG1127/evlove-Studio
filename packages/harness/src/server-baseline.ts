@@ -8,6 +8,7 @@ import type {
 } from "@evolution/contracts";
 import {
   baselineReadiness,
+  campaignLiveObservationFresh,
   campaignObservesLiveTarget,
   campaignRootBaselineForMeasurement,
   campaignScoringInputBlocker,
@@ -38,8 +39,9 @@ export function serverCampaignScoringRouteBlocker(project: EvolveProject, routeF
   return "[server-campaign-scoring-route-changed] 服务端执行或评审模型已变化，旧 Campaign 分数不可直接比较；请重置搜索后重新运行。生产发布状态不会被重置。";
 }
 /** A ready score is reusable only for the exact current Target, tests, Champion and Server AI route. */
-export function canReuseServerBaseline(project: EvolveProject, routeFingerprint?: string): boolean {
-  if (campaignObservesLiveTarget(project) && project.campaign.checkpoint?.round !== project.campaign.currentRound + 1) return false;
+export function canReuseServerBaseline(project: EvolveProject, routeFingerprint?: string, nowMs = Date.now()): boolean {
+  if (campaignObservesLiveTarget(project) && (project.campaign.checkpoint?.round !== project.campaign.currentRound + 1
+    || !campaignLiveObservationFresh(project, project.baselineRun.completedAt, nowMs))) return false;
 
   return baselineReadiness(project).ready
     && project.baselineRun.measurementFingerprint === serverBaselineFingerprint(project, routeFingerprint);
@@ -329,7 +331,7 @@ export async function runServerBaseline(
     baselineRun: baseline,
     campaign: {
       ...project.campaign,
-      rootBaseline: campaignRootBaselineForMeasurement(project, evaluation, ports.scoringRouteFingerprint, !baselineReadiness(project).ready),
+      rootBaseline: campaignRootBaselineForMeasurement(project, evaluation, ports.scoringRouteFingerprint, true),
       scoringRouteFingerprint: project.campaign.currentRound === 0 ? ports.scoringRouteFingerprint ?? project.campaign.scoringRouteFingerprint : project.campaign.scoringRouteFingerprint,
       scoringInputFingerprint: project.campaign.currentRound === 0 ? campaignScoringInputFingerprint(project) : project.campaign.scoringInputFingerprint,
     },

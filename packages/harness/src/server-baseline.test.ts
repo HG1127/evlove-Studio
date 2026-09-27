@@ -117,6 +117,7 @@ describe("server baseline",()=>{
       const dynamic = { ...measured.project, targetConnection: { ...measured.project.targetConnection, adapter } };
       const bound = { ...dynamic, baselineRun: { ...dynamic.baselineRun, measurementFingerprint: serverBaselineFingerprint(dynamic) } };
       expect(canReuseServerBaseline(bound)).toBe(true);
+      expect(canReuseServerBaseline(bound, undefined, Date.parse(bound.baselineRun.completedAt!) + 10 * 60_000)).toBe(false);
       expect(canReuseServerBaseline({ ...bound, campaign: { ...bound.campaign, currentRound: 1, checkpoint: undefined } })).toBe(false);
     }
     const external = { ...measured.project, evalSuite: measured.project.evalSuite.map((testCase, index) => index === 0 ? { ...testCase, executionMode: "external-runner" as const } : testCase) };
@@ -284,6 +285,24 @@ describe("server Campaign scoring route binding", () => {
     expect(outcome.ready).toBe(true);
     expect(outcome.project.campaign.rootBaseline).toEqual(outcome.baseline.result);
     expect(outcome.project.campaign.rootBaseline?.accuracy).not.toBe(1);
+  });
+  it("reanchors a fresh first-round measurement even when the previous Baseline was ready", async () => {
+    const ports = {
+      executeSemanticBatch: async ({ testCases }: { testCases: EvolveProject["evalSuite"] }) => ({
+        results: testCases.map((testCase) => ({ testCaseId: testCase.id, output: "当前说明包含安装步骤，但验证与回滚说明不足。", trace: [] })),
+      }),
+      judge: async () => judge(),
+    };
+    const previous = await runServerBaseline(fixture(), ports);
+    expect(previous.ready).toBe(true);
+    const oldRoot = { ...previous.baseline.result!, accuracy: 1 };
+    const rerun = await runServerBaseline({
+      ...previous.project,
+      campaign: { ...previous.project.campaign, currentRound: 0, rootBaseline: oldRoot },
+    }, ports);
+    expect(rerun.ready).toBe(true);
+    expect(rerun.project.campaign.rootBaseline).toEqual(rerun.baseline.result);
+    expect(rerun.project.campaign.rootBaseline?.accuracy).not.toBe(1);
   });
   it("remeasures and reanchors the first round after a scoring route change", async () => {
     const project = fixture();

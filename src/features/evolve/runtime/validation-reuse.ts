@@ -46,13 +46,14 @@ function sessionSet(key: string, run: TargetRunResult) {
 }
 export function clearValidationReuseCache() { SESSION_EVIDENCE_CACHE.clear(); }
 
-export function createValidationReuse(scope?: string) {
+export function createValidationReuse(scope?: string, options?: { sessionCache?: boolean }) {
+  const sessionCacheEnabled = Boolean(scope) && options?.sessionCache !== false;
   const cache = new Map<string, TargetRunResult>();
   const key = (variant: string, test: TestCase) => JSON.stringify([scope ?? "local", variant, test]);
   const eligible = (test: TestCase) => ["artifact-runtime", "static-evidence", "roundtrip"].includes(test.executionMode);
   const read = (variant: string, test: TestCase) => {
     const k = key(variant, test);
-    return cache.get(k) ?? (scope ? sessionGet(k) : undefined);
+    return cache.get(k) ?? (sessionCacheEnabled ? sessionGet(k) : undefined);
   };
   return async (variant: string, cases: TestCase[], execute: (missing: TestCase[], progress: (done: number) => void) => Promise<TargetRunResult[]>, onProgress?: (done: number, total: number) => void) => {
     const duplicateCases = indexUniqueById(cases, (test) => test.id).duplicateIds;
@@ -74,7 +75,7 @@ export function createValidationReuse(scope?: string) {
       if (eligible(test) && run && !run.error && run.verificationStatus === "verified" && (Boolean(run.artifactHash) || Boolean(scope))) {
         const k = key(variant, test);
         cache.set(k, structuredClone(run));
-        if (scope) sessionSet(k, run);
+        if (sessionCacheEnabled) sessionSet(k, run);
       }
     }
     return cases.map(test => duplicateCases.has(test.id)

@@ -17,7 +17,7 @@ import { buildCandidateArtifacts } from "./artifact-quality";
 import { mapTestsToRubric, normalizeAcceptanceRubric, rubricCoverage, rubricValidation } from "./acceptance-rubric";
 import { describeArtifact, resolveProjectArtifactStrategy } from "./artifact-strategy";
 import { buildArtifactGraph, compileSemanticEvolution } from "./semantic-evolution";
-import { canRetryHoldoutFailures, candidateWinnerDecision, computeGapAnalysis, gapHeadline, indexScopedAcceptanceResults, indexScopedTestCaseResults, indexUniqueById, projectHasOnlineReleaseTarget, projectSupportsLocalDocumentSnapshot, reusableHoldoutBaseline, REGRESSION_TOLERANCE, validationDecision, validationHardRubricFailures as hardRubricFailures, validationRegression as coreValidationRegression, validationUnverifiedHardCriteria as unverifiedHardRubricCriteria } from "@evolution/core";
+import { LIVE_TARGET_OBSERVATION_MAX_AGE_MS, campaignObservesLiveTarget, canRetryHoldoutFailures, candidateWinnerDecision, computeGapAnalysis, gapHeadline, indexScopedAcceptanceResults, indexScopedTestCaseResults, indexUniqueById, projectHasOnlineReleaseTarget, projectSupportsLocalDocumentSnapshot, reusableHoldoutBaseline, REGRESSION_TOLERANCE, validationDecision, validationHardRubricFailures as hardRubricFailures, validationRegression as coreValidationRegression, validationUnverifiedHardCriteria as unverifiedHardRubricCriteria } from "@evolution/core";
 import { extractSource } from "../sources/source-loader";
 import { getArtifactBlob, putArtifactBlob } from "./artifact-blob-store";
 import { readFrozenArtifact } from "./frozen-artifact";
@@ -1034,7 +1034,8 @@ async function runValidationUnbound(project: EvolveProject, inputCandidate: Cand
   const adapter = getTargetAdapter(parsed);
   const baselineVariant = searchBaseCandidate(parsed);
   const policy = effectiveExperimentPolicy(parsed);
-  const reuse = createValidationReuse(parsed.id);
+  const liveTarget = campaignObservesLiveTarget(parsed);
+  const reuse = createValidationReuse(parsed.id, { sessionCache: !liveTarget });
   const validationContractFingerprint = holdoutBaselineFingerprint(parsed);
   // Candidate ids are model-generated and may repeat across rounds. Bind reuse to the exact
   // candidate/source + validation-contract fingerprints. Normalize local evidence BEFORE caching,
@@ -1104,7 +1105,7 @@ async function runValidationUnbound(project: EvolveProject, inputCandidate: Cand
   // 跨轮盲测对照复用：静态版本按输入指纹复用；动态 Target 与外部 Runner 每轮重新观测，
   // 同一轮断点仍可复用已验证对照，避免重试重复支付。
   const roundFingerprint = validationContractFingerprint;
-  const cachedHoldout = getHoldoutBaseline(parsed.id, roundFingerprint);
+  const cachedHoldout = getHoldoutBaseline(parsed.id, roundFingerprint, liveTarget ? LIVE_TARGET_OBSERVATION_MAX_AGE_MS : undefined);
   const cacheReusable = Boolean(cachedHoldout)
     && cachedHoldout!.suiteIds.length === suiteIds.length
     && cachedHoldout!.suiteIds.every((id, index) => id === suiteIds[index])
@@ -1146,7 +1147,7 @@ async function runValidationUnbound(project: EvolveProject, inputCandidate: Cand
   } else {
     // 断点复用：同一次失败重跑时，当前版本在同一套盲测题上的作答与评审直接沿用上次结果，
     // 不用把半程的时间和费用再付一遍；题集或当前版本变化时自动失效（重跑会重置存档）。
-    const reusableBaseline = prior.baselineContextFingerprint===roundFingerprint && Date.now()-(prior.baselineObservedAt??0)<600000 && Boolean(prior.baselineEvaluation)
+    const reusableBaseline = prior.baselineContextFingerprint===roundFingerprint && Date.now()-(prior.baselineObservedAt??0)>=0 && Date.now()-(prior.baselineObservedAt??0)<LIVE_TARGET_OBSERVATION_MAX_AGE_MS && Boolean(prior.baselineEvaluation)
       && prior.baselineSuiteIds?.length === suiteIds.length
       && (prior.baselineSuiteIds ?? []).every((id, index) => id === suiteIds[index])
       && reusableHoldoutBaseline(suite, prior.baselineRuns, prior.baselineEvaluation);

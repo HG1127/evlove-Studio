@@ -39,12 +39,14 @@ describe("campaign Baseline reuse", () => {
     const dynamic = { ...demoProject, targetConnection: { ...demoProject.targetConnection, adapter: "http" as const } };
     const verified = {
       ...dynamic.baselineRun,
+      completedAt: "2026-09-28T00:00:00.000Z",
       measurementFingerprint: baselineMeasurementFingerprint(dynamic),
       runs: dynamic.evalSuite.map((testCase) => ({ testCaseId: testCase.id, verificationStatus: "verified" as const })) as EvolveProject["baselineRun"]["runs"],
     };
     expect(canReuseVisibleBaseline(dynamic, verified)).toBe(false);
     const resumed = { ...dynamic, campaign: { ...dynamic.campaign, checkpoint: { round: dynamic.campaign.currentRound + 1, completedPhase: "baseline" as const, at: "2026-09-28T00:00:00Z" } } };
-    expect(canReuseVisibleBaseline(resumed, verified)).toBe(true);
+    expect(canReuseVisibleBaseline(resumed, verified, Date.parse(verified.completedAt!) + 1_000)).toBe(true);
+    expect(canReuseVisibleBaseline(resumed, verified, Date.parse(verified.completedAt!) + 10 * 60_000)).toBe(false);
     expect(canReuseVisibleBaseline({ ...resumed, campaign: { ...resumed.campaign, currentRound: resumed.campaign.currentRound + 1, checkpoint: undefined } }, verified)).toBe(false);
     expect(holdoutBaselineFingerprint(dynamic)).toBe(holdoutBaselineFingerprint(resumed));
     expect(holdoutBaselineFingerprint({ ...dynamic, campaign: { ...dynamic.campaign, currentRound: dynamic.campaign.currentRound + 1 } })).not.toBe(holdoutBaselineFingerprint(dynamic));
@@ -224,6 +226,22 @@ describe("round-cache · 跨轮 Baseline 复用", () => {
     expect(getVisibleBaseline("p2", fp)).toBeUndefined();
   });
 
+  it("expires dynamic holdout cache after its shorter freshness window", () => {
+    clearRoundCaches();
+    const at = Date.parse("2026-09-28T00:00:00Z");
+    const clock = vi.spyOn(Date, "now").mockReturnValue(at);
+    try {
+      setHoldoutBaseline("live", { fingerprint: "fp", suiteIds: ["h1"], runs: [], evaluation: { accuracy: 80 } as never });
+      clock.mockReturnValue(at + 10 * 60_000 - 1);
+      expect(getHoldoutBaseline("live", "fp", 10 * 60_000)).toBeTruthy();
+      clock.mockReturnValue(at + 10 * 60_000);
+      expect(getHoldoutBaseline("live", "fp", 10 * 60_000)).toBeUndefined();
+      clock.mockReturnValue(at - 1);
+      expect(getHoldoutBaseline("live", "fp", 10 * 60_000)).toBeUndefined();
+    } finally {
+      clock.mockRestore();
+    }
+  });
   it("盲测对照：按项目 + 指纹存取；指纹变化自动失效", () => {
     clearRoundCaches();
     const fp = baselineFingerprint(project());

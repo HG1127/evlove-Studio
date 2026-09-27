@@ -29,6 +29,16 @@ it("reuses exact scoped local evidence across sequential validation calls withou
   expect(run).toHaveBeenCalledTimes(2);
 });
 
+it("keeps live Target evidence only within one validation invocation", async () => {
+  clearValidationReuseCache();
+  const run = vi.fn(async (tests: ReturnType<typeof testCase>[]) => tests.map((test) => result(test.id)));
+  const first = createValidationReuse("live-target", { sessionCache: false });
+  await first("baseline:round-1", [testCase("a")], run);
+  await first("baseline:round-1", [testCase("a")], run);
+  expect(run).toHaveBeenCalledTimes(1);
+  await createValidationReuse("live-target", { sessionCache: false })("baseline:round-1", [testCase("a")], run);
+  expect(run).toHaveBeenCalledTimes(2);
+});
 it("does not reuse live runner, missing hash, failure or changed test definitions", async () => {
   const reuse = createValidationReuse();
   const cases = [testCase("a"), { ...testCase("b"), executionMode: "external-runner" as const }, testCase("c")];
