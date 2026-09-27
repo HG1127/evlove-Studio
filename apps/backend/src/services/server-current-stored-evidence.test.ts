@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { EvolveProject, TestCase } from "@evolution/contracts";
 import { serverArtifactSha256 } from "./server-experiment-artifacts";
 import { runServerCurrentStoredEvidence } from "./server-current-stored-evidence";
+import { buildServerCurrentSemanticArtifactContext } from "./server-current-semantic-context";
 
 const blobs = vi.hoisted(() => new Map<string, Blob>());
 vi.mock("./artifact-runtime", () => ({ getServerArtifactStore: () => ({ get: async (id: string) => blobs.get(id) }) }));
@@ -36,6 +37,44 @@ async function acceptChampion(project: EvolveProject, content: string) {
 beforeEach(() => { blobs.clear(); vi.stubGlobal("crypto", webcrypto); });
 
 describe("Server current-version stored evidence", () => {
+  it("builds semantic context from actual Source and Champion bytes", async () => {
+    const current = project();
+    await storeSource(current, "ACTUAL SOURCE GUIDE");
+    const sourceContext = await buildServerCurrentSemanticArtifactContext({ project: current });
+    expect(sourceContext[0]?.content).toBe("ACTUAL SOURCE GUIDE");
+    expect(JSON.stringify(sourceContext)).not.toContain("STALE PARSED INDEX");
+    await acceptChampion(current, "ACTUAL CHAMPION GUIDE");
+    const championContext = await buildServerCurrentSemanticArtifactContext({ project: current });
+    expect(championContext[0]?.content).toBe("ACTUAL CHAMPION GUIDE");
+    blobs.set("champion-guide", new NodeBlob(["TAMPERED CHAMPION TEXT"]) as Blob);
+    await expect(buildServerCurrentSemanticArtifactContext({ project: current })).rejects.toThrow();
+    blobs.delete("champion-guide");
+    await expect(buildServerCurrentSemanticArtifactContext({ project: current })).rejects.toThrow();
+  });
+
+  it("reads an accepted DOCX Champion instead of its modification blueprint", async () => {
+    const current = project("docx");
+    const zip = new JSZip();
+    zip.file("word/document.xml", "<w:t>ACTUAL CURRENT DOCX</w:t>");
+    const bytes = new Uint8Array(await zip.generateAsync({ type: "uint8array" }));
+    const blob = new NodeBlob([bytes]) as Blob;
+    const sha256 = await serverArtifactSha256(bytes);
+    const content = "BLUEPRINT ONLY";
+    const contentHash = await serverArtifactSha256(new TextEncoder().encode(content));
+    blobs.set("champion-guide", blob);
+    current.searchChampion = {
+      id: "champion", versionLabel: "S1", validation: { status: "completed", recommendation: "release" }, artifactAcceptance: { status: "passed", candidateId: "C1" },
+      candidate: { id: "C1", artifactSnapshots: [{ id: "S1", sourceArtifactId: "guide", name: "guide.docx", content, contentHash, frozenArtifact: { sourceArtifactId: "guide", snapshotHash: contentHash, blobId: "champion-guide", name: "guide.docx", sha256, size: blob.size } }] },
+    } as unknown as EvolveProject["searchChampion"];
+    const context = await buildServerCurrentSemanticArtifactContext({ project: current });
+    expect(context[0]?.content).toContain("ACTUAL CURRENT DOCX");
+    expect(JSON.stringify(context)).not.toContain("BLUEPRINT ONLY");
+  });
+  it("refuses missing uploaded bytes rather than sending a stale parsed index to AI", async () => {
+    const current = project();
+    current.sourceArtifacts[0]!.size = 12;
+    await expect(buildServerCurrentSemanticArtifactContext({ project: current })).rejects.toThrow();
+  });
   it("uses uploaded Source bytes for static text and roundtrip, ignoring stale parsed text", async () => {
     const current = project();
     await storeSource(current, "ACTUAL SOURCE GUIDE");

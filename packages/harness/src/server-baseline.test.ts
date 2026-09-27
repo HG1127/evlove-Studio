@@ -186,6 +186,7 @@ describe("server baseline",()=>{
     project.campaign.currentRound=1;
     let observed="";
     const outcome=await runServerBaseline(project,{
+      buildCurrentArtifactContext:async()=>[{id:"source",content:"S1 CURRENT CHAMPION：安装、验证、回滚均已完整。",truncated:false}],
       executeSemanticBatch:async({testCases,artifactContext})=>{
         observed=String(artifactContext.find((item)=>item.id==="source")?.content??"");
         return {results:testCases.map((testCase)=>({testCaseId:testCase.id,output:"S1 CURRENT CHAMPION 已包含安装、验证、回滚。",trace:[]}))};

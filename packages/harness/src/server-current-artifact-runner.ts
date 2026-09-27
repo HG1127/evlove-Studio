@@ -8,8 +8,8 @@ import type {
 import { criteriaRequiringJudge, deriveCriterionScores, settleAiEvaluation } from "@evolution/core";
 import {
   baselineLocalEvidence,
-  boundedBaselineArtifacts,
   compactBaselineRunOutput,
+  currentSemanticArtifactContext,
   semanticEvidenceStatus,
   serverBaselineCurrentViewGap,
   storedBaselineEvidence,
@@ -24,6 +24,7 @@ export type ServerCurrentArtifactPorts = {
     artifactContext: Array<Record<string, unknown>>;
   }): Promise<ExecuteArtifactBatchAiResult>;
   executeStoredEvidence?(args: { project: EvolveProject; testCase: TestCase }): Promise<TargetRunResult>;
+  buildCurrentArtifactContext?(args: { project: EvolveProject }): Promise<Array<Record<string, unknown>>>;
   executeExternalBatch?(args: {
     project: EvolveProject;
     testCases: TestCase[];
@@ -63,7 +64,8 @@ export async function executeServerCurrentArtifactSuite(
   for(const testCase of testCases){
     const stored=await storedBaselineEvidence(project,testCase,ports.executeStoredEvidence);
     if(stored){ordered.set(testCase.id,stored);continue;}
-    const gap=serverBaselineCurrentViewGap(project,testCase);
+    const gap=testCase.executionMode==="artifact-runtime"&&ports.buildCurrentArtifactContext
+      ?undefined:serverBaselineCurrentViewGap(project,testCase);
     if(gap){ordered.set(testCase.id,unavailableBaselineRun(testCase,gap));continue;}
     const local=baselineLocalEvidence(project,testCase);
     if(local){ordered.set(testCase.id,local);continue;}
@@ -90,7 +92,8 @@ export async function executeServerCurrentArtifactSuite(
   if(semanticCases.length){
     const started=Date.now();
     try{
-      const result=await ports.executeSemanticBatch({project,testCases:semanticCases,artifactContext:boundedBaselineArtifacts(project)});
+      const artifactContext=await currentSemanticArtifactContext(project,ports.buildCurrentArtifactContext);
+      const result=await ports.executeSemanticBatch({project,testCases:semanticCases,artifactContext});
       const {byId,duplicateIds}=indexUniqueBatchResults(result.results);
       const latency=Math.max(1,Math.round((Date.now()-started)/Math.max(1,semanticCases.length)));
       for(const testCase of semanticCases){
@@ -99,7 +102,7 @@ export async function executeServerCurrentArtifactSuite(
           ?unavailableBaselineRun(testCase,"Server AI Batch 对本题返回了重复结果，证据身份不明确。")
           :item?{
           testCaseId:testCase.id,output:item.output,latencyMs:latency,cost:0,
-          verificationStatus:semanticEvidenceStatus(item.output),
+          verificationStatus:artifactContext.some((artifact)=>artifact.truncated)&&semanticEvidenceStatus(item.output)==="verified"?"partial":semanticEvidenceStatus(item.output),
           trace:[{id:`server-current-semantic-${testCase.id}`,stage:"AI 语义核查",summary:"Server AI 读取当前版本并定位同卷证据",status:"info",detail:"仅提供当前成果观察；独立 Judge 负责 Rubric 结算。"},...item.trace],
         }:unavailableBaselineRun(testCase,"Server AI Batch 未返回本题结果。"));
       }

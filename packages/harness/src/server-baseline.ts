@@ -15,8 +15,8 @@ import {
 } from "@evolution/core";
 import {
   baselineLocalEvidence,
-  boundedBaselineArtifacts,
   compactBaselineRunOutput,
+  currentSemanticArtifactContext,
   serverBaselineCurrentViewGap,
   semanticEvidenceStatus,
   serverBaselineFingerprint,
@@ -34,6 +34,7 @@ export type ServerBaselinePorts = {
     artifactContext: Array<Record<string, unknown>>;
   }): Promise<ExecuteArtifactBatchAiResult>;
   executeStoredEvidence?(args: { project: EvolveProject; testCase: TestCase }): Promise<TargetRunResult>;
+  buildCurrentArtifactContext?(args: { project: EvolveProject }): Promise<Array<Record<string, unknown>>>;
   executeExternalBatch?(args: {
     project: EvolveProject;
     testCases: TestCase[];
@@ -96,7 +97,8 @@ export async function runServerBaseline(
   for (const testCase of project.evalSuite) {
     const stored = await storedBaselineEvidence(project, testCase, ports.executeStoredEvidence);
     if (stored) { ordered.set(testCase.id, stored); continue; }
-    const currentViewGap = serverBaselineCurrentViewGap(project, testCase);
+    const currentViewGap = testCase.executionMode === "artifact-runtime" && ports.buildCurrentArtifactContext
+      ? undefined : serverBaselineCurrentViewGap(project, testCase);
     if (currentViewGap) {
       ordered.set(testCase.id, unavailableBaselineRun(testCase, currentViewGap));
       continue;
@@ -139,10 +141,11 @@ export async function runServerBaseline(
   if (semanticCases.length) {
     const semanticStarted = Date.now();
     try {
+      const artifactContext = await currentSemanticArtifactContext(project, ports.buildCurrentArtifactContext);
       const result = await ports.executeSemanticBatch({
         project,
         testCases: semanticCases,
-        artifactContext: boundedBaselineArtifacts(project),
+        artifactContext,
       });
       const { byId, duplicateIds } = indexUniqueBatchResults(result.results);
       const latency = Math.max(1, Math.round((Date.now() - semanticStarted) / Math.max(1, semanticCases.length)));
@@ -155,7 +158,7 @@ export async function runServerBaseline(
           output: item.output,
           latencyMs: latency,
           cost: 0,
-          verificationStatus: semanticEvidenceStatus(item.output),
+          verificationStatus: artifactContext.some((artifact) => artifact.truncated) && semanticEvidenceStatus(item.output) === "verified" ? "partial" : semanticEvidenceStatus(item.output),
           trace: [{
             id: `server-semantic-${testCase.id}`,
             stage: "AI 语义核查",

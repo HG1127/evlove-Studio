@@ -6,6 +6,7 @@ import { getServerArtifactStore } from "./artifact-runtime";
 import { runServerFrozenArtifactStaticEvidence } from "./server-static-artifact-evidence";
 import { attachServerVisualEvidence } from "./server-visual-evidence";
 import { runServerCurrentStoredEvidence } from "./server-current-stored-evidence";
+import { buildServerCurrentSemanticArtifactContext } from "./server-current-semantic-context";
 import { runServerHttpTargetBatch, serverHttpTargetEnabled } from "./server-http-target-execution";
 import {runServerConnectorTargetBatch} from "./server-connector-target-execution";
 import {serverConnectorTargetEnabled} from "./connector-target-source";
@@ -98,6 +99,7 @@ export async function runServerMissionHoldout(project:EvolveProject){
         variant:null,
       }),
       executeStoredEvidence:runServerCurrentStoredEvidence,
+      buildCurrentArtifactContext:buildServerCurrentSemanticArtifactContext,
       executeExternalBatch:({project:current,testCases})=>executeCurrentExternal(current,testCases),
       judge:(payload)=>runServerAi("evaluate",payload),
     },

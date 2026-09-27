@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
-import { storedBaselineEvidence } from "./server-baseline-evidence";
+import { currentSemanticArtifactContext, storedBaselineEvidence } from "./server-baseline-evidence";
 import { executeServerCurrentArtifactSuite } from "./server-current-artifact-runner";
 
 const testCase: TestCase = { id: "H1", title: "Check guide", input: "Check actual file", expected: [], tags: [], hidden: true, criterionIds: [], executionMode: "static-evidence", evidenceScope: "implementation" };
@@ -32,6 +32,22 @@ describe("Server current-version file evidence routing", () => {
     const pairwise = { ...testCase, criterionIds: ["SYS-PAIRWISE"] };
     const port = async () => { throw new Error("Pairwise must not read a static file"); };
     expect((await storedBaselineEvidence(project(), pairwise, port))?.verificationStatus).toBe("unverified");
+  });  it("rejects stale semantic context without a file port and downgrades truncated evidence", async () => {
+    const current = project();
+    await expect(currentSemanticArtifactContext(current)).rejects.toThrow("实际文件语义上下文端口");
+    const semantic = { ...testCase, executionMode: "artifact-runtime" as const };
+    const runs = await executeServerCurrentArtifactSuite(current, [semantic], {
+      buildCurrentArtifactContext: async () => [{ id: "guide", content: "ACTUAL FILE", truncated: true }],
+      executeSemanticBatch: async () => ({ results: [{ testCaseId: "H1", output: "ACTUAL FILE", trace: [] }] }),
+      judge: async () => { throw new Error("not needed"); },
+    });
+    expect(runs[0]?.verificationStatus).toBe("partial");
+    const missing = await executeServerCurrentArtifactSuite(current, [semantic], {
+      buildCurrentArtifactContext: async () => [],
+      executeSemanticBatch: async () => { throw new Error("stale context must not reach AI"); },
+      judge: async () => { throw new Error("not needed"); },
+    });
+    expect(missing[0]?.verificationStatus).toBe("unverified");
   });  it("keeps direct pasted text on the local evidence path", async () => {
     expect(await storedBaselineEvidence(project(false), testCase)).toBeUndefined();
   });

@@ -78,6 +78,21 @@ export function boundedBaselineArtifacts(project: EvolveProject, budget = 56_000
   });
 }
 
+export async function currentSemanticArtifactContext(
+  project: EvolveProject,
+  build?: (args: { project: EvolveProject }) => Promise<Array<Record<string, unknown>>>,
+): Promise<Array<Record<string, unknown>>> {
+  const stored = Boolean(project.searchChampion) || project.sourceArtifacts.some((artifact) => Boolean(artifact.storageRef?.trim())
+    || artifact.inputMode === "upload" || artifact.inputMode === "remote");
+  if (!stored) return boundedBaselineArtifacts(project);
+  if (!build) throw new Error("当前版本缺少实际文件语义上下文端口，不能让过期解析索引产生 VERIFIED 结论。");
+  const context = await build({ project });
+  const targets = project.sourceArtifacts.filter((artifact) => artifact.role === "target");
+  if (!Array.isArray(context) || !targets.length || targets.some((target) => context.filter((item) => item.id === target.id).length !== 1)) {
+    throw new Error("当前版本语义上下文没有覆盖全部唯一 Target。");
+  }
+  return context;
+}
 export function serverBaselineCurrentViewGap(project: EvolveProject, testCase: TestCase) {
   const candidate = trustedServerBaselineChampion(project);
   if (!candidate) return undefined;
