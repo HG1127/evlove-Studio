@@ -11,6 +11,7 @@ import type {
 import {
   criteriaRequiringJudge,
   deriveCriterionScores,
+  fastHash,
   settleAiEvaluation,
 } from "@evolution/core";
 import {
@@ -44,6 +45,14 @@ export type ServerExperimentExecutionPorts = {
 function unavailableFrozenStatic(testCase: TestCase, detail: string): TargetRunResult {
   const result = unavailableExperimentRun(testCase, detail);
   return { ...result, trace: [...result.trace, { id: `candidate-zip-static-${testCase.id}`, stage: "candidate-static-evidence", summary: "冻结代码包静态证据未完成", status: "warning", detail }] };
+}
+function unavailableFrozenRoundtrip(testCase: TestCase, detail: string): TargetRunResult {
+  const result = unavailableExperimentRun(testCase, detail);
+  return { ...result, trace: [...result.trace, { id: `server-frozen-roundtrip-${testCase.id}`, stage: "format-roundtrip", summary: "Server 冻结文件往返证据未完成", status: "warning", detail }] };
+}
+
+function frozenRoundtripSignature(snapshots: CandidateArtifactSnapshot[]) {
+  return JSON.stringify(snapshots.map((snapshot) => [snapshot.sourceArtifactId, snapshot.frozenArtifact?.sha256, fastHash(snapshot.content)]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))));
 }
 function average(values: number[]) {
   return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
@@ -106,7 +115,8 @@ export async function executeServerExperimentCandidate(
     }
     const local = candidateLocalEvidence(project, candidate, testCase);
     if (local) {
-      if (testCase.executionMode === "roundtrip" && local.trace.some((step) => step.id === `candidate-frozen-roundtrip-${candidate.id}-${testCase.id}`)) {
+      if (testCase.executionMode === "roundtrip" && local.trace.some((step) => step.id === `candidate-frozen-roundtrip-${candidate.id}-${testCase.id}` || step.id === `candidate-roundtrip-${candidate.id}-${testCase.id}`)) {
+        const textRoundtrip = local.trace.some((step) => step.id === `candidate-roundtrip-${candidate.id}-${testCase.id}`);
         const snapshots = snapshotsForTest(project, candidate, testCase);
         const mappedIds = new Set(testCase.criterionIds.flatMap((id) => project.acceptanceRubric.filter((criterion) => criterion.id === id).flatMap((criterion) => criterion.artifactIds)));
         const targetIds = project.sourceArtifacts.filter((source) => source.role === "target").map((source) => source.id);
@@ -117,7 +127,7 @@ export async function executeServerExperimentCandidate(
           && new Set(snapshots.map((snapshot) => snapshot.sourceArtifactId)).size === snapshots.length
           && snapshots.every((snapshot) => expectedIds.includes(snapshot.sourceArtifactId) && snapshot.frozenArtifact?.sourceArtifactId === snapshot.sourceArtifactId);
         let validated = false;
-        if (exactCoverage && ports.verifyFrozenArtifact) {
+        if (exactCoverage && ports.verifyFrozenArtifact && (!textRoundtrip || local.verificationStatus === "partial")) {
           try {
             validated = (await Promise.all(snapshots.map((snapshot) => ports.verifyFrozenArtifact!(snapshot)))).every(Boolean);
           } catch {
@@ -129,8 +139,8 @@ export async function executeServerExperimentCandidate(
           output: `CANDIDATE FROZEN ARTIFACT ROUNDTRIP VERIFIED\n${local.output}\n本轮已重新读取每份实际 Blob，并核对 Snapshot 绑定、大小及 SHA-256。`,
           verificationStatus: "verified",
           artifactHash: snapshots.length === 1 ? snapshots[0]!.frozenArtifact!.sha256 : undefined,
-          trace: [...local.trace, { id: `candidate-frozen-recheck-${candidate.id}-${testCase.id}`, stage: "format-roundtrip", summary: "本轮已重新核对冻结文件字节", status: "pass" }],
-        } : unavailableExperimentRun(testCase, "Candidate 冻结文件未通过本轮 Blob 回读、完整 Target 覆盖或 SHA-256 校验。"));
+          trace: [...local.trace, { id: `server-frozen-roundtrip-${testCase.id}`, stage: "format-roundtrip", summary: "本轮已重新核对冻结文件字节", status: "pass", detail: frozenRoundtripSignature(snapshots) }],
+        } : unavailableFrozenRoundtrip(testCase, "Candidate 冻结文件未通过本轮 Blob 回读、完整 Target 覆盖或 SHA-256 校验。"));
         continue;
       }
       ordered.set(testCase.id, local);

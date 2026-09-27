@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Candidate, EvaluateAiResult, EvolveProject, TargetRunResult } from "@evolution/contracts";
 import { runServerExperiment } from "./server-experiment";
 import { executeServerExperimentCandidate } from "./server-experiment-runner";
+import { normalizeLocallyVerifiableCandidateRuns } from "./candidate-snapshot-evidence";
 
 function fixture(executionMode:"artifact-runtime"|"external-runner"|"visual-review"="artifact-runtime"):EvolveProject{
   const now="2026-09-20T13:00:00.000Z";
@@ -200,9 +201,28 @@ describe("server frozen roundtrip recheck", () => {
     expect(verify).toHaveBeenCalledOnce();
     expect(run?.verificationStatus).toBe("verified");
     expect(run?.artifactHash).toBe(candidate.artifactSnapshots[0]!.frozenArtifact!.sha256);
-    expect(run?.trace.some((step) => step.id.startsWith("candidate-frozen-recheck-") && step.status === "pass")).toBe(true);
+    expect(run?.trace.some((step) => step.id.startsWith("server-frozen-roundtrip-") && step.status === "pass")).toBe(true);
   });
 
+  it("requires the stored text file before upgrading UTF-8 Snapshot evidence", async () => {
+    const project = fixture();
+    project.acceptanceRubric[0]!.validationMethod = "format-roundtrip";
+    const testCase = { ...project.evalSuite[0]!, executionMode: "roundtrip" as const, evidenceScope: "format" as const };
+    const candidate = frozenCandidate(project.candidates[0]!, "Complete new guide");
+    const [verified] = await executeServerExperimentCandidate(project, candidate, ports(async () => true), [testCase]);
+    expect(verified?.verificationStatus).toBe("verified");
+    expect(verified?.artifactHash).toBe("sha-new");
+    const [missing] = await executeServerExperimentCandidate(project, candidate, ports(), [testCase]);
+    expect(missing?.verificationStatus).toBe("unverified");
+    expect(missing?.output).not.toContain("ROUNDTRIP VERIFIED");
+    const [failed] = await executeServerExperimentCandidate(project, candidate, ports(async () => false), [testCase]);
+    expect(failed?.verificationStatus).toBe("unverified");
+    const stale = { ...candidate, artifactSnapshots: [{ ...candidate.artifactSnapshots[0]!, frozenArtifact: { ...candidate.artifactSnapshots[0]!.frozenArtifact!, sha256: "new-blob-sha" } }] } as Candidate;
+    const [reused] = normalizeLocallyVerifiableCandidateRuns(project, stale, [testCase], [verified!]);
+    expect(reused?.verificationStatus).toBe("unverified");
+    const changedText = { ...candidate, artifactSnapshots: [{ ...candidate.artifactSnapshots[0]!, content: "Changed after validation" }] } as Candidate;
+    expect(normalizeLocallyVerifiableCandidateRuns(project, changedText, [testCase], [verified!])[0]?.verificationStatus).toBe("unverified");
+  });
   it("rejects a missing verifier, failed byte check, and ambiguous Target coverage", async () => {
     const { project, testCase, candidate } = scenario();
     const absent = await executeServerExperimentCandidate(project, candidate, ports(), [testCase]);

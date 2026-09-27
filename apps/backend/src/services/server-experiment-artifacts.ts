@@ -208,7 +208,17 @@ export async function verifyServerCandidateFrozenArtifact(snapshot: CandidateArt
   if (receipt.snapshotHash !== contentHash || (snapshot.contentHash && snapshot.contentHash !== contentHash)) return false;
   const blob = await getServerArtifactStore().get(receipt.blobId);
   if (!blob || blob.size !== receipt.size) return false;
-  return await serverArtifactSha256(await blob.arrayBuffer()) === receipt.sha256;
+  const bytes = await blob.arrayBuffer();
+  if (await serverArtifactSha256(bytes) !== receipt.sha256) return false;
+  const extension = receipt.name.split(".").pop()?.toLowerCase() ?? "";
+  if (TEXT_FAMILY.test(extension)) {
+    try {
+      if (new TextDecoder("utf-8", { fatal: true }).decode(bytes) !== snapshot.content) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
 }
 export async function applyServerCodebaseOverlay(baseBlob: Blob, content: string, mimeType = "application/zip") {
   const payload = parseCodebaseOverlay(content, true)!;

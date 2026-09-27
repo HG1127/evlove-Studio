@@ -185,6 +185,30 @@ describe("server experiment materialization",()=>{
   });
 });
 describe("server frozen receipt execution recheck", () => {
+  it("requires a frozen text Blob to equal the complete Candidate Snapshot", async () => {
+    vi.stubGlobal("crypto", webcrypto);
+    try {
+      const content = "expected";
+      const snapshotHash = await serverArtifactSha256(new TextEncoder().encode(content));
+      const wrong = new NodeBlob(["different"], { type: "text/markdown" });
+      const wrongSha = await serverArtifactSha256(await wrong.arrayBuffer());
+      const snapshot = {
+        id: "text-snap", sourceArtifactId: "guide", name: "guide.md", mimeType: "text/markdown", content,
+        contentHash: snapshotHash, buildMode: "ai-full", notes: [], createdAt: "2026-09-27T00:00:00.000Z",
+        frozenArtifact: { sourceArtifactId: "guide", snapshotHash, blobId: "text-blob", name: "guide.md", mimeType: "text/markdown", sha256: wrongSha, size: wrong.size, verifiedAt: "2026-09-27T00:00:00.000Z", checks: [], limitations: [] },
+      } as CandidateArtifactSnapshot;
+      getBlob.mockReset().mockResolvedValue(wrong);
+      expect(await verifyServerCandidateFrozenArtifact(snapshot)).toBe(false);
+      const correct = new NodeBlob([content], { type: "text/markdown" });
+      getBlob.mockResolvedValue(correct);
+      snapshot.frozenArtifact!.sha256 = await serverArtifactSha256(await correct.arrayBuffer());
+      snapshot.frozenArtifact!.size = correct.size;
+      expect(await verifyServerCandidateFrozenArtifact(snapshot)).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("binds Snapshot content and persisted Blob bytes before claiming a binary roundtrip", async () => {
     vi.stubGlobal("crypto", webcrypto);
     const content = JSON.stringify({ kind: "codebase", overlay: true, files: [{ path: "src/app.ts", content: "v2" }] });

@@ -1,5 +1,5 @@
 import type { Candidate, EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
-import { criterionCanUseLocalSnapshotEvidence } from "@evolution/core";
+import { criterionCanUseLocalSnapshotEvidence, fastHash } from "@evolution/core";
 import { retrieveTextContext } from "./context-retrieval";
 
 const LOCALLY_ROUNDTRIPPABLE_TEXT = /^(txt|md|markdown|csv|json|yaml|yml|css|js|jsx|ts|tsx)$/i;
@@ -108,6 +108,31 @@ export function normalizeLocallyVerifiableCandidateRuns(
     });
     if (!mapped.length) return run;
 
+    // Server roundtrip evidence is backed by a fresh Blob read. Do not let the legacy
+    // text-only UTF-8 shortcut replace a missing or stale frozen-file result.
+    if (testCase.executionMode === "roundtrip" && run.trace.some((step) => step.id === `server-frozen-roundtrip-${testCase.id}`)) {
+      if (run.verificationStatus === "unverified") return run;
+      const scopedIds = new Set(mapped.flatMap((criterion) => criterion.artifactIds));
+      const targetIds = project.sourceArtifacts.filter((source) => source.role === "target").map((source) => source.id);
+      const expectedIds = scopedIds.size ? [...scopedIds] : targetIds;
+      const snapshots = candidate.artifactSnapshots.filter((snapshot) => expectedIds.includes(snapshot.sourceArtifactId));
+      const exactCoverage = expectedIds.length > 0
+        && new Set(targetIds).size === targetIds.length
+        && snapshots.length === expectedIds.length
+        && new Set(snapshots.map((snapshot) => snapshot.sourceArtifactId)).size === snapshots.length
+        && snapshots.every((snapshot) => snapshot.frozenArtifact?.sourceArtifactId === snapshot.sourceArtifactId);
+      const signature = JSON.stringify(snapshots.map((snapshot) => [snapshot.sourceArtifactId, snapshot.frozenArtifact?.sha256, fastHash(snapshot.content)]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))));
+      const bound = exactCoverage && run.verificationStatus === "verified"
+        && (snapshots.length !== 1 || run.artifactHash === snapshots[0]!.frozenArtifact?.sha256)
+        && run.trace.some((step) => step.id === `server-frozen-roundtrip-${testCase.id}` && step.status === "pass" && step.detail === signature);
+      return bound ? run : {
+        ...run,
+        output: "UNVERIFIED：Server 格式往返证据与当前冻结文件集合不一致。",
+        verificationStatus: "unverified",
+        artifactHash: undefined,
+        trace: [...run.trace, { id: `server-frozen-binding-${testCase.id}`, stage: "format-roundtrip", summary: "冻结文件往返绑定失效", status: "warning" }],
+      };
+    }
     // The Target adapter has already read and hashed the materialized ZIP. Keep that exact
     // result instead of replacing it with the Candidate overlay's partial text evidence.
     if (testCase.executionMode === "static-evidence" && run.trace.some((step) => step.id === `candidate-zip-static-${testCase.id}` && step.stage === "candidate-static-evidence")) {

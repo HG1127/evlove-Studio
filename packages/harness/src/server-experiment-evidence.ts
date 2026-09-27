@@ -66,15 +66,15 @@ export function candidateLocalEvidence(
       const preserved = details.every((item) => item.preserved);
       return {
         testCaseId: testCase.id,
-        output: `CANDIDATE TEXT FORMAT ROUNDTRIP VERIFIED\n${JSON.stringify(details)}\nServer 对 Candidate Snapshot 执行 UTF-8 编码→解码并逐字比较。`,
+        output: `CANDIDATE TEXT FORMAT ROUNDTRIP PENDING BLOB\n${JSON.stringify(details)}\nServer 已对 Candidate Snapshot 执行 UTF-8 编码→解码；实际冻结文件仍需本轮回读逐字核对。`,
         latencyMs: 0,
         cost: 0,
-        verificationStatus: preserved ? "verified" : "partial",
+        verificationStatus: preserved ? "partial" : "unverified",
         trace: [{
           id: `candidate-roundtrip-${candidate.id}-${testCase.id}`,
           stage: "format-roundtrip",
           summary: preserved ? "Candidate 文本实际编解码一致" : "Candidate 文本编解码不一致",
-          status: preserved ? "pass" : "warning",
+          status: "warning",
         }],
       };
     }
