@@ -51,6 +51,10 @@ describe("Source Parse start receipt",()=>{
     expect(SourceParseStartResponseSchema.safeParse({...receipt,runId:"run-1"}).success).toBe(true);
   });
 
+  it("rejects empty Job and Artifact identities",()=>{
+    expect(SourceParseStartResponseSchema.safeParse({...receipt,jobId:"",runId:"run-1"}).success).toBe(false);
+    expect(SourceParseStartResponseSchema.safeParse({...receipt,artifactId:"",runId:"run-1"}).success).toBe(false);
+  });
   it("allows a verified completed Parse result with no historic run ID",()=>{
     expect(SourceParseStartResponseSchema.safeParse({...receipt,status:"completed",reused:true}).success).toBe(true);
   });

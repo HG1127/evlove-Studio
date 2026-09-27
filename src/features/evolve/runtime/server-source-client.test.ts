@@ -3,6 +3,7 @@ import {EvolutionJobSchema} from "@evolution/contracts";
 import {
   ServerParseUnavailableError,
   cancelServerParseJob,
+  getServerParseStatus,
   listServerParseJobs,
   parseJobMetadata,
   startServerParseFile,
@@ -130,5 +131,46 @@ describe("server source client degraded fallback classification",()=>{
     vi.stubGlobal("fetch",fetch);
     expect(await waitForServerParseJob(job.id)).toMatchObject(artifact);
     expect(fetch).toHaveBeenCalledTimes(2);
+  });
+  it("rejects a Parse start receipt for another uploaded Artifact",async()=>{
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({
+      jobId:"parse-1",runId:"run-1",artifactId:"artifact-other",status:"queued",
+    }),{status:200})));
+    await expect(startServerParseFile(new File(["hello"],"input.txt"),"target","artifact-expected"))
+      .rejects.toThrow("Parse start Artifact identity mismatch");
+  });
+
+  it("rejects a Parse status for another Job or mismatched result Artifact",async()=>{
+    const at="2026-09-24T00:00:00.000Z";
+    const job=EvolutionJobSchema.parse({schemaVersion:"job-v1",id:"parse-other",type:"parse",
+      status:"completed",label:"Parse",idempotencyKey:"parse-key",createdAt:at,updatedAt:at});
+    const artifact={id:"artifact-other",name:"input.txt",role:"target",mimeType:"text/plain",size:5,
+      inputMode:"upload",storageRef:"input-1",createdAt:at};
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({job,artifact}),{status:200})));
+    await expect(getServerParseStatus("parse-expected")).rejects.toThrow("Parse status Job identity mismatch");
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({
+      job:{...job,id:"parse-expected",metadata:{artifactId:"artifact-expected"}},artifact,
+    }),{status:200})));
+    await expect(getServerParseStatus("parse-expected")).rejects.toThrow("Parse status Artifact identity mismatch");
+  });
+
+  it("rejects a completed Parse result that differs from the uploaded Artifact ID",async()=>{
+    const at="2026-09-24T00:00:00.000Z";
+    const job=EvolutionJobSchema.parse({schemaVersion:"job-v1",id:"parse-1",type:"parse",
+      status:"completed",label:"Parse",idempotencyKey:"parse-key",createdAt:at,updatedAt:at});
+    const artifact={id:"artifact-other",name:"input.txt",role:"target",mimeType:"text/plain",size:5,
+      inputMode:"upload",storageRef:"input-1",createdAt:at};
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({job,artifact}),{status:200})));
+    await expect(waitForServerParseJob(job.id,undefined,"artifact-expected"))
+      .rejects.toThrow("Parse result Artifact identity mismatch");
+  });
+
+  it("rejects a Parse cancellation receipt for another Job",async()=>{
+    const workflow={runId:"run-1",bound:true,exists:true,statusBefore:"running",statusAfter:"cancelled",
+      cancelIssued:true,reason:"workflow-run-cancelled"};
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({
+      jobId:"parse-other",status:"cancelled",workflow,
+    }),{status:200})));
+    await expect(cancelServerParseJob("parse-expected")).rejects.toThrow("Parse cancel Job identity mismatch");
   });
 });

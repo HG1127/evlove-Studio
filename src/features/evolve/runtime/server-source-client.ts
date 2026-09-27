@@ -52,7 +52,9 @@ export async function startServerParseFile(file:File,role:ArtifactRole,artifactI
   form.append("lastModified",String(file.lastModified));
   if(sessionId)form.append("sessionId",sessionId);
   try{
-    return SourceParseStartResponseSchema.parse(await json("/api/evolution/parse-start",{method:"POST",body:form}));
+    const receipt=SourceParseStartResponseSchema.parse(await json("/api/evolution/parse-start",{method:"POST",body:form}));
+    if(receipt.artifactId!==artifactId)throw new Error("Parse start Artifact identity mismatch");
+    return receipt;
   }catch(error){
     if(error instanceof ServerParseResultPendingError){
       return SourceParseStartResponseSchema.parse({jobId:error.jobId,artifactId,status:"completed",reused:true});
@@ -62,15 +64,22 @@ export async function startServerParseFile(file:File,role:ArtifactRole,artifactI
 }
 
 export async function getServerParseStatus(jobId:string){
-  return SourceParseStatusResponseSchema.parse(await json("/api/evolution/parse-status?id="+encodeURIComponent(jobId)));
+  const status=SourceParseStatusResponseSchema.parse(await json("/api/evolution/parse-status?id="+encodeURIComponent(jobId)));
+  if(status.job.id!==jobId||status.job.type!=="parse")throw new Error("Parse status Job identity mismatch");
+  if(status.artifact&&typeof status.job.metadata?.artifactId==="string"
+    &&status.artifact.id!==status.job.metadata.artifactId)throw new Error("Parse status Artifact identity mismatch");
+  return status;
 }
 
-export async function waitForServerParseJob(jobId:string,signal?:AbortSignal){
+export async function waitForServerParseJob(jobId:string,signal?:AbortSignal,expectedArtifactId?:string){
   const started=Date.now();
   while(Date.now()-started<5*60_000){
     if(signal?.aborted)throw signal.reason??new DOMException("Aborted","AbortError");
     const status=await getServerParseStatus(jobId);
-    if(status.job.status==="completed"&&status.artifact)return status.artifact;
+    if(status.job.status==="completed"&&status.artifact){
+      if(expectedArtifactId&&status.artifact.id!==expectedArtifactId)throw new Error("Parse result Artifact identity mismatch");
+      return status.artifact;
+    }
     if(status.job.status==="completed"&&status.resultIssueCode!=="temporary-storage-unavailable"){
       throw new Error(status.resultIssue??"Parse 结果 Artifact 缺失");
     }
@@ -88,11 +97,13 @@ export async function listServerParseJobs(sessionId?:string){
 }
 
 export async function cancelServerParseJob(jobId:string,deleteArtifact=true){
-  return SourceParseCancelResponseSchema.parse(await json("/api/evolution/parse-cancel",{
+  const receipt=SourceParseCancelResponseSchema.parse(await json("/api/evolution/parse-cancel",{
     method:"POST",
     headers:{"Content-Type":"application/json"},
     body:JSON.stringify({jobId,deleteArtifact}),
   }));
+  if(receipt.jobId!==jobId)throw new Error("Parse cancel Job identity mismatch");
+  return receipt;
 }
 
 export function parseJobMetadata(job:EvolutionJob){
@@ -118,7 +129,7 @@ export async function parseServerFile(args:{
 }):Promise<SourceArtifact>{
   const artifactId=args.artifactId??`artifact-${crypto.randomUUID()}`;
   const start=await startServerParseFile(args.file,args.role,artifactId,args.sessionId);
-  return waitForServerParseJob(start.jobId,args.signal);
+  return waitForServerParseJob(start.jobId,args.signal,artifactId);
 }
 
 export async function ingestSourcesOnServer(args:{

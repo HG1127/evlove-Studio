@@ -68,9 +68,9 @@ export const SourceParseResultArtifactSchema=SourceArtifactSchema.extend({
 });
 
 export const SourceParseStartResponseSchema=z.object({
-  jobId:z.string(),
+  jobId:z.string().min(1),
   runId:z.string().min(1).optional(),
-  artifactId:z.string(),
+  artifactId:ArtifactIdSchema,
   status:z.enum(["queued","running","waiting","completed"]),
   reused:z.boolean().optional(),
 }).superRefine((receipt,context)=>{

@@ -245,7 +245,7 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
         let parsed: SourceArtifact | undefined;
         let serverJobId=item.serverJobId;
         if(serverJobId){
-          parsed=await waitForServerParseJob(serverJobId);
+          parsed=await waitForServerParseJob(serverJobId,undefined,artifactId);
         }else if(serverParseAvailableRef.current===false){
           [parsed]=await ingestSources({files:[item.file],role:item.role});
         }else{
@@ -259,7 +259,7 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
               void cancelServerParseJob(serverJobId,true).catch(()=>undefined);
               return undefined;
             }
-            parsed=await waitForServerParseJob(serverJobId);
+            parsed=await waitForServerParseJob(serverJobId,undefined,artifactId);
           }catch(cause){
             if(!(cause instanceof ServerParseUnavailableError))throw cause;
             [parsed]=await ingestSources({files:[item.file],role:item.role});
