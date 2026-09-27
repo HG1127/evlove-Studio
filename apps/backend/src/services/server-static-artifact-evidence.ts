@@ -70,6 +70,17 @@ function spreadsheetText(bytes: Uint8Array) {
   return blocks.join("\n\n");
 }
 
+export function serverStaticTextExtension(extension: string) {
+  return TEXT_EXTENSION.test(extension);
+}
+
+export async function extractServerStaticArtifactText(extension: string, bytes: Uint8Array): Promise<string | undefined> {
+  if (bytes.byteLength > MAX_FILE_BYTES) throw new Error("冻结文件超出静态索引范围。");
+  if (TEXT_EXTENSION.test(extension)) return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  if (extension === "docx" || extension === "pptx") return officeText(bytes, extension);
+  if (["xlsx", "xls", "ods"].includes(extension)) return spreadsheetText(bytes);
+  return undefined;
+}
 /** Static evidence from the same frozen bytes that Gate F may later accept. */
 export async function runServerFrozenArtifactStaticEvidence(args: {
   project: EvolveProject; candidate: Candidate; testCase: TestCase;
@@ -94,11 +105,8 @@ export async function runServerFrozenArtifactStaticEvidence(args: {
     if (await serverArtifactSha256(buffer) !== receipt.sha256) return unavailable(testCase, "用于静态索引的冻结文件字节已变化。");
     const bytes = new Uint8Array(buffer);
     const extension = source.extension.toLowerCase();
-    let actual = "";
-    if (TEXT_EXTENSION.test(extension)) actual = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    else if (extension === "docx" || extension === "pptx") actual = await officeText(bytes, extension);
-    else if (["xlsx", "xls", "ods"].includes(extension)) actual = spreadsheetText(bytes);
-    else return unavailable(testCase, `${source.name} 尚无 Server 冻结文件静态解析器。`);
+    const actual = await extractServerStaticArtifactText(extension, bytes);
+    if (actual === undefined) return unavailable(testCase, `${source.name} 尚无 Server 冻结文件静态解析器。`);
     if (!actual.trim()) return unavailable(testCase, "冻结文件没有可定位的静态文本/结构证据。");
     const complete = actual.length <= MAX_OUTPUT_CHARS;
     const status: TargetRunResult["verificationStatus"] = !complete || testCase.evidenceScope === "product-behavior" ? "partial" : "verified";

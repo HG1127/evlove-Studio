@@ -113,6 +113,22 @@ export function unavailableBaselineRun(testCase: TestCase, detail: string): Targ
   };
 }
 
+export async function storedBaselineEvidence(
+  project: EvolveProject,
+  testCase: TestCase,
+  execute?: (args: { project: EvolveProject; testCase: TestCase }) => Promise<TargetRunResult>,
+): Promise<TargetRunResult | undefined> {
+  if (testCase.executionMode !== "static-evidence" && testCase.executionMode !== "roundtrip") return undefined;
+  if (testCase.criterionIds.length && testCase.criterionIds.every((id) => id === "SYS-PAIRWISE")) return unavailableBaselineRun(testCase, "原版是 Pairwise 比较起点；相对改进只能在 Candidate 实验中验证。");
+  if (!project.searchChampion && !project.sourceArtifacts.some((artifact) => artifact.role === "target" && (Boolean(artifact.storageRef?.trim()) || artifact.inputMode === "upload" || artifact.inputMode === "remote"))) return undefined;
+  if (!execute) return unavailableBaselineRun(testCase, "Server 当前版本缺少实际文件读取端口，不能用解析索引代替冻结字节。");
+  try {
+    const result = await execute({ project, testCase });
+    return result.testCaseId === testCase.id ? result : unavailableBaselineRun(testCase, "当前版本文件证据返回了错误的 Test Case ID。");
+  } catch (error) {
+    return unavailableBaselineRun(testCase, `当前版本文件读取失败：${error instanceof Error ? error.message : String(error)}`);
+  }
+}
 export function baselineLocalEvidence(project: EvolveProject, testCase: TestCase): TargetRunResult | undefined {
   if (testCase.criterionIds.length > 0 && testCase.criterionIds.every((id) => id === "SYS-PAIRWISE")) {
     return unavailableBaselineRun(testCase, "原版是 Pairwise 比较起点；相对改进只能在 Candidate 实验中验证。");

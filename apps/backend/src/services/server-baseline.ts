@@ -4,6 +4,7 @@ import { runServerBaseline, trustedServerBaselineChampion } from "@evolution/har
 import { runServerAi } from "./ai-gateway";
 import { getServerArtifactStore } from "./artifact-runtime";
 import { attachServerVisualEvidence } from "./server-visual-evidence";
+import { runServerCurrentStoredEvidence } from "./server-current-stored-evidence";
 import { serverArtifactSha256 } from "./server-experiment-artifacts";
 import { runServerHttpTargetBatch, serverHttpTargetEnabled } from "./server-http-target-execution";
 import {runServerConnectorTargetBatch} from "./server-connector-target-execution";
@@ -140,6 +141,7 @@ export async function runServerMissionBaseline(project: EvolveProject) {
       evidenceInstruction: "Inspect the current Baseline artifact only. Missing evidence must be reported as UNVERIFIED; never infer future Candidate behavior.",
       variant: null,
     }),
+    executeStoredEvidence: runServerCurrentStoredEvidence,
     executeExternalBatch: ({ project: current, testCases }) => executeServerBaselineExternal(current,testCases),
     judge: (payload) => runServerAi("evaluate", payload),
   });

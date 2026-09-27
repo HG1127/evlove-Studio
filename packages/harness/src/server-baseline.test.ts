@@ -194,7 +194,8 @@ describe("server baseline",()=>{
     });
     expect(observed).toContain("S1 CURRENT CHAMPION");
     expect(observed).not.toContain("缺少验证与回滚说明");
-    expect(outcome.baseline.runs.find((run)=>run.testCaseId==="V2")?.output).toContain("S1");
-    expect(outcome.project.campaign.checkpoint).toMatchObject({round:2,completedPhase:"baseline"});
+    expect(outcome.baseline.runs.find((run)=>run.testCaseId==="V2")?.verificationStatus).toBe("unverified");
+    expect(outcome.ready).toBe(false);
+    expect(outcome.project.campaign.status).toBe("paused");
   });
 });

@@ -20,6 +20,7 @@ import {
   serverBaselineCurrentViewGap,
   semanticEvidenceStatus,
   serverBaselineFingerprint,
+  storedBaselineEvidence,
   unavailableBaselineRun,
 } from "./server-baseline-evidence";
 import { indexUniqueBatchResults } from "./server-batch-results";
@@ -32,6 +33,7 @@ export type ServerBaselinePorts = {
     testCases: TestCase[];
     artifactContext: Array<Record<string, unknown>>;
   }): Promise<ExecuteArtifactBatchAiResult>;
+  executeStoredEvidence?(args: { project: EvolveProject; testCase: TestCase }): Promise<TargetRunResult>;
   executeExternalBatch?(args: {
     project: EvolveProject;
     testCases: TestCase[];
@@ -92,6 +94,8 @@ export async function runServerBaseline(
   const semanticCases: TestCase[] = [];
   const externalCases: TestCase[] = [];
   for (const testCase of project.evalSuite) {
+    const stored = await storedBaselineEvidence(project, testCase, ports.executeStoredEvidence);
+    if (stored) { ordered.set(testCase.id, stored); continue; }
     const currentViewGap = serverBaselineCurrentViewGap(project, testCase);
     if (currentViewGap) {
       ordered.set(testCase.id, unavailableBaselineRun(testCase, currentViewGap));

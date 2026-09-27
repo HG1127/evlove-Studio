@@ -5,6 +5,7 @@ import { runServerAi } from "./ai-gateway";
 import { getServerArtifactStore } from "./artifact-runtime";
 import { runServerFrozenArtifactStaticEvidence } from "./server-static-artifact-evidence";
 import { attachServerVisualEvidence } from "./server-visual-evidence";
+import { runServerCurrentStoredEvidence } from "./server-current-stored-evidence";
 import { runServerHttpTargetBatch, serverHttpTargetEnabled } from "./server-http-target-execution";
 import {runServerConnectorTargetBatch} from "./server-connector-target-execution";
 import {serverConnectorTargetEnabled} from "./connector-target-source";
@@ -96,6 +97,7 @@ export async function runServerMissionHoldout(project:EvolveProject){
         evidenceInstruction:"Inspect only the CURRENT VERSION on this frozen hidden paper. Missing runtime evidence must be UNVERIFIED. Never infer Candidate behavior.",
         variant:null,
       }),
+      executeStoredEvidence:runServerCurrentStoredEvidence,
       executeExternalBatch:({project:current,testCases})=>executeCurrentExternal(current,testCases),
       judge:(payload)=>runServerAi("evaluate",payload),
     },
