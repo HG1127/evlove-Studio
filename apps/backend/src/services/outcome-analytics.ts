@@ -5,7 +5,7 @@ import {
   serverSupabaseSecureConfigured,
 } from "../server-env";
 import {probeOutcomeSampleStore,readOutcomeSamples} from "./outcome-sample-store";
-import {getOutcomeTelemetryCapabilities} from "./outcome-telemetry-source";
+import {getOutcomeTelemetryCapabilities,getOutcomeTelemetryConfigState} from "./outcome-telemetry-source";
 
 export function outcomeMinimumSamplesPerArm(){
   const parsed=Number(process.env.EVOLUTION_OUTCOME_MIN_SAMPLES_PER_ARM??"30")||30;
@@ -58,9 +58,12 @@ export async function getOutcomeAnalyticsHealth(){
 
 export async function analyzeMissionOutcome(input:{missionId:string;candidateId:string}){
   const samples=await readOutcomeSamples({...input,limit:20_000,requireComplete:true});
+  const telemetry=getOutcomeTelemetryConfigState();
   return analyzeOutcomeSamples({
     ...input,
     samples,
     minimumSamplesPerArm:outcomeMinimumSamplesPerArm(),
+    requiredMetricScopes:telemetry.sources.flatMap((source)=>source.metrics.map((metric)=>({metricKey:metric.metricKey,segment:metric.segment}))),
+    telemetryConfigurationError:telemetry.configured&&!telemetry.ready?telemetry.errors.slice(0,3).join("; "):undefined,
   });
 }

@@ -42,6 +42,28 @@ describe("outcome statistics",()=>{
     expect(result.verdict).toBe("insufficient");
   });
 
+  it("requires configured metrics even when a scope produced no rows at all",()=>{
+    const values=Array.from({length:30},(_,i)=>0.5+(i%3)*0.001);
+    const result=analyzeOutcomeSamples({
+      missionId:"m1",candidateId:"c1",minimumSamplesPerArm:30,
+      samples:samples({metricKey:"conversion",kind:"business",direction:"higher",stable:values,candidate:values}),
+      requiredMetricScopes:[{metricKey:"conversion",segment:"all"},{metricKey:"safety",segment:"all"}],
+    });
+    expect(result.metrics).toHaveLength(1);
+    expect(result.verdict).toBe("insufficient");
+    expect(result.message).toContain("safety/all: Stable 0, Candidate 0");
+  });
+
+  it("does not claim healthy when telemetry configuration is invalid",()=>{
+    const values=Array.from({length:30},()=>1);
+    const result=analyzeOutcomeSamples({
+      missionId:"m1",candidateId:"c1",minimumSamplesPerArm:30,
+      samples:samples({metricKey:"conversion",kind:"business",direction:"higher",stable:values,candidate:values}),
+      telemetryConfigurationError:"source credential missing",
+    });
+    expect(result.verdict).toBe("insufficient");
+    expect(result.message).toContain("source credential missing");
+  });
   it("retains a measured regression even when another metric is incomplete",()=>{
     const stable=Array.from({length:30},(_,i)=>100+(i%3));
     const candidate=Array.from({length:30},(_,i)=>135+(i%3));

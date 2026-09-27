@@ -131,6 +131,8 @@ export function analyzeOutcomeSamples(input:{
   candidateId?:string;
   samples:OutcomeMetricSample[];
   minimumSamplesPerArm:number;
+  requiredMetricScopes?:ReadonlyArray<{metricKey:string;segment:string}>;
+  telemetryConfigurationError?:string;
   checkedAt?:string;
 }):OutcomeAnalyticsResponse{
   const checkedAt=input.checkedAt??new Date().toISOString();
@@ -157,9 +159,17 @@ export function analyzeOutcomeSamples(input:{
     kind:metric.metricKind,
     reason:`${metric.metricKey}/${metric.segment}: Candidate ${metric.candidate.mean} vs Stable ${metric.stable.mean}; p≈${metric.pValueApprox?.toFixed(4)}`,
   }));
-  const incompleteScopes=metrics.filter((metric)=>metric.evidenceStatus==="insufficient")
-    .map((metric)=>`${metric.metricKey}/${metric.segment}: Stable ${metric.stable.count}, Candidate ${metric.candidate.count}`);
-  const insufficient=metrics.length===0||incompleteScopes.length>0;
+  const observedScopes=new Set(metrics.map((metric)=>metric.metricKey+"\u0000"+metric.segment));
+  const requiredScopes=new Map((input.requiredMetricScopes??[])
+    .map((scope)=>[scope.metricKey+"\u0000"+scope.segment,scope] as const));
+  const missingConfigured=[...requiredScopes].filter(([key])=>!observedScopes.has(key))
+    .map(([,scope])=>`${scope.metricKey}/${scope.segment}: Stable 0, Candidate 0`);
+  const incompleteScopes=[
+    ...metrics.filter((metric)=>metric.evidenceStatus==="insufficient")
+      .map((metric)=>`${metric.metricKey}/${metric.segment}: Stable ${metric.stable.count}, Candidate ${metric.candidate.count}`),
+    ...missingConfigured,
+  ];
+  const insufficient=metrics.length===0||incompleteScopes.length>0||Boolean(input.telemetryConfigurationError);
   const drifting=driftRows.some((item)=>item.status==="drifting");
   const verdict=regressions.length?"regression":drifting?"watch":insufficient?"insufficient":"healthy";
   return OutcomeAnalyticsResponseSchema.parse({
@@ -180,6 +190,7 @@ export function analyzeOutcomeSamples(input:{
           ?"未检测到显著回归，但 Candidate 时间漂移需要继续观察。"
           :"当前样本未检测到显著回归。")
       +(incompleteScopes.length?` 证据不足：${incompleteScopes.slice(0,5).join("；")}${incompleteScopes.length>5?"；等更多分段":""}。`:"")
+      +(input.telemetryConfigurationError?` Telemetry 配置不可用：${input.telemetryConfigurationError}。`:"")
       +(dropped?` 已忽略 ${dropped} 个跨 Candidate、无效时间或超前时间样本。`:""),
   });
 }
