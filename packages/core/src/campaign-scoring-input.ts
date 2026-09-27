@@ -50,6 +50,12 @@ export function campaignScoringInputFingerprint(project: EvolveProject): string 
   });
 }
 
+/** A live Target or remote evaluator may change even when the stored input identity has not. */
+export function campaignObservesLiveTarget(project: EvolveProject): boolean {
+  return project.targetConnection.adapter === "http"
+    || (project.targetConnection.adapter === "connector" && !project.targetConnection.connectorSnapshot)
+    || [...project.evalSuite, ...project.hiddenEvalSuite].some((testCase) => testCase.executionMode === "external-runner" || testCase.executionMode === "visual-review");
+}
 /** Old scores cannot be compared after the scoring input changes, including legacy rows without a binding. */
 export function campaignScoringInputBlocker(project: EvolveProject): string | undefined {
   if (project.campaign.currentRound === 0) return undefined;

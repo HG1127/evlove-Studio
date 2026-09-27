@@ -8,6 +8,7 @@ import type {
 } from "@evolution/contracts";
 import {
   baselineReadiness,
+  campaignObservesLiveTarget,
   campaignRootBaselineForMeasurement,
   campaignScoringInputBlocker,
   campaignScoringInputFingerprint,
@@ -38,6 +39,8 @@ export function serverCampaignScoringRouteBlocker(project: EvolveProject, routeF
 }
 /** A ready score is reusable only for the exact current Target, tests, Champion and Server AI route. */
 export function canReuseServerBaseline(project: EvolveProject, routeFingerprint?: string): boolean {
+  if (campaignObservesLiveTarget(project) && project.campaign.checkpoint?.round !== project.campaign.currentRound + 1) return false;
+
   return baselineReadiness(project).ready
     && project.baselineRun.measurementFingerprint === serverBaselineFingerprint(project, routeFingerprint);
 }

@@ -21,7 +21,7 @@ import { canRetryHoldoutFailures, candidateWinnerDecision, computeGapAnalysis, g
 import { extractSource } from "../sources/source-loader";
 import { getArtifactBlob, putArtifactBlob } from "./artifact-blob-store";
 import { readFrozenArtifact } from "./frozen-artifact";
-import { baselineFingerprint, baselineMeasurementFingerprint, getHoldoutBaseline, setHoldoutBaseline } from "./round-cache";
+import { baselineMeasurementFingerprint, holdoutBaselineFingerprint, getHoldoutBaseline, setHoldoutBaseline } from "./round-cache";
 import { criterionCanUseLocalSnapshotEvidence, normalizeEvalSuiteForProject } from "./eval-suite-normalization";
 import { normalizeLocallyVerifiableCandidateRuns, retrieveTextContext } from "@evolution/harness";
 import { searchBaseCandidate } from "./search-base";
@@ -1035,7 +1035,7 @@ async function runValidationUnbound(project: EvolveProject, inputCandidate: Cand
   const baselineVariant = searchBaseCandidate(parsed);
   const policy = effectiveExperimentPolicy(parsed);
   const reuse = createValidationReuse(parsed.id);
-  const validationContractFingerprint = baselineFingerprint(parsed);
+  const validationContractFingerprint = holdoutBaselineFingerprint(parsed);
   // Candidate ids are model-generated and may repeat across rounds. Bind reuse to the exact
   // candidate/source + validation-contract fingerprints. Normalize local evidence BEFORE caching,
   // so Fast Gate verified rows are reused by the authoritative full holdout instead of executed twice.
@@ -1101,9 +1101,9 @@ async function runValidationUnbound(project: EvolveProject, inputCandidate: Cand
   const totalRuns = suite.length * 2;
   const prior = parsed.validationRun;
   const suiteIds = suite.map((testCase) => testCase.id);
-  // 跨轮盲测对照复用：当前版本在同一套隐藏题上的作答只取决于「考卷 + 进化对象 + 执行配置」，
-  // 指纹不变时直接沿用上一轮的对照卷与评审，多轮编排每轮省掉半程盲测执行与一次评审。
-  const roundFingerprint = baselineFingerprint(parsed);
+  // 跨轮盲测对照复用：静态版本按输入指纹复用；动态 Target 与外部 Runner 每轮重新观测，
+  // 同一轮断点仍可复用已验证对照，避免重试重复支付。
+  const roundFingerprint = validationContractFingerprint;
   const cachedHoldout = getHoldoutBaseline(parsed.id, roundFingerprint);
   const cacheReusable = Boolean(cachedHoldout)
     && cachedHoldout!.suiteIds.length === suiteIds.length

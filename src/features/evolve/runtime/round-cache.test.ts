@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { EvolveProject } from "../schemas";
-import { baselineFingerprint, baselineMeasurementFingerprint, baselineScoringRouteFingerprint, campaignScoringRouteBlocker, canReuseVisibleBaseline, canReusePriorDiagnosis, clearRoundCaches, getHoldoutBaseline, getVisibleBaseline, setHoldoutBaseline, setVisibleBaseline } from "./round-cache";
+import { baselineFingerprint, baselineMeasurementFingerprint, baselineScoringRouteFingerprint, campaignScoringRouteBlocker, canReuseVisibleBaseline, canReusePriorDiagnosis, clearRoundCaches, getHoldoutBaseline, getVisibleBaseline, holdoutBaselineFingerprint, setHoldoutBaseline, setVisibleBaseline } from "./round-cache";
 import { demoProject } from "../data/mock-project";
 import { EvolutionRoundSchema } from "../schemas";
 import { buildRoundRecord } from "./evolution-search";
@@ -35,6 +35,23 @@ describe("campaign Baseline reuse", () => {
     expect(canReuseVisibleBaseline({ ...demoProject, evalSuite: demoProject.evalSuite.map((testCase) => ({ ...testCase, input: testCase.input + " 新要求" })) }, verified)).toBe(false);
     expect(canReuseVisibleBaseline({ ...demoProject, aiProfile: { mode: "project", primary: { connectionId: "judge-2", model: "different", label: "new judge" } } }, verified)).toBe(false);
   });
+  it("remeasures a live Target in a new round but resumes its same-round Baseline", () => {
+    const dynamic = { ...demoProject, targetConnection: { ...demoProject.targetConnection, adapter: "http" as const } };
+    const verified = {
+      ...dynamic.baselineRun,
+      measurementFingerprint: baselineMeasurementFingerprint(dynamic),
+      runs: dynamic.evalSuite.map((testCase) => ({ testCaseId: testCase.id, verificationStatus: "verified" as const })) as EvolveProject["baselineRun"]["runs"],
+    };
+    expect(canReuseVisibleBaseline(dynamic, verified)).toBe(false);
+    const resumed = { ...dynamic, campaign: { ...dynamic.campaign, checkpoint: { round: dynamic.campaign.currentRound + 1, completedPhase: "baseline" as const, at: "2026-09-28T00:00:00Z" } } };
+    expect(canReuseVisibleBaseline(resumed, verified)).toBe(true);
+    expect(canReuseVisibleBaseline({ ...resumed, campaign: { ...resumed.campaign, currentRound: resumed.campaign.currentRound + 1, checkpoint: undefined } }, verified)).toBe(false);
+    expect(holdoutBaselineFingerprint(dynamic)).toBe(holdoutBaselineFingerprint(resumed));
+    expect(holdoutBaselineFingerprint({ ...dynamic, campaign: { ...dynamic.campaign, currentRound: dynamic.campaign.currentRound + 1 } })).not.toBe(holdoutBaselineFingerprint(dynamic));
+    expect(holdoutBaselineFingerprint({ ...demoProject, campaign: { ...demoProject.campaign, currentRound: demoProject.campaign.currentRound + 1 } })).toBe(holdoutBaselineFingerprint(demoProject));
+    const hiddenExternal = { ...demoProject, hiddenEvalSuite: demoProject.hiddenEvalSuite.map((testCase, index) => index === 0 ? { ...testCase, executionMode: "external-runner" as const } : testCase) };
+    expect(holdoutBaselineFingerprint({ ...hiddenExternal, campaign: { ...hiddenExternal.campaign, currentRound: hiddenExternal.campaign.currentRound + 1 } })).not.toBe(holdoutBaselineFingerprint(hiddenExternal));
+  });
 });
 describe("repair-round diagnosis evidence", () => {
   it("reuses the prior root cause only when the previous round measured these exact inputs", () => {
@@ -54,6 +71,7 @@ describe("repair-round diagnosis evidence", () => {
       },
     };
     expect(canReusePriorDiagnosis(eligible)).toBe(true);
+    expect(canReusePriorDiagnosis({ ...eligible, targetConnection: { ...eligible.targetConnection, adapter: 'http' } })).toBe(false);
     expect(canReusePriorDiagnosis({ ...eligible, goal: "Updated user goal" })).toBe(false);
     expect(canReusePriorDiagnosis({ ...eligible, evalSuite: demoProject.evalSuite.map((testCase) => ({ ...testCase, input: testCase.input + " changed" })) })).toBe(false);
     expect(canReusePriorDiagnosis({ ...eligible, roundHistory: [{ ...previous, baselineMeasurementFingerprint: undefined }] })).toBe(false);

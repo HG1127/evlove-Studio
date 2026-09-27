@@ -1,7 +1,7 @@
 import type { BaselineRun, EvaluationResult, EvolveProject, TargetRunResult } from "../schemas";
 import { fastHash } from "../ai/performance";
 import { searchBaseCandidate } from "./search-base";
-import { baselineReadiness, campaignScoringInputFingerprint } from "@evolution/core";
+import { baselineReadiness, campaignObservesLiveTarget, campaignScoringInputFingerprint } from "@evolution/core";
 import { resolveProjectOperationConnections } from "../ai/providers/registry";
 import { getAiProviderStatus } from "../ai/service";
 
@@ -54,6 +54,12 @@ export function baselineFingerprint(project: EvolveProject): string {
 export function baselineMeasurementFingerprint(project: EvolveProject): string {
   return baselineFingerprint(project) + JSON.stringify(project.evalSuite);
 }
+/** Live Target holdout observations are comparable only within the same Campaign round. */
+export function holdoutBaselineFingerprint(project: EvolveProject): string {
+  const fingerprint = baselineFingerprint(project);
+  return campaignObservesLiveTarget(project) ? `${fingerprint}:round-${project.campaign.currentRound + 1}` : fingerprint;
+}
+
 export type HoldoutBaselineCache = {
   fingerprint: string;
   suiteIds: string[];
@@ -81,6 +87,7 @@ function remember<K, V>(map: Map<K, V>, key: K, value: V, cap = 8) {
 
 /** Only a diagnosis-ready measurement may skip the next round's real Baseline run. */
 export function canReuseVisibleBaseline(project: EvolveProject, baseline: BaselineRun): boolean {
+  if (campaignObservesLiveTarget(project) && project.campaign.checkpoint?.round !== project.campaign.currentRound + 1) return false;
   return baseline.measurementFingerprint === baselineMeasurementFingerprint(project)
     && baselineReadiness({ ...project, baselineRun: baseline }).ready;
 }
@@ -93,7 +100,8 @@ export function campaignScoringRouteBlocker(project: EvolveProject): string | un
 /** A repair round may reuse a root cause only for the exact evidence and Target it analyzed. */
 export function canReusePriorDiagnosis(project: EvolveProject): boolean {
   const previous = project.roundHistory.at(-1);
-  return project.campaign.noImprovementRounds === 1
+  return !campaignObservesLiveTarget(project)
+    && project.campaign.noImprovementRounds === 1
     && Boolean(project.campaign.lastGapAdvice && project.diagnosis && project.selectedProblemId
       && project.problems.some((item) => item.id === project.selectedProblemId)
       && previous?.round === project.campaign.currentRound

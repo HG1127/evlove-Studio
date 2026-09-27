@@ -107,6 +107,34 @@ describe("server baseline",()=>{
     expect(canReuseServerBaseline({ ...outcome.project, baselineRun: { ...outcome.baseline, measurementFingerprint: undefined } })).toBe(false);
   });
 
+  it("remeasures live Target observations in each new Campaign round while reusing a same-round checkpoint", async () => {
+    const measured = await runServerBaseline(fixture(), {
+      executeSemanticBatch: async ({ testCases }) => ({ results: testCases.map((testCase) => ({ testCaseId: testCase.id, output: "当前说明包含安装步骤，但验证与回滚说明不足。", trace: [] })) }),
+      judge: async () => judge(),
+    });
+    expect(measured.ready).toBe(true);
+    for (const adapter of ["http", "connector"] as const) {
+      const dynamic = { ...measured.project, targetConnection: { ...measured.project.targetConnection, adapter } };
+      const bound = { ...dynamic, baselineRun: { ...dynamic.baselineRun, measurementFingerprint: serverBaselineFingerprint(dynamic) } };
+      expect(canReuseServerBaseline(bound)).toBe(true);
+      expect(canReuseServerBaseline({ ...bound, campaign: { ...bound.campaign, currentRound: 1, checkpoint: undefined } })).toBe(false);
+    }
+    const external = { ...measured.project, evalSuite: measured.project.evalSuite.map((testCase, index) => index === 0 ? { ...testCase, executionMode: "external-runner" as const } : testCase) };
+    const externalBound = { ...external, baselineRun: { ...external.baselineRun, measurementFingerprint: serverBaselineFingerprint(external) } };
+    expect(canReuseServerBaseline(externalBound)).toBe(true);
+    expect(canReuseServerBaseline({ ...externalBound, campaign: { ...externalBound.campaign, currentRound: 1, checkpoint: undefined } })).toBe(false);
+    expect(canReuseServerBaseline({ ...measured.project, campaign: { ...measured.project.campaign, currentRound: 1, checkpoint: undefined } })).toBe(true);
+    const snapshotted = {
+      ...measured.project,
+      targetConnection: {
+        ...measured.project.targetConnection,
+        adapter: "connector" as const,
+        connectorSnapshot: { connectorId: "connector", targetId: "target", versionRef: "v1", artifactId: "source", observedAt: "2026-09-20T13:00:00Z" },
+      },
+    };
+    const snapshotBound = { ...snapshotted, baselineRun: { ...snapshotted.baselineRun, measurementFingerprint: serverBaselineFingerprint(snapshotted) } };
+    expect(canReuseServerBaseline({ ...snapshotBound, campaign: { ...snapshotBound.campaign, currentRound: 1, checkpoint: undefined } })).toBe(true);
+  });
   it("fails closed when the server judge cannot complete",async()=>{
     const outcome=await runServerBaseline(fixture(),{
       executeSemanticBatch:async({testCases})=>({results:testCases.map((testCase)=>({testCaseId:testCase.id,output:"当前说明包含安装步骤。",trace:[]}))}),
