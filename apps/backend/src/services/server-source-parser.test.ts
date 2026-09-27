@@ -278,4 +278,53 @@ describe("server source parser",()=>{
     expect(rejected.parseStatus).toBe("unsupported");
     expect(rejected.storageRef).toBe("artifact-test");
     expect(rejected.warnings.join(" ")).toContain("解压大小");
+  });  it("reports a large text Source as a bounded preview",async()=>{
+    const artifact=await parse("large.txt","text/plain",new TextEncoder().encode("A".repeat(160_001)));
+    expect(artifact.parseStatus).toBe("ready");
+    expect(artifact.textContent).toHaveLength(160_000);
+    expect(artifact.storageRef).toBe("artifact-test");
+    expect(artifact.parsingProfile).toMatchObject({eligibleEntries:1,deepIndexedEntries:0,deepIndexCoverage:0,completeness:0});
+    expect(artifact.warnings.join(" ")).toContain("有界文本预览");
+  });
+
+  it("does not confuse UTF-8 byte length with text preview truncation",async()=>{
+    const artifact=await parse("chinese.txt","text/plain",new TextEncoder().encode("中".repeat(160_000)));
+    expect(artifact.parseStatus).toBe("ready");
+    expect(artifact.textContent).toHaveLength(160_000);
+    expect(artifact.parsingProfile?.deepIndexCoverage).toBe(1);
+    expect(artifact.warnings.join(" ")).not.toContain("有界文本预览");
+  });
+
+  it("retains bounded structured JSON while reporting a truncated text preview",async()=>{
+    const artifact=await parse("large.json","application/json",
+      new TextEncoder().encode(JSON.stringify({content:"A".repeat(160_001)})));
+    expect(artifact.parseStatus).toBe("ready");
+    expect(artifact.structuredContent).toMatchObject({kind:"json",value:{content:"A".repeat(160_001)}});
+    expect(artifact.parsingProfile?.deepIndexCoverage).toBe(0);
+    expect(artifact.warnings.join(" ")).toContain("有界文本预览");
+  });
+
+  it("rejects invalid UTF-8 in a named text Source without losing the upload",async()=>{
+    const artifact=await parse("broken.txt","text/plain",Uint8Array.from([0xff,0xfe,0xfd]));
+    expect(artifact.parseStatus).toBe("unsupported");
+    expect(artifact.storageRef).toBe("artifact-test");
+    expect(artifact.warnings.join(" ")).toContain("encoded data");
+  });
+
+  it("marks a large Office text extraction as a preview",async()=>{
+    const zip=new JSZip();zip.file("word/document.xml",`<w:document><w:t>${"A".repeat(160_001)}</w:t></w:document>`);
+    const artifact=await parse("large.docx","application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      new Uint8Array(await zip.generateAsync({type:"uint8array",compression:"DEFLATE"})));
+    expect(artifact.parseStatus).toBe("ready");
+    expect(artifact.textContent).toHaveLength(160_000);
+    expect(artifact.parsingProfile?.deepIndexCoverage).toBe(0);
+    expect(artifact.warnings.join(" ")).toContain("有界文本预览");
+  });  it("skips unbounded JSON structure but retains a text preview and raw bytes",async()=>{
+    const artifact=await parse("huge.json","application/json",
+      new TextEncoder().encode(JSON.stringify({content:"A".repeat(1_000_001)})));
+    expect(artifact.parseStatus).toBe("ready");
+    expect(artifact.structuredContent).toBeUndefined();
+    expect(artifact.storageRef).toBe("artifact-test");
+    expect(artifact.parsingProfile?.deepIndexCoverage).toBe(0);
+    expect(artifact.warnings.join(" ")).toContain("结构化解析上限");
   });});

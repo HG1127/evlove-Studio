@@ -10,6 +10,7 @@ import {describeArtifact} from "@evolution/core";
 import {assertServerZipEntryBudget,safeServerZipPath,serverZipCrc32} from "./server-codebase-zip-index";
 
 const MAX_TEXT_CHARS=160_000;
+const MAX_JSON_STRUCTURE_CHARS=1_000_000;
 const MAX_ZIP_FILES=2_000;
 const MAX_ZIP_TEXT_FILES=220;
 const MAX_ZIP_FILE_CHARS=24_000;
@@ -385,6 +386,8 @@ export async function parseServerSource(args:{
   let text="";
   let structure:string[]=[];
   let structuredContent:unknown;
+  let boundedPreview=false;
+  let textWasTruncated=false;
   let stats={totalEntries:0,indexedEntries:0,parsedEntries:0,eligibleEntries:0,deepIndexedEntries:0,codeFiles:0,documentFiles:0,officeFiles:0,imageFiles:0};
   try{
     if(ext==="docx"){
@@ -406,12 +409,14 @@ export async function parseServerSource(args:{
       const parsed=await parseZip(buffer);
       ({text,structure,structuredContent}=parsed);stats=parsed.stats;warnings.push(...parsed.warnings);
     }else{
-      const decoded=decode(buffer);
-      if(TEXT_EXTS.has(ext)||args.mimeType.startsWith("text/")||!binaryLike(decoded)){
-        text=decoded.slice(0,MAX_TEXT_CHARS);
-        if(ext==="json"){
-          try{structuredContent={kind:"json",value:JSON.parse(decoded)};}catch{warnings.push("JSON 文本无法完整解析为结构化对象，已保留原文。");}
-        }
+      const knownText=TEXT_EXTS.has(ext)||args.mimeType.startsWith("text/");
+      if(knownText||!binaryLike(decode(buffer))){
+        const validText=new TextDecoder("utf-8",{fatal:true}).decode(buffer);
+        textWasTruncated=validText.length>MAX_TEXT_CHARS;
+        text=validText.slice(0,MAX_TEXT_CHARS);
+        if(ext==="json"&&validText.length<=MAX_JSON_STRUCTURE_CHARS){
+          try{structuredContent={kind:"json",value:JSON.parse(validText)};}catch{warnings.push("JSON 文本无法完整解析为结构化对象，已保留原文。");}
+        }else if(ext==="json")warnings.push("JSON 超出结构化解析上限；原文件已保留。");
       }else{
         warnings.push("当前 Server Native Parser 未识别该二进制格式；原文件已安全保留，可连接外部 Parser 扩展。");
       }
@@ -419,12 +424,18 @@ export async function parseServerSource(args:{
   }catch(error){
     warnings.push(`Server Native Parser 部分解析失败：${error instanceof Error?error.message:String(error)}`);
   }
+  if(text.length>MAX_TEXT_CHARS||textWasTruncated){
+    boundedPreview=true;
+    text=text.slice(0,MAX_TEXT_CHARS);
+    warnings.push("仅建立有界文本预览；超出范围的原文未纳入语义索引，原文件已保留。");
+    stats={...stats,totalEntries:1,indexedEntries:1,parsedEntries:1,eligibleEntries:1,deepIndexedEntries:0};
+  }
   const artifactKind=inferKind(args.name,args.mimeType,structure);
   const parseStatus=args.mimeType.startsWith("image/")?"image":text?"ready":warnings.length?"unsupported":"binary";
   const artifactDescriptor=describeArtifact({
     name:args.name,mimeType:args.mimeType,extension:ext,artifactKind,structure,structuredContent,
   });
-  const bounded=ext==="zip"||ext==="pdf"||ext==="xlsx"||ext==="xls";
+  const bounded=boundedPreview||ext==="zip"||ext==="pdf"||ext==="xlsx"||ext==="xls";
   const parsedEntries=bounded?stats.parsedEntries:stats.parsedEntries||(text?1:0);
   const totalEntries=bounded?stats.totalEntries:stats.totalEntries||(text?1:0);
   const eligibleEntries=bounded?stats.eligibleEntries:stats.eligibleEntries||parsedEntries;
