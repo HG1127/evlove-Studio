@@ -124,6 +124,22 @@ describe("connector registry",()=>{
     expect(JSON.stringify(result)).not.toContain("connector-token");
   });
 
+  it("rejects upstream Connector identities that contradict the requested Target",async()=>{
+    process.env.EVOLUTION_CONNECTORS_JSON=manifest({snapshot:"/snapshot"});
+    process.env.TEST_CONNECTOR_TOKEN="connector-token";
+    for(const mismatch of [
+      {connectorId:"other-connector"},
+      {operation:"observe"},
+      {targetId:"other-target"},
+    ]){
+      vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({
+        ok:true,versionRef:"v1",...mismatch,
+      }),{status:200})));
+      await expect(executeConnectorAction({
+        connectorId:"test-connector",operation:"snapshot",targetId:"target-1",payload:{},
+      })).rejects.toThrow(/returned mismatched/);
+    }
+  });
   it("rejects insecure connector origins in production",()=>{
     process.env.NODE_ENV="production";
     process.env.EVOLUTION_CONNECTORS_JSON=JSON.stringify([{

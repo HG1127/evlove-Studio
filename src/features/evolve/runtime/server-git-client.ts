@@ -1,4 +1,5 @@
 import {
+  GitTargetActionRequestSchema,
   GitTargetActionResponseSchema,
   GitTargetCapabilitiesSchema,
   type GitTargetActionRequest,
@@ -25,9 +26,14 @@ export async function getServerGitTargetCapabilities():Promise<GitTargetCapabili
 }
 
 export async function runServerGitTargetAction(input:GitTargetActionRequest):Promise<GitTargetActionResponse>{
-  return GitTargetActionResponseSchema.parse(await apiJson("/api/evolution/git-action",{
+  const request=GitTargetActionRequestSchema.parse(input);
+  const receipt=GitTargetActionResponseSchema.parse(await apiJson("/api/evolution/git-action",{
     method:"POST",
     headers:{"Content-Type":"application/json"},
-    body:JSON.stringify(input),
+    body:JSON.stringify(request),
   }));
+  if(receipt.action!==request.action||receipt.repository!==`${request.repository.owner}/${request.repository.repo}`){
+    throw new Error("Git Target action receipt identity mismatch");
+  }
+  return receipt;
 }

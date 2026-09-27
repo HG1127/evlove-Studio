@@ -176,6 +176,13 @@ export async function executeConnectorAction(raw:ConnectorActionRequest){
     const detail=typeof body.message==="string"?body.message:`HTTP ${response.status}`;
     throw new Error(`Connector ${manifest.id} ${input.operation} failed: ${detail}`);
   }
+  for(const [field,expected] of [
+    ["connectorId",manifest.id],["operation",input.operation],["targetId",input.targetId],
+  ] as const){
+    if(body[field]!==undefined&&body[field]!==expected){
+      throw new Error(`Connector ${manifest.id} ${input.operation} returned mismatched ${field}`);
+    }
+  }
   return ConnectorActionResponseSchema.parse({
     ...body,
     connectorId:manifest.id,

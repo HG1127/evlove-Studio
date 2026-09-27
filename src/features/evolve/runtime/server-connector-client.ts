@@ -1,4 +1,5 @@
 import {
+  ConnectorActionRequestSchema,
   ConnectorActionResponseSchema,
   ConnectorRegistryCapabilitiesSchema,
   type ConnectorActionRequest,
@@ -23,9 +24,13 @@ export async function getServerConnectorCapabilities():Promise<ConnectorRegistry
 }
 
 export async function runServerConnectorAction(input:ConnectorActionRequest):Promise<ConnectorActionResponse>{
-  return ConnectorActionResponseSchema.parse(await apiJson("/api/evolution/connector-action",{
+  const request=ConnectorActionRequestSchema.parse(input);
+  const receipt=ConnectorActionResponseSchema.parse(await apiJson("/api/evolution/connector-action",{
     method:"POST",
     headers:{"Content-Type":"application/json"},
-    body:JSON.stringify(input),
+    body:JSON.stringify(request),
   }));
+  if(receipt.connectorId!==request.connectorId||receipt.operation!==request.operation
+    ||receipt.targetId!==request.targetId)throw new Error("Connector action receipt identity mismatch");
+  return receipt;
 }
