@@ -75,14 +75,9 @@ function analyzeGroup(rows:OutcomeMetricSample[],segment:string,minPerArm:number
 function groups(samples:OutcomeMetricSample[]){
   const map=new Map<string,{segment:string;rows:OutcomeMetricSample[]}>();
   for(const row of samples){
-    const allKey=row.metricKey+"\u0000all";
-    const all=map.get(allKey)??{segment:"all",rows:[]};
-    all.rows.push(row);map.set(allKey,all);
-    if(row.segment!=="all"){
-      const key=row.metricKey+"\u0000"+row.segment;
-      const group=map.get(key)??{segment:row.segment,rows:[]};
-      group.rows.push(row);map.set(key,group);
-    }
+    const key=row.metricKey+"\u0000"+row.segment;
+    const group=map.get(key)??{segment:row.segment,rows:[]};
+    group.rows.push(row);map.set(key,group);
   }
   return [...map.values()];
 }

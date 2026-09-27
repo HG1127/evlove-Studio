@@ -89,6 +89,26 @@ describe("outcome statistics",()=>{
     expect(result.verdict).toBe("insufficient");
     expect(result.message).toContain("latency/vip: Stable 0, Candidate 1");
   });
+  it("does not invent an all-segment result when only a cohort was reported",()=>{
+    const rows=samples({metricKey:"latency",kind:"latency",direction:"lower",stable:[100,101,99,100,101],candidate:[90,91,89,90,91],segment:"vip"});
+    const result=analyzeOutcomeSamples({missionId:"m1",candidateId:"c1",minimumSamplesPerArm:5,samples:rows});
+    expect(result.metrics.map((metric)=>metric.segment)).toEqual(["vip"]);
+    expect(result.metrics[0]?.stable.count).toBe(5);
+    expect(result.metrics[0]?.candidate.count).toBe(5);
+  });
+
+  it("does not double-count a cohort that is also represented by an all-segment sample",()=>{
+    const all=samples({metricKey:"latency",kind:"latency",direction:"lower",stable:[100,101,99,100,101],candidate:[100,101,99,100,101]});
+    const vip=samples({metricKey:"latency",kind:"latency",direction:"lower",stable:[80,81,79,80,81],candidate:[80,81,79,80,81],segment:"vip"})
+      .map((row)=>({...row,id:row.id+"-vip"}));
+    const result=analyzeOutcomeSamples({missionId:"m1",candidateId:"c1",minimumSamplesPerArm:5,samples:[...all,...vip]});
+    expect(result.sampleCount).toBe(20);
+    expect(result.metrics).toHaveLength(2);
+    expect(result.metrics.find((metric)=>metric.segment==="all")?.stable.count).toBe(5);
+    expect(result.metrics.find((metric)=>metric.segment==="all")?.candidate.count).toBe(5);
+    expect(result.metrics.find((metric)=>metric.segment==="vip")?.stable.count).toBe(5);
+    expect(result.metrics.find((metric)=>metric.segment==="vip")?.candidate.count).toBe(5);
+  });
   it("detects a significant lower-is-better regression",()=>{
     const stable=Array.from({length:30},(_,i)=>100+(i%3));
     const candidate=Array.from({length:30},(_,i)=>135+(i%3));
