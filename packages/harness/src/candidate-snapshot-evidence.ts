@@ -108,6 +108,27 @@ export function normalizeLocallyVerifiableCandidateRuns(
     });
     if (!mapped.length) return run;
 
+    // The Target adapter has already read and hashed the materialized ZIP. Keep that exact
+    // result instead of replacing it with the Candidate overlay's partial text evidence.
+    if (testCase.executionMode === "static-evidence" && run.trace.some((step) => step.id === `candidate-zip-static-${testCase.id}` && step.stage === "candidate-static-evidence")) {
+      if (run.verificationStatus === "unverified") return run;
+      const scopedIds = new Set(mapped.flatMap((criterion) => criterion.artifactIds));
+      const targets = project.sourceArtifacts.filter((source) => source.role === "target" && source.artifactKind === "codebase" && (!scopedIds.size || scopedIds.has(source.id)));
+      const snapshots = targets.length === 1 ? candidate.artifactSnapshots.filter((snapshot) => snapshot.sourceArtifactId === targets[0]!.id) : [];
+      const receipt = snapshots.length === 1 ? snapshots[0]!.frozenArtifact : undefined;
+      const bound = receipt?.sourceArtifactId === targets[0]?.id
+        && run.artifactHash === receipt.sha256
+        && run.trace.some((step) => step.id === `candidate-zip-static-${testCase.id}` && step.stage === "candidate-static-evidence" && step.status === "pass" && step.detail === receipt.sha256)
+        && (testCase.evidenceScope !== "product-behavior" || run.verificationStatus !== "verified");
+      return bound ? run : {
+        ...run,
+        output: "UNVERIFIED：冻结代码包证据与当前 Candidate Snapshot 的 Target 或 SHA-256 不一致。",
+        verificationStatus: "unverified",
+        artifactHash: undefined,
+        trace: [...run.trace, { id: `candidate-zip-binding-${testCase.id}`, stage: "candidate-static-evidence", summary: "冻结代码包绑定失效", status: "warning" }],
+      };
+    }
+
     if (testCase.criterionIds.length > 0 && testCase.criterionIds.every((id) => id === "SYS-PAIRWISE")) {
       const scopedIds = new Set(mapped.flatMap((criterion) => criterion.artifactIds));
       const snapshots = candidate.artifactSnapshots.filter((snapshot) => !scopedIds.size || scopedIds.has(snapshot.sourceArtifactId));

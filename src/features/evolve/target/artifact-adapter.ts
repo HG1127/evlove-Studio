@@ -1,6 +1,8 @@
 import { htmlCandidateGuard } from "../runtime/html-candidate-guard";
 import { htmlFileEvidence } from "../runtime/html-file-evidence";
 import {runVisualCase} from "../runtime/visual-case";
+import {extractSource} from "../sources/extract";
+import {SourceArtifactSchema} from "@evolution/contracts";
 import {readFrozenArtifact} from "../runtime/frozen-artifact";
 import { ExecuteArtifactAiResultSchema, ExecuteArtifactBatchAiResultSchema } from "../ai/schemas";
 import { runEvolveAi } from "../ai/service";
@@ -67,10 +69,60 @@ function unavailableResult(testCase: Parameters<TargetAdapter["run"]>[0]["testCa
   return undefined;
 }
 
+async function runFrozenCodebaseStaticEvidence(
+  project: Parameters<TargetAdapter["run"]>[0]["project"],
+  testCase: Parameters<TargetAdapter["run"]>[0]["testCase"],
+  variant: NonNullable<Parameters<TargetAdapter["run"]>[0]["variant"]>,
+): Promise<TargetRunResult | undefined> {
+  const criteria = project.acceptanceRubric.filter((item) => testCase.criterionIds.includes(item.id));
+  const scopedIds = new Set(criteria.flatMap((item) => item.artifactIds));
+  const codebases = project.sourceArtifacts.filter((item) => item.role === "target" && item.artifactKind === "codebase");
+  if (!codebases.length) return undefined;
+  const targets = codebases.filter((item) => !scopedIds.size || scopedIds.has(item.id));
+  const unavailable = (detail: string): TargetRunResult => ({
+    testCaseId: testCase.id, output: `UNVERIFIED：${detail}`, latencyMs: 0, cost: 0,
+    verificationStatus: "unverified",
+    trace: [{ id: `candidate-zip-static-${testCase.id}`, stage: "candidate-static-evidence", summary: "候选 ZIP 静态证据未完成", status: "warning", detail }],
+  });
+  if (targets.length !== 1) return unavailable("静态验收题没有唯一的代码库 Target 绑定。");
+  const source = targets[0]!;
+  const snapshots = variant.artifactSnapshots.filter((item) => item.sourceArtifactId === source.id);
+  if (snapshots.length !== 1) return unavailable("Candidate 没有唯一的代码库 Snapshot。");
+  const snapshot = snapshots[0]!;
+  const receipt = snapshot.frozenArtifact;
+  if (!receipt || receipt.sourceArtifactId !== source.id) return unavailable("Candidate ZIP 缺少对应 Target 的冻结凭证。");
+  try {
+    const blob = await readFrozenArtifact(receipt, snapshot.content);
+    const parsed = await extractSource({ name: receipt.name, mimeType: receipt.mimeType || "application/zip", buffer: new Uint8Array(await blob.arrayBuffer()) });
+    const indexed = parsed.structuredContent as { entries?: unknown[] } | undefined;
+    if (parsed.artifactKind !== "codebase" || !Array.isArray(indexed?.entries) || !indexed.entries.length) {
+      return unavailable("冻结 ZIP 未解析出完整代码库索引。");
+    }
+    const actual = SourceArtifactSchema.parse({
+      ...source, name: receipt.name, mimeType: receipt.mimeType || source.mimeType, size: receipt.size,
+      extension: parsed.extension, artifactKind: parsed.artifactKind, artifactDescriptor: parsed.artifactDescriptor,
+      textContent: parsed.extractedText ?? "", textExcerpt: parsed.excerpt ?? "", structure: parsed.structure,
+      structuredContent: parsed.structuredContent, parsingProfile: parsed.parsingProfile, warnings: parsed.warnings,
+    });
+    const candidateProject = { ...project, sourceArtifacts: [actual] };
+    const result = await runStaticEvidence(candidateProject, testCase);
+    return {
+      ...result, artifactHash: receipt.sha256,
+      output: `CANDIDATE FROZEN ZIP SHA-256: ${receipt.sha256}\n${result.output}`,
+      trace: [{ id: `candidate-zip-static-${testCase.id}`, stage: "candidate-static-evidence", summary: "已从 Candidate 冻结 ZIP 字节重建代码库索引", status: "pass", detail: receipt.sha256 }, ...result.trace],
+    };
+  } catch (error) {
+    return unavailable(`冻结 ZIP 校验或解析失败：${error instanceof Error ? error.message : String(error)}`);
+  }
+}
 async function runLocalEvidence(project: Parameters<TargetAdapter["run"]>[0]["project"], testCase: Parameters<TargetAdapter["run"]>[0]["testCase"],variant?:Parameters<TargetAdapter["run"]>[0]["variant"]) {
   const originalProject = project;
   if (!variant && testCase.criterionIds.length > 0 && testCase.criterionIds.every((id) => id === "SYS-PAIRWISE")) return { testCaseId: testCase.id, output: "BASELINE NOT APPLICABLE: 原版是比较起点；相对原版改进只能在候选实验中验证。", latencyMs: 0, cost: 0, trace: [], verificationStatus: "unverified" as const };
   if(testCase.executionMode==="visual-review")return runVisualCase(project,testCase,variant);
+  if(variant && testCase.executionMode==="static-evidence"){
+    const frozen=await runFrozenCodebaseStaticEvidence(project,testCase,variant);
+    if(frozen)return frozen;
+  }
   if(variant){
     if(testCase.executionMode==="roundtrip"){
       try{for(const snapshot of variant.artifactSnapshots)await readFrozenArtifact(snapshot.frozenArtifact,snapshot.content);if(!variant.artifactSnapshots.length)throw new Error("缺少文件");return {testCaseId:testCase.id,output:JSON.stringify(variant.artifactSnapshots.map(s=>s.frozenArtifact)),latencyMs:0,cost:0,verificationStatus:"verified" as const,trace:[]};}

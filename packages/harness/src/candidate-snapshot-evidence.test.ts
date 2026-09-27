@@ -130,3 +130,42 @@ describe("candidate snapshot evidence",()=>{
     expect(normalizeLocallyVerifiableCandidateRuns(project,malformed,[testCase],[seed])[0]?.verificationStatus).toBe("unverified");
   });
 });
+
+describe("frozen Candidate codebase binding", () => {
+  const project = {
+    evolutionCommand: "Improve setup",
+    acceptanceRubric: [{ id: "CONFIG", artifactIds: ["repo"], validationMethod: "static-structure" }],
+    sourceArtifacts: [{ id: "repo", name: "app.zip", extension: "zip", role: "target", artifactKind: "codebase" }],
+  } as unknown as EvolveProject;
+  const testCase = {
+    id: "STATIC-CONFIG", title: "Setup", input: "Check setup", expected: ["setup"], criterionIds: ["CONFIG"],
+    executionMode: "static-evidence", evidenceScope: "implementation",
+  } as TestCase;
+  const candidate = {
+    artifactSnapshots: [{ id: "snapshot", sourceArtifactId: "repo", name: "app.zip", content: JSON.stringify({ overlay: true, files: [{ path: "src/setup.ts", content: "setup" }] }), frozenArtifact: { sourceArtifactId: "repo", sha256: "exact-zip-sha" } }],
+  } as Candidate;
+  const run: TargetRunResult = {
+    testCaseId: testCase.id, output: "CANDIDATE FROZEN ZIP SHA-256: exact-zip-sha", latencyMs: 1, cost: 0,
+    verificationStatus: "verified", artifactHash: "exact-zip-sha",
+    trace: [{ id: `candidate-zip-static-${testCase.id}`, stage: "candidate-static-evidence", summary: "Indexed frozen ZIP", status: "pass", detail: "exact-zip-sha" }],
+  };
+
+  it("retains exact frozen ZIP static evidence instead of replacing it with overlay text", () => {
+    const [result] = normalizeLocallyVerifiableCandidateRuns(project, candidate, [testCase], [run]);
+    expect(result).toEqual(run);
+  });
+
+  it("invalidates a result whose Candidate frozen receipt changed", () => {
+    const changed = { ...candidate, artifactSnapshots: [{ ...candidate.artifactSnapshots[0]!, frozenArtifact: { sourceArtifactId: "repo", sha256: "different-zip-sha" } }] } as Candidate;
+    const [result] = normalizeLocallyVerifiableCandidateRuns(project, changed, [testCase], [run]);
+    expect(result?.verificationStatus).toBe("unverified");
+    expect(result?.artifactHash).toBeUndefined();
+    expect(result?.output).not.toContain("CANDIDATE FROZEN ZIP SHA-256");
+  });
+
+  it("does not turn missing frozen bytes into overlay evidence", () => {
+    const missing = { ...run, verificationStatus: "unverified" as const, output: "UNVERIFIED: frozen ZIP missing" };
+    const [result] = normalizeLocallyVerifiableCandidateRuns(project, candidate, [testCase], [missing]);
+    expect(result).toEqual(missing);
+  });
+});
