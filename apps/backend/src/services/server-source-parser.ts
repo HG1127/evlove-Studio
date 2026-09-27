@@ -1,5 +1,4 @@
 import JSZip, {type JSZipObject} from "jszip";
-import mammoth from "mammoth";
 import * as XLSX from "xlsx";
 import {
   SourceArtifactSchema,
@@ -20,6 +19,11 @@ const MAX_PDF_FILE_BYTES=20_000_000;
 const MAX_PDF_PAGES=100;
 const MAX_PDF_PAGE_ITEMS=10_000;
 const MAX_PDF_TEXT_CHARS=150_000;
+const MAX_OFFICE_FILE_BYTES=20_000_000;
+const MAX_OFFICE_XML_BYTES=2_000_000;
+const MAX_OFFICE_INDEX_BYTES=12_000_000;
+const MAX_OFFICE_PARTS=200;
+const MAX_OFFICE_TEXT_CHARS=300_000;
 const MAX_ZIP_TEXT_ENTRY_BYTES=250_000;
 const MAX_ZIP_INDEX_BYTES=8_000_000;
 const MAX_ZIP_MANIFEST_CHARS=200_000;
@@ -73,11 +77,37 @@ function parseRtf(buffer:Uint8Array){
     .trim();
   return {text,structure:["rtf-body"],structuredContent:{kind:"document",subtype:"rtf",approximate:true}};
 }
-async function parseOpenDocument(buffer:Uint8Array,ext:string){
+async function loadOfficeZip(buffer:Uint8Array){
+  if(!buffer.byteLength||buffer.byteLength>MAX_OFFICE_FILE_BYTES)throw new Error("Office 文件超出 Server Native 解析范围");
+  assertServerZipEntryBudget(buffer);
   const zip=await JSZip.loadAsync(buffer);
-  const content=await zip.file("content.xml")?.async("string");
-  if(!content)throw new Error("OpenDocument 中未找到 content.xml");
+  for(const entry of Object.values(zip.files) as JSZipObject[]){
+    if(entry.dir)continue;
+    const original=(entry as JSZipObject&{unsafeOriginalName?:string}).unsafeOriginalName;
+    if(!safeServerZipPath(entry.name)||(original&&!safeServerZipPath(original)))throw new Error("Office 包含不安全的文件路径");
+  }
+  return zip;
+}
+async function readOfficeXml(entry:JSZipObject,budget:{bytes:number}){
+  const data=(entry as JSZipObject&{_data?:{uncompressedSize?:number;crc32?:number}})._data;
+  const size=data?.uncompressedSize;
+  if(!Number.isSafeInteger(size)||size!<0||size!>MAX_OFFICE_XML_BYTES||budget.bytes+size!>MAX_OFFICE_INDEX_BYTES){
+    throw new Error("Office XML 解压大小超出安全索引范围");
+  }
+  budget.bytes+=size!;
+  const raw=await entry.async("uint8array");
+  if(raw.byteLength!==size||!Number.isInteger(data?.crc32)||serverZipCrc32(raw)!==(data!.crc32!>>>0)){
+    throw new Error("Office XML 大小或 CRC32 校验失败");
+  }
+  return new TextDecoder("utf-8",{fatal:true}).decode(raw);
+}
+async function parseOpenDocument(buffer:Uint8Array,ext:string){
+  const zip=await loadOfficeZip(buffer);
+  const entry=zip.file("content.xml");
+  if(!entry)throw new Error("OpenDocument 中未找到 content.xml");
+  const content=await readOfficeXml(entry,{bytes:0});
   const text=stripXml(content);
+  if(text.length>MAX_OFFICE_TEXT_CHARS)throw new Error("OpenDocument 正文超出安全索引范围");
   const kind=ext==="ods"?"spreadsheet":ext==="odp"?"presentation":"document";
   const structure=["content.xml",...Object.keys(zip.files).filter((name)=>/^(styles|meta|settings)\.xml$/.test(name))];
   return {text,structure,structuredContent:{kind,subtype:ext,source:"content.xml"}};
@@ -119,39 +149,45 @@ function inferKind(name:string,mimeType:string,structure:string[]):ArtifactKind{
 }
 
 async function parseDocx(buffer:Uint8Array){
-  let text="";
-  try{text=(await mammoth.extractRawText({buffer:Buffer.from(buffer)})).value;}catch{/* package fallback below */}
-  const zip=await JSZip.loadAsync(buffer);
+  const zip=await loadOfficeZip(buffer);
+  if(!zip.file("word/document.xml"))throw new Error("DOCX 中未找到 word/document.xml");
   const paths=["word/document.xml",...Object.keys(zip.files).filter((name)=>/^word\/(footnotes|endnotes|header\d*|footer\d*)\.xml$/.test(name))];
+  if(!paths.length||paths.length>MAX_OFFICE_PARTS)throw new Error("DOCX 正文分片数量超出安全索引范围");
+  const budget={bytes:0};
   const parts:Array<{path:string;textRuns:Array<{index:number;text:string}>}>=[];
   const chunks:string[]=[];
   for(const path of paths){
     const file=zip.file(path);
     if(!file)continue;
-    const xml=await file.async("string");
+    const xml=await readOfficeXml(file,budget);
     const runs=[...xml.matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)].map((match,index)=>({index,text:xmlUnescape(match[1]??"")}));
     if(runs.length)parts.push({path,textRuns:runs});
     const part=runs.map((run)=>run.text).join(" ").trim();
     if(part)chunks.push(part);
   }
-  text=text.trim()||chunks.join("\n\n");
+  const text=chunks.join("\n\n");
+  if(text.length>MAX_OFFICE_TEXT_CHARS)throw new Error("DOCX 正文超出安全索引范围");
   return {text,structure:parts.map((part)=>part.path),structuredContent:{kind:"document",subtype:"docx",parts}};
 }
 
 async function parsePptx(buffer:Uint8Array){
-  const zip=await JSZip.loadAsync(buffer);
+  const zip=await loadOfficeZip(buffer);
   const slides=Object.keys(zip.files).filter((name)=>/^ppt\/slides\/slide\d+\.xml$/.test(name)).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+  if(!slides.length||slides.length>MAX_OFFICE_PARTS)throw new Error("PPTX 幻灯片数量超出安全索引范围");
+  const budget={bytes:0};
   const rows:Array<{number:number;path:string;textRuns:Array<{index:number;text:string}>}>=[];
   const chunks:string[]=[];
   for(const path of slides){
-    const xml=await zip.file(path)!.async("string");
+    const xml=await readOfficeXml(zip.file(path)!,budget);
     const textRuns=[...xml.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)].map((match,index)=>({index,text:xmlUnescape(match[1]??"")}));
     const number=Number(path.match(/slide(\d+)/)?.[1]??rows.length+1);
     rows.push({number,path,textRuns});
     const text=textRuns.map((run)=>run.text).filter(Boolean).join("\n").trim();
     if(text)chunks.push(`===== SLIDE ${number} =====\n${text}`);
   }
-  return {text:chunks.join("\n\n"),structure:slides,structuredContent:{kind:"presentation",slides:rows}};
+  const text=chunks.join("\n\n");
+  if(text.length>MAX_OFFICE_TEXT_CHARS)throw new Error("PPTX 文本超出安全索引范围");
+  return {text,structure:slides,structuredContent:{kind:"presentation",slides:rows}};
 }
 
 function parseSpreadsheet(buffer:Uint8Array){

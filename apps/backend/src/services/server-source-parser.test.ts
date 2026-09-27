@@ -177,4 +177,59 @@ describe("server source parser",()=>{
     const corrupt=await parse("corrupt.pdf","application/pdf",new TextEncoder().encode("not a pdf"));
     expect(corrupt.parseStatus).toBe("unsupported");
     expect(corrupt.storageRef).toBe("artifact-test");
+  });  it("indexes real DOCX and PPTX text from checked Office XML",async()=>{
+    const docx=new JSZip();
+    docx.file("word/document.xml",'<w:document xmlns:w="w"><w:p><w:r><w:t>FINAL DOCX GUIDE</w:t></w:r></w:p></w:document>');
+    const document=await parse("guide.docx","application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      new Uint8Array(await docx.generateAsync({type:"uint8array"})));
+    expect(document.parseStatus).toBe("ready");
+    expect(document.textContent).toContain("FINAL DOCX GUIDE");
+    expect(document.structure).toContain("word/document.xml");
+    const pptx=new JSZip();
+    pptx.file("ppt/slides/slide1.xml",'<p:sld xmlns:a="a"><a:t>FINAL SLIDE TEXT</a:t></p:sld>');
+    const presentation=await parse("slides.pptx","application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      new Uint8Array(await pptx.generateAsync({type:"uint8array"})));
+    expect(presentation.parseStatus).toBe("ready");
+    expect(presentation.textContent).toContain("FINAL SLIDE TEXT");
+    expect(presentation.structure).toContain("ppt/slides/slide1.xml");
+  });
+
+  it("rejects oversized Office XML before decompression while retaining the original",async()=>{
+    const docx=new JSZip();
+    docx.file("word/document.xml",`<w:document><w:t>${"A".repeat(2_000_001)}</w:t></w:document>`);
+    const artifact=await parse("huge.docx","application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      new Uint8Array(await docx.generateAsync({type:"uint8array",compression:"DEFLATE"})));
+    expect(artifact.parseStatus).toBe("unsupported");
+    expect(artifact.storageRef).toBe("artifact-test");
+    expect(artifact.warnings.join(" ")).toContain("解压大小");
+  });
+
+  it("rejects unsafe Office paths and missing PPTX slides",async()=>{
+    const unsafe=new JSZip();
+    unsafe.file("word/document.xml","<w:t>GOOD</w:t>");
+    unsafe.file("../outside.xml","<w:t>BAD</w:t>");
+    const artifact=await parse("unsafe.docx","application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      new Uint8Array(await unsafe.generateAsync({type:"uint8array"})));
+    expect(artifact.parseStatus).toBe("unsupported");
+    expect(artifact.warnings.join(" ")).toContain("不安全");
+    const missing=new JSZip();missing.file("ppt/presentation.xml","<p:presentation/>");
+    const empty=await parse("empty.pptx","application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      new Uint8Array(await missing.generateAsync({type:"uint8array"})));
+    expect(empty.parseStatus).toBe("unsupported");
+    expect(empty.warnings.join(" ")).toContain("幻灯片数量");
+  });  it("rejects changed Office XML bytes by CRC before reporting usable content",async()=>{
+    const pptx=new JSZip();
+    pptx.file("ppt/slides/slide1.xml","<a:t>CRC OFFICE TEXT</a:t>");
+    const bytes=new Uint8Array(await pptx.generateAsync({type:"uint8array",compression:"STORE"}));
+    const needle=new TextEncoder().encode("CRC OFFICE TEXT");
+    let offset=-1;
+    for(let index=0;index<=bytes.length-needle.length;index+=1){
+      if(needle.every((byte,pos)=>bytes[index+pos]===byte)){offset=index;break;}
+    }
+    expect(offset).toBeGreaterThan(0);
+    bytes[offset]!^=1;
+    const artifact=await parse("changed.pptx","application/vnd.openxmlformats-officedocument.presentationml.presentation",bytes);
+    expect(artifact.parseStatus).toBe("unsupported");
+    expect(artifact.storageRef).toBe("artifact-test");
+    expect(artifact.warnings.join(" ")).toContain("CRC32");
   });});
