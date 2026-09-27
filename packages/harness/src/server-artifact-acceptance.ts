@@ -5,6 +5,7 @@ import type {
   FrozenArtifact,
 } from "@evolution/contracts";
 import {
+  campaignObservesLiveTarget,
   estimateRoundCost,
   evidenceFingerprint,
   settleArtifactAcceptanceFromValidation,
@@ -70,6 +71,8 @@ function settleRound(project:EvolveProject,candidate:Candidate,accepted:boolean,
     baseline:project.campaign.rootBaseline??project.baselineRun.result,
     parentVersionId,
     minImprovement:project.campaign.stopCriteria.minImprovement,
+    liveTarget:campaignObservesLiveTarget(project),
+    hiddenSuite:project.hiddenEvalSuite,
     selectedAt:now,
   }):{champion:project.searchChampion,changed:false,improvement:0};
   const evaluation=project.validationRun.evaluation;
@@ -188,6 +191,22 @@ export async function runServerArtifactAcceptance(
     return pause(project,reason,now);
   }
   if(acceptance.status==="passed"){
+    if(campaignObservesLiveTarget(project)&&project.searchChampion){
+      const comparison=updateSearchChampion({
+        current:project.searchChampion,
+        round,
+        winner:candidate,
+        validation:project.validationRun,
+        artifactAcceptance:acceptance,
+        baseline:project.campaign.rootBaseline??project.baselineRun.result,
+        parentVersionId:project.searchChampion.versionLabel,
+        minImprovement:project.campaign.stopCriteria.minImprovement,
+        liveTarget:true,
+        hiddenSuite:project.hiddenEvalSuite,
+        selectedAt:now,
+      });
+      if(comparison.comparisonPending)return pause(project,"[server-campaign-live-comparison-pending] 当前 Champion 缺少完整同卷 Hidden 对照证据；必须重新运行 Hidden Holdout。",now);
+    }
     project={
       ...project,
       candidates:project.candidates.map((item)=>item.id===candidate.id?{...item,status:"passed" as const}:item),

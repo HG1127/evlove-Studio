@@ -59,6 +59,29 @@ describe("server artifact acceptance",()=>{
     expect(completed.campaign.checkpoint).toBeUndefined();
   });
 
+  it("pauses a later live Target round instead of settling without paired Hidden evidence",async()=>{
+    const x=fixture(true);
+    const ports={
+      verifyFrozenArtifacts:async()=>({verified:[x.frozen],unavailable:[],failed:[]}),
+      repairCandidate:async()=>{throw new Error("repair must not run");},
+    };
+    const first=await runServerArtifactAcceptance(x.project,ports);
+    expect(first.project.searchChampion).toBeDefined();
+    const project={
+      ...first.project,
+      targetConnection:{...first.project.targetConnection,adapter:"http" as const},
+      campaign:{...first.project.campaign,checkpoint:{round:2,completedPhase:"validation" as const,at:"2026-09-20T15:00:00.000Z"}},
+    };
+    project.validationRun={...project.validationRun,evidenceFingerprint:evidenceFingerprint(project,x.candidate)};
+    const second=await runServerArtifactAcceptance(project,ports);
+    expect(second.control).toBe("stop");
+    expect(second.project.campaign.status).toBe("paused");
+    expect(second.project.campaign.currentRound).toBe(1);
+    expect(second.project.campaign.checkpoint?.round).toBe(2);
+    expect(second.project.searchChampion?.id).toBe(first.project.searchChampion?.id);
+    expect(second.reason).toContain("live-comparison-pending");
+  });
+
   it("refuses an accepted package if a stored frozen receipt is duplicated later",async()=>{
     const x=fixture(true);
     const outcome=await runServerArtifactAcceptance(x.project,{

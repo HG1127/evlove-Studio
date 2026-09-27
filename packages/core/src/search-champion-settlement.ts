@@ -1,4 +1,5 @@
-import type {ArtifactAcceptance,Candidate,EvaluationResult,SearchChampion,ValidationRun} from "@evolution/contracts";
+import type {ArtifactAcceptance,Candidate,EvaluationResult,SearchChampion,TestCase,ValidationRun} from "@evolution/contracts";
+import {reusableHoldoutBaseline} from "./baseline-readiness";
 
 function clamp(value:number,min=0,max=100){return Math.max(min,Math.min(max,value));}
 
@@ -33,16 +34,31 @@ export function updateSearchChampion(args:{
   baseline?:EvaluationResult;
   parentVersionId:string;
   minImprovement:number;
+  liveTarget?:boolean;
+  hiddenSuite?:TestCase[];
   selectedAt?:string;
 }){
   if(!args.winner||!args.validation.evaluation||args.validation.recommendation!=="release"||args.artifactAcceptance?.status!=="passed")return {champion:args.current,changed:false,improvement:0};
   if(args.validation.status!=="completed"||!args.artifactAcceptance.hardGatePass||args.artifactAcceptance.candidateId!==args.winner.id)return {champion:args.current,changed:false,improvement:0};
   if(args.validation.evaluation.demoJudged)return {champion:args.current,changed:false,improvement:0};
-  const score=computeSearchFitness(args.validation.evaluation,args.baseline,args.artifactAcceptance).score;
-  const previous=args.current?.score;
+  const paired=args.liveTarget&&args.current?args.validation.baselineEvaluation:undefined;
+  if(args.liveTarget&&args.current){
+    const ids=args.hiddenSuite?.map((item)=>item.id)??[];
+    const validation=args.validation;
+    if(validation.validationMode!=="full"||!ids.length||new Set(ids).size!==ids.length
+      ||!validation.baselineContextFingerprint||!validation.baselineObservedAt
+      ||validation.baselineSuiteIds?.length!==ids.length
+      ||ids.some((id,index)=>validation.baselineSuiteIds?.[index]!==id||validation.runs[index]?.testCaseId!==id||validation.baselineRuns[index]?.testCaseId!==id)
+      ||!reusableHoldoutBaseline(args.hiddenSuite!,validation.baselineRuns,paired)){
+      return {champion:args.current,changed:false,improvement:0,comparisonPending:true};
+    }
+  }
+  const scoringBaseline=paired??args.baseline;
+  const score=computeSearchFitness(args.validation.evaluation,scoringBaseline,args.artifactAcceptance).score;
+  const previous=paired?computeSearchFitness(paired,scoringBaseline,args.current?.artifactAcceptance).score:args.current?.score;
   const improvement=previous===undefined?score:score-previous;
   if(previous!==undefined&&improvement<args.minImprovement){
-    const currentEval=args.current?.evaluation;
+    const currentEval=paired??args.current?.evaluation;
     if(!(currentEval&&dominates(args.validation.evaluation,currentEval)))return {champion:args.current,changed:false,improvement};
   }
   const patches=[...(args.current?.patches??[]),...args.winner.patches].filter((patch,index,all)=>all.findIndex((item)=>item.id===patch.id)===index);

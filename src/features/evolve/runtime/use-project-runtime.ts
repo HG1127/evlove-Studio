@@ -1,4 +1,4 @@
-import { campaignRootBaselineForMeasurement, campaignScoringInputBlocker, campaignScoringInputFingerprint, applyProductionLearningGovernance, applyReleaseResultToProject, beginReleaseCycle, completeAutonomousMission, experimentNeedsEvidenceRepair, buildExperimentGapAdvicePayload, buildGapAdvicePayload, fallbackExperimentAdvice, integrateDistilledLesson, mergeGovernedNextQueue, nextDurableReleaseAction, prepareCampaignRetry, productionOutcomeFreshness, productionOutcomeTrend, projectHasStableHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, projectUsesConnectorRelease, projectUsesHttpRelease, projectUsesVercelRelease, transitionReleaseTarget } from "@evolution/core";
+import { campaignObservesLiveTarget, campaignRootBaselineForMeasurement, campaignScoringInputBlocker, campaignScoringInputFingerprint, applyProductionLearningGovernance, applyReleaseResultToProject, beginReleaseCycle, completeAutonomousMission, experimentNeedsEvidenceRepair, buildExperimentGapAdvicePayload, buildGapAdvicePayload, fallbackExperimentAdvice, integrateDistilledLesson, mergeGovernedNextQueue, nextDurableReleaseAction, prepareCampaignRetry, productionOutcomeFreshness, productionOutcomeTrend, projectHasStableHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, projectUsesConnectorRelease, projectUsesHttpRelease, projectUsesVercelRelease, transitionReleaseTarget } from "@evolution/core";
 import { deliveryReadiness } from "./delivery-readiness";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -1989,7 +1989,16 @@ export function useProjectRuntime(initialProject: EvolveProject) {
         baseline: working.campaign.rootBaseline ?? baseline.result,
         parentVersionId,
         minImprovement: working.campaign.stopCriteria.minImprovement,
+        liveTarget: campaignObservesLiveTarget(working),
+        hiddenSuite: working.hiddenEvalSuite,
       });
+      if (championUpdate.comparisonPending) {
+        const stopReason = "当前 Champion 缺少完整同卷 Hidden 对照证据；请重新运行 Hidden Validation。";
+        working = persist({ ...working, campaign: { ...working.campaign, status: "paused", stopReason, schedule: { ...working.campaign.schedule, enabled: false, nextRunAt: undefined } }, stage: "validation" });
+        setStage("validation");
+        pushActivity(stopReason, undefined, projectId);
+        return { round, stopped: true, paused: true, stopReason, champion: working.searchChampion };
+      }
       const winnerEvaluation = validation.evaluation ?? experiment.candidateResults.find((item) => item.candidateId === (experiment.winnerId ?? experiment.pendingEvidenceCandidateId))?.evaluation;
       const winnerScore = winnerEvaluation ? computeFitness(winnerEvaluation, working.campaign.rootBaseline ?? baseline.result, artifactAcceptance).score : undefined;
       const roundCost = estimateRoundCost(working);

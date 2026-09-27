@@ -23,6 +23,7 @@ import type {
   OutputArtifact,
   SearchChampion,
   ValidationRun,
+  TestCase,
 } from "../schemas";
 
 export type FitnessBreakdown = {
@@ -210,7 +211,9 @@ export function maybeUpdateSearchChampion(args: {
   baseline?: EvaluationResult;
   parentVersionId: string;
   minImprovement: number;
-}): { champion?: SearchChampion; changed: boolean; improvement: number } {
+  liveTarget?: boolean;
+  hiddenSuite?: TestCase[];
+}): { champion?: SearchChampion; changed: boolean; improvement: number; comparisonPending?: boolean } {
   return updateSearchChampion(args);
 }
 
