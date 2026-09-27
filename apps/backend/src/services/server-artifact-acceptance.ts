@@ -1,18 +1,24 @@
 import type {AcceptanceCriterion,Candidate,EvolveProject,FrozenArtifact} from "@evolution/contracts";
+import {indexUniqueById} from "@evolution/core";
 import {runServerArtifactAcceptance,type ServerArtifactVerification} from "@evolution/harness";
 import {runServerAi} from "./ai-gateway";
 import {getServerArtifactStore} from "./artifact-runtime";
 import {materializeServerCandidateArtifacts,serverArtifactSha256} from "./server-experiment-artifacts";
 
 async function verifyFrozenArtifacts({project,candidate}:{project:EvolveProject;candidate:Candidate}):Promise<ServerArtifactVerification>{
-  const targetIds=new Set(project.sourceArtifacts.filter((artifact)=>artifact.role==="target").map((artifact)=>artifact.id));
+  const targetIds=project.sourceArtifacts.filter((artifact)=>artifact.role==="target").map((artifact)=>artifact.id);
+  const targets=indexUniqueById(targetIds,(id)=>id);
+  const snapshots=indexUniqueById(candidate.artifactSnapshots,(item)=>item.sourceArtifactId);
+  if(targets.duplicateIds.size||snapshots.duplicateIds.size||candidate.artifactSnapshots.length!==targetIds.length){
+    return {verified:[],unavailable:["Target 与 Candidate Snapshot 的 sourceArtifactId 必须一一对应且唯一"],failed:[]};
+  }
   const verified:FrozenArtifact[]=[];
   const unavailable:string[]=[];
   const failed:string[]=[];
   for(const targetId of targetIds){
-    const snapshot=candidate.artifactSnapshots.find((item)=>item.sourceArtifactId===targetId);
+    const snapshot=snapshots.byId.get(targetId);
     const receipt=snapshot?.frozenArtifact;
-    if(!snapshot||!receipt){
+    if(!snapshot||!receipt||receipt.sourceArtifactId!==targetId){
       unavailable.push(`${targetId}: Candidate 缺少 frozen Artifact receipt`);
       continue;
     }
@@ -26,7 +32,7 @@ async function verifyFrozenArtifacts({project,candidate}:{project:EvolveProject;
       failed.push(`${targetId}: frozen bytes/hash/size 与 receipt 不一致`);
       continue;
     }
-    if(snapshot.contentHash&&receipt.snapshotHash&&snapshot.contentHash!==receipt.snapshotHash){
+    if(snapshot.contentHash&&snapshot.contentHash!==receipt.snapshotHash){
       failed.push(`${targetId}: Candidate Snapshot hash 与 frozen receipt 不一致`);
       continue;
     }

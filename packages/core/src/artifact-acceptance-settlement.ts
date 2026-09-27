@@ -7,6 +7,7 @@ import type {
 } from "@evolution/contracts";
 import { evidenceFingerprint } from "./evidence-binding";
 import { indexScopedAcceptanceResults } from "./acceptance-result-identity";
+import { indexUniqueById } from "./identity-index";
 
 function validationScoreIndex(project:EvolveProject,validation:ValidationRun){
   return indexScopedAcceptanceResults([{requestedCriterionIds:project.acceptanceRubric.map((item)=>item.id),results:validation.evaluation?.criterionScores??[]}]);
@@ -36,13 +37,29 @@ export function settleArtifactAcceptanceFromValidation(args:{
   const now=args.now??new Date().toISOString();
   const binding=evidenceFingerprint(args.project,args.candidate);
   const targetIds=args.project.sourceArtifacts.filter((item)=>item.role==="target").map((item)=>item.id);
-  const frozenById=new Map(args.frozenArtifacts.map((item)=>[item.sourceArtifactId,item]));
-  const snapshotsById=new Map(args.candidate.artifactSnapshots.map((item)=>[item.sourceArtifactId,item]));
-  const allTargetsFrozen=targetIds.length>0&&targetIds.every((id)=>{
-    const snapshot=snapshotsById.get(id);
-    const frozen=frozenById.get(id);
-    return Boolean(snapshot&&frozen&&snapshot.frozenArtifact?.sha256===frozen.sha256&&snapshot.frozenArtifact?.blobId===frozen.blobId);
-  });
+  const targetIndex=indexUniqueById(targetIds,(id)=>id);
+  const frozenIndex=indexUniqueById(args.frozenArtifacts,(item)=>item.sourceArtifactId);
+  const snapshotIndex=indexUniqueById(args.candidate.artifactSnapshots,(item)=>item.sourceArtifactId);
+  const allTargetsFrozen=targetIds.length>0
+    && targetIndex.duplicateIds.size===0
+    && frozenIndex.duplicateIds.size===0
+    && snapshotIndex.duplicateIds.size===0
+    && args.frozenArtifacts.length===targetIds.length
+    && args.candidate.artifactSnapshots.length===targetIds.length
+    && targetIds.every((id)=>{
+      const snapshot=snapshotIndex.byId.get(id);
+      const frozen=frozenIndex.byId.get(id);
+      const receipt=snapshot?.frozenArtifact;
+      return Boolean(snapshot&&frozen&&receipt
+        && receipt.sourceArtifactId===id
+        && receipt.sha256===frozen.sha256
+        && receipt.blobId===frozen.blobId
+        && receipt.snapshotHash===frozen.snapshotHash
+        && receipt.size===frozen.size
+        && receipt.name===frozen.name
+        && receipt.mimeType===frozen.mimeType
+        && (!snapshot.contentHash||snapshot.contentHash===receipt.snapshotHash));
+    });
   const validationReusable=args.validation.status==="completed"
     && args.validation.candidateId===args.candidate.id
     && args.validation.evidenceFingerprint===binding

@@ -68,4 +68,51 @@ describe("artifact acceptance settlement",()=>{
       expect(verifiedValidationFailures(x.project,x.validation)).toHaveLength(0);
     }
   });
+  it("rejects duplicate or unrelated frozen receipt identities",()=>{
+    for(const extra of [
+      (x:ReturnType<typeof fixture>)=>({...x.frozen}),
+      (x:ReturnType<typeof fixture>)=>({...x.frozen,sourceArtifactId:"unrelated"}),
+    ]){
+      const x=fixture();
+      const result=settleArtifactAcceptanceFromValidation({
+        project:x.project,candidate:x.candidate,validation:x.validation,frozenArtifacts:[x.frozen,extra(x)],
+      });
+      expect(result.status).toBe("unverified");
+      expect(result.frozenArtifacts).toBeUndefined();
+    }
+  });
+  it("rejects duplicate and unrelated Candidate Snapshot identities",()=>{
+    for(const sourceArtifactId of ["source","unrelated"]){
+      const x=fixture();
+      x.candidate.artifactSnapshots.push({...x.candidate.artifactSnapshots[0]!,id:"extra",sourceArtifactId});
+      x.validation.evidenceFingerprint=evidenceFingerprint(x.project,x.candidate);
+      const result=settleArtifactAcceptanceFromValidation({
+        project:x.project,candidate:x.candidate,validation:x.validation,frozenArtifacts:[x.frozen],
+      });
+      expect(result.status).toBe("unverified");
+      expect(result.frozenArtifacts).toBeUndefined();
+    }
+  });
+  it("rejects a receipt bound to another source even when blob and hash match",()=>{
+    const x=fixture();
+    x.candidate.artifactSnapshots[0]!.frozenArtifact={...x.frozen,sourceArtifactId:"unrelated"};
+    x.validation.evidenceFingerprint=evidenceFingerprint(x.project,x.candidate);
+    const result=settleArtifactAcceptanceFromValidation({
+      project:x.project,candidate:x.candidate,validation:x.validation,frozenArtifacts:[x.frozen],
+    });
+    expect(result.status).toBe("unverified");
+    expect(result.frozenArtifacts).toBeUndefined();
+  });
+  it("accepts two exact targets with frozen receipts in either order",()=>{
+    const x=fixture();
+    const second={...x.frozen,sourceArtifactId:"second",blobId:"blob2",sha256:"sha2",snapshotHash:"hash2"};
+    x.project.sourceArtifacts.push({...x.project.sourceArtifacts[0]!,id:"second"});
+    x.candidate.artifactSnapshots.push({...x.candidate.artifactSnapshots[0]!,id:"snap2",sourceArtifactId:"second",contentHash:"hash2",frozenArtifact:second});
+    x.validation.evidenceFingerprint=evidenceFingerprint(x.project,x.candidate);
+    for(const frozenArtifacts of [[x.frozen,second],[second,x.frozen]]){
+      const result=settleArtifactAcceptanceFromValidation({project:x.project,candidate:x.candidate,validation:x.validation,frozenArtifacts});
+      expect(result.status).toBe("passed");
+      expect(result.frozenArtifacts).toHaveLength(2);
+    }
+  });
 });
