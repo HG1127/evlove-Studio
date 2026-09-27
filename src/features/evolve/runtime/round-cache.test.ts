@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { EvolveProject } from "../schemas";
-import { baselineFingerprint, baselineMeasurementFingerprint, canReuseVisibleBaseline, clearRoundCaches, getHoldoutBaseline, getVisibleBaseline, setHoldoutBaseline, setVisibleBaseline } from "./round-cache";
+import { baselineFingerprint, baselineMeasurementFingerprint, canReuseVisibleBaseline, canReusePriorDiagnosis, clearRoundCaches, getHoldoutBaseline, getVisibleBaseline, setHoldoutBaseline, setVisibleBaseline } from "./round-cache";
 import { demoProject } from "../data/mock-project";
+import { EvolutionRoundSchema } from "../schemas";
+import { buildRoundRecord } from "./evolution-search";
 
 function project(overrides: Partial<EvolveProject> = {}): EvolveProject {
   return {
@@ -30,6 +32,40 @@ describe("campaign Baseline reuse", () => {
     expect(canReuseVisibleBaseline({ ...demoProject, goal: "修改后的用户目标" }, verified)).toBe(false);
     expect(canReuseVisibleBaseline({ ...demoProject, evalSuite: demoProject.evalSuite.map((testCase) => ({ ...testCase, input: testCase.input + " 新要求" })) }, verified)).toBe(false);
     expect(canReuseVisibleBaseline({ ...demoProject, aiProfile: { mode: "project", primary: { connectionId: "judge-2", model: "different", label: "new judge" } } }, verified)).toBe(false);
+  });
+});
+describe("repair-round diagnosis evidence", () => {
+  it("reuses the prior root cause only when the previous round measured these exact inputs", () => {
+    const fingerprint = baselineMeasurementFingerprint(demoProject);
+    const previous = EvolutionRoundSchema.parse({
+      id: "round-1", round: 1, status: "completed", parentVersionId: "V0",
+      startedAt: "2026-09-28T00:00:00Z", candidateCount: 1, summary: "No improvement",
+      baselineMeasurementFingerprint: fingerprint,
+    });
+    const eligible = {
+      ...demoProject,
+      diagnosis: { summary: "Evidence-backed root cause" } as EvolveProject["diagnosis"],
+      roundHistory: [previous],
+      campaign: {
+        ...demoProject.campaign, currentRound: 1, noImprovementRounds: 1,
+        lastGapAdvice: { overall: "Try another mutation", actions: [] },
+      },
+    };
+    expect(canReusePriorDiagnosis(eligible)).toBe(true);
+    expect(canReusePriorDiagnosis({ ...eligible, goal: "Updated user goal" })).toBe(false);
+    expect(canReusePriorDiagnosis({ ...eligible, evalSuite: demoProject.evalSuite.map((testCase) => ({ ...testCase, input: testCase.input + " changed" })) })).toBe(false);
+    expect(canReusePriorDiagnosis({ ...eligible, roundHistory: [{ ...previous, baselineMeasurementFingerprint: undefined }] })).toBe(false);
+    expect(canReusePriorDiagnosis({ ...eligible, campaign: { ...eligible.campaign, currentRound: 2 } })).toBe(false);
+  });
+
+  it("records the measured Baseline identity in each completed round", () => {
+    const fingerprint = baselineMeasurementFingerprint(demoProject);
+    const record = buildRoundRecord({
+      project: { ...demoProject, baselineRun: { ...demoProject.baselineRun, measurementFingerprint: fingerprint } },
+      round: 1, parentVersionId: "V0", championChanged: false, improvement: 0,
+      startedAt: "2026-09-28T00:00:00Z", summary: "No improvement",
+    });
+    expect(EvolutionRoundSchema.parse(record).baselineMeasurementFingerprint).toBe(fingerprint);
   });
 });
 describe("round-cache · 跨轮 Baseline 复用", () => {

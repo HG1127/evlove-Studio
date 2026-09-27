@@ -78,6 +78,16 @@ export function canReuseVisibleBaseline(project: EvolveProject, baseline: Baseli
   return baseline.measurementFingerprint === baselineMeasurementFingerprint(project)
     && baselineReadiness({ ...project, baselineRun: baseline }).ready;
 }
+/** A repair round may reuse a root cause only for the exact evidence and Target it analyzed. */
+export function canReusePriorDiagnosis(project: EvolveProject): boolean {
+  const previous = project.roundHistory.at(-1);
+  return project.campaign.noImprovementRounds === 1
+    && Boolean(project.campaign.lastGapAdvice && project.diagnosis && project.selectedProblemId
+      && project.problems.some((item) => item.id === project.selectedProblemId)
+      && previous?.round === project.campaign.currentRound
+      && previous.baselineMeasurementFingerprint
+      && previous.baselineMeasurementFingerprint === baselineMeasurementFingerprint(project));
+}
 export function getVisibleBaseline(projectId: string, fingerprint: string): BaselineRun | undefined {
   const hit = VISIBLE_BASELINE.get(projectId);
   return hit && Date.now() - hit.cachedAt < MAX_CACHE_AGE_MS && hit.fingerprint === fingerprint ? structuredClone(hit.baseline) : undefined;

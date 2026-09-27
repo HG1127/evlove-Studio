@@ -233,6 +233,7 @@ export function buildRoundRecord(args: {
     startedAt: args.startedAt,
     completedAt: new Date().toISOString(),
     selectedProblemTitle: args.project.problems.find((problem) => problem.id === args.project.selectedProblemId)?.title,
+    baselineMeasurementFingerprint: args.project.baselineRun.measurementFingerprint,
     candidateCount: args.project.selectedCandidateIds.length || args.project.candidates.length,
     winnerCandidateId: args.winnerId,
     winnerScore: args.winnerScore,

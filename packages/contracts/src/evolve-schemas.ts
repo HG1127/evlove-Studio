@@ -992,6 +992,8 @@ export const EvolutionRoundSchema = z.object({
   startedAt: z.string(),
   completedAt: z.string().optional(),
   selectedProblemTitle: z.string().optional(),
+  /** Exact Baseline measurement that supports this round's problem and root-cause evidence. */
+  baselineMeasurementFingerprint: z.string().min(1).optional(),
   candidateCount: z.number().int().min(0),
   winnerCandidateId: z.string().optional(),
   winnerScore: z.number().optional(),

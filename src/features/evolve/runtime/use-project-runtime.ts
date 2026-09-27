@@ -40,7 +40,7 @@ import {
 } from "./run-manager";
 import { advanceCampaignScheduleAfterRun, buildRoundArchive, buildRoundRecord, campaignGoalSatisfied, campaignPreflightStopReason, campaignScheduleIssue, campaignStopReason, computeFitness, estimateRoundCost, materializeChampionOutputs, maybeUpdateSearchChampion, nextScheduledAt, selectDiverseCandidates, selectParentPool } from "./evolution-search";
 import { buildSearchMemory, nextExploreRatio } from "./search-memory";
-import { baselineFingerprint, canReuseVisibleBaseline, getVisibleBaseline, setVisibleBaseline } from "./round-cache";
+import { baselineFingerprint, canReuseVisibleBaseline, canReusePriorDiagnosis, getVisibleBaseline, setVisibleBaseline } from "./round-cache";
 import { flagUngroundedCandidates } from "./plan-grounding";
 import { baselineRubricProblem, buildFocusedPlanPayload, focusedTask, focusedSourceContext, prioritizeProblems, limitPlanToTask } from "./focused-task";
 import { compactProblemAnalysisInput } from "./problem-analysis-input";
@@ -1559,9 +1559,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
       // problem/root cause once and spend the model budget on a different mutation instead of paying
       // for identical problem-analysis + diagnosis again. A second miss reaches the default patience
       // boundary and therefore does not silently keep a stale diagnosis forever.
-      const reusePriorDiagnosis = working.campaign.noImprovementRounds === 1
-        && Boolean(working.campaign.lastGapAdvice && working.diagnosis && working.selectedProblemId
-          && working.problems.some((item) => item.id === working.selectedProblemId));
+      const reusePriorDiagnosis = canReusePriorDiagnosis(working);
       // 轮内断点续跑：同一轮上次被打断（暂停键 / 页面刷新）时，已完成阶段直接复用落盘数据，
       // 从下一步接着跑——昂贵的基线、诊断、候选生成、沙箱实验都不会白做第二遍。
       const resumeFrom = working.campaign.checkpoint?.round === round ? working.campaign.checkpoint.completedPhase : undefined;
