@@ -17,7 +17,7 @@ import { buildCandidateArtifacts } from "./artifact-quality";
 import { mapTestsToRubric, normalizeAcceptanceRubric, rubricCoverage, rubricValidation } from "./acceptance-rubric";
 import { describeArtifact, resolveProjectArtifactStrategy } from "./artifact-strategy";
 import { buildArtifactGraph, compileSemanticEvolution } from "./semantic-evolution";
-import { candidateWinnerDecision, computeGapAnalysis, gapHeadline, indexScopedTestCaseResults, indexUniqueById, projectHasOnlineReleaseTarget, REGRESSION_TOLERANCE, validationRegression as coreValidationRegression } from "@evolution/core";
+import { candidateWinnerDecision, computeGapAnalysis, gapHeadline, indexScopedTestCaseResults, indexUniqueById, projectHasOnlineReleaseTarget, reusableHoldoutBaseline, REGRESSION_TOLERANCE, validationRegression as coreValidationRegression } from "@evolution/core";
 import { extractSource } from "../sources/source-loader";
 import { getArtifactBlob, putArtifactBlob } from "./artifact-blob-store";
 import { readFrozenArtifact } from "./frozen-artifact";
@@ -1109,8 +1109,7 @@ async function runValidationUnbound(project: EvolveProject, inputCandidate: Cand
   const cacheReusable = Boolean(cachedHoldout)
     && cachedHoldout!.suiteIds.length === suiteIds.length
     && cachedHoldout!.suiteIds.every((id, index) => id === suiteIds[index])
-    && cachedHoldout!.runs.length === suite.length
-    && !cachedHoldout!.runs.some((item) => item.error);
+    && reusableHoldoutBaseline(suite, cachedHoldout!.runs, cachedHoldout!.evaluation);
   let baselineRuns: TargetRunResult[];
   let baselineHoldout: EvaluationResult;
   let runs: TargetRunResult[];
@@ -1151,8 +1150,7 @@ async function runValidationUnbound(project: EvolveProject, inputCandidate: Cand
     const reusableBaseline = prior.baselineContextFingerprint===roundFingerprint && Date.now()-(prior.baselineObservedAt??0)<600000 && Boolean(prior.baselineEvaluation)
       && prior.baselineSuiteIds?.length === suiteIds.length
       && (prior.baselineSuiteIds ?? []).every((id, index) => id === suiteIds[index])
-      && prior.baselineRuns.length === suite.length
-      && !prior.baselineRuns.some((item) => item.error);
+      && reusableHoldoutBaseline(suite, prior.baselineRuns, prior.baselineEvaluation);
     if (reusableBaseline && prior.baselineEvaluation) {
       onProgress?.(suite.length, totalRuns, "复用当前版本同卷作答");
       baselineRuns = prior.baselineRuns;

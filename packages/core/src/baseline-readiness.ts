@@ -1,4 +1,4 @@
-import type { EvolveProject } from "@evolution/contracts";
+import type { EvaluationResult, EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
 import { indexUniqueById } from "./identity-index";
 
 /** Baseline is usable for diagnosis only when real, sufficiently complete evidence exists. */
@@ -64,4 +64,18 @@ export function reusableBaselineRuns(project: EvolveProject, fingerprint: string
     return Boolean(testCase && !run.error && run.verificationStatus === "verified"
       && testCase.criterionIds.every((id) => scores.byId.get(id)?.verificationStatus === "verified"));
   });
+}
+/** An incomplete holdout observation must be measured again when execution or judging recovers. */
+export function reusableHoldoutBaseline(suite: TestCase[], runs: TargetRunResult[], evaluation: EvaluationResult | undefined): boolean {
+  if (!evaluation || evaluation.demoJudged || runs.length !== suite.length) return false;
+  const cases = indexUniqueById(suite, (testCase) => testCase.id);
+  const results = indexUniqueById(runs, (run) => run.testCaseId);
+  if (cases.duplicateIds.size || results.duplicateIds.size || results.byId.size !== cases.byId.size) return false;
+  if ([...cases.byId.keys()].some((id) => {
+    const run = results.byId.get(id);
+    return !run || Boolean(run.error) || run.verificationStatus !== "verified";
+  })) return false;
+  const requiredCriteria = new Set(suite.flatMap((testCase) => testCase.criterionIds).filter((id) => id !== "SYS-PAIRWISE"));
+  const scores = indexUniqueById(evaluation.criterionScores ?? [], (score) => score.criterionId);
+  return !scores.duplicateIds.size && [...requiredCriteria].every((id) => scores.byId.get(id)?.verificationStatus === "verified");
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { EvolveProject } from "@evolution/contracts";
-import { baselineReadiness, reusableBaselineRuns } from "./baseline-readiness";
+import { baselineReadiness, reusableBaselineRuns, reusableHoldoutBaseline } from "./baseline-readiness";
 
 function fixture(): EvolveProject {
   const run = (testCaseId: string) => ({ testCaseId, output: "measured", latencyMs: 1, cost: 0, trace: [], verificationStatus: "verified" as const });
@@ -48,5 +48,36 @@ describe("baseline evidence identity", () => {
     const project = fixture();
     project.baselineRun.result!.criterionScores!.push({ ...project.baselineRun.result!.criterionScores![0]! });
     expect(reusableBaselineRuns(project, "same", true).map((run) => run.testCaseId)).toEqual(["T2"]);
+  });
+});
+describe("holdout baseline reuse", () => {
+  it("reuses an exact, uniquely identified, fully verified observation", () => {
+    const project = fixture();
+    expect(reusableHoldoutBaseline(project.evalSuite, project.baselineRun.runs, project.baselineRun.result)).toBe(true);
+  });
+
+  it("remeasures missing, duplicate, failed, partial and unverified case evidence", () => {
+    const project = fixture();
+    const suite = project.evalSuite;
+    const runs = project.baselineRun.runs;
+    const evaluation = project.baselineRun.result;
+    expect(reusableHoldoutBaseline(suite, runs.slice(0, 1), evaluation)).toBe(false);
+    expect(reusableHoldoutBaseline(suite, [runs[0]!, { ...runs[0]! }], evaluation)).toBe(false);
+    expect(reusableHoldoutBaseline([{ ...suite[0]! }, { ...suite[0]! }], runs, evaluation)).toBe(false);
+    for (const status of ["failed", "partial", "unverified"] as const) {
+      expect(reusableHoldoutBaseline(suite, [{ ...runs[0]!, verificationStatus: status }, runs[1]!], evaluation)).toBe(false);
+    }
+    expect(reusableHoldoutBaseline(suite, [{ ...runs[0]!, error: "runner unavailable" }, runs[1]!], evaluation)).toBe(false);
+  });
+
+  it("remeasures when judging is incomplete or demo-only", () => {
+    const project = fixture();
+    const suite = project.evalSuite;
+    const runs = project.baselineRun.runs;
+    const evaluation = project.baselineRun.result!;
+    expect(reusableHoldoutBaseline(suite, runs, { ...evaluation, demoJudged: true })).toBe(false);
+    expect(reusableHoldoutBaseline(suite, runs, { ...evaluation, criterionScores: evaluation.criterionScores!.slice(0, 1) })).toBe(false);
+    expect(reusableHoldoutBaseline(suite, runs, { ...evaluation, criterionScores: [{ ...evaluation.criterionScores![0]!, verificationStatus: "unverified" }, evaluation.criterionScores![1]!] })).toBe(false);
+    expect(reusableHoldoutBaseline(suite, runs, { ...evaluation, criterionScores: [evaluation.criterionScores![0]!, { ...evaluation.criterionScores![0]! }, evaluation.criterionScores![1]!] })).toBe(false);
   });
 });
