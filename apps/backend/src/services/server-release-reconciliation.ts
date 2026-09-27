@@ -40,7 +40,10 @@ export async function runServerMissionReleaseReconciliation(project:EvolveProjec
         deploymentId,
         stableDeploymentId,
         expectedArtifactHashes,
-        expectedArtifactByteHashes:expectedServerHttpReleaseByteHashes(project,candidate),
+        expectedArtifactByteHashes:(()=>{
+          if(recoveryAction!=="rollback")return expectedServerHttpReleaseByteHashes(project,candidate);
+          try{return expectedServerHttpReleaseByteHashes(project,candidate);}catch{return [];}
+        })(),
         recoveryAction,
         healthPath,
       }),

@@ -118,15 +118,16 @@ export async function observeHttpTarget(raw:unknown){
   const input=TargetObserveProxyRequestSchema.parse(raw);
   const snapshots=new Map(input.candidate.artifactSnapshots.map((item)=>[item.sourceArtifactId,item]));
   const expected=input.expectedArtifactByteHashes;
-  if(snapshots.size!==input.candidate.artifactSnapshots.length||expected.length!==snapshots.size
-    ||new Set(expected.map((item)=>item.sourceArtifactId)).size!==expected.length
-    ||expected.some((item)=>!snapshots.has(item.sourceArtifactId))){
+  if((!expected.length&&input.recoveryAction!=="rollback")
+    ||(expected.length>0&&(snapshots.size!==input.candidate.artifactSnapshots.length||expected.length!==snapshots.size
+      ||new Set(expected.map((item)=>item.sourceArtifactId)).size!==expected.length
+      ||expected.some((item)=>!snapshots.has(item.sourceArtifactId))))){
     throw new Error("HTTP Observe 预期字节 SHA-256 未唯一覆盖 Candidate Target。");
   }
   const result=TargetObserveProxyResponseSchema.parse(await post(getServerTargetProxyConfig().observeUrl,input,"Target Observe"));
   if(result.effectiveAction!=="rollback"){
     const received=result.artifactByteHashes??[];
-    if(received.length!==expected.length
+    if(!expected.length||received.length!==expected.length
       ||new Set(received.map((item)=>item.sourceArtifactId)).size!==received.length
       ||expected.some((item)=>!received.some((receipt)=>receipt.sourceArtifactId===item.sourceArtifactId&&receipt.sha256===item.sha256))){
       throw new Error("HTTP Observe 回执未独立确认已部署 Artifact 的 Gate F 字节 SHA-256。");

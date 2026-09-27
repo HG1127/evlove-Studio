@@ -195,6 +195,20 @@ describe("server HTTP target gateway",()=>{
     })).resolves.toMatchObject({effectiveAction:"rollback"});
   });
 
+  it("confirms an uncertain rollback without Candidate Gate F hashes but rejects a still-live Candidate",async()=>{
+    process.env.EVOLUTION_TARGET_OBSERVE_URL="https://runner.internal/observe";
+    const candidate={id:"C1",name:"c",change:"x",patches:[],artifactSnapshots:[{id:"s",sourceArtifactId:"source",name:"a.txt",mimeType:"text/plain",content:"new",contentHash:"hash-c1",createdAt:"now"}]};
+    const input={projectId:"p",connectionId:"c",candidate,recoveryAction:"rollback"};
+    const rollback={ok:true,trafficPercent:0,note:"stable observed",healthy:true,kpis:[],evidenceMode:"live",effectiveAction:"rollback",observationStatus:"healthy",deploymentId:"stable",stableDeploymentId:"stable",environment:"production",observedAt:"2026-09-27T00:00:00Z"};
+    const fetchMock=vi.fn(async()=>new Response(JSON.stringify(rollback),{status:200}));
+    vi.stubGlobal("fetch",fetchMock);
+    await expect(observeHttpTarget(input)).resolves.toMatchObject({effectiveAction:"rollback",deploymentId:"stable"});
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({...rollback,effectiveAction:"promote",deploymentId:"candidate",trafficPercent:100}),{status:200}));
+    await expect(observeHttpTarget(input)).rejects.toThrow("Gate F 字节 SHA-256");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await expect(observeHttpTarget({...input,recoveryAction:"promote"})).rejects.toThrow("预期字节 SHA-256");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
   it("rejects an observe response that is successful HTTP but lacks a live deployment receipt",async()=>{
     process.env.EVOLUTION_TARGET_OBSERVE_URL="https://runner.internal/observe";
     vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({

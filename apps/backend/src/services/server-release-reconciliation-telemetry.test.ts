@@ -84,6 +84,18 @@ describe("server release reconciliation telemetry gate",()=>{
     expect(observeHttp).not.toHaveBeenCalled();
     expect(recordHttp).not.toHaveBeenCalled();
   });
+  it("can read-only confirm a rollback even after Candidate Gate F metadata is unavailable",async()=>{
+    const project=fixture("http");
+    project.searchChampion!.artifactAcceptance=undefined;
+    project.release={...project.release,status:"promoted",trafficPercent:100,environment:"production",
+      recovery:{status:"pending",action:"rollback",reason:"rollback response lost",at:"2026-09-24T18:00:00Z"}};
+    observeHttp.mockResolvedValue({...receipt("promote"),effectiveAction:"rollback",trafficPercent:0,
+      deploymentId:"stable-deployment",artifactHashes:undefined,artifactByteHashes:undefined});
+    const outcome=await runServerMissionReleaseReconciliation(project);
+    expect(observeHttp).toHaveBeenCalledWith(expect.objectContaining({expectedArtifactByteHashes:[]}));
+    expect(outcome.disposition).not.toBe("manual-check");
+    expect(outcome.project.release.status).toBe("rolled-back");
+  });
   for(const provider of ["http","connector"] as const){
     it(`does not record or advertise an invalid ${provider} observation`,async()=>{
       const observe=provider==="http"?observeHttp:observeConnector;
