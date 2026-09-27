@@ -1,6 +1,7 @@
 import {
   OutcomeAnalyticsHealthSchema,
   OutcomeAnalyticsResponseSchema,
+  OutcomeMetricBatchRequestSchema,
   OutcomeMetricBatchResponseSchema,
   type OutcomeAnalyticsHealth,
   type OutcomeAnalyticsResponse,
@@ -25,13 +26,20 @@ export async function getServerOutcomeHealth():Promise<OutcomeAnalyticsHealth>{
 }
 
 export async function ingestServerOutcomeSamples(input:OutcomeMetricBatchRequest):Promise<OutcomeMetricBatchResponse>{
-  return OutcomeMetricBatchResponseSchema.parse(await apiJson("/api/evolution/outcome-samples",{
-    method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(input),
+  const request=OutcomeMetricBatchRequestSchema.parse(input);
+  const receipt=OutcomeMetricBatchResponseSchema.parse(await apiJson("/api/evolution/outcome-samples",{
+    method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(request),
   }));
+  if(receipt.missionId!==request.missionId)throw new Error("Outcome write Mission identity mismatch");
+  return receipt;
 }
 
 export async function getServerOutcomeAnalysis(missionId:string,candidateId?:string):Promise<OutcomeAnalyticsResponse>{
   const query=new URLSearchParams({missionId});
   if(candidateId)query.set("candidateId",candidateId);
-  return OutcomeAnalyticsResponseSchema.parse(await apiJson("/api/evolution/outcome-analysis?"+query.toString()));
+  const analysis=OutcomeAnalyticsResponseSchema.parse(await apiJson("/api/evolution/outcome-analysis?"+query.toString()));
+  if(analysis.missionId!==missionId||(candidateId&&analysis.candidateId!==candidateId)){
+    throw new Error("Outcome analysis identity mismatch");
+  }
+  return analysis;
 }

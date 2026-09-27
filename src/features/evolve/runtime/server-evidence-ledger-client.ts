@@ -22,7 +22,9 @@ export async function getServerEvidenceLedgerHealth():Promise<EvidenceLedgerHeal
 }
 
 export async function verifyServerEvidenceLedger(missionId:string):Promise<EvidenceLedgerVerifyResponse>{
-  return EvidenceLedgerVerifyResponseSchema.parse(
+  const result=EvidenceLedgerVerifyResponseSchema.parse(
     await apiJson("/api/evolution/evidence-ledger-verify?missionId="+encodeURIComponent(missionId)),
   );
+  if(result.missionId!==missionId)throw new Error("Evidence Ledger Mission identity mismatch");
+  return result;
 }

@@ -255,4 +255,18 @@ describe("server workflow routing",()=>{
     await getServerWorkflowCapabilities(true);
     expect(await shouldUseServerAutoPilot(connectorRelease)).toBe(false);
   });
+  it("rejects Workflow start and status receipts for another Mission or Job",async()=>{
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({
+      missionId:"mission-other",controlJobId:"job-1",runId:"run-1",status:"queued",
+    }),{status:200})));
+    await expect(startServerEvolutionWorkflow("mission-expected"))
+      .rejects.toThrow("Workflow start Mission identity mismatch");
+    const at="2026-09-24T00:00:00.000Z";
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({
+      job:{schemaVersion:"job-v1",id:"job-other",type:"mission-action",status:"running",
+        label:"Run",idempotencyKey:"run:1",createdAt:at,updatedAt:at},events:[],
+    }),{status:200})));
+    await expect(getServerEvolutionWorkflowStatus({jobId:"job-expected"}))
+      .rejects.toThrow("Workflow status Job identity mismatch");
+  });
 });

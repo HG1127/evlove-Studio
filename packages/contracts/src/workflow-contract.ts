@@ -47,9 +47,9 @@ export const EvolutionWorkflowResultSchema = z.object({
 export type EvolutionWorkflowResult = z.infer<typeof EvolutionWorkflowResultSchema>;
 
 export const EvolutionWorkflowStartResponseSchema = z.object({
-  missionId: z.string(),
-  controlJobId: z.string(),
-  runId: z.string(),
+  missionId: z.string().min(1),
+  controlJobId: z.string().min(1),
+  runId: z.string().min(1),
   status: z.literal("queued"),
   scheduledFor: z.string().optional(),
   reused:z.boolean().optional(),

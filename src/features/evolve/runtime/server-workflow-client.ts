@@ -63,7 +63,9 @@ export async function startServerEvolutionWorkflow(
       ...(options?.idempotencyKey?{idempotencyKey:options.idempotencyKey}:{}),
     }),
   });
-  return EvolutionWorkflowStartResponseSchema.parse(data);
+  const receipt=EvolutionWorkflowStartResponseSchema.parse(data);
+  if(receipt.missionId!==missionId)throw new Error("Workflow start Mission identity mismatch");
+  return receipt;
 }
 
 export async function getServerEvolutionWorkflowStatus(input:{runId?:string;jobId?:string}){
@@ -71,7 +73,9 @@ export async function getServerEvolutionWorkflowStatus(input:{runId?:string;jobI
   const query=new URLSearchParams();
   if(parsed.runId)query.set("runId",parsed.runId);
   if(parsed.jobId)query.set("jobId",parsed.jobId);
-  return EvolutionWorkflowStatusResponseSchema.parse(await apiJson("/api/evolution/status?"+query.toString()));
+  const status=EvolutionWorkflowStatusResponseSchema.parse(await apiJson("/api/evolution/status?"+query.toString()));
+  if(parsed.jobId&&status.job&&status.job.id!==parsed.jobId)throw new Error("Workflow status Job identity mismatch");
+  return status;
 }
 
 export async function checkServerSandboxHealth():Promise<SandboxHealth>{
