@@ -2,6 +2,8 @@ import type { BaselineRun, EvaluationResult, EvolveProject, TargetRunResult } fr
 import { fastHash } from "../ai/performance";
 import { searchBaseCandidate } from "./search-base";
 import { baselineReadiness } from "@evolution/core";
+import { resolveProjectOperationConnections } from "../ai/providers/registry";
+import { getAiProviderStatus } from "../ai/service";
 
 const VALIDATION_CONTRACT_VERSION = "criterion-scope-v2";
 
@@ -32,10 +34,20 @@ export function baselineFingerprint(project: EvolveProject): string {
     judge: aiProfile.judge,
     operationRoutes: Object.fromEntries(["execute-artifact", "execute-artifact-batch", "evaluate", "evaluate-population"].flatMap((operation) => aiProfile.operationRoutes?.[operation] ? [[operation, aiProfile.operationRoutes[operation]]] : [])),
   } : aiProfile;
-  const contract = JSON.stringify([project.evalSuite, project.goal, project.evolutionCommand, project.acceptanceRubric, project.protectedItems, project.inputClarifications, baselineProfile, project.targetConnection, project.metrics?.map(({ key, target, direction }) => ({ key, target, direction }))]);
+  const liveRoutes = (["execute-artifact", "execute-artifact-batch", "evaluate", "evaluate-population"] as const).map((operation) => {
+    const routed = resolveProjectOperationConnections(operation, aiProfile)[0];
+    if (routed) return [operation, routed.connection.id, routed.connection.providerId, routed.model, routed.resolved.baseUrl];
+    const fallback = getAiProviderStatus(operation, { aiProfile });
+    return [operation, fallback.connectionId ?? fallback.providerId, fallback.model, fallback.routeSource];
+  });
+  const contract = JSON.stringify([project.evalSuite, project.goal, project.evolutionCommand, project.acceptanceRubric, project.protectedItems, project.inputClarifications, baselineProfile, liveRoutes, project.targetConnection, project.metrics?.map(({ key, target, direction }) => ({ key, target, direction }))]);
   return fastHash([VALIDATION_CONTRACT_VERSION, suite, hidden, targets, policy, patches, contract].join("::"));
 }
 
+/** Exact input, suite, and model binding recorded on a completed Baseline measurement. */
+export function baselineMeasurementFingerprint(project: EvolveProject): string {
+  return baselineFingerprint(project) + JSON.stringify(project.evalSuite);
+}
 export type HoldoutBaselineCache = {
   fingerprint: string;
   suiteIds: string[];
@@ -63,7 +75,8 @@ function remember<K, V>(map: Map<K, V>, key: K, value: V, cap = 8) {
 
 /** Only a diagnosis-ready measurement may skip the next round's real Baseline run. */
 export function canReuseVisibleBaseline(project: EvolveProject, baseline: BaselineRun): boolean {
-  return baselineReadiness({ ...project, baselineRun: baseline }).ready;
+  return baseline.measurementFingerprint === baselineMeasurementFingerprint(project)
+    && baselineReadiness({ ...project, baselineRun: baseline }).ready;
 }
 export function getVisibleBaseline(projectId: string, fingerprint: string): BaselineRun | undefined {
   const hit = VISIBLE_BASELINE.get(projectId);

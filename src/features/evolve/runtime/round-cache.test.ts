@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { EvolveProject } from "../schemas";
-import { baselineFingerprint, canReuseVisibleBaseline, clearRoundCaches, getHoldoutBaseline, getVisibleBaseline, setHoldoutBaseline, setVisibleBaseline } from "./round-cache";
+import { baselineFingerprint, baselineMeasurementFingerprint, canReuseVisibleBaseline, clearRoundCaches, getHoldoutBaseline, getVisibleBaseline, setHoldoutBaseline, setVisibleBaseline } from "./round-cache";
 import { demoProject } from "../data/mock-project";
 
 function project(overrides: Partial<EvolveProject> = {}): EvolveProject {
@@ -19,11 +19,17 @@ function project(overrides: Partial<EvolveProject> = {}): EvolveProject {
 describe("campaign Baseline reuse", () => {
   it("reuses a complete verified measurement and rejects a Demo Judge or missing cases", () => {
     const verified = { ...demoProject.baselineRun,
+      measurementFingerprint: baselineMeasurementFingerprint(demoProject),
       runs: demoProject.evalSuite.map((testCase) => ({ testCaseId: testCase.id, verificationStatus: "verified" as const })) as EvolveProject["baselineRun"]["runs"],
     };
     expect(canReuseVisibleBaseline(demoProject, verified)).toBe(true);
     expect(canReuseVisibleBaseline(demoProject, { ...verified, result: { ...verified.result!, demoJudged: true } })).toBe(false);
     expect(canReuseVisibleBaseline(demoProject, { ...verified, runs: [] })).toBe(false);
+    expect(canReuseVisibleBaseline(demoProject, { ...verified, measurementFingerprint: undefined })).toBe(false);
+    expect(canReuseVisibleBaseline(demoProject, { ...verified, measurementFingerprint: "old-target-and-suite" })).toBe(false);
+    expect(canReuseVisibleBaseline({ ...demoProject, goal: "修改后的用户目标" }, verified)).toBe(false);
+    expect(canReuseVisibleBaseline({ ...demoProject, evalSuite: demoProject.evalSuite.map((testCase) => ({ ...testCase, input: testCase.input + " 新要求" })) }, verified)).toBe(false);
+    expect(canReuseVisibleBaseline({ ...demoProject, aiProfile: { mode: "project", primary: { connectionId: "judge-2", model: "different", label: "new judge" } } }, verified)).toBe(false);
   });
 });
 describe("round-cache · 跨轮 Baseline 复用", () => {
@@ -32,6 +38,32 @@ describe("round-cache · 跨轮 Baseline 复用", () => {
     expect(baselineFingerprint(project({ hiddenEvalSuite:[{id:"h1",input:"新测试"}] } as Partial<EvolveProject>))).not.toBe(base);
     expect(baselineFingerprint(project({goal:"新的目标"}))).not.toBe(base);
     expect(baselineFingerprint(project({aiProfile:{mode:"project",primary:{connectionId:"x",model:"different",label:"test"}}} as Partial<EvolveProject>))).not.toBe(base);
+  });
+  it("global Judge route changes invalidate an otherwise complete Baseline", () => {
+    const connectionKey = "evolve-studio:provider-connections:v2";
+    const routingKey = "evolve-studio:ai-routing:v2";
+    const originalConnection = localStorage.getItem(connectionKey);
+    const originalRouting = localStorage.getItem(routingKey);
+    try {
+      localStorage.setItem(connectionKey, JSON.stringify([{
+        id: "baseline-global-judge", providerId: "openai", label: "Test Judge", enabled: true,
+        apiKey: "test-key", defaultModel: "gpt-5.6-sol", models: ["gpt-5.6-sol", "gpt-5.6-terra"],
+        createdAt: "2026-09-28T00:00:00Z", updatedAt: "2026-09-28T00:00:00Z",
+      }]));
+      const policy = (model: string) => ({
+        mode: "single", operationRoutes: {}, defaultRoute: { connectionId: "baseline-global-judge", model, fallbackConnectionIds: [] },
+        requireIndependentEvaluator: false, fallbackToDemo: false,
+      });
+      localStorage.setItem(routingKey, JSON.stringify(policy("gpt-5.6-sol")));
+      const first = baselineFingerprint(project());
+      localStorage.setItem(routingKey, JSON.stringify(policy("gpt-5.6-terra")));
+      expect(baselineFingerprint(project())).not.toBe(first);
+    } finally {
+      if (originalConnection === null) localStorage.removeItem(connectionKey);
+      else localStorage.setItem(connectionKey, originalConnection);
+      if (originalRouting === null) localStorage.removeItem(routingKey);
+      else localStorage.setItem(routingKey, originalRouting);
+    }
   });
   it("只改诊断节点模型不让 Baseline 缓存失效", () => {
     const base = baselineFingerprint(project());

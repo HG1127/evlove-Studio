@@ -5,6 +5,7 @@ import { getAiProviderStatus } from "../ai/service";
 import { getTargetAdapter } from "../target/registry";
 import type { TestCase } from "@evolution/contracts";
 import { runIntake, runBaseline, runAi, runValidation } from "./api";
+import { baselineMeasurementFingerprint } from "./round-cache";
 import { CandidateArtifactBuildError, effectiveExperimentPolicy, executeCandidateAwareCaseSet, executeCaseSet, fastGateCaseLimit, isSimpleLocalTextProject, normalizeLocallyVerifiableCandidateRuns, reusableScreeningRuns, visibleBaselineEvaluationReusable } from "./run-local";
 
 describe("experiment performance policy", () => {
@@ -187,6 +188,7 @@ describe("browser runtime smoke", () => {
     expect(Array.isArray(suite.validationCases)).toBe(true);
     const baseline = await runBaseline({ ...project, evalSuite: demoProject.evalSuite });
     expect(baseline.status).toBe("completed");
+    expect(baseline.measurementFingerprint).toBe(baselineMeasurementFingerprint({ ...project, evalSuite: demoProject.evalSuite }));
     expect(baseline.totalCases).toBeGreaterThan(0);
   });
 

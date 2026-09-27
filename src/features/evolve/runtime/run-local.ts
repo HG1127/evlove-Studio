@@ -21,7 +21,7 @@ import { canRetryHoldoutFailures, candidateWinnerDecision, computeGapAnalysis, g
 import { extractSource } from "../sources/source-loader";
 import { getArtifactBlob, putArtifactBlob } from "./artifact-blob-store";
 import { readFrozenArtifact } from "./frozen-artifact";
-import { baselineFingerprint, getHoldoutBaseline, setHoldoutBaseline } from "./round-cache";
+import { baselineFingerprint, baselineMeasurementFingerprint, getHoldoutBaseline, setHoldoutBaseline } from "./round-cache";
 import { criterionCanUseLocalSnapshotEvidence, normalizeEvalSuiteForProject } from "./eval-suite-normalization";
 import { normalizeLocallyVerifiableCandidateRuns, retrieveTextContext } from "@evolution/harness";
 import { searchBaseCandidate } from "./search-base";
@@ -416,7 +416,7 @@ export async function runBaseline(project: EvolveProject, onProgress?: (done: nu
   const suite = parsed.evalSuite;
   const adapter = getTargetAdapter(parsed);
   const batchSize = options?.retryIncompleteOnly ? 1 : parsed.experimentPolicy.batchArtifactRuntime ? parsed.experimentPolicy.batchSize : 1;
-  const measurementFingerprint = baselineFingerprint(parsed) + JSON.stringify(suite);
+  const measurementFingerprint = baselineMeasurementFingerprint(parsed);
   const reusable = new Map(reusableBaselineRuns(parsed, measurementFingerprint, Boolean(options?.retryIncompleteOnly)).map((run) => [run.testCaseId, run]));
   const pending = suite.filter((testCase) => !reusable.has(testCase.id));
   const baselineVariant = searchBaseCandidate(parsed);
