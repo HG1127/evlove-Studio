@@ -17,7 +17,7 @@ import { buildCandidateArtifacts } from "./artifact-quality";
 import { mapTestsToRubric, normalizeAcceptanceRubric, rubricCoverage, rubricValidation } from "./acceptance-rubric";
 import { describeArtifact, resolveProjectArtifactStrategy } from "./artifact-strategy";
 import { buildArtifactGraph, compileSemanticEvolution } from "./semantic-evolution";
-import { candidateWinnerDecision, computeGapAnalysis, gapHeadline, indexScopedTestCaseResults, indexUniqueById, projectHasOnlineReleaseTarget, reusableHoldoutBaseline, REGRESSION_TOLERANCE, validationRegression as coreValidationRegression } from "@evolution/core";
+import { canRetryHoldoutFailures, candidateWinnerDecision, computeGapAnalysis, gapHeadline, indexScopedTestCaseResults, indexUniqueById, projectHasOnlineReleaseTarget, reusableHoldoutBaseline, REGRESSION_TOLERANCE, validationRegression as coreValidationRegression } from "@evolution/core";
 import { extractSource } from "../sources/source-loader";
 import { getArtifactBlob, putArtifactBlob } from "./artifact-blob-store";
 import { readFrozenArtifact } from "./frozen-artifact";
@@ -1115,7 +1115,7 @@ async function runValidationUnbound(project: EvolveProject, inputCandidate: Cand
   let runs: TargetRunResult[];
   let evaluation: EvaluationResult;
   // 补考模式：沿用上次成功作答，只重跑两张卷里执行失败的题，再重走评审与发布审查。
-  const canRetryFailed = options?.retryFailedOnly && prior.status === "completed" && prior.runs.length === suite.length && prior.baselineRuns.length === suite.length;
+  const canRetryFailed = options?.retryFailedOnly && canRetryHoldoutFailures(suite, prior, candidate.id, roundFingerprint);
   if (canRetryFailed) {
     const failedIndexesOf = (source: TargetRunResult[]) => source.map((run, index) => (run.error ? index : -1)).filter((index) => index >= 0);
     const mergeByIndexes = (source: TargetRunResult[], indexes: number[], rerun: TargetRunResult[]) => source.map((run, index) => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { EvolveProject } from "@evolution/contracts";
-import { baselineReadiness, reusableBaselineRuns, reusableHoldoutBaseline } from "./baseline-readiness";
+import type { EvolveProject, ValidationRun } from "@evolution/contracts";
+import { baselineReadiness, canRetryHoldoutFailures, reusableBaselineRuns, reusableHoldoutBaseline } from "./baseline-readiness";
 
 function fixture(): EvolveProject {
   const run = (testCaseId: string) => ({ testCaseId, output: "measured", latencyMs: 1, cost: 0, trace: [], verificationStatus: "verified" as const });
@@ -79,5 +79,27 @@ describe("holdout baseline reuse", () => {
     expect(reusableHoldoutBaseline(suite, runs, { ...evaluation, criterionScores: evaluation.criterionScores!.slice(0, 1) })).toBe(false);
     expect(reusableHoldoutBaseline(suite, runs, { ...evaluation, criterionScores: [{ ...evaluation.criterionScores![0]!, verificationStatus: "unverified" }, evaluation.criterionScores![1]!] })).toBe(false);
     expect(reusableHoldoutBaseline(suite, runs, { ...evaluation, criterionScores: [evaluation.criterionScores![0]!, { ...evaluation.criterionScores![0]! }, evaluation.criterionScores![1]!] })).toBe(false);
+  });
+});
+
+describe("targeted holdout retry identity", () => {
+  it("accepts only the same full holdout candidate and ordered answer sheets", () => {
+    const project = fixture();
+    const suite = project.evalSuite;
+    const prior: ValidationRun = {
+      id: "validation", status: "completed", validationMode: "full", candidateId: "C1",
+      baselineContextFingerprint: "same", baselineSuiteIds: ["T1", "T2"],
+      runs: project.baselineRun.runs, baselineRuns: project.baselineRun.runs,
+      checks: [],
+    };
+    expect(canRetryHoldoutFailures(suite, prior, "C1", "same")).toBe(true);
+    expect(canRetryHoldoutFailures(suite, prior, "C2", "same")).toBe(false);
+    expect(canRetryHoldoutFailures(suite, prior, "C1", "changed")).toBe(false);
+    expect(canRetryHoldoutFailures([...suite].reverse(), prior, "C1", "same")).toBe(false);
+    expect(canRetryHoldoutFailures([{ ...suite[0]! }, { ...suite[0]! }], prior, "C1", "same")).toBe(false);
+    expect(canRetryHoldoutFailures(suite, { ...prior, validationMode: "fast-gate" }, "C1", "same")).toBe(false);
+    expect(canRetryHoldoutFailures(suite, { ...prior, baselineSuiteIds: ["T2", "T1"] }, "C1", "same")).toBe(false);
+    expect(canRetryHoldoutFailures(suite, { ...prior, runs: [...prior.runs].reverse() }, "C1", "same")).toBe(false);
+    expect(canRetryHoldoutFailures(suite, { ...prior, baselineRuns: [...prior.baselineRuns].reverse() }, "C1", "same")).toBe(false);
   });
 });

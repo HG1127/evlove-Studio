@@ -1,4 +1,4 @@
-import type { EvaluationResult, EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
+import type { EvaluationResult, EvolveProject, TargetRunResult, TestCase, ValidationRun } from "@evolution/contracts";
 import { indexUniqueById } from "./identity-index";
 
 /** Baseline is usable for diagnosis only when real, sufficiently complete evidence exists. */
@@ -78,4 +78,16 @@ export function reusableHoldoutBaseline(suite: TestCase[], runs: TargetRunResult
   const requiredCriteria = new Set(suite.flatMap((testCase) => testCase.criterionIds).filter((id) => id !== "SYS-PAIRWISE"));
   const scores = indexUniqueById(evaluation.criterionScores ?? [], (score) => score.criterionId);
   return !scores.duplicateIds.size && [...requiredCriteria].every((id) => scores.byId.get(id)?.verificationStatus === "verified");
+}
+
+/** A targeted retry may merge old rows only when both answer sheets match this exact holdout. */
+export function canRetryHoldoutFailures(suite: TestCase[], prior: ValidationRun, candidateId: string, baselineFingerprint: string): boolean {
+  if (prior.status !== "completed" || prior.validationMode !== "full" || prior.candidateId !== candidateId
+    || prior.baselineContextFingerprint !== baselineFingerprint) return false;
+  const suiteIds = suite.map((testCase) => testCase.id);
+  if (!suiteIds.length || new Set(suiteIds).size !== suiteIds.length
+    || prior.baselineSuiteIds?.length !== suiteIds.length
+    || prior.runs.length !== suiteIds.length || prior.baselineRuns.length !== suiteIds.length) return false;
+  return suiteIds.every((id, index) => prior.baselineSuiteIds![index] === id
+    && prior.runs[index]?.testCaseId === id && prior.baselineRuns[index]?.testCaseId === id);
 }
