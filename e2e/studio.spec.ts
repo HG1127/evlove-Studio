@@ -17,10 +17,7 @@ test("user can upload a source artifact and create an evolve project", async ({ 
   });
   await page.getByPlaceholder(/告诉 AI 你要怎么进化/).fill("让这个 Agent 的重要结论都有证据，并加入风险反证，但不要改变输出语言。");
   await page.getByRole("button", { name: "发送进化要求" }).click();
-  await expect(page.getByText("AI 已理解本次进化输入")).toBeVisible();
-  await expect(page.getByText("agent-prompt.md", { exact: true }).first()).toBeVisible();
-  await page.getByRole("button", { name: /创建并开始进化/ }).click();
-  await expect(page).toHaveURL(/#\/projects\/[^?]+\?autostart=1/);
+  await expect(page).toHaveURL(/#\/projects\/[^?]+\?autostart=1/, { timeout: 60_000 });
   await expect(page.getByRole("heading", { name: /agent-prompt/ })).toBeVisible();
   const missionId = new URL(page.url()).hash.match(/^#\/projects\/([^?]+)/)?.[1];
   expect(missionId).toBeTruthy();

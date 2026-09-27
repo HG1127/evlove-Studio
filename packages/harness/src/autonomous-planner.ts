@@ -86,6 +86,17 @@ function looksLikeEvidencePause(project: EvolveProject) {
   return /(?:只剩|缺少|待补|等待).{0,24}(?:验证|证据)|真实验证|验证能力|UNVERIFIED|unverified/i.test(reason);
 }
 
+/** A measured Baseline without diagnosis-ready evidence is a capability pause, not a campaign limit. */
+export function isLocalBaselineEvidencePause(project: EvolveProject): boolean {
+  return project.campaign.status === "paused"
+    && project.stage === "baseline"
+    && (project.campaign.stopReason ?? "").startsWith("当前版本基线不足以进入自动诊断");
+}
+
+export function isLocalDemoBaselinePause(project: EvolveProject): boolean {
+  return isLocalBaselineEvidencePause(project) && project.baselineRun.result?.demoJudged === true;
+}
+
 export function deriveAttentionRequest(project: EvolveProject): AttentionRequest | undefined {
   const clarificationPlan = autonomousClarificationPlan(project);
   if (clarificationPlan.human.length) {
@@ -214,6 +225,23 @@ export function deriveAttentionRequest(project: EvolveProject): AttentionRequest
       blocking: true,
       questions: [],
       suggestedAction: "当前 Candidate 已保留。请检查或切换 AI 评审模型后重试；无需重新生成成果、补截图或连接 Runner。",
+      criterionIds: [],
+    });
+  }
+
+  if (isLocalBaselineEvidencePause(project)) {
+    const demoJudge = isLocalDemoBaselinePause(project);
+    return attention({
+      type: "capability",
+      title: demoJudge ? "当前版本基线缺少真实 AI 评审" : "当前版本基线缺少可靠验证证据",
+      reason: project.campaign.stopReason ?? "当前版本的 Baseline 尚不足以支持自动诊断。",
+      stage: "baseline",
+      riskLevel: "medium",
+      blocking: true,
+      questions: [],
+      suggestedAction: demoJudge
+        ? "在 AI 模型与连接中配置并测试真实评审模型，再从当前轮次重新测量 Baseline；演示评分不会被复用。"
+        : "检查 Target Runner 或文件验证能力，再从当前轮次补测缺少证据的验收题；不需要增加进化轮数。",
       criterionIds: [],
     });
   }

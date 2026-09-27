@@ -18,6 +18,34 @@ function project(patch: Partial<EvolveProject> = {}): EvolveProject {
 }
 
 describe("autonomous orchestrator", () => {
+  it("classifies a Demo-judged Baseline pause as model capability instead of a budget limit", () => {
+    const p = project({
+      stage: "baseline",
+      inputUnderstanding: { status: "ready", intentRestatement: "优化", implicitRequirements: [], assumptions: [], acceptanceFocus: [], confidence: 0.9, clarifications: [] },
+      baselineRun: { ...demoProject.baselineRun, result: { ...demoProject.baselineRun.result!, demoJudged: true } },
+      campaign: { ...demoProject.campaign, status: "paused", stopReason: "当前版本基线不足以进入自动诊断：评审使用了演示兜底，不能作为问题诊断依据" },
+      attentionRequests: [],
+    });
+    const request = deriveAttentionRequest(p);
+    expect(request?.type).toBe("capability");
+    expect(request?.stage).toBe("baseline");
+    expect(request?.suggestedAction).toContain("真实评审模型");
+    expect(request?.title).not.toContain("安全边界");
+  });
+  it("classifies incomplete non-Demo Baseline evidence as capability rather than a budget limit", () => {
+    const p = project({
+      stage: "baseline",
+      inputUnderstanding: { status: "ready", intentRestatement: "优化", implicitRequirements: [], assumptions: [], acceptanceFocus: [], confidence: 0.9, clarifications: [] },
+      baselineRun: { ...demoProject.baselineRun, result: { ...demoProject.baselineRun.result!, demoJudged: false } },
+      campaign: { ...demoProject.campaign, status: "paused", stopReason: "当前版本基线不足以进入自动诊断：可用证据覆盖仅 20%，至少需要 60%" },
+      attentionRequests: [],
+    });
+    const request = deriveAttentionRequest(p);
+    expect(request?.type).toBe("capability");
+    expect(request?.stage).toBe("baseline");
+    expect(request?.title).toContain("可靠验证证据");
+    expect(request?.suggestedAction).toContain("Target Runner");
+  });
   it("asks the engine to understand input before any downstream workflow", () => {
     const p = project({ inputUnderstanding: undefined, attentionRequests: [] });
     expect(deriveAutonomousDecision(p).action).toBe("understand");

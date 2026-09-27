@@ -1,13 +1,13 @@
 import type { AttentionRequest, EvolveProject } from "../schemas";
 import { deliveryReadiness } from "./delivery-readiness";
 import { projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget } from "@evolution/core";
-import { deriveAttentionRequest } from "./autonomous-orchestrator";
+import { deriveAttentionRequest, isLocalDemoBaselinePause } from "@evolution/harness";
 
 export { autonomousClarificationPlan, clarificationNeedsHuman } from "./autonomy-policy";
 
 export type AutonomousEvolutionState = "waiting-input" | "ready" | "preparing" | "running" | "attention" | "completed";
 export type AutonomousAttention = {
-  kind: "clarification" | "source" | "validation" | "limit";
+  kind: "clarification" | "source" | "validation" | "model" | "limit";
   title: string;
   detail: string;
   stage: EvolveProject["stage"];
@@ -37,7 +37,7 @@ export function autonomousAttention(project: EvolveProject): AutonomousAttention
   const request = deriveAttentionRequest(project);
   if (!request) return undefined;
   return {
-    kind: legacyKind(request.type),
+    kind: isLocalDemoBaselinePause(project) ? "model" : legacyKind(request.type),
     title: request.title,
     detail: request.reason,
     stage: request.stage,

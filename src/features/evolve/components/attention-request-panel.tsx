@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import type { AutonomousAttention } from "../runtime/autonomous-evolution";
 import type { ProjectRuntime } from "../runtime/use-project-runtime";
 import { PendingEvidencePanel } from "./stage-panels";
+import { isLocalBaselineEvidencePause, isLocalDemoBaselinePause } from "@evolution/harness";
 
 export function AttentionRequestPanel({
   runtime,
@@ -24,12 +25,12 @@ export function AttentionRequestPanel({
   if (!request) return null;
 
   const continueAutonomously = () => window.setTimeout(() => void runtime.resumeAutonomousEvolution(), 0);
-  const retryAtLimit = () => {
+  const retryCampaign = (blockedMessage: string) => {
     setError(undefined);
     setRetrying(true);
     window.setTimeout(() => {
       void runtime.resumeAutonomousEvolution().then((resumed) => {
-        if (!resumed) setError("当前设置仍无法启动新一轮，请调整高级边界后重试。");
+        if (!resumed) setError(blockedMessage);
       }).catch((cause: unknown) => {
         setError(cause instanceof Error ? cause.message : "重试失败，请检查运行状态后再试。");
       }).finally(() => setRetrying(false));
@@ -64,6 +65,18 @@ export function AttentionRequestPanel({
     return <section id="evolve-attention-request" tabIndex={-1} className="rounded-3xl border border-amber-200 bg-white p-5 outline-none soft-shadow sm:p-6"><h3 className="font-bold text-slate-950">需要补充输入后才能继续</h3><p className="mt-2 text-sm leading-6 text-slate-600">{request.reason}</p><p className="mt-1 text-xs text-slate-400">修正材料或重新上传后，系统会自动重新理解并继续，不需要重新走前面的流程。</p><div className="mt-4"><Button onClick={onOpenSource}>补充或修正材料 <ArrowRight className="size-4"/></Button></div></section>;
   }
 
+  if (request.type === "capability" && isLocalBaselineEvidencePause(runtime.project)) {
+    const demoJudge = isLocalDemoBaselinePause(runtime.project);
+    return <section id="evolve-attention-request" tabIndex={-1} className="rounded-3xl border border-amber-200 bg-white p-5 outline-none soft-shadow sm:p-6">
+      <h3 className="font-bold text-slate-950">{demoJudge ? "当前基线需要真实 AI 评审" : "当前基线需要补齐可靠验证证据"}</h3>
+      <p className="mt-2 text-sm leading-6 text-slate-600">{request.reason}</p>
+      <p className="mt-1 text-xs leading-5 text-slate-500">{demoJudge
+        ? "演示评审不能用于诊断或验收。配置并测试真实评审模型后，系统会保留已核验的题目结果，并重新测量当前 Baseline。"
+        : "请检查 Target Runner 或文件验证能力。恢复后系统会复用已核验的题目结果，只补测缺少证据的 Baseline 题目。"}</p>
+      {error && <p role="alert" className="mt-3 text-xs text-rose-700">{error}</p>}
+      <div className="mt-4 flex flex-wrap gap-2"><a href="#/settings" className="inline-flex h-9 items-center rounded-xl border bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"><Settings2 className="mr-2 size-4"/>{demoJudge ? "AI 模型与连接" : "验证能力设置"}</a><Button variant="secondary" disabled={runtime.status.busy || retrying} onClick={() => retryCampaign(demoJudge ? "请先配置并测试真实评审模型，再重新测量基线。" : "请先检查真实评审或 Runner 验证能力，并确认运行边界允许继续。")}>{retrying ? "正在重新测量…" : "配置完成，重新测量基线"}</Button></div>
+    </section>;
+  }
   if (request.type === "capability" && /评审|judge/i.test(`${request.title} ${request.reason}`)) {
     return <section id="evolve-attention-request" tabIndex={-1} className="rounded-3xl border border-amber-200 bg-white p-5 outline-none soft-shadow sm:p-6">
       <div className="flex items-start gap-3"><AlertTriangle className="mt-0.5 size-5 shrink-0 text-amber-600"/><div><h3 className="font-bold text-slate-950">AI 评审服务需要恢复</h3><p className="mt-1 text-sm leading-6 text-slate-600">{request.reason}</p><p className="mt-1 text-xs leading-5 text-slate-400">当前成果、本地 TXT/格式证据和 Candidate 都已保留。这不是视觉、人工或 Runner 证据缺口，不需要重新生成成果。</p></div></div>
@@ -77,5 +90,5 @@ export function AttentionRequestPanel({
     return <section id="evolve-attention-request" tabIndex={-1} className="space-y-3 outline-none"><div className="rounded-2xl border border-amber-200 bg-amber-50/60 px-4 py-3"><div className="font-semibold text-amber-950">系统只缺真实验证，不会继续盲目改成果</div><p className="mt-1 text-sm leading-6 text-amber-900/75">{request.reason}</p></div>{criteria.length?<PendingEvidencePanel runtime={runtime} criteria={criteria}/>:<div className="rounded-2xl border bg-white p-4"><p className="text-sm leading-6 text-slate-600">当前需要连接真实 Runner 或对应外部验证能力。配置完成后点击继续，系统会复用当前候选而不是重新生成。</p><div className="mt-3 flex flex-wrap gap-2"><a href="#/settings" className="inline-flex h-9 items-center rounded-xl border bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"><Settings2 className="mr-2 size-4"/>验证能力设置</a><Button variant="secondary" onClick={revalidateAndContinue}>配置完成，重新验证并继续</Button></div></div>}</section>;
   }
 
-  return <section id="evolve-attention-request" tabIndex={-1} className="rounded-3xl border border-amber-200 bg-white p-5 outline-none soft-shadow sm:p-6"><h3 className="font-bold text-slate-950">自动进化到达安全边界</h3><p className="mt-2 text-sm leading-6 text-slate-600">{request.reason}</p><p className="mt-1 text-xs text-slate-400">这不是成果完成。调整轮数、预算或时间边界后再继续；系统不会把“跑到上限”冒充成功。</p>{error&&<p role="alert" className="mt-3 text-xs text-rose-700">{error}</p>}<div className="mt-4 flex flex-wrap gap-2"><Button onClick={onOpenAdvanced}><Settings2 className="size-4"/>调整高级边界</Button><Button variant="secondary" disabled={runtime.status.busy || retrying} onClick={retryAtLimit}>{retrying ? "正在重试…" : "按当前设置重试"}</Button></div></section>;
+  return <section id="evolve-attention-request" tabIndex={-1} className="rounded-3xl border border-amber-200 bg-white p-5 outline-none soft-shadow sm:p-6"><h3 className="font-bold text-slate-950">自动进化到达安全边界</h3><p className="mt-2 text-sm leading-6 text-slate-600">{request.reason}</p><p className="mt-1 text-xs text-slate-400">这不是成果完成。调整轮数、预算或时间边界后再继续；系统不会把“跑到上限”冒充成功。</p>{error&&<p role="alert" className="mt-3 text-xs text-rose-700">{error}</p>}<div className="mt-4 flex flex-wrap gap-2"><Button onClick={onOpenAdvanced}><Settings2 className="size-4"/>调整高级边界</Button><Button variant="secondary" disabled={runtime.status.busy || retrying} onClick={() => retryCampaign("当前设置仍无法启动新一轮，请调整高级边界后重试。")}>{retrying ? "正在重试…" : "按当前设置重试"}</Button></div></section>;
 }

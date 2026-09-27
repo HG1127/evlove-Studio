@@ -1,6 +1,7 @@
 import type { BaselineRun, EvaluationResult, EvolveProject, TargetRunResult } from "../schemas";
 import { fastHash } from "../ai/performance";
 import { searchBaseCandidate } from "./search-base";
+import { baselineReadiness } from "@evolution/core";
 
 const VALIDATION_CONTRACT_VERSION = "criterion-scope-v2";
 
@@ -60,6 +61,10 @@ function remember<K, V>(map: Map<K, V>, key: K, value: V, cap = 8) {
   }
 }
 
+/** Only a diagnosis-ready measurement may skip the next round's real Baseline run. */
+export function canReuseVisibleBaseline(project: EvolveProject, baseline: BaselineRun): boolean {
+  return baselineReadiness({ ...project, baselineRun: baseline }).ready;
+}
 export function getVisibleBaseline(projectId: string, fingerprint: string): BaselineRun | undefined {
   const hit = VISIBLE_BASELINE.get(projectId);
   return hit && Date.now() - hit.cachedAt < MAX_CACHE_AGE_MS && hit.fingerprint === fingerprint ? structuredClone(hit.baseline) : undefined;

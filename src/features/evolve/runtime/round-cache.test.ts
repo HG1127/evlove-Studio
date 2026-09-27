@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { EvolveProject } from "../schemas";
-import { baselineFingerprint, clearRoundCaches, getHoldoutBaseline, getVisibleBaseline, setHoldoutBaseline, setVisibleBaseline } from "./round-cache";
+import { baselineFingerprint, canReuseVisibleBaseline, clearRoundCaches, getHoldoutBaseline, getVisibleBaseline, setHoldoutBaseline, setVisibleBaseline } from "./round-cache";
+import { demoProject } from "../data/mock-project";
 
 function project(overrides: Partial<EvolveProject> = {}): EvolveProject {
   return {
@@ -15,6 +16,16 @@ function project(overrides: Partial<EvolveProject> = {}): EvolveProject {
   } as unknown as EvolveProject;
 }
 
+describe("campaign Baseline reuse", () => {
+  it("reuses a complete verified measurement and rejects a Demo Judge or missing cases", () => {
+    const verified = { ...demoProject.baselineRun,
+      runs: demoProject.evalSuite.map((testCase) => ({ testCaseId: testCase.id, verificationStatus: "verified" as const })) as EvolveProject["baselineRun"]["runs"],
+    };
+    expect(canReuseVisibleBaseline(demoProject, verified)).toBe(true);
+    expect(canReuseVisibleBaseline(demoProject, { ...verified, result: { ...verified.result!, demoJudged: true } })).toBe(false);
+    expect(canReuseVisibleBaseline(demoProject, { ...verified, runs: [] })).toBe(false);
+  });
+});
 describe("round-cache · 跨轮 Baseline 复用", () => {
   it("同 ID 隐藏题内容、模型与用户目标变化使缓存失效", () => {
     const base = baselineFingerprint(project());

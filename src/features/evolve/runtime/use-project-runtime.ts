@@ -40,7 +40,7 @@ import {
 } from "./run-manager";
 import { advanceCampaignScheduleAfterRun, buildRoundArchive, buildRoundRecord, campaignGoalSatisfied, campaignPreflightStopReason, campaignScheduleIssue, campaignStopReason, computeFitness, estimateRoundCost, materializeChampionOutputs, maybeUpdateSearchChampion, nextScheduledAt, selectDiverseCandidates, selectParentPool } from "./evolution-search";
 import { buildSearchMemory, nextExploreRatio } from "./search-memory";
-import { baselineFingerprint, getVisibleBaseline, setVisibleBaseline } from "./round-cache";
+import { baselineFingerprint, canReuseVisibleBaseline, getVisibleBaseline, setVisibleBaseline } from "./round-cache";
 import { flagUngroundedCandidates } from "./plan-grounding";
 import { baselineRubricProblem, buildFocusedPlanPayload, focusedTask, focusedSourceContext, prioritizeProblems, limitPlanToTask } from "./focused-task";
 import { compactProblemAnalysisInput } from "./problem-analysis-input";
@@ -61,14 +61,14 @@ import { evidenceFingerprint } from "./evidence-binding";
 import { getVisualEvidence } from "./visual-evidence";
 import { LOCAL_REVIEW_CONTRACT_VERSION, reconcileAttentionRequest } from "./autonomous-orchestrator";
 import { evolutionHarness, type HarnessPlan } from "./evolution-harness";
-import { createHarnessActionExecutor } from "@evolution/harness";
+import { createHarnessActionExecutor, isLocalBaselineEvidencePause, isLocalDemoBaselinePause } from "@evolution/harness";
 import { getProductionRuntime, productionRuntimeMode } from "./production-runtime";
 import { localProductionPorts } from "./local-production-adapters";
 import { shouldUseServerAutoPilot, startServerEvolutionWorkflow } from "./server-workflow-client";
 import { flushProductionMissionSync } from "./production-sync";
 import { classifyRuntimeFailure, retryDelayMs } from "./failure-router";
 import { reconcileServerRelease } from "./server-release-client";
-import { withProjectAiProfile } from "../ai/service";
+import { getAiProviderStatus, withProjectAiProfile } from "../ai/service";
 import { automaticEvidenceKey, ensureAutomaticEvidence } from "./automatic-evidence";
 
 const stageOrder: Stage[] = ["target", "baseline", "problem", "diagnosis", "plan", "experiment", "validation", "release", "learning"];
@@ -1565,9 +1565,15 @@ export function useProjectRuntime(initialProject: EvolveProject) {
       // 轮内断点续跑：同一轮上次被打断（暂停键 / 页面刷新）时，已完成阶段直接复用落盘数据，
       // 从下一步接着跑——昂贵的基线、诊断、候选生成、沙箱实验都不会白做第二遍。
       const resumeFrom = working.campaign.checkpoint?.round === round ? working.campaign.checkpoint.completedPhase : undefined;
-      const resumed = (phase: CampaignCheckpointPhase) => resumeFrom !== undefined && CHECKPOINT_PHASES.indexOf(resumeFrom) >= CHECKPOINT_PHASES.indexOf(phase);
+      const checkpointIncludesBaseline = resumeFrom !== undefined && CHECKPOINT_PHASES.indexOf(resumeFrom) >= CHECKPOINT_PHASES.indexOf("baseline");
+      const baselineCheckpointReusable = checkpointIncludesBaseline && canReuseVisibleBaseline(working, working.baselineRun);
+      const resumed = (phase: CampaignCheckpointPhase) => resumeFrom !== undefined
+        && CHECKPOINT_PHASES.indexOf(resumeFrom) >= CHECKPOINT_PHASES.indexOf(phase)
+        && (!checkpointIncludesBaseline || baselineCheckpointReusable);
       pushActivity(resumeFrom
-        ? `Round ${round} 从断点继续 · 「${CHECKPOINT_PHASE_LABELS[resumeFrom]}」已完成，接着往下跑`
+        ? baselineCheckpointReusable
+          ? `Round ${round} 从断点继续 · 「${CHECKPOINT_PHASE_LABELS[resumeFrom]}」已完成，接着往下跑`
+          : `Round ${round} 原 Baseline 证据不足，重新测量当前版本后继续`
         : `Round ${round} 开始 · 运行 Baseline 体检`, undefined, projectId);
       // 阶段计时：每条「完成」日志带刚结束阶段的耗时，编排页据此统计时间花在哪些阶段。
       let phaseAt = Date.now();
@@ -1603,23 +1609,25 @@ export function useProjectRuntime(initialProject: EvolveProject) {
       });
 
       let baseline: typeof working.baselineRun;
-      if (resumed("baseline") && working.baselineRun.result) {
+      if (baselineCheckpointReusable) {
         // 断点续跑：本轮 Baseline 已落盘，直接复用，不重跑整卷。
         baseline = working.baselineRun;
       } else {
         // Baseline 跨轮复用：指纹不变（考卷 / 进化对象 / 执行配置 / 已上线补丁都相同）时，
         // 当前版本的成绩与上一轮必然一致，直接复用整轮执行 + 评审，省掉一轮里最贵的一步。
         const fingerprint = baselineFingerprint(working);
-        const cachedBaseline = getVisibleBaseline(projectId, fingerprint);
+        const cached = getVisibleBaseline(projectId, fingerprint);
+        const retryIncompleteBaseline = checkpointIncludesBaseline && !baselineCheckpointReusable;
+        const cachedBaseline = cached && canReuseVisibleBaseline(working, cached) ? cached : undefined;
         baseline = cachedBaseline
           ? { ...cachedBaseline, id: `baseline-r${round}-reuse` }
-          : await runBaseline(working);
+          : await runBaseline(working, undefined, retryIncompleteBaseline ? { retryIncompleteOnly: true } : undefined);
         if (cachedBaseline) pushActivity(`Round ${round} 复用上一轮 Baseline（输入与考卷未变化，省一次整卷重跑）`, undefined, projectId);
-        else setVisibleBaseline(projectId, fingerprint, baseline);
+        else if (canReuseVisibleBaseline(working, baseline)) setVisibleBaseline(projectId, fingerprint, baseline);
         working = persist({
           ...working,
           baselineRun: baseline,
-          campaign: { ...working.campaign, rootBaseline: working.campaign.rootBaseline ?? baseline.result },
+          campaign: { ...working.campaign, rootBaseline: retryIncompleteBaseline ? baseline.result : working.campaign.rootBaseline ?? baseline.result },
           stage: "baseline",
           problems: reusePriorDiagnosis ? working.problems : [],
           selectedProblemId: reusePriorDiagnosis ? working.selectedProblemId : undefined,
@@ -2355,6 +2363,12 @@ export function useProjectRuntime(initialProject: EvolveProject) {
   const resumeAutonomousEvolution = useCallback(async () => {
     if (status.busy) return false;
     const current = projectRef.current;
+    if (isLocalDemoBaselinePause(current) && !getAiProviderStatus("evaluate", { aiProfile: current.aiProfile }).live) {
+      const message = "当前基线仍只有演示评审。请先在「AI 模型与连接」配置并测试真实评审模型，再重新测量 Baseline。";
+      setStatus({ busy: false, message });
+      pushActivity(`基线重测未启动 · ${message}`, undefined, projectId);
+      return false;
+    }
     const harnessPlan = evolutionHarness.plan(current);
     const decision = harnessPlan.decision;
     if (harnessPlan.policy.mode === "blocked") {
@@ -2363,7 +2377,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
       pushActivity(`继续自主进化被 Harness Budget/Policy 阻塞：${harnessPlan.policy.reason}`, undefined, projectId);
       return false;
     }
-    if (decision.action === "wait-human" && decision.attention && decision.attention.type !== "limit") {
+    if (decision.action === "wait-human" && decision.attention && decision.attention.type !== "limit" && !isLocalBaselineEvidencePause(current)) {
       setStage(decision.stage);
       setStatus({ busy: false, message: `请先处理当前阻塞：${decision.attention.title}` });
       pushActivity(`继续自主进化被阻塞：${decision.attention.title}`, undefined, projectId);

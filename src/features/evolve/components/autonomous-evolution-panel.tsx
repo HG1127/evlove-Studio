@@ -71,6 +71,6 @@ export function AutonomousEvolutionPanel({
       </div>)}
     </div>
 
-    {state === "attention" && attention && <div className="mt-4 rounded-xl border border-amber-200 bg-white/70 px-3 py-2 text-xs leading-5 text-amber-900"><b>为什么需要你：</b>{attention.kind === "clarification" ? "这个决定会显著改变结果或具有较高影响，系统不会自行猜测。" : attention.kind === "validation" ? "这项要求需要视觉、人工或真实外部运行证据，系统不能伪造。" : attention.kind === "limit" ? "自动搜索已触及安全边界，但尚未达到完整验收要求。" : "当前输入无法可靠读取或生成，需要你修正材料。"}</div>}
+    {state === "attention" && attention && <div className="mt-4 rounded-xl border border-amber-200 bg-white/70 px-3 py-2 text-xs leading-5 text-amber-900"><b>为什么需要你：</b>{attention.kind === "clarification" ? "这个决定会显著改变结果或具有较高影响，系统不会自行猜测。" : attention.kind === "validation" ? "这项要求需要视觉、人工或真实外部运行证据，系统不能伪造。" : attention.kind === "model" ? "当前基线只有演示评审。请连接通过测试的真实评审模型，系统会重新测量，不会把演示分数当作证据。" : attention.kind === "limit" ? "自动搜索已触及安全边界，但尚未达到完整验收要求。" : "当前输入无法可靠读取或生成，需要你修正材料。"}</div>}
   </section>;
 }
