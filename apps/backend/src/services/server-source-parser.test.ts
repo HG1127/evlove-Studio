@@ -1,5 +1,6 @@
 import {describe,expect,it} from "vitest";
 import JSZip from "jszip";
+import {minimalTextPdf,minimalTextPdfPages} from "./pdf-test-fixture";
 import {parseServerSource,SERVER_SOURCE_PARSE_EXTENSIONS} from "./server-source-parser";
 
 function parse(name:string,mimeType:string,bytes:Uint8Array){
@@ -142,4 +143,38 @@ describe("server source parser",()=>{
     expect(artifact.parseStatus).toBe("unsupported");
     expect(artifact.warnings.join(" ")).toContain("文件数量");
   });
-});
+  it("parses an actual PDF and records complete text-layer coverage",async()=>{
+    const artifact=await parse("guide.pdf","application/pdf",minimalTextPdf("SOURCE PDF TEXT"));
+    expect(artifact.parseStatus).toBe("ready");
+    expect(artifact.textContent).toContain("SOURCE PDF TEXT");
+    expect(artifact.parsingProfile).toMatchObject({totalEntries:1,parsedEntries:1,deepIndexedEntries:1,deepIndexCoverage:1});
+  });
+
+  it("reports missing PDF text layers and retains the original file",async()=>{
+    const artifact=await parse("scan.pdf","application/pdf",minimalTextPdfPages([""]));
+    expect(artifact.parseStatus).toBe("unsupported");
+    expect(artifact.storageRef).toBe("artifact-test");
+    expect(artifact.parsingProfile).toMatchObject({totalEntries:1,parsedEntries:0,deepIndexedEntries:0,deepIndexCoverage:0});
+    expect(artifact.warnings.join(" ")).toContain("OCR");
+  });
+
+  it("limits PDF preview to 100 pages and reports actual coverage",async()=>{
+    const bytes=minimalTextPdfPages(Array.from({length:101},(_,index)=>`PAGE ${index+1} TEXT`));
+    const artifact=await parse("book.pdf","application/pdf",bytes);
+    expect(artifact.parseStatus).toBe("ready");
+    expect(artifact.structure).toHaveLength(100);
+    expect(artifact.textContent).toContain("PAGE 100 TEXT");
+    expect(artifact.textContent).not.toContain("PAGE 101 TEXT");
+    expect(artifact.parsingProfile?.deepIndexCoverage).toBeCloseTo(100/101);
+    expect(artifact.warnings.join(" ")).toContain("有界文本预览");
+  });
+
+  it("rejects oversized or corrupt PDFs without discarding uploaded bytes",async()=>{
+    const oversized=await parse("oversized.pdf","application/pdf",new Uint8Array(20_000_001));
+    expect(oversized.parseStatus).toBe("unsupported");
+    expect(oversized.storageRef).toBe("artifact-test");
+    expect(oversized.warnings.join(" ")).toContain("超出");
+    const corrupt=await parse("corrupt.pdf","application/pdf",new TextEncoder().encode("not a pdf"));
+    expect(corrupt.parseStatus).toBe("unsupported");
+    expect(corrupt.storageRef).toBe("artifact-test");
+  });});

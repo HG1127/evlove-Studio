@@ -16,6 +16,10 @@ const MAX_ZIP_TEXT_FILES=220;
 const MAX_ZIP_FILE_CHARS=24_000;
 const MAX_ZIP_TOTAL_CHARS=520_000;
 const MAX_ZIP_ARCHIVE_BYTES=25_000_000;
+const MAX_PDF_FILE_BYTES=20_000_000;
+const MAX_PDF_PAGES=100;
+const MAX_PDF_PAGE_ITEMS=10_000;
+const MAX_PDF_TEXT_CHARS=150_000;
 const MAX_ZIP_TEXT_ENTRY_BYTES=250_000;
 const MAX_ZIP_INDEX_BYTES=8_000_000;
 const MAX_ZIP_MANIFEST_CHARS=200_000;
@@ -170,18 +174,45 @@ function parseSpreadsheet(buffer:Uint8Array){
 }
 
 async function parsePdf(buffer:Uint8Array){
+  if(!buffer.byteLength||buffer.byteLength>MAX_PDF_FILE_BYTES)throw new Error("PDF 文件超出 Server Native 解析范围");
   const pdfjs=await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const doc=await pdfjs.getDocument({data:buffer,useWorkerFetch:false}).promise;
-  const chunks:string[]=[];
-  const structure:string[]=[];
-  for(let index=1;index<=Math.min(doc.numPages,300);index+=1){
-    const page=await doc.getPage(index);
-    const content=await page.getTextContent();
-    const text=content.items.map((item)=>"str" in item?item.str:"").join(" ").trim();
-    structure.push(`page-${index}`);
-    if(text)chunks.push(`===== PAGE ${index} =====\n${text}`);
-  }
-  return {text:chunks.join("\n\n"),structure,structuredContent:{kind:"document",subtype:"pdf",pages:structure.length}};
+  const task=pdfjs.getDocument({data:buffer,useWorkerFetch:false,stopAtErrors:true,disableFontFace:true});
+  try{
+    const doc=await task.promise;
+    if(!doc.numPages)throw new Error("PDF 没有可解析的页面");
+    const chunks:string[]=[];
+    const structure:string[]=[];
+    const warnings:string[]=[];
+    let totalChars=0;
+    let parsedPages=0;
+    let deepIndexedPages=0;
+    for(let index=1;index<=Math.min(doc.numPages,MAX_PDF_PAGES);index+=1){
+      const page=await doc.getPage(index);
+      try{
+        const content=await page.getTextContent();
+        if(content.items.length>MAX_PDF_PAGE_ITEMS)throw new Error("PDF 单页文本项超出 Server Native 解析范围");
+        const pageText=content.items.map((item)=>"str" in item?item.str:"").join(" ").trim();
+        structure.push(`page-${index}`);
+        if(!pageText)continue;
+        parsedPages+=1;
+        const remaining=MAX_PDF_TEXT_CHARS-totalChars;
+        const excerpt=pageText.slice(0,remaining);
+        if(excerpt)chunks.push(`===== PAGE ${index} =====\n${excerpt}`);
+        totalChars+=excerpt.length;
+        if(excerpt.length===pageText.length)deepIndexedPages+=1;
+        if(totalChars>=MAX_PDF_TEXT_CHARS)break;
+      }finally{page.cleanup();}
+    }
+    if(parsedPages<structure.length)warnings.push("PDF 部分页面没有可提取的文字层；扫描或图片内容需 OCR 扩展。");
+    if(structure.length<doc.numPages||deepIndexedPages<parsedPages)warnings.push("PDF 仅建立有界文本预览；未读取的页面或截断内容不计入完整覆盖率。");
+    if(!parsedPages)warnings.push("PDF 未找到可提取的文字层；原文件已保留，可连接 OCR 扩展。");
+    return {
+      text:chunks.join("\n\n"),structure,warnings,
+      structuredContent:{kind:"document",subtype:"pdf",pages:doc.numPages,indexedPages:structure.length},
+      stats:{totalEntries:doc.numPages,indexedEntries:structure.length,parsedEntries:parsedPages,
+        eligibleEntries:doc.numPages,deepIndexedEntries:deepIndexedPages,codeFiles:0,documentFiles:1,officeFiles:0,imageFiles:0},
+    };
+  }finally{await task.destroy();}
 }
 
 async function parseZip(buffer:Uint8Array){
@@ -284,7 +315,8 @@ export async function parseServerSource(args:{
       ({text,structure,structuredContent}=parseRtf(buffer));
       warnings.push("RTF 已按文本近似抽取；样式信息不作为结构化证据。");
     }else if(ext==="pdf"){
-      ({text,structure,structuredContent}=await parsePdf(buffer));
+      const parsed=await parsePdf(buffer);
+      ({text,structure,structuredContent}=parsed);stats=parsed.stats;warnings.push(...parsed.warnings);
     }else if(ext==="zip"){
       const parsed=await parseZip(buffer);
       ({text,structure,structuredContent}=parsed);stats=parsed.stats;warnings.push(...parsed.warnings);
@@ -307,10 +339,11 @@ export async function parseServerSource(args:{
   const artifactDescriptor=describeArtifact({
     name:args.name,mimeType:args.mimeType,extension:ext,artifactKind,structure,structuredContent,
   });
-  const parsedEntries=ext==="zip"?stats.parsedEntries:stats.parsedEntries||(text?1:0);
-  const totalEntries=ext==="zip"?stats.totalEntries:stats.totalEntries||(text?1:0);
-  const eligibleEntries=ext==="zip"?stats.eligibleEntries:stats.eligibleEntries||parsedEntries;
-  const deepIndexedEntries=ext==="zip"?stats.deepIndexedEntries:stats.deepIndexedEntries||parsedEntries;
+  const bounded=ext==="zip"||ext==="pdf";
+  const parsedEntries=bounded?stats.parsedEntries:stats.parsedEntries||(text?1:0);
+  const totalEntries=bounded?stats.totalEntries:stats.totalEntries||(text?1:0);
+  const eligibleEntries=bounded?stats.eligibleEntries:stats.eligibleEntries||parsedEntries;
+  const deepIndexedEntries=bounded?stats.deepIndexedEntries:stats.deepIndexedEntries||parsedEntries;
   const deepIndexCoverage=eligibleEntries?Math.min(1,deepIndexedEntries/eligibleEntries):0;
   const now=new Date().toISOString();
   return SourceArtifactSchema.parse({
@@ -333,7 +366,7 @@ export async function parseServerSource(args:{
       engine:"server-native",
       engineLabel:"Server Native Parser",
       confidence:text?0.9:0.45,
-      completeness:ext==="zip"?deepIndexCoverage:text?Math.min(1,Math.max(0.55,parsedEntries/Math.max(1,totalEntries))):0.15,
+      completeness:bounded?deepIndexCoverage:text?Math.min(1,Math.max(0.55,parsedEntries/Math.max(1,totalEntries))):0.15,
       structuralCoverage:structure.length?Math.min(1,structure.length/Math.max(1,totalEntries)):text?0.8:0.15,
       totalEntries,
       indexedEntries:stats.indexedEntries||structure.length||(text?1:0),
