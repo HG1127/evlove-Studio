@@ -4,6 +4,7 @@ import { runServerBaseline, trustedServerBaselineChampion } from "@evolution/har
 import { runServerAi } from "./ai-gateway";
 import { getServerArtifactStore } from "./artifact-runtime";
 import { attachServerVisualEvidence } from "./server-visual-evidence";
+import { serverArtifactSha256 } from "./server-experiment-artifacts";
 import { runServerHttpTargetBatch, serverHttpTargetEnabled } from "./server-http-target-execution";
 import {runServerConnectorTargetBatch} from "./server-connector-target-execution";
 import {serverConnectorTargetEnabled} from "./connector-target-source";
@@ -37,6 +38,7 @@ export function resolveServerBaselineCodebaseBinding(project: EvolveProject) {
     blobId: snapshot?.frozenArtifact?.blobId ?? source.id,
     candidateId: snapshot ? champion?.id : undefined,
     sha256: snapshot?.frozenArtifact?.sha256,
+    size: snapshot?.frozenArtifact?.size,
     reason: undefined,
   };
 }
@@ -76,9 +78,23 @@ export async function executeServerBaselineExternal(current:EvolveProject,testCa
         `找不到当前 Baseline Artifact Blob ${binding.blobId}，不能回退其他版本冒充真实代码执行。`,
       ));
     }
+    const archive = await blob.arrayBuffer();
+    if (binding.size !== undefined && archive.byteLength !== binding.size) {
+      return testCases.map((testCase) => unavailableExternal(
+        testCase,
+        `当前 Baseline ZIP 大小与冻结凭证不一致：${archive.byteLength} != ${binding.size}。`,
+      ));
+    }
+    if (binding.sha256 && await serverArtifactSha256(archive) !== binding.sha256) {
+      return testCases.map((testCase) => unavailableExternal(
+        testCase,
+        "当前 Baseline ZIP SHA-256 与冻结凭证不一致。",
+      ));
+    }
     const response = await runVercelSandboxCodebaseValidation({
       id: `${current.id}-baseline-${binding.candidateId ?? "source"}`,
-      archive: new Uint8Array(await blob.arrayBuffer()),
+      archive: new Uint8Array(archive),
+      expectedSha256: binding.sha256,
       testCases,
     });
     return attachServerVisualEvidence(current, testCases, response.results);
