@@ -339,6 +339,31 @@ describe("server HTTP Target execution",()=>{
     expect(result?.verificationStatus).toBe("verified");
     expect(runTarget).toHaveBeenCalledOnce();
   });
+  it("does not accept remote verified evidence for an unsupported file Target without its bytes",async()=>{
+    const p=project();
+    p.sourceArtifacts=[{...p.sourceArtifacts[0]!,id:"office-source",name:"report.docx",extension:"docx",mimeType:"application/vnd.openxmlformats-officedocument.wordprocessingml.document",storageRef:"office-blob"}];
+    const runTarget=vi.fn(async()=>({testCaseId:"T1",output:"claimed verified",latencyMs:1,cost:0,verificationStatus:"verified",trace:[]} as TargetRunResult));
+    const getArtifact=vi.fn();
+    const [result]=await runServerHttpTargetBatch(p,[testCase],undefined,{runTarget,getArtifact,attachVisual:async(_p,_t,runs)=>runs});
+    expect(result?.verificationStatus).toBe("unverified");
+    expect(result?.output).toContain("尚不能绑定真实文件执行");
+    expect(getArtifact).not.toHaveBeenCalled();
+    expect(runTarget).not.toHaveBeenCalled();
+  });
+
+  it("keeps fileless remote Targets executable when no Source Artifact is declared",async()=>{
+    const p=project();
+    p.sourceArtifacts=[];
+    const runTarget=vi.fn(async(raw:unknown)=>{
+      const input=raw as {artifact?:unknown;archiveBase64?:string};
+      expect(input.artifact).toBeUndefined();
+      expect(input.archiveBase64).toBeUndefined();
+      return{testCaseId:"T1",output:"remote verified",latencyMs:1,cost:0,verificationStatus:"verified",trace:[]} as TargetRunResult;
+    });
+    const [result]=await runServerHttpTargetBatch(p,[testCase],undefined,{runTarget,getArtifact:async()=>undefined,attachVisual:async(_p,_t,runs)=>runs});
+    expect(result?.verificationStatus).toBe("verified");
+    expect(runTarget).toHaveBeenCalledOnce();
+  });
   it("only activates for an explicitly connected HTTP Target",()=>{
     const p=project();
     expect(serverHttpTargetEnabled(p)).toBe(true);

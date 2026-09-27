@@ -142,7 +142,7 @@ async function bindingFor(
     return{archiveBase64:Buffer.from(bytes).toString("base64"),expectedHash:actualHash};
   }
 
-  return{};
+  throw new Error(`HTTP Target Artifact ${target.id} 的格式 ${target.extension||target.mimeType} 尚不能绑定真实文件执行。`);
 }
 
 export function serverHttpTargetEnabled(project:EvolveProject){
