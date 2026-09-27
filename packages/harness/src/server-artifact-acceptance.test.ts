@@ -59,6 +59,16 @@ describe("server artifact acceptance",()=>{
     expect(completed.campaign.checkpoint).toBeUndefined();
   });
 
+  it("refuses an accepted package if a stored frozen receipt is duplicated later",async()=>{
+    const x=fixture(true);
+    const outcome=await runServerArtifactAcceptance(x.project,{
+      verifyFrozenArtifacts:async()=>({verified:[x.frozen],unavailable:[],failed:[]}),
+      repairCandidate:async()=>{throw new Error("repair must not run");},
+    });
+    expect(outcome.accepted).toBe(true);
+    outcome.project.searchChampion!.artifactAcceptance!.frozenArtifacts!.push({...x.frozen});
+    expect(()=>materializeAcceptedChampionPackage(outcome.project)).toThrow(/冻结成果身份/);
+  });
   it("pauses without repair when frozen evidence is unavailable",async()=>{
     const x=fixture(true);
     const repair=vi.fn();

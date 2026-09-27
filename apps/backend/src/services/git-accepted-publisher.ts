@@ -8,7 +8,7 @@ import {
   type GitRepositoryBinding,
   type GitTargetActionResponse,
 } from "@evolution/contracts";
-import {materializeAcceptedChampionPackage} from "@evolution/core";
+import {hasExactFrozenArtifactSet,materializeAcceptedChampionPackage} from "@evolution/core";
 import {executeGitTargetAction} from "./github-target";
 
 type Executor=(input:unknown)=>Promise<GitTargetActionResponse>;
@@ -48,9 +48,7 @@ function acceptedChampion(project:EvolveProject){
     throw new Error("Artifact Acceptance candidate does not match Search Champion");
   }
   if(!candidate.artifactSnapshots.length)throw new Error("Accepted Champion has no artifact snapshots");
-  const frozen=new Set((acceptance.frozenArtifacts??[]).map((item)=>item.sourceArtifactId));
-  const missing=candidate.artifactSnapshots.filter((item)=>!frozen.has(item.sourceArtifactId));
-  if(missing.length)throw new Error("Accepted Champion snapshot is not frozen for: "+missing.map((item)=>item.name).join(", "));
+  if(!hasExactFrozenArtifactSet(project,candidate,acceptance))throw new Error("Accepted Champion frozen Artifact identities do not exactly match Target Snapshots");
   return {champion,candidate,acceptance};
 }
 
@@ -90,9 +88,10 @@ function sourceGitChanges(project:EvolveProject,snapshot:CandidateArtifactSnapsh
 
 export function acceptedChampionGitChanges(project:EvolveProject,includeMetadata=true){
   const {candidate}=acceptedChampion(project);
+  const acceptedPackage=materializeAcceptedChampionPackage(project);
   const primary:GitFileChange[]=candidate.artifactSnapshots.flatMap((snapshot)=>sourceGitChanges(project,snapshot));
   const metadata=includeMetadata
-    ?materializeAcceptedChampionPackage(project)
+    ?acceptedPackage
       .filter((artifact)=>artifact.kind!=="primary")
       .map((artifact):GitFileChange=>({
         path:".evolution/"+artifact.name,

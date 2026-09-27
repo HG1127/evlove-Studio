@@ -6,6 +6,12 @@ import type { EvolveProject } from "../schemas";
 import { deriveAttentionRequest, deriveAutonomousDecision, LOCAL_REVIEW_CONTRACT_VERSION, reconcileAttentionRequest } from "./autonomous-orchestrator";
 import { buildServerHarnessPlan } from "@evolution/harness";
 
+function frozenFor(candidate:EvolveProject["candidates"][number]){
+  const snapshot=candidate.artifactSnapshots[0]!;
+  return [{sourceArtifactId:snapshot.sourceArtifactId,snapshotHash:"tested-content",blobId:"frozen-tested-content",
+    name:snapshot.name,mimeType:snapshot.mimeType,sha256:"verified-bytes",size:snapshot.content.length,
+    verifiedAt:"2026-09-20T00:00:00Z",checks:["roundtrip"],limitations:[]}];
+}
 function project(patch: Partial<EvolveProject> = {}): EvolveProject {
   return { ...demoProject, ...patch } as EvolveProject;
 }
@@ -335,7 +341,7 @@ describe("autonomous orchestrator", () => {
       candidates:[candidate],
       experimentRun:{...demoProject.experimentRun,status:"completed",winnerId:candidate.id},
       validationRun:{...demoProject.validationRun,status:"completed",candidateId:candidate.id,recommendation:"release",evaluation:{...demoProject.baselineRun.result!,demoJudged:false},checks:[],runs:[],baselineRuns:[]},
-      artifactAcceptance:{...demoProject.artifactAcceptance,status:"passed",candidateId:candidate.id,hardGatePass:true,overallScore:96,coverageScore:96,integrityScore:96,pairwiseScore:96},
+      artifactAcceptance:{...demoProject.artifactAcceptance,status:"passed",candidateId:candidate.id,hardGatePass:true,overallScore:96,coverageScore:96,integrityScore:96,pairwiseScore:96,frozenArtifacts:frozenFor(candidate)},
       outputArtifacts:[{id:"out-offline-complete",projectId:demoProject.id,round:1,versionLabel:"S1",candidateId:candidate.id,name:"result.txt",mimeType:"text/plain",kind:"primary",content:"final",description:"accepted",sourceArtifactIds:[demoProject.sourceArtifacts[0]!.id],isChampion:true,accepted:true,createdAt:"now"} as EvolveProject["outputArtifacts"][number]],
       lessons:[],nextQueue:[],
     });
@@ -361,7 +367,7 @@ describe("autonomous orchestrator", () => {
       candidates:[candidate],
       experimentRun:{...demoProject.experimentRun,status:"completed",winnerId:candidate.id},
       validationRun:{...demoProject.validationRun,status:"completed",candidateId:candidate.id,recommendation:"release",evaluation:{...demoProject.baselineRun.result!,demoJudged:false},checks:[],runs:[],baselineRuns:[]},
-      artifactAcceptance:{...demoProject.artifactAcceptance,status:"passed",candidateId:candidate.id,hardGatePass:true,overallScore:96,coverageScore:96,integrityScore:96,pairwiseScore:96},
+      artifactAcceptance:{...demoProject.artifactAcceptance,status:"passed",candidateId:candidate.id,hardGatePass:true,overallScore:96,coverageScore:96,integrityScore:96,pairwiseScore:96,frozenArtifacts:frozenFor(candidate)},
       outputArtifacts:[{id:"out-online-complete",projectId:demoProject.id,round:1,versionLabel:"S1",candidateId:candidate.id,name:"result.txt",mimeType:"text/plain",kind:"primary",content:"final",description:"accepted",sourceArtifactIds:[demoProject.sourceArtifacts[0]!.id],isChampion:true,accepted:true,createdAt:"now"} as EvolveProject["outputArtifacts"][number]],
       release:{...demoProject.release,status:"idle",evidenceMode:"none"},
       lessons:[],nextQueue:[],
@@ -447,7 +453,7 @@ describe("autonomous orchestrator", () => {
       candidates:[candidate],
       experimentRun:{...demoProject.experimentRun,status:"completed",winnerId:candidate.id},
       validationRun:{...demoProject.validationRun,status:"completed",candidateId:candidate.id,recommendation:"release",evaluation:{...demoProject.baselineRun.result!,demoJudged:false},checks:[],runs:[],baselineRuns:[]},
-      artifactAcceptance:{...demoProject.artifactAcceptance,status:"passed",candidateId:candidate.id,hardGatePass:true,overallScore:96,coverageScore:96,integrityScore:96,pairwiseScore:96},
+      artifactAcceptance:{...demoProject.artifactAcceptance,status:"passed",candidateId:candidate.id,hardGatePass:true,overallScore:96,coverageScore:96,integrityScore:96,pairwiseScore:96,frozenArtifacts:frozenFor(candidate)},
       outputArtifacts:[{id:"out-http-release",projectId:demoProject.id,round:1,versionLabel:"S1",candidateId:candidate.id,name:"result.txt",mimeType:"text/plain",kind:"primary",content:"final",description:"accepted",sourceArtifactIds:[demoProject.sourceArtifacts[0]!.id],isChampion:true,accepted:true,createdAt:"now"} as EvolveProject["outputArtifacts"][number]],
       gates:demoProject.gates.map((gate)=>gate.id==="release-ready"?{...gate,status:"approved" as const}:gate),
       release:{...demoProject.release,status:"idle",candidateId:candidate.id,evidenceMode:"none",recovery:{status:"pending",action:"shadow",reason:"network lost after HTTP release request",at:"2026-09-22T01:00:00Z"}},

@@ -5,6 +5,7 @@ import type {
   OutputArtifact,
 } from "@evolution/contracts";
 import { deliveryReadiness } from "./delivery-readiness";
+import { hasExactFrozenArtifactSet } from "./artifact-identity";
 import { evidenceFingerprint } from "./evidence-binding";
 
 export function acceptanceArtifacts(
@@ -25,7 +26,8 @@ export function acceptanceArtifacts(
     && validation?.candidateId===candidate.id
     && validation.status==="completed"
     && validation.recommendation==="release"
-    && !validation.evaluation?.demoJudged;
+    && !validation.evaluation?.demoJudged
+    && hasExactFrozenArtifactSet(project,candidate,acceptance);
 
   const primary:OutputArtifact[]=candidate.artifactSnapshots.map((artifact,index)=>({
     id:`accepted-primary-${candidate.id}-${index}`,
@@ -41,7 +43,7 @@ export function acceptanceArtifacts(
     sourceArtifactIds:[artifact.sourceArtifactId],
     isChampion:true,
     frozenArtifact:acceptance.frozenArtifacts?.find((item)=>item.sourceArtifactId===artifact.sourceArtifactId),
-    accepted:canDeliver&&Boolean(acceptance.frozenArtifacts?.some((item)=>item.sourceArtifactId===artifact.sourceArtifactId)),
+    accepted:canDeliver,
     createdAt,
   }));
 
@@ -154,6 +156,7 @@ export function materializeAcceptedChampionPackage(
   if(champion.artifactAcceptance?.status!=="passed")throw new Error("Search Champion 尚未通过 Gate F · Artifact Ready，禁止生成正式成果包");
   if(!champion.candidate.artifactSnapshots.length)throw new Error("Search Champion 缺少已测试的 Candidate Artifact Snapshot");
   const primaryAndAcceptance=acceptanceArtifacts(project,champion.candidate,champion.artifactAcceptance,createdAt);
+  if(primaryAndAcceptance.some((artifact)=>!artifact.accepted))throw new Error("Search Champion 的冻结成果身份或验证绑定不完整，禁止生成正式成果包");
   const metadata=materializeChampionOutputs(project,createdAt)
     .filter((artifact)=>artifact.kind!=="primary")
     .map((artifact)=>({...artifact,accepted:true}));

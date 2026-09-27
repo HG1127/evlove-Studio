@@ -14,8 +14,12 @@ function ready() {
     validationRun: { ...demoProject.validationRun, status: "completed", candidateId: "C", recommendation: "release" },
     artifactAcceptance: { ...demoProject.artifactAcceptance, candidateId: "C", status: "passed", hardGatePass: true },
   });
-  project.candidates = [CandidateSchema.parse({ id: "C", name: "candidate", change: "edit", artifactSnapshots: [CandidateArtifactSnapshotSchema.parse({ id: "s", sourceArtifactId: "source", name: "page.html", mimeType: "text/html", content: "tested content", contentHash: "caller-hash", buildMode: "deterministic", createdAt: "now" })] })];
-  const binding = evidenceFingerprint(project, project.candidates[0]);
+  project.candidates = [CandidateSchema.parse({ id: "C", name: "candidate", change: "edit", artifactSnapshots: [CandidateArtifactSnapshotSchema.parse({ id: "s", sourceArtifactId: "demo-prompt", name: "page.html", mimeType: "text/html", content: "tested content", contentHash: "caller-hash", buildMode: "deterministic", createdAt: "now" })] })];
+  project.artifactAcceptance.frozenArtifacts = [{
+    sourceArtifactId: "demo-prompt", snapshotHash: "snapshot-proof", blobId: "blob-proof",
+    name: "page.html", mimeType: "text/html", sha256: "bytes-proof", size: 14,
+    verifiedAt: "2026-09-20T00:00:00Z", checks: ["roundtrip"], limitations: [],
+  }];  const binding = evidenceFingerprint(project, project.candidates[0]);
   project.validationRun.evidenceFingerprint = binding;
   project.artifactAcceptance.evidenceFingerprint = binding;
   return project;
@@ -137,6 +141,37 @@ it("legacy unbound proof cannot authorize final delivery", () => {
   expect(deliveryReadiness(project).ready).toBe(false);
 });
 
+it("交付就绪与成果包拒绝重复、额外或缺失的冻结凭证", () => {
+  for (const mutate of [
+    (project:ReturnType<typeof ready>) => { project.artifactAcceptance.frozenArtifacts = []; },
+    (project:ReturnType<typeof ready>) => { project.artifactAcceptance.frozenArtifacts!.push({...project.artifactAcceptance.frozenArtifacts![0]!}); },
+    (project:ReturnType<typeof ready>) => { project.artifactAcceptance.frozenArtifacts!.push({...project.artifactAcceptance.frozenArtifacts![0]!, sourceArtifactId:"unrelated"}); },
+  ]) {
+    const project = ready();
+    mutate(project);
+    expect(deliveryReadiness(project).ready).toBe(false);
+    expect(acceptanceArtifacts(project, project.candidates[0]!, project.artifactAcceptance).every((item) => !item.accepted)).toBe(true);
+  }
+});
+
+it("交付就绪拒绝重复候选快照，即使验证指纹重新计算", () => {
+  const project = ready();
+  const candidate = project.candidates[0]!;
+  candidate.artifactSnapshots.push({...candidate.artifactSnapshots[0]!, id:"duplicate-snapshot"});
+  const binding=evidenceFingerprint(project,candidate);
+  project.validationRun.evidenceFingerprint=binding;
+  project.artifactAcceptance.evidenceFingerprint=binding;
+  expect(deliveryReadiness(project).ready).toBe(false);
+  expect(acceptanceArtifacts(project,candidate,project.artifactAcceptance).every((item)=>!item.accepted)).toBe(true);
+});
+it("交付就绪拒绝与已验收凭证不符的候选冻结记录", () => {
+  const project = ready();
+  project.candidates[0]!.artifactSnapshots[0]!.frozenArtifact = {
+    ...project.artifactAcceptance.frozenArtifacts![0]!, blobId:"different-blob",
+  };
+  expect(deliveryReadiness(project).ready).toBe(false);
+  expect(acceptanceArtifacts(project, project.candidates[0]!, project.artifactAcceptance).every((item) => !item.accepted)).toBe(true);
+});
 it("旧验收不能给改写后的同 ID 文件标记已接受", () => {
   const project = ready();
   project.candidates[0].artifactSnapshots[0].content = "changed after acceptance";

@@ -1,6 +1,7 @@
 // @vitest-environment node
 import {describe,expect,it,vi} from "vitest";
 import type {Candidate,EvolveProject,GitTargetActionResponse} from "@evolution/contracts";
+import {evidenceFingerprint} from "@evolution/core";
 import {acceptedChampionGitChanges,publishAcceptedChampionToConfiguredGit,publishAcceptedChampionToGit} from "./git-accepted-publisher";
 
 function project(){
@@ -19,12 +20,12 @@ function project(){
       {sourceArtifactId:"source-b",snapshotHash:"hash-b",blobId:"blob-b",name:"README.md",mimeType:"text/markdown",sha256:"sha-b",size:9,verifiedAt:"now",checks:[],limitations:[]},
     ],
   };
-  return {
+  const mission={
     id:"mission-1",name:"Mission",version:"V1",
     goal:"Improve the accepted artifact",evolutionCommand:"Improve safely",protectedItems:["preserve API"],
-    metrics:[],hiddenEvalSuite:[],sourceArtifacts:[],acceptanceRubric:[],roundHistory:[],evolutionArchive:[],
+    metrics:[],hiddenEvalSuite:[],sourceArtifacts:[{id:"source-a",role:"target",name:"src/a.ts",mimeType:"text/plain",extension:"ts"},{id:"source-b",role:"target",name:"README.md",mimeType:"text/markdown",extension:"md"}],acceptanceRubric:[],roundHistory:[],evolutionArchive:[],
     campaign:{currentRound:1,parentStrategy:"champion",status:"paused",schedule:{enabled:false}},
-    candidates:[candidate],experimentRun:{winnerId:"C1"},validationRun:{status:"completed",candidateId:"C1"},
+    candidates:[candidate],experimentRun:{winnerId:"C1"},validationRun:{status:"completed",candidateId:"C1",recommendation:"release"},
     artifactAcceptance:acceptance,
     targetConnection:{
       adapter:"git",connectionId:"acme/app",status:"connected",label:"GitHub",
@@ -33,9 +34,19 @@ function project(){
     },
     searchChampion:{
       id:"champion-1",round:1,versionLabel:"V1",candidate,artifactAcceptance:acceptance,
-      validation:{status:"completed",candidateId:"C1"},score:99,reason:"best",patches:[],evaluation:null,
+      validation:{status:"completed",candidateId:"C1",recommendation:"release"},score:99,reason:"best",patches:[],evaluation:null,
     },
   } as unknown as EvolveProject;
+  refreshBinding(mission);
+  return mission;
+}
+
+function refreshBinding(mission:EvolveProject){
+  const candidate=mission.searchChampion!.candidate!;
+  const binding=evidenceFingerprint(mission,candidate);
+  mission.validationRun.evidenceFingerprint=binding;
+  mission.artifactAcceptance.evidenceFingerprint=binding;
+  mission.searchChampion!.validation!.evidenceFingerprint=binding;
 }
 
 const repository={provider:"github" as const,owner:"acme",repo:"app",baseBranch:"main"};
@@ -51,6 +62,21 @@ describe("accepted Git publisher",()=>{
     ]));
   });
 
+  it("rejects duplicate and unrelated frozen receipts before Git writeback",()=>{
+    for(const sourceArtifactId of ["source-a","unrelated"]){
+      const mission=project();
+      mission.searchChampion!.artifactAcceptance!.frozenArtifacts!.push({
+        ...mission.searchChampion!.artifactAcceptance!.frozenArtifacts![0]!,sourceArtifactId,
+      });
+      expect(()=>acceptedChampionGitChanges(mission,false)).toThrow(/frozen Artifact identities/i);
+    }
+  });
+
+  it("rejects changed Candidate bytes even when Git metadata is omitted",()=>{
+    const mission=project();
+    mission.searchChampion!.candidate!.artifactSnapshots[0]!.content="changed after acceptance";
+    expect(()=>acceptedChampionGitChanges(mission,false)).toThrow(/验证绑定不完整/);
+  });
   it("expands an accepted code/package blueprint into real Git files",()=>{
     const mission=project();
     mission.sourceArtifacts=[{
@@ -71,6 +97,7 @@ describe("accepted Git publisher",()=>{
     mission.searchChampion!.artifactAcceptance!.frozenArtifacts=[
       {sourceArtifactId:"source-a",snapshotHash:"hash-a",blobId:"blob-a",name:"repo.zip",mimeType:"application/zip",sha256:"sha-a",size:1,verifiedAt:"now",checks:[],limitations:[]},
     ];
+    refreshBinding(mission);
     const prepared=acceptedChampionGitChanges(mission,false);
     expect(prepared.changes).toEqual([
       {path:"src/a.ts",content:"export const a=3",delete:false},
@@ -93,6 +120,7 @@ describe("accepted Git publisher",()=>{
     mission.searchChampion!.artifactAcceptance!.frozenArtifacts=[
       {sourceArtifactId:"source-a",snapshotHash:"hash-a",blobId:"blob-a",name:"report.docx",mimeType:"application/vnd.openxmlformats-officedocument.wordprocessingml.document",sha256:"sha-a",size:1,verifiedAt:"now",checks:[],limitations:[]},
     ];
+    refreshBinding(mission);
     expect(()=>acceptedChampionGitChanges(mission,false)).toThrow(/binary artifact|Server Renderer/i);
   });
 
@@ -192,6 +220,7 @@ describe("accepted Git publisher",()=>{
   it("rejects duplicate accepted paths before Git mutation",()=>{
     const mission=project();
     mission.searchChampion!.candidate!.artifactSnapshots[1]!.name="src/a.ts";
+    refreshBinding(mission);
     expect(()=>acceptedChampionGitChanges(mission,false)).toThrow(/duplicate path/i);
   });
 });

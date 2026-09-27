@@ -4,6 +4,12 @@ import type { EvolveProject } from "../schemas";
 import { evidenceFingerprint } from "./evidence-binding";
 import { autonomousClarificationPlan, autonomousEvolutionState, clarificationNeedsHuman, hasEvolutionTargetInput } from "./autonomous-evolution";
 
+function frozenFor(candidate:EvolveProject["candidates"][number]){
+  const snapshot=candidate.artifactSnapshots[0]!;
+  return [{sourceArtifactId:snapshot.sourceArtifactId,snapshotHash:"tested-content",blobId:"frozen-tested-content",
+    name:snapshot.name,mimeType:snapshot.mimeType,sha256:"verified-bytes",size:snapshot.content.length,
+    verifiedAt:"2026-09-20T00:00:00Z",checks:["roundtrip"],limitations:[]}];
+}
 function project(patch: Partial<EvolveProject> = {}): EvolveProject {
   return { ...demoProject, ...patch } as EvolveProject;
 }
@@ -77,7 +83,7 @@ describe("autonomous evolution policy", () => {
       experimentRun:{...demoProject.experimentRun,status:"completed",winnerId:candidate.id},
       candidates:[candidate],
       validationRun:{...demoProject.validationRun,status:"completed",candidateId:candidate.id,recommendation:"release",evaluation:{...demoProject.baselineRun.result!,demoJudged:false}},
-      artifactAcceptance:{...demoProject.artifactAcceptance,status:"passed",hardGatePass:true,candidateId:candidate.id},
+      artifactAcceptance:{...demoProject.artifactAcceptance,status:"passed",hardGatePass:true,candidateId:candidate.id,frozenArtifacts:frozenFor(candidate)},
       outputArtifacts:[{id:"online-output",projectId:demoProject.id,round:1,versionLabel:"S1",candidateId:candidate.id,name:"a.txt",mimeType:"text/plain",kind:"primary",content:"ok",description:"accepted",sourceArtifactIds:[demoProject.sourceArtifacts[0]!.id],isChampion:true,accepted:true,createdAt:new Date().toISOString()} as EvolveProject["outputArtifacts"][number]],
       release:{...demoProject.release,status:"idle",evidenceMode:"none"},
       lessons:[],
