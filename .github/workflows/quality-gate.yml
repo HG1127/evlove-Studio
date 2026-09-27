@@ -52,13 +52,18 @@ jobs:
       - name: Install Runner Gateway dependencies
         run: pnpm runner:setup
 
-      - name: Install Runner Chromium
-        run: pnpm runner:install-browser
+      - name: Install Chromium and system dependencies
+        run: pnpm exec playwright install --with-deps chromium
 
       - name: Runner Gateway tests
         env:
           RUNNER_BROWSER_CI_NO_SANDBOX: "1"
         run: pnpm runner:test
+
+      - name: Browser E2E
+        env:
+          RUNNER_BROWSER_CI_NO_SANDBOX: "1"
+        run: pnpm test:e2e
 
       - name: Local UI smoke
         env:

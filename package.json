@@ -11,6 +11,7 @@
     "lint": "eslint . --max-warnings 0",
     "architecture:check": "eslint packages",
     "test": "vitest run",
+    "test:e2e": "playwright test --project=chromium --reporter=line",
     "prepreview": "node scripts/ensure-runner.mjs",
     "preview": "vite preview",
     "runner:setup": "npm ci --prefix runner-gateway",
@@ -77,6 +78,7 @@
   "devDependencies": {
     "@babel/parser": "^7.29.7",
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "1.63.0",
     "@testing-library/jest-dom": "^7.0.1",
     "@types/node": "^24.12.2",
     "@types/react": "^19.2.14",

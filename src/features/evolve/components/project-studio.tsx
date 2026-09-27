@@ -162,8 +162,9 @@ export function ProjectStudio({ project: initialProject }: { project: EvolveProj
     const current = runtime.project;
     const alreadyStarted = current.campaign.status !== "idle" || current.campaign.currentRound > 0 || current.outputArtifacts.some((artifact) => artifact.accepted);
     if (alreadyStarted || runtime.status.busy) return;
-    autostartTriggeredRef.current = true;
     const timer = window.setTimeout(() => {
+      if (autostartTriggeredRef.current) return;
+      autostartTriggeredRef.current = true;
       setView("flow");
       void runtime.runAutoPilot();
     }, 0);
