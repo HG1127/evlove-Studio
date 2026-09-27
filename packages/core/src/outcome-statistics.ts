@@ -126,7 +126,7 @@ export function analyzeOutcomeSamples(input:{
   candidateId?:string;
   samples:OutcomeMetricSample[];
   minimumSamplesPerArm:number;
-  requiredMetricScopes?:ReadonlyArray<{metricKey:string;segment:string}>;
+  requiredMetricScopes?:ReadonlyArray<{metricKey:string;segment:string;source?:string}>;
   telemetryConfigurationError?:string;
   checkedAt?:string;
 }):OutcomeAnalyticsResponse{
@@ -154,11 +154,18 @@ export function analyzeOutcomeSamples(input:{
     kind:metric.metricKind,
     reason:`${metric.metricKey}/${metric.segment}: Candidate ${metric.candidate.mean} vs Stable ${metric.stable.mean}; p≈${metric.pValueApprox?.toFixed(4)}`,
   }));
-  const observedScopes=new Set(metrics.map((metric)=>metric.metricKey+"\u0000"+metric.segment));
+  const observedScopeSources=new Map(grouped.map((group)=>[
+    group.rows[0]!.metricKey+"\u0000"+group.segment,
+    group.rows[0]!.source,
+  ] as const));
   const requiredScopes=new Map((input.requiredMetricScopes??[])
-    .map((scope)=>[scope.metricKey+"\u0000"+scope.segment,scope] as const));
-  const missingConfigured=[...requiredScopes].filter(([key])=>!observedScopes.has(key))
-    .map(([,scope])=>`${scope.metricKey}/${scope.segment}: Stable 0, Candidate 0`);
+    .map((scope)=>[scope.metricKey+"\u0000"+scope.segment+"\u0000"+(scope.source??""),scope] as const));
+  const missingConfigured=[...requiredScopes.values()]
+    .filter((scope)=>{
+      const observedSource=observedScopeSources.get(scope.metricKey+"\u0000"+scope.segment);
+      return observedSource===undefined||(scope.source!==undefined&&observedSource!==scope.source);
+    })
+    .map((scope)=>`${scope.metricKey}/${scope.segment}${scope.source?` (${scope.source})`:""}: Stable 0, Candidate 0`);
   const incompleteScopes=[
     ...metrics.filter((metric)=>metric.evidenceStatus==="insufficient")
       .map((metric)=>`${metric.metricKey}/${metric.segment}: Stable ${metric.stable.count}, Candidate ${metric.candidate.count}`),

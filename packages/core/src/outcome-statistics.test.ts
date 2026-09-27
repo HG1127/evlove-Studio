@@ -54,6 +54,17 @@ describe("outcome statistics",()=>{
     expect(result.message).toContain("safety/all: Stable 0, Candidate 0");
   });
 
+  it("does not count manual samples as evidence from a configured telemetry source",()=>{
+    const values=Array.from({length:30},()=>1);
+    const result=analyzeOutcomeSamples({
+      missionId:"m1",candidateId:"c1",minimumSamplesPerArm:30,
+      samples:samples({metricKey:"conversion",kind:"business",direction:"higher",stable:values,candidate:values}),
+      requiredMetricScopes:[{metricKey:"conversion",segment:"all",source:"outcome-telemetry:product"}],
+    });
+    expect(result.metrics[0]?.evidenceStatus).toBe("estimated");
+    expect(result.verdict).toBe("insufficient");
+    expect(result.message).toContain("conversion/all (outcome-telemetry:product): Stable 0, Candidate 0");
+  });
   it("does not claim healthy when telemetry configuration is invalid",()=>{
     const values=Array.from({length:30},()=>1);
     const result=analyzeOutcomeSamples({

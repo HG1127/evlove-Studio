@@ -63,7 +63,7 @@ export async function analyzeMissionOutcome(input:{missionId:string;candidateId:
     ...input,
     samples,
     minimumSamplesPerArm:outcomeMinimumSamplesPerArm(),
-    requiredMetricScopes:telemetry.sources.flatMap((source)=>source.metrics.map((metric)=>({metricKey:metric.metricKey,segment:metric.segment}))),
+    requiredMetricScopes:telemetry.sources.flatMap((source)=>source.metrics.map((metric)=>({metricKey:metric.metricKey,segment:metric.segment,source:"outcome-telemetry:"+source.id}))),
     telemetryConfigurationError:telemetry.configured&&!telemetry.ready?telemetry.errors.slice(0,3).join("; "):undefined,
   });
 }

@@ -43,12 +43,25 @@ describe("Outcome Analytics configured evidence",()=>{
         {metricKey:"safety",metricKind:"safety",direction:"lower",path:"safety"},
       ],
     }]);
+    readSamples.mockResolvedValue(measuredRows().map((row)=>({...row,source:"outcome-telemetry:product"})));
     const result=await analyzeMissionOutcome({missionId:"m1",candidateId:"c1"});
     expect(readSamples).toHaveBeenCalledWith({missionId:"m1",candidateId:"c1",limit:20_000,requireComplete:true});
     expect(result.verdict).toBe("insufficient");
-    expect(result.message).toContain("safety/all: Stable 0, Candidate 0");
+    expect(result.message).toContain("safety/all (outcome-telemetry:product): Stable 0, Candidate 0");
   });
 
+  it("requires samples from the configured source rather than same-named manual rows",async()=>{
+    process.env.EVOLUTION_OUTCOME_TELEMETRY_JSON=JSON.stringify([{
+      id:"product",urlTemplate:"https://metrics.example.com/{deploymentId}",
+      metrics:[{metricKey:"conversion",metricKind:"business",direction:"higher",path:"conversion"}],
+    }]);
+    const wrongSource=await analyzeMissionOutcome({missionId:"m1",candidateId:"c1"});
+    expect(wrongSource.verdict).toBe("insufficient");
+    expect(wrongSource.message).toContain("conversion/all (outcome-telemetry:product): Stable 0, Candidate 0");
+    readSamples.mockResolvedValue(measuredRows().map((row)=>({...row,source:"outcome-telemetry:product"})));
+    const correctSource=await analyzeMissionOutcome({missionId:"m1",candidateId:"c1"});
+    expect(correctSource.verdict).toBe("healthy");
+  });
   it("reports invalid telemetry configuration even when stored samples look healthy",async()=>{
     process.env.EVOLUTION_OUTCOME_TELEMETRY_JSON="not json";
     const result=await analyzeMissionOutcome({missionId:"m1",candidateId:"c1"});
