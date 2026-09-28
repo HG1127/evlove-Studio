@@ -3,7 +3,7 @@ import type { Candidate, EvolveProject, EvolutionArchiveEntry } from "../schemas
 import { CandidateSchema, EvolutionArchiveEntrySchema } from "../schemas";
 import { advanceCampaignScheduleAfterRun, campaignGoalSatisfied, campaignMetricTargetStatus, campaignPreflightStopReason, campaignScheduleIssue, campaignStopReason, nextScheduledAt, selectDiverseCandidates } from "./evolution-search";
 import { demoProject } from "../data/mock-project";
-import { prepareCampaignRetry } from "@evolution/core";
+import { evidenceFingerprint, prepareCampaignRetry } from "@evolution/core";
 
 type PatchInput = { component: "prompt" | "workflow" | "tool" | "memory" | "code" | "model"; operation: "add" | "update" | "remove"; target: string; content: string };
 
@@ -45,19 +45,43 @@ function project(archive: EvolutionArchiveEntry[], exploreRatio = 0): EvolveProj
 }
 
 describe("autonomous campaign completion", () => {
-  it("stops successfully as soon as a fully accepted Search Champion exists", () => {
-    const candidate = CandidateSchema.parse({ id:"C-auto", name:"达标版本", change:"满足要求", artifactSnapshots:[{ id:"s-auto", sourceArtifactId:demoProject.sourceArtifacts[0]!.id, name:"result.txt", mimeType:"text/plain", content:"accepted", contentHash:"accepted-hash", createdAt:new Date().toISOString() }] });
+  function acceptedProject(): EvolveProject {
+    const frozen = { sourceArtifactId: demoProject.sourceArtifacts[0]!.id, snapshotHash: "accepted-hash", blobId: "accepted-blob", sha256: "accepted-sha", size: 8, name: "result.txt", mimeType: "text/plain", verifiedAt: "2026-09-28T00:00:00.000Z", checks: ["hash"], limitations: [] };
+    const accepted = CandidateSchema.parse({ id:"C-auto", name:"达标版本", change:"满足要求", artifactSnapshots:[{ id:"s-auto", sourceArtifactId:frozen.sourceArtifactId, name:frozen.name, mimeType:frozen.mimeType, content:"accepted", contentHash:frozen.snapshotHash, frozenArtifact:frozen, createdAt:new Date().toISOString() }] });
     const p = {
       ...demoProject,
       campaign: { ...demoProject.campaign, stopCriteria: { ...demoProject.campaign.stopCriteria, stopWhenAcceptanceMet:true } },
       searchChampion: {
-        id:"champion-auto", versionLabel:"S1", round:1, score:90, candidate, patches:[], reason:"accepted", selectedAt:new Date().toISOString(),
-        validation:{ id:"v-auto", status:"completed" as const, validationMode:"full" as const, candidateId:candidate.id, recommendation:"release" as const, runs:[], baselineRuns:[], checks:[], evaluation:{ accuracy:90,evidence:90,riskCoverage:90,completeness:90,safety:"PASS" as const,averageCost:0,averageLatencyMs:1,failures:[],unverifiedCriterionIds:[] } },
-        artifactAcceptance:{ id:"a-auto",status:"passed" as const,candidateId:candidate.id,overallScore:90,coverageScore:95,integrityScore:100,pairwiseScore:90,hardGatePass:true,results:[],attempts:0,maxRepairAttempts:3,summary:"passed" },
+        id:"champion-auto", versionLabel:"S1", round:1, score:90, candidate:accepted, patches:[], reason:"accepted", selectedAt:new Date().toISOString(),
+        validation:{ id:"v-auto", status:"completed" as const, validationMode:"full" as const, candidateId:accepted.id, recommendation:"release" as const, runs:[], baselineRuns:[], checks:[], evaluation:{ accuracy:90,evidence:90,riskCoverage:90,completeness:90,safety:"PASS" as const,averageCost:0,averageLatencyMs:1,failures:[],unverifiedCriterionIds:[] } },
+        artifactAcceptance:{ id:"a-auto",status:"passed" as const,candidateId:accepted.id,overallScore:90,coverageScore:95,integrityScore:100,pairwiseScore:90,hardGatePass:true,results:[],frozenArtifacts:[frozen],attempts:0,maxRepairAttempts:3,summary:"passed" },
       },
     } as unknown as EvolveProject;
+    const binding = evidenceFingerprint(p, accepted);
+    p.searchChampion!.validation!.evidenceFingerprint = binding;
+    p.searchChampion!.artifactAcceptance!.evidenceFingerprint = binding;
+    return p;
+  }
+
+  it("stops successfully as soon as a fully accepted Search Champion exists", () => {
+    const p = acceptedProject();
     expect(campaignGoalSatisfied(p)).toBe(true);
     expect(campaignStopReason(p)).toContain("进化要求已全部通过");
+  });
+
+  it("does not stop on an old acceptance after the source or rubric changes", () => {
+    const p = acceptedProject();
+    expect(campaignGoalSatisfied({ ...p, goal: p.goal + " changed" })).toBe(false);
+    p.searchChampion!.validation!.evidenceFingerprint = "stale";
+    expect(campaignGoalSatisfied(p)).toBe(false);
+  });
+
+  it("does not stop when the frozen receipt is missing or belongs to different bytes", () => {
+    const p = acceptedProject();
+    p.searchChampion!.artifactAcceptance!.frozenArtifacts = [];
+    expect(campaignGoalSatisfied(p)).toBe(false);
+    p.searchChampion!.artifactAcceptance!.frozenArtifacts = [{...p.searchChampion!.candidate!.artifactSnapshots[0]!.frozenArtifact!, sha256:"other-bytes"}];
+    expect(campaignGoalSatisfied(p)).toBe(false);
   });
 
   it("reaching max rounds without an accepted champion is not goal satisfaction", () => {
