@@ -201,7 +201,7 @@ export function analyzeOutcomeSamples(input:{
   ];
   const insufficient=metrics.length===0||incompleteScopes.length>0||Boolean(input.telemetryConfigurationError);
   const drifting=driftRows.some((item)=>item.status==="drifting");
-  const verdict=regressions.length?"regression":drifting?"watch":insufficient?"insufficient":"healthy";
+  const verdict=regressions.length?"regression":insufficient?"insufficient":drifting?"watch":"healthy";
   return OutcomeAnalyticsResponseSchema.parse({
     missionId:input.missionId,
     candidateId,

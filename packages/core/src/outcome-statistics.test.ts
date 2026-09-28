@@ -143,6 +143,19 @@ describe("outcome statistics",()=>{
     expect(result.metrics[0]?.significance).toBe("significant-improvement");
   });
 
+  it("keeps missing metric evidence insufficient even when another metric drifts",()=>{
+    const stable=Array.from({length:40},()=>100);
+    const candidate=[...Array.from({length:20},()=>100),...Array.from({length:20},()=>130)];
+    const result=analyzeOutcomeSamples({
+      missionId:"m1",candidateId:"c1",minimumSamplesPerArm:20,
+      samples:samples({metricKey:"conversion",kind:"business",direction:"higher",stable,candidate}),
+      requiredMetricScopes:[{metricKey:"conversion",segment:"all"},{metricKey:"safety",segment:"all"}],
+    });
+    expect(result.drift[0]?.status).toBe("drifting");
+    expect(result.regressions).toEqual([]);
+    expect(result.verdict).toBe("insufficient");
+    expect(result.message).toContain("safety/all: Stable 0, Candidate 0");
+  });
   it("flags candidate time drift separately from stable comparison",()=>{
     const stable=Array.from({length:40},()=>100);
     const candidate=[...Array.from({length:20},()=>100),...Array.from({length:20},()=>130)];
