@@ -14,7 +14,7 @@ function metricEvaluationValue(key: string, evaluation: EvaluationResult) {
 }
 
 export function campaignMetricTargetStatus(project: EvolveProject) {
-  const evaluation = project.searchChampion?.evaluation;
+  const evaluation = project.searchChampion?.validation?.evaluation;
   const targets = project.metrics.filter((metric) => metric.target !== undefined);
   const unsupported: string[] = [];
   const unmet: string[] = [];
@@ -36,7 +36,7 @@ export function campaignMetricTargetStatus(project: EvolveProject) {
     supported,
     unsupported,
     unmet,
-    satisfied: targets.length > 0 && supported === targets.length && unsupported.length === 0 && unmet.length === 0,
+    satisfied: campaignGoalSatisfied(project) && targets.length > 0 && supported === targets.length && unsupported.length === 0 && unmet.length === 0,
   };
 }
 
@@ -65,7 +65,7 @@ export function campaignStopReason(project: EvolveProject): string | undefined {
   if (criteria.stopWhenAcceptanceMet && campaignGoalSatisfied(project)) return "当前进化要求已全部通过：独立验证与成果完整性验收完成";
   if (campaign.currentRound >= criteria.maxRounds) return `已达到设定的最大进化轮数 ${criteria.maxRounds}`;
   if (campaign.noImprovementRounds >= criteria.patienceRounds) return `连续 ${campaign.noImprovementRounds} 轮没有达到最小提升 ${criteria.minImprovement}`;
-  if (criteria.targetScore !== undefined && (campaign.bestScore ?? 0) >= criteria.targetScore) return `Search Champion 已达到目标综合分 ${criteria.targetScore}`;
+  if (criteria.targetScore !== undefined && campaignGoalSatisfied(project) && (project.searchChampion?.score ?? 0) >= criteria.targetScore) return `Search Champion 已达到目标综合分 ${criteria.targetScore}`;
   if (criteria.maxEstimatedCost !== undefined && campaign.estimatedCost >= criteria.maxEstimatedCost) return `预计成本已达到预算上限 ${criteria.maxEstimatedCost}`;
   if (criteria.maxWallMinutes !== undefined && campaign.startedAt) {
     const elapsedMinutes = (Date.now() - new Date(campaign.startedAt).getTime()) / 60_000;

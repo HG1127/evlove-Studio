@@ -44,8 +44,7 @@ function project(archive: EvolutionArchiveEntry[], exploreRatio = 0): EvolveProj
   } as unknown as EvolveProject;
 }
 
-describe("autonomous campaign completion", () => {
-  function acceptedProject(): EvolveProject {
+function acceptedProject(): EvolveProject {
     const frozen = { sourceArtifactId: demoProject.sourceArtifacts[0]!.id, snapshotHash: "accepted-hash", blobId: "accepted-blob", sha256: "accepted-sha", size: 8, name: "result.txt", mimeType: "text/plain", verifiedAt: "2026-09-28T00:00:00.000Z", checks: ["hash"], limitations: [] };
     const accepted = CandidateSchema.parse({ id:"C-auto", name:"达标版本", change:"满足要求", artifactSnapshots:[{ id:"s-auto", sourceArtifactId:frozen.sourceArtifactId, name:frozen.name, mimeType:frozen.mimeType, content:"accepted", contentHash:frozen.snapshotHash, frozenArtifact:frozen, createdAt:new Date().toISOString() }] });
     const p = {
@@ -61,8 +60,9 @@ describe("autonomous campaign completion", () => {
     p.searchChampion!.validation!.evidenceFingerprint = binding;
     p.searchChampion!.artifactAcceptance!.evidenceFingerprint = binding;
     return p;
-  }
+}
 
+describe("autonomous campaign completion", () => {
   it("stops successfully as soon as a fully accepted Search Champion exists", () => {
     const p = acceptedProject();
     expect(campaignGoalSatisfied(p)).toBe(true);
@@ -92,30 +92,49 @@ describe("autonomous campaign completion", () => {
 });
 
 describe("campaign control preflight", () => {
-  const evaluation = { accuracy: 92, evidence: 91, riskCoverage: 90, completeness: 93, safety: "PASS" as const, averageCost: 0.4, averageLatencyMs: 800, notes: [], failures: [] };
+  function acceptedWithMetrics(metric: EvolveProject["metrics"][number]) {
+    const p = acceptedProject();
+    p.metrics = [metric];
+    p.campaign = { ...p.campaign, stopCriteria: { ...p.campaign.stopCriteria, stopWhenAcceptanceMet:false, stopWhenMetricTargetsMet:true } };
+    const binding = evidenceFingerprint(p, p.searchChampion!.candidate!);
+    p.searchChampion!.validation!.evidenceFingerprint = binding;
+    p.searchChampion!.artifactAcceptance!.evidenceFingerprint = binding;
+    return p;
+  }
 
   it("does not treat unsupported custom metrics as automatically satisfied", () => {
-    const p = {
-      ...demoProject,
-      metrics: [{ ...demoProject.metrics[0]!, key: "custom-business-kpi", label: "自定义业务指标", target: 95, direction: "higher" as const }],
-      searchChampion: { id:"metric-champion", versionLabel:"S1", round:1, score:90, evaluation, patches:[], reason:"test", selectedAt:new Date().toISOString() },
-      campaign: { ...demoProject.campaign, stopCriteria: { ...demoProject.campaign.stopCriteria, stopWhenAcceptanceMet:false, stopWhenMetricTargetsMet:true }, currentRound:0, noImprovementRounds:0 },
-    } as EvolveProject;
+    const p = acceptedWithMetrics({ ...demoProject.metrics[0]!, key:"custom-business-kpi", label:"自定义业务指标", target:95, direction:"higher" });
     const status = campaignMetricTargetStatus(p);
     expect(status.satisfied).toBe(false);
     expect(status.unsupported).toContain("自定义业务指标");
     expect(campaignStopReason(p)).toBeUndefined();
   });
 
-  it("supports lower-is-better cost targets without reversing the comparison", () => {
-    const p = {
-      ...demoProject,
-      metrics: [{ ...demoProject.metrics[0]!, key: "cost", label: "平均成本", target: 0.5, direction: "lower" as const }],
-      searchChampion: { id:"cost-champion", versionLabel:"S1", round:1, score:90, evaluation, patches:[], reason:"test", selectedAt:new Date().toISOString() },
-      campaign: { ...demoProject.campaign, stopCriteria: { ...demoProject.campaign.stopCriteria, stopWhenAcceptanceMet:false, stopWhenMetricTargetsMet:true }, currentRound:0, noImprovementRounds:0 },
-    } as EvolveProject;
+  it("uses the accepted Hidden evaluation for lower-is-better cost targets", () => {
+    const p = acceptedWithMetrics({ ...demoProject.metrics[0]!, key:"cost", label:"平均成本", target:0.5, direction:"lower" });
+    p.searchChampion!.evaluation = { ...p.searchChampion!.validation!.evaluation!, averageCost:99 };
     expect(campaignMetricTargetStatus(p).satisfied).toBe(true);
     expect(campaignStopReason(p)).toContain("指标目标");
+  });
+
+  it("does not stop on metric targets after the accepted contract changes", () => {
+    const p = acceptedWithMetrics({ ...demoProject.metrics[0]!, key:"cost", label:"平均成本", target:0.5, direction:"lower" });
+    p.goal += " changed";
+    expect(campaignMetricTargetStatus(p).satisfied).toBe(false);
+    expect(campaignStopReason(p)).toBeUndefined();
+  });
+
+  it("requires the current accepted Champion score for a target-score stop", () => {
+    const p = acceptedProject();
+    p.campaign = { ...p.campaign, bestScore:99, stopCriteria:{ ...p.campaign.stopCriteria, targetScore:85, stopWhenAcceptanceMet:false, stopWhenMetricTargetsMet:false } };
+    p.searchChampion!.score = 80;
+    expect(campaignStopReason(p)).toBeUndefined();
+    p.searchChampion!.score = 90;
+    expect(campaignStopReason(p)).toContain("目标综合分");
+    p.searchChampion!.validation!.evidenceFingerprint = "stale";
+    expect(campaignStopReason(p)).toBeUndefined();
+    p.searchChampion = undefined;
+    expect(campaignStopReason(p)).toBeUndefined();
   });
 
   it("blocks before an estimated next round would overshoot the budget", () => {
