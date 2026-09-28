@@ -8,8 +8,9 @@ import {probeOutcomeSampleStore,readOutcomeSamples} from "./outcome-sample-store
 import {getOutcomeTelemetryCapabilities,getOutcomeTelemetryConfigState} from "./outcome-telemetry-source";
 
 export function outcomeMinimumSamplesPerArm(){
-  const parsed=Number(process.env.EVOLUTION_OUTCOME_MIN_SAMPLES_PER_ARM??"30")||30;
-  return Math.max(5,Math.min(parsed,10_000));
+  const parsed=Number(process.env.EVOLUTION_OUTCOME_MIN_SAMPLES_PER_ARM??"30");
+  if(!Number.isFinite(parsed)||parsed===0)return 30;
+  return Math.max(5,Math.min(Math.trunc(parsed),10_000));
 }
 
 export async function getOutcomeAnalyticsHealth(){

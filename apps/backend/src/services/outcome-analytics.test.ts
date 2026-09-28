@@ -1,7 +1,7 @@
 // @vitest-environment node
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
 import type {OutcomeMetricSample} from "@evolution/contracts";
-import {analyzeMissionOutcome} from "./outcome-analytics";
+import {analyzeMissionOutcome,outcomeMinimumSamplesPerArm} from "./outcome-analytics";
 
 const {readSamples}=vi.hoisted(()=>({readSamples:vi.fn()}));
 vi.mock("./outcome-sample-store",()=>({readOutcomeSamples:readSamples,probeOutcomeSampleStore:vi.fn()}));
@@ -32,6 +32,19 @@ beforeEach(()=>{
 afterEach(()=>{
   restore("EVOLUTION_OUTCOME_TELEMETRY_JSON",originalConfig);
   restore("EVOLUTION_OUTCOME_MIN_SAMPLES_PER_ARM",originalMinimum);
+});
+
+describe("Outcome Analytics sample threshold configuration",()=>{
+  it("keeps fractional and malformed values within the integer response contract",()=>{
+    process.env.EVOLUTION_OUTCOME_MIN_SAMPLES_PER_ARM="7.9";
+    expect(outcomeMinimumSamplesPerArm()).toBe(7);
+    process.env.EVOLUTION_OUTCOME_MIN_SAMPLES_PER_ARM="Infinity";
+    expect(outcomeMinimumSamplesPerArm()).toBe(30);
+    process.env.EVOLUTION_OUTCOME_MIN_SAMPLES_PER_ARM="invalid";
+    expect(outcomeMinimumSamplesPerArm()).toBe(30);
+    process.env.EVOLUTION_OUTCOME_MIN_SAMPLES_PER_ARM="20000";
+    expect(outcomeMinimumSamplesPerArm()).toBe(10_000);
+  });
 });
 
 describe("Outcome Analytics configured evidence",()=>{
