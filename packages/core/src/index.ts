@@ -37,3 +37,5 @@ export * from "./release-reconciliation";
 export * from "./release-outcome";
 export * from "./outcome-statistics";
 export * from "./learning-governance";
+
+export * from "./hidden-validation-evidence";

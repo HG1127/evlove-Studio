@@ -7,6 +7,7 @@ import type {
 import { deliveryReadiness } from "./delivery-readiness";
 import { hasExactFrozenArtifactSet } from "./artifact-identity";
 import { evidenceFingerprint } from "./evidence-binding";
+import { hasAuthoritativeHiddenRelease } from "./hidden-validation-evidence";
 
 export function acceptanceArtifacts(
   project:EvolveProject,
@@ -23,10 +24,7 @@ export function acceptanceArtifacts(
     && acceptance.status==="passed"
     && acceptance.hardGatePass
     && acceptance.candidateId===candidate.id
-    && validation?.candidateId===candidate.id
-    && validation.status==="completed"
-    && validation.recommendation==="release"
-    && !validation.evaluation?.demoJudged
+    && Boolean(validation&&hasAuthoritativeHiddenRelease(validation,candidate.id))
     && hasExactFrozenArtifactSet(project,candidate,acceptance);
 
   const primary:OutputArtifact[]=candidate.artifactSnapshots.map((artifact,index)=>({
@@ -232,8 +230,7 @@ export function assertDeliverablePackageIdentity(project:EvolveProject):string{
   const acceptance=champion?.artifactAcceptance??project.artifactAcceptance;
   const validation=champion?.validation??project.validationRun;
   if(!candidate||!acceptance||!validation||acceptance.status!=="passed"||!acceptance.hardGatePass
-    ||acceptance.candidateId!==candidateId||validation.status!=="completed"||validation.recommendation!=="release"
-    ||validation.candidateId!==candidateId||validation.evaluation?.demoJudged
+    ||acceptance.candidateId!==candidateId||!hasAuthoritativeHiddenRelease(validation,candidateId)
     ||!hasExactFrozenArtifactSet(project,candidate,acceptance)){
     throw new Error("成果包缺少当前 Candidate 的真实 Hidden Validation 或 Gate F 冻结证据");
   }

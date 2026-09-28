@@ -48,7 +48,7 @@ describe("local-store 删除与迁移", () => {
       id: "agent_riskos",
       candidates: [winner],
       experimentRun: { ...demoProject.experimentRun, status: "completed" as const, winnerId: winner.id },
-      validationRun: { ...demoProject.validationRun, status: "completed" as const, candidateId: winner.id, evaluation, recommendation: "release" as const },
+      validationRun: { ...demoProject.validationRun, status: "completed" as const, validationMode: "full" as const, candidateId: winner.id, evaluation, recommendation: "release" as const },
       artifactAcceptance: { ...demoProject.artifactAcceptance, status: "passed" as const, candidateId: winner.id, overallScore: 88, coverageScore: 90, integrityScore: 90, pairwiseScore: 85, hardGatePass: true, attempts: 1, summary: "Gate F 通过", acceptedAt: "2026-09-07T00:00:00.000Z" },
       outputArtifacts: [{ id: "accepted-primary-C1-0", projectId: "agent_riskos", round: 0, versionLabel: "V2", candidateId: winner.id, name: "evolved-prd.md", mimeType: "text/markdown", kind: "primary" as const, content: "# 奶茶店点单系统 PRD", description: "通过验收的 Candidate 快照", sourceArtifactIds: [], isChampion: true, accepted: true, createdAt: "2026-09-07T00:00:00.000Z" }],
     };

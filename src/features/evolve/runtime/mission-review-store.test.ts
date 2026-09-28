@@ -17,7 +17,7 @@ function projectWithOutput(content="v1"): EvolveProject {
   project.candidates=[candidate];
   project.experimentRun={...project.experimentRun,winnerId:candidate.id};
   const binding=evidenceFingerprint(project,candidate);
-  project.validationRun={...project.validationRun,status:"completed",candidateId:candidate.id,
+  project.validationRun={...project.validationRun,status:"completed",validationMode:"full",candidateId:candidate.id,
     recommendation:"release",evaluation:project.baselineRun.result,evidenceFingerprint:binding};
   project.artifactAcceptance={...project.artifactAcceptance,status:"passed",hardGatePass:true,
     candidateId:candidate.id,frozenArtifacts:[frozen],evidenceFingerprint:binding};

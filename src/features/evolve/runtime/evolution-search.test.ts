@@ -52,7 +52,7 @@ describe("autonomous campaign completion", () => {
       campaign: { ...demoProject.campaign, stopCriteria: { ...demoProject.campaign.stopCriteria, stopWhenAcceptanceMet:true } },
       searchChampion: {
         id:"champion-auto", versionLabel:"S1", round:1, score:90, candidate, patches:[], reason:"accepted", selectedAt:new Date().toISOString(),
-        validation:{ id:"v-auto", status:"completed" as const, candidateId:candidate.id, recommendation:"release" as const, runs:[], baselineRuns:[], checks:[], evaluation:{ accuracy:90,evidence:90,riskCoverage:90,completeness:90,safety:"PASS" as const,averageCost:0,averageLatencyMs:1,failures:[],unverifiedCriterionIds:[] } },
+        validation:{ id:"v-auto", status:"completed" as const, validationMode:"full" as const, candidateId:candidate.id, recommendation:"release" as const, runs:[], baselineRuns:[], checks:[], evaluation:{ accuracy:90,evidence:90,riskCoverage:90,completeness:90,safety:"PASS" as const,averageCost:0,averageLatencyMs:1,failures:[],unverifiedCriterionIds:[] } },
         artifactAcceptance:{ id:"a-auto",status:"passed" as const,candidateId:candidate.id,overallScore:90,coverageScore:95,integrityScore:100,pairwiseScore:90,hardGatePass:true,results:[],attempts:0,maxRepairAttempts:3,summary:"passed" },
       },
     } as unknown as EvolveProject;

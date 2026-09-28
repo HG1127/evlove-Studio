@@ -13,7 +13,7 @@ import { acceptanceArtifacts } from "./artifact-quality";
 function ready() {
   const project = EvolveProjectSchema.parse({ ...demoProject,
     experimentRun: { ...demoProject.experimentRun, winnerId: "C" },
-    validationRun: { ...demoProject.validationRun, status: "completed", candidateId: "C", recommendation: "release" },
+    validationRun: { ...demoProject.validationRun, status: "completed", validationMode: "full", candidateId: "C", recommendation: "release", evaluation: demoProject.baselineRun.result },
     artifactAcceptance: { ...demoProject.artifactAcceptance, candidateId: "C", status: "passed", hardGatePass: true },
   });
   project.candidates = [CandidateSchema.parse({ id: "C", name: "candidate", change: "edit", artifactSnapshots: [CandidateArtifactSnapshotSchema.parse({ id: "s", sourceArtifactId: "demo-prompt", name: "page.html", mimeType: "text/html", content: "tested content", contentHash: "caller-hash", buildMode: "deterministic", createdAt: "now" })] })];
@@ -86,6 +86,13 @@ describe("真实交付闭环", () => {
     expect(deliveryReadiness(project).ready).toBe(false);
     project.validationRun.candidateId = "C"; project.artifactAcceptance.hardGatePass = false;
     expect(deliveryReadiness(project).ready).toBe(false);
+  });
+  it("缺少完整 Hidden 评测结果时，release 建议不能解锁交付或成果包", () => {
+    const project=ready();
+    project.validationRun.evaluation=undefined;
+    expect(deliveryReadiness(project).ready).toBe(false);
+    expect(acceptanceArtifacts(project,project.candidates[0]!,project.artifactAcceptance).every((item)=>!item.accepted)).toBe(true);
+    expect(()=>materializeAcceptedCandidatePackage(project,project.candidates[0]!,project.artifactAcceptance)).toThrow(/冻结身份尚未一致/);
   });
   it("演示评测不能解锁真实交付", () => {
     const project = ready(); project.validationRun.evaluation = { ...demoProject.baselineRun.result!, demoJudged: true };

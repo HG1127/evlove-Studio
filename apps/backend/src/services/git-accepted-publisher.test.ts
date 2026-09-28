@@ -20,12 +20,13 @@ function project(){
       {sourceArtifactId:"source-b",snapshotHash:"hash-b",blobId:"blob-b",name:"README.md",mimeType:"text/markdown",sha256:"sha-b",size:9,verifiedAt:"now",checks:[],limitations:[]},
     ],
   };
+  const evaluation={accuracy:92,evidence:92,riskCoverage:92,completeness:92,safety:"PASS",averageCost:0,averageLatencyMs:1,notes:[],failures:[]};
   const mission={
     id:"mission-1",name:"Mission",version:"V1",
     goal:"Improve the accepted artifact",evolutionCommand:"Improve safely",protectedItems:["preserve API"],
     metrics:[],hiddenEvalSuite:[],sourceArtifacts:[{id:"source-a",role:"target",name:"src/a.ts",mimeType:"text/plain",extension:"ts"},{id:"source-b",role:"target",name:"README.md",mimeType:"text/markdown",extension:"md"}],acceptanceRubric:[],roundHistory:[],evolutionArchive:[],
     campaign:{currentRound:1,parentStrategy:"champion",status:"paused",schedule:{enabled:false}},
-    candidates:[candidate],experimentRun:{winnerId:"C1"},validationRun:{status:"completed",candidateId:"C1",recommendation:"release"},
+    candidates:[candidate],experimentRun:{winnerId:"C1"},validationRun:{status:"completed",validationMode:"full",candidateId:"C1",recommendation:"release",evaluation},
     artifactAcceptance:acceptance,
     targetConnection:{
       adapter:"git",connectionId:"acme/app",status:"connected",label:"GitHub",
@@ -34,7 +35,7 @@ function project(){
     },
     searchChampion:{
       id:"champion-1",round:1,versionLabel:"V1",candidate,artifactAcceptance:acceptance,
-      validation:{status:"completed",candidateId:"C1",recommendation:"release"},score:99,reason:"best",patches:[],evaluation:null,
+      validation:{status:"completed",validationMode:"full",candidateId:"C1",recommendation:"release",evaluation},score:99,reason:"best",patches:[],evaluation,
     },
   } as unknown as EvolveProject;
   refreshBinding(mission);

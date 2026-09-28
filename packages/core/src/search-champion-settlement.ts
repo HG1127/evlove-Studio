@@ -1,5 +1,6 @@
 import type {ArtifactAcceptance,Candidate,EvaluationResult,SearchChampion,TestCase,ValidationRun} from "@evolution/contracts";
 import {reusableHoldoutBaseline} from "./baseline-readiness";
+import {hasAuthoritativeHiddenRelease} from "./hidden-validation-evidence";
 
 function clamp(value:number,min=0,max=100){return Math.max(min,Math.min(max,value));}
 
@@ -38,9 +39,10 @@ export function updateSearchChampion(args:{
   hiddenSuite?:TestCase[];
   selectedAt?:string;
 }){
-  if(!args.winner||!args.validation.evaluation||args.validation.recommendation!=="release"||args.artifactAcceptance?.status!=="passed")return {champion:args.current,changed:false,improvement:0};
-  if(args.validation.status!=="completed"||!args.artifactAcceptance.hardGatePass||args.artifactAcceptance.candidateId!==args.winner.id)return {champion:args.current,changed:false,improvement:0};
-  if(args.validation.evaluation.demoJudged)return {champion:args.current,changed:false,improvement:0};
+  if(!args.winner||args.artifactAcceptance?.status!=="passed")return {champion:args.current,changed:false,improvement:0};
+  if(!hasAuthoritativeHiddenRelease(args.validation,args.winner.id)
+    ||!args.artifactAcceptance.hardGatePass||args.artifactAcceptance.candidateId!==args.winner.id)return {champion:args.current,changed:false,improvement:0};
+  const evaluation=args.validation.evaluation!;
   const paired=args.liveTarget&&args.current?args.validation.baselineEvaluation:undefined;
   if(args.liveTarget&&args.current){
     const ids=args.hiddenSuite?.map((item)=>item.id)??[];
@@ -54,12 +56,12 @@ export function updateSearchChampion(args:{
     }
   }
   const scoringBaseline=paired??args.baseline;
-  const score=computeSearchFitness(args.validation.evaluation,scoringBaseline,args.artifactAcceptance).score;
+  const score=computeSearchFitness(evaluation,scoringBaseline,args.artifactAcceptance).score;
   const previous=paired?computeSearchFitness(paired,scoringBaseline,args.current?.artifactAcceptance).score:args.current?.score;
   const improvement=previous===undefined?score:score-previous;
   if(previous!==undefined&&improvement<args.minImprovement){
     const currentEval=paired??args.current?.evaluation;
-    if(!(currentEval&&dominates(args.validation.evaluation,currentEval)))return {champion:args.current,changed:false,improvement};
+    if(!(currentEval&&dominates(evaluation,currentEval)))return {champion:args.current,changed:false,improvement};
   }
   const patches=[...(args.current?.patches??[]),...args.winner.patches].filter((patch,index,all)=>all.findIndex((item)=>item.id===patch.id)===index);
   return {
@@ -69,7 +71,7 @@ export function updateSearchChampion(args:{
       round:args.round,
       score:Number(score.toFixed(2)),
       candidate:args.winner,
-      evaluation:args.validation.evaluation,
+      evaluation,
       validation:args.validation,
       artifactAcceptance:args.artifactAcceptance,
       patches,

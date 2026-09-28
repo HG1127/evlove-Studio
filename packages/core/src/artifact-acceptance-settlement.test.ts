@@ -18,7 +18,7 @@ function fixture(){
     {criterionId:"CONTENT",score:90,pass:true,verificationStatus:"verified",evidence:["hidden"],gaps:[],testCaseIds:["H1"]},
     {criterionId:"FORMAT",score:100,pass:true,verificationStatus:"verified",evidence:["roundtrip"],gaps:[],testCaseIds:["H2"]},
   ]};
-  const validation={id:"v",status:"completed",candidateId:"C1",recommendation:"release",evaluation,runs:[],baselineRuns:[],checks:[],evidenceFingerprint:evidenceFingerprint(project,candidate)} as ValidationRun;
+  const validation={id:"v",status:"completed",validationMode:"full",candidateId:"C1",recommendation:"release",evaluation,runs:[],baselineRuns:[],checks:[],evidenceFingerprint:evidenceFingerprint(project,candidate)} as ValidationRun;
   return {project,candidate,validation,frozen};
 }
 
@@ -29,6 +29,11 @@ describe("artifact acceptance settlement",()=>{
     expect(result.status).toBe("passed");
     expect(result.hardGatePass).toBe(true);
     expect(result.frozenArtifacts?.[0]?.blobId).toBe("blob");
+  });
+  it("does not pass Gate F when a release recommendation has no full evaluation",()=>{
+    const x=fixture();
+    x.validation.evaluation=undefined;
+    expect(settleArtifactAcceptanceFromValidation({project:x.project,candidate:x.candidate,validation:x.validation,frozenArtifacts:[x.frozen]}).status).toBe("unverified");
   });
   it("keeps missing evidence unverified instead of failed",()=>{
     const x=fixture();

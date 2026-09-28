@@ -1,13 +1,14 @@
 import type { EvolveProject } from "@evolution/contracts";
+import { hasAuthoritativeHiddenRelease } from "./hidden-validation-evidence";
 
 export function campaignGoalSatisfied(project: EvolveProject) {
   const champion = project.searchChampion;
   return Boolean(
     champion?.candidate
-    && champion.validation?.status === "completed"
-    && champion.validation.recommendation === "release"
+    && champion.validation
+    && hasAuthoritativeHiddenRelease(champion.validation, champion.candidate.id)
     && champion.artifactAcceptance?.status === "passed"
     && champion.artifactAcceptance.hardGatePass
-    && !(champion.validation.evaluation?.unverifiedCriterionIds?.length),
+    && champion.artifactAcceptance.candidateId === champion.candidate.id,
   );
 }

@@ -6,6 +6,7 @@ import type {
   ValidationRun,
 } from "@evolution/contracts";
 import { evidenceFingerprint } from "./evidence-binding";
+import { hasAuthoritativeHiddenRelease, hasFullHiddenMeasurement } from "./hidden-validation-evidence";
 import { indexScopedAcceptanceResults } from "./acceptance-result-identity";
 import { indexUniqueById } from "./identity-index";
 
@@ -60,10 +61,8 @@ export function settleArtifactAcceptanceFromValidation(args:{
         && receipt.mimeType===frozen.mimeType
         && (!snapshot.contentHash||snapshot.contentHash===receipt.snapshotHash));
     });
-  const validationReusable=args.validation.status==="completed"
-    && args.validation.candidateId===args.candidate.id
-    && args.validation.evidenceFingerprint===binding
-    && !args.validation.evaluation?.demoJudged;
+  const validationReusable=hasFullHiddenMeasurement(args.validation,args.candidate.id)
+    && args.validation.evidenceFingerprint===binding;
   const {byId:scoreById,duplicateIds}=indexScopedAcceptanceResults([{
     requestedCriterionIds:args.project.acceptanceRubric.map((item)=>item.id),
     results:validationReusable?args.validation.evaluation?.criterionScores??[]:[],
@@ -97,7 +96,7 @@ export function settleArtifactAcceptanceFromValidation(args:{
   });
   const thresholdsPass=overallScore>=85&&coverageScore>=90&&integrityScore>=90&&(pairwiseScore>=80||!args.project.acceptanceRubric.some((item)=>item.id==="SYS-PAIRWISE"));
   const passed=validationReusable
-    && args.validation.recommendation==="release"
+    && hasAuthoritativeHiddenRelease(args.validation,args.candidate.id)
     && allTargetsFrozen
     && hardGatePass
     && !missingEvidence
