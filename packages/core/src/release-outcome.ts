@@ -134,10 +134,12 @@ function currentProductionObservations(
   maxFutureSkewMs:number,
 ){
   const deploymentId=project.release.deploymentId;
+  const candidateId=project.release.candidateId;
   return (project.release.observations??[])
     .filter((item)=>item.evidenceMode==="live"
       &&item.environment==="production"
-      &&Boolean(deploymentId)
+      &&Boolean(deploymentId&&candidateId)
+      &&item.candidateId===candidateId
       &&item.deploymentId===deploymentId)
     .filter((item)=>{
       const at=Date.parse(item.at);

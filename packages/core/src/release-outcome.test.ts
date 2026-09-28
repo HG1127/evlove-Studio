@@ -142,6 +142,23 @@ describe("production outcome freshness",()=>{
     expect(projectHasStableHealthyProductionOutcome(p,{now})).toBe(true);
   });
 
+  it("does not count a prior Candidate on the same Deployment toward current stability",()=>{
+    const p=project("2026-09-20T08:29:00.000Z");
+    const base={
+      source:"reconcile" as const,action:"reconcile" as const,deploymentId:"dpl_candidate",
+      evidenceMode:"live" as const,environment:"production",healthy:true,observationStatus:"healthy" as const,reason:"health",
+    };
+    p.release.observations=[
+      {...base,id:"old-1",candidateId:"C-old",at:"2026-09-20T08:27:00.000Z"},
+      {...base,id:"old-2",candidateId:"C-old",at:"2026-09-20T08:28:00.000Z"},
+      {...base,id:"current",candidateId:"C1",at:"2026-09-20T08:29:00.000Z"},
+    ];
+    const trend=productionOutcomeTrend(p,{now});
+    expect(trend.status).toBe("healthy-insufficient");
+    expect(trend.healthyStreak).toBe(1);
+    expect(trend.observations).toBe(1);
+    expect(projectHasStableHealthyProductionOutcome(p,{now})).toBe(false);
+  });
   it("does not count far-future observations toward the stable healthy streak",()=>{
     const p=project("2026-09-20T08:29:00.000Z");
     const base={
