@@ -1,4 +1,5 @@
 import {randomUUID} from "node:crypto";
+import {isDeepStrictEqual} from "node:util";
 import {
   OutcomeMetricBatchRequestSchema,
   OutcomeMetricBatchResponseSchema,
@@ -12,6 +13,12 @@ import {supabaseRestAuthHeaders} from "./supabase-rest-auth";
 
 type JsonRecord=Record<string,unknown>;
 
+export class OutcomeSampleIdConflictError extends Error{
+  constructor(){
+    super("Outcome sample ID is duplicated or reused with different content");
+    this.name="OutcomeSampleIdConflictError";
+  }
+}
 export class OutcomeSampleLimitExceededError extends Error{
   constructor(readonly limit:number){
     super(`Outcome analysis exceeds the ${limit} sample limit; complete evidence is required`);
@@ -44,6 +51,15 @@ function fromRow(row:JsonRecord):OutcomeMetricSample{
   });
 }
 
+function sameSampleRow(expected:JsonRecord,actual:JsonRecord){
+  const normalize=(row:JsonRecord)=>{
+    const sample=fromRow(row);
+    const observedMs=Date.parse(sample.observedAt);
+    if(!Number.isFinite(observedMs))throw new Error("Outcome sample observedAt is invalid");
+    return {...sample,observedAt:new Date(observedMs).toISOString()};
+  };
+  return isDeepStrictEqual(normalize(expected),normalize(actual));
+}
 function filterValue(value:string){
   // PostgREST requires quoted values inside a logical filter when an ID or
   // timestamp contains punctuation that also belongs to its URL grammar.
@@ -67,12 +83,56 @@ export async function insertOutcomeSamples(raw:OutcomeMetricBatchRequest){
     value:sample.value,unit:sample.unit??null,segment:sample.segment,source:sample.source,
     observed_at:sample.observedAt,metadata:sample.metadata,
   }));
-  const inserted=await db()("outcome_metric_samples?on_conflict=id",{
+  const expectedById=new Map<string,JsonRecord>();
+  for(const row of rows){
+    if(expectedById.has(row.id))throw new OutcomeSampleIdConflictError();
+    expectedById.set(row.id,row);
+  }
+  const request=db();
+  const inserted=await request("outcome_metric_samples?on_conflict=id",{
     method:"POST",headers:{Prefer:"resolution=ignore-duplicates,return=representation"},body:JSON.stringify(rows),
-  }) as JsonRecord[]|undefined;
+  });
+  if(!Array.isArray(inserted))throw new Error("Outcome sample write response is unconfirmed");
+  const insertedIds=new Set<string>();
+  for(const raw of inserted){
+    if(!raw||typeof raw!=="object"||Array.isArray(raw))throw new Error("Outcome sample write response is invalid");
+    const actual=raw as JsonRecord;
+    const id=actual.id;
+    if(typeof id!=="string"||insertedIds.has(id)||!expectedById.has(id)){
+      throw new Error("Outcome sample write response contains an unexpected ID");
+    }
+    if(!sameSampleRow(expectedById.get(id)!,actual))throw new OutcomeSampleIdConflictError();
+    insertedIds.add(id);
+  }
+  const missing=rows.filter((row)=>!insertedIds.has(row.id));
+  for(let offset=0;offset<missing.length;offset+=50){
+    const chunk=missing.slice(offset,offset+50);
+    const chunkIds=new Set(chunk.map((row)=>row.id));
+    const path="outcome_metric_samples?select=*"
+      +"&id=in.("+chunk.map((row)=>filterValue(row.id)).join(",")+")"
+      +"&order=id.asc";
+    const seen=new Set<string>();
+    while(seen.size<chunk.length){
+      const page=await request(path+"&limit="+(chunk.length-seen.size)+"&offset="+seen.size);
+      if(!Array.isArray(page))throw new Error("Outcome sample duplicate readback is invalid");
+      if(!page.length||page.length>chunk.length-seen.size){
+        throw new Error("Outcome sample duplicate readback is incomplete");
+      }
+      for(const raw of page){
+        if(!raw||typeof raw!=="object"||Array.isArray(raw))throw new Error("Outcome sample duplicate readback is invalid");
+        const actual=raw as JsonRecord;
+        const id=actual.id;
+        if(typeof id!=="string"||seen.has(id)||!chunkIds.has(id)){
+          throw new Error("Outcome sample duplicate readback contains an unexpected ID");
+        }
+        if(!sameSampleRow(expectedById.get(id)!,actual))throw new OutcomeSampleIdConflictError();
+        seen.add(id);
+      }
+    }
+  }
   return OutcomeMetricBatchResponseSchema.parse({
-    missionId:input.missionId,inserted:inserted?.length??0,
-    message:`Accepted ${rows.length} samples; inserted ${inserted?.length??0} new rows.`,
+    missionId:input.missionId,inserted:insertedIds.size,
+    message:`Accepted ${rows.length} samples; inserted ${insertedIds.size} new rows.`,
   });
 }
 

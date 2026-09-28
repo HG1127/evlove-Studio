@@ -1,6 +1,6 @@
 // @vitest-environment node
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
-import {probeOutcomeSampleStore,readOutcomeSamples} from "./outcome-sample-store";
+import {insertOutcomeSamples,OutcomeSampleIdConflictError,probeOutcomeSampleStore,readOutcomeSamples} from "./outcome-sample-store";
 
 const originalEnv={...process.env};
 
@@ -22,7 +22,7 @@ function pageAfter(query:URLSearchParams,stored:ReturnType<typeof row>[]){
     ||sample.observed_at===cursor[1]&&sample.id>cursor[2]).slice(0,1);
 }
 
-describe("Outcome sample store pagination",()=>{
+describe("Outcome sample store",()=>{
   beforeEach(()=>{
     process.env.NODE_ENV="test";
     process.env.SUPABASE_URL="https://supabase.test";
@@ -32,6 +32,67 @@ describe("Outcome sample store pagination",()=>{
   afterEach(()=>{
     process.env={...originalEnv};
     vi.unstubAllGlobals();
+  });
+
+  function sampleBatch(id="sample-1"){
+    return {missionId:"mission/test",candidateId:"candidate/a",samples:[{
+      id,candidateId:"candidate/a",arm:"candidate" as const,metricKey:"conversion",
+      metricKind:"business" as const,direction:"higher" as const,value:1,segment:"all",
+      source:"test",observedAt:"2026-09-24T00:00:00Z",metadata:{},
+    }]};
+  }
+
+  it("confirms a new insert from the returned canonical row",async()=>{
+    const fetchMock=vi.fn(async()=>new Response(JSON.stringify([row("sample-1")]),{status:201}));
+    vi.stubGlobal("fetch",fetchMock);
+    const result=await insertOutcomeSamples(sampleBatch());
+    expect(result.inserted).toBe(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it("accepts an exact same-ID retry only after reading the stored sample",async()=>{
+    const fetchMock=vi.fn(async(_input:RequestInfo|URL,init?:RequestInit)=>new Response(JSON.stringify(
+      init?.method==="POST"?[]:[row("sample-1")],
+    ),{status:200}));
+    vi.stubGlobal("fetch",fetchMock);
+    const result=await insertOutcomeSamples(sampleBatch());
+    expect(result.inserted).toBe(0);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(new URL(String(fetchMock.mock.calls[1][0])).searchParams.get("id"))
+      .toBe('in.("sample-1")');
+  });
+
+  it("finishes duplicate readback through a short server-capped page",async()=>{
+    const fetchMock=vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
+      if(init?.method==="POST")return new Response("[]",{status:200});
+      const offset=Number(new URL(String(input)).searchParams.get("offset"));
+      return new Response(JSON.stringify([row(offset===0?"sample-1":"sample-2")]),{status:200});
+    });
+    vi.stubGlobal("fetch",fetchMock);
+    const batch=sampleBatch();
+    batch.samples.push({...batch.samples[0]!,id:"sample-2"});
+    const result=await insertOutcomeSamples(batch);
+    expect(result.inserted).toBe(0);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+  it("rejects a changed same-ID retry rather than claiming accepted evidence",async()=>{
+    vi.stubGlobal("fetch",vi.fn(async(_input:RequestInfo|URL,init?:RequestInit)=>new Response(JSON.stringify(
+      init?.method==="POST"?[]:[{...row("sample-1"),value:2}],
+    ),{status:200})));
+    await expect(insertOutcomeSamples(sampleBatch())).rejects.toBeInstanceOf(OutcomeSampleIdConflictError);
+  });
+
+  it("rejects duplicate IDs inside a batch before writing any sample",async()=>{
+    const fetchMock=vi.fn();
+    vi.stubGlobal("fetch",fetchMock);
+    const batch=sampleBatch();
+    batch.samples.push({...batch.samples[0]!});
+    await expect(insertOutcomeSamples(batch)).rejects.toBeInstanceOf(OutcomeSampleIdConflictError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("requires readback after an ignored duplicate write",async()=>{
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response("[]",{status:200})));
+    await expect(insertOutcomeSamples(sampleBatch())).rejects.toThrow(/readback is incomplete/);
   });
 
   it("continues after short pages imposed by a server row cap",async()=>{
