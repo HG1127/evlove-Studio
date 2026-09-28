@@ -5,6 +5,7 @@ import { getLocalProject, listLocalProjects, saveLocalProject, deleteLocalProjec
 import { cacheRemoteEvolutionJob, localProductionPorts } from "./local-production-adapters";
 import { getProductionRuntime, productionRuntimeMode } from "./production-runtime";
 import { flushPendingArtifactSync } from "./artifact-blob-store";
+import { flushProjectDatabase, missionSyncJournal, updateMissionSyncJournal } from "./project-database";
 
 const HTTP_POLL_BASE_DELAY_MS=3_000;
 const HTTP_POLL_MAX_DELAY_MS=30_000;
@@ -56,14 +57,21 @@ async function pushLocalProjection(options?:{
 }){
   if(productionRuntimeMode()==="local"||applyingRemote)return;
   const ports=getProductionRuntime();
-  const local=listLocalProjects();
-  const projects=options?.projects??local;
-  const localIds=new Set(local.map((project)=>project.id));
+  const projects=options?.projects??listLocalProjects();
   let firstConflict:MissionRevisionConflictError|undefined;
 
   for(const project of projects){
-    try{await ports.missions.save(project);}
-    catch(error){
+    if(missionSyncJournal().pendingDeleteIds.includes(project.id))continue;
+    try{
+      await ports.missions.save(project);
+      knownRemoteIds.add(project.id);
+      updateMissionSyncJournal((current)=>({
+        knownRemoteIds:[...new Set([...current.knownRemoteIds,project.id])],
+        pendingDeleteIds:getLocalProject(project.id)?current.pendingDeleteIds
+          :[...new Set([...current.pendingDeleteIds,project.id])],
+      }));
+      await flushProjectDatabase();
+    }catch(error){
       if(error instanceof MissionRevisionConflictError){
         missionConflicts.add(error.missionId);
         firstConflict??=error;
@@ -73,20 +81,30 @@ async function pushLocalProjection(options?:{
     }
   }
 
-  const removed=[...knownRemoteIds].filter((id)=>!localIds.has(id));
-  for(const id of removed){
-    try{await ports.missions.delete(id);}
-    catch(error){
+  for(const id of missionSyncJournal().pendingDeleteIds){
+    try{
+      await ports.missions.delete(id);
+      knownRemoteIds.delete(id);
+      updateMissionSyncJournal((current)=>({
+        knownRemoteIds:current.knownRemoteIds.filter((known)=>known!==id),
+        pendingDeleteIds:current.pendingDeleteIds.filter((pending)=>pending!==id),
+      }));
+      await flushProjectDatabase();
+    }catch(error){
       if(error instanceof MissionRevisionConflictError){
         missionConflicts.add(error.missionId);
         firstConflict??=error;
+        // A newer remote revision wins; the next poll restores that Mission.
+        updateMissionSyncJournal((current)=>({
+          ...current,pendingDeleteIds:current.pendingDeleteIds.filter((pending)=>pending!==id),
+        }));
+        await flushProjectDatabase();
         continue;
       }
       throw error;
     }
   }
 
-  knownRemoteIds=new Set(localIds);
   if(firstConflict){
     setRealtimeStatus("http-conflict",firstConflict);
     if(!httpPollRunning)scheduleHttpPoll(0);
@@ -218,21 +236,25 @@ async function pollHttpProjection(){
     ]);
     const remoteIds=new Set(missions.map((project)=>project.id));
     const remoteById=new Map(missions.map((project)=>[project.id,project]));
-    const localBefore=listLocalProjects();
     const localJobsBefore=await localProductionPorts.jobs.list();
+    const journal=missionSyncJournal();
+    const previouslyKnown=new Set(journal.knownRemoteIds);
+    const pendingDeletes=new Set(journal.pendingDeleteIds);
+    const localBefore=listLocalProjects();
     const conflictedBefore=new Set(missionConflicts);
     const localToPush=localBefore.filter((project)=>{
-      if(conflictedBefore.has(project.id))return false;
+      if(conflictedBefore.has(project.id)||pendingDeletes.has(project.id))return false;
       const remote=remoteById.get(project.id);
-      return !remote||project.updatedAt>remote.updatedAt;
+      return remote?project.updatedAt>remote.updatedAt:!previouslyKnown.has(project.id);
     });
     withRemoteProjection(()=>{
       for(const project of missions){
+        if(pendingDeletes.has(project.id))continue;
         const current=getLocalProject(project.id);
         if(conflictedBefore.has(project.id)||!current||project.updatedAt>=current.updatedAt)saveLocalProject(project);
       }
-      for(const id of conflictedBefore)if(!remoteIds.has(id))deleteLocalProject(id);
-      for(const id of knownRemoteIds)if(!remoteIds.has(id))deleteLocalProject(id);
+      for(const id of previouslyKnown)if(!remoteIds.has(id))deleteLocalProject(id,{fromRemote:true});
+      for(const id of conflictedBefore)if(!remoteIds.has(id))deleteLocalProject(id,{fromRemote:true});
       const localJobsById=new Map(localJobsBefore.map((job)=>[job.id,job]));
       for(const job of jobs){
         const current=localJobsById.get(job.id);
@@ -241,8 +263,15 @@ async function pollHttpProjection(){
       for(const event of [...events].reverse())cacheLocalEvolutionEvent(event);
       knownRemoteIds=remoteIds;
     });
+    updateMissionSyncJournal((current)=>({
+      knownRemoteIds:[...remoteIds],
+      pendingDeleteIds:current.pendingDeleteIds.filter((id)=>remoteIds.has(id)),
+    }));
+    await flushProjectDatabase();
     for(const id of conflictedBefore)missionConflicts.delete(id);
-    if(localToPush.length)await pushLocalProjection({projects:localToPush});
+    if(localToPush.length||missionSyncJournal().pendingDeleteIds.length){
+      await pushLocalProjection({projects:localToPush});
+    }
     if(recovering)await pushLocalJobs(jobs,localJobsBefore);
     await pushLocalEvents();
     await flushPendingArtifactSync();
@@ -277,20 +306,34 @@ export async function initializeProductionSync(){
   try{
     await ports.missions.initialize();
     const remote=await ports.missions.list();
-    knownRemoteIds=new Set(remote.map((project)=>project.id));
+    const remoteIds=new Set(remote.map((project)=>project.id));
+    const journal=missionSyncJournal();
+    const previouslyKnown=new Set(journal.knownRemoteIds);
+    const pendingDeletes=new Set(journal.pendingDeleteIds);
     const local=listLocalProjects();
     const remoteById=new Map(remote.map((project)=>[project.id,project]));
     const localToPush=local.filter((project)=>{
+      if(pendingDeletes.has(project.id))return false;
       const current=remoteById.get(project.id);
-      return !current||project.updatedAt>current.updatedAt;
+      return current?project.updatedAt>current.updatedAt:!previouslyKnown.has(project.id);
     });
     const merged=new Map(remoteById);
+    for(const id of pendingDeletes)merged.delete(id);
     for(const project of localToPush)merged.set(project.id,project);
     withRemoteProjection(()=>{
+      for(const id of previouslyKnown)if(!remoteIds.has(id))deleteLocalProject(id,{fromRemote:true});
       for(const project of merged.values())saveLocalProject(project);
+      knownRemoteIds=remoteIds;
     });
-    // Seed an empty/new backend and push only locally newer Mission revisions.
-    if(localToPush.length)await pushLocalProjection({projects:localToPush});
+    updateMissionSyncJournal((current)=>({
+      knownRemoteIds:[...remoteIds],
+      pendingDeleteIds:current.pendingDeleteIds.filter((id)=>remoteIds.has(id)),
+    }));
+    await flushProjectDatabase();
+    // Seed new local Missions and replay durable deletes after a restart or outage.
+    if(localToPush.length||missionSyncJournal().pendingDeleteIds.length){
+      await pushLocalProjection({projects:localToPush});
+    }
     const projection=await hydrateRemoteProjection();
     await pushLocalJobs(projection.jobs,projection.localJobs);
     await pushLocalEvents();

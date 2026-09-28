@@ -1,7 +1,8 @@
 import {MissionRevisionConflictError} from "@evolution/adapters";
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
 import {demoProject} from "../data/mock-project";
-import {getLocalProject,saveLocalProject} from "./local-store";
+import {deleteLocalProject,getLocalProject,saveLocalProject} from "./local-store";
+import {missionSyncJournal} from "./project-database";
 import {EvolutionJobSchema} from "./job-contract";
 import {createEvolutionEvent,pendingLocalEvolutionEventCount} from "./event-contract";
 import {localProductionPorts} from "./local-production-adapters";
@@ -254,5 +255,138 @@ describe("production sync bootstrap",()=>{
       lastError:undefined,
       failureCount:0,
     });
+  });
+  it("does not resurrect a Mission deleted remotely on polling or after a restart",async()=>{
+    vi.useFakeTimers();
+    const project={...demoProject,id:"mission-remote-delete",updatedAt:"2026-09-22T10:00:00.000Z"};
+    let remote=[project];
+    const save=vi.fn(async()=>undefined);
+    const list=vi.fn(async()=>remote);
+    configureProductionRuntime({
+      ...localProductionPorts,
+      missions:{...localProductionPorts.missions,list,save,delete:async()=>undefined},
+      jobs:{...localProductionPorts.jobs,list:async()=>[],put:async()=>undefined},
+      events:{...localProductionPorts.events,list:async()=>[],append:async()=>undefined},
+    },"http");
+    await initializeProductionSync();
+    expect(getLocalProject(project.id)).toBeDefined();
+    expect(missionSyncJournal().knownRemoteIds).toContain(project.id);
+    remote=[];
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(getLocalProject(project.id)).toBeUndefined();
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("does not recreate a remotely deleted Mission on cold startup",async()=>{
+    vi.useFakeTimers();
+    const project={...demoProject,id:"mission-deleted-before-restart",updatedAt:"2026-09-22T10:00:00.000Z"};
+    let remote=[project];
+    const save=vi.fn(async()=>undefined);
+    configureProductionRuntime({
+      ...localProductionPorts,
+      missions:{...localProductionPorts.missions,list:async()=>remote,save,delete:async()=>undefined},
+      jobs:{...localProductionPorts.jobs,list:async()=>[],put:async()=>undefined},
+      events:{...localProductionPorts.events,list:async()=>[],append:async()=>undefined},
+    },"http");
+    await initializeProductionSync();
+    await stopProductionSync();
+    remote=[];
+    await initializeProductionSync();
+    expect(getLocalProject(project.id)).toBeUndefined();
+    expect(save).not.toHaveBeenCalled();
+    expect(missionSyncJournal().knownRemoteIds).not.toContain(project.id);
+  });
+
+  it("does not rehydrate a deletion made while a poll awaits other server data",async()=>{
+    vi.useFakeTimers();
+    const project={...demoProject,id:"mission-deleted-during-poll",updatedAt:"2026-09-22T10:00:00.000Z"};
+    let releaseJobs:((jobs:never[])=>void)|undefined;
+    let delayJobs=false;
+    const jobsList=vi.fn(()=>delayJobs
+      ?new Promise<never[]>((resolve)=>{releaseJobs=resolve;})
+      :Promise.resolve([]));
+    const remove=vi.fn(async()=>undefined);
+    configureProductionRuntime({
+      ...localProductionPorts,
+      missions:{...localProductionPorts.missions,list:async()=>[project],save:async()=>undefined,delete:remove},
+      jobs:{...localProductionPorts.jobs,list:jobsList,put:async()=>undefined},
+      events:{...localProductionPorts.events,list:async()=>[],append:async()=>undefined},
+    },"http");
+    await initializeProductionSync();
+    delayJobs=true;
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(jobsList).toHaveBeenCalledTimes(2);
+    deleteLocalProject(project.id);
+    releaseJobs!([]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getLocalProject(project.id)).toBeUndefined();
+    expect(remove).toHaveBeenCalledWith(project.id);
+  });
+  it("restores the newer server Mission after a delete revision conflict",async()=>{
+    vi.useFakeTimers();
+    const project={...demoProject,id:"mission-delete-conflict",updatedAt:"2026-09-22T10:00:00.000Z"};
+    const save=vi.fn(async()=>undefined);
+    const remove=vi.fn(async()=>{throw new MissionRevisionConflictError(project.id,2);});
+    configureProductionRuntime({
+      ...localProductionPorts,
+      missions:{...localProductionPorts.missions,list:async()=>[project],save,delete:remove},
+      jobs:{...localProductionPorts.jobs,list:async()=>[],put:async()=>undefined},
+      events:{...localProductionPorts.events,list:async()=>[],append:async()=>undefined},
+    },"http");
+    await initializeProductionSync();
+    deleteLocalProject(project.id);
+    await vi.advanceTimersByTimeAsync(350);
+    expect(productionSyncStatus().realtimeStatus).toBe("http-conflict");
+    expect(missionSyncJournal().pendingDeleteIds).not.toContain(project.id);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(getLocalProject(project.id)?.id).toBe(project.id);
+    expect(save).not.toHaveBeenCalled();
+  });
+  it("keeps a failed remote delete pending and retries after data-plane recovery",async()=>{
+    vi.useFakeTimers();
+    const project={...demoProject,id:"mission-delete-retry",updatedAt:"2026-09-22T10:00:00.000Z"};
+    let remote=[project];
+    const remove=vi.fn()
+      .mockRejectedValueOnce(new Error("Production API HTTP 503"))
+      .mockImplementation(async(id:string)=>{remote=remote.filter((item)=>item.id!==id);});
+    configureProductionRuntime({
+      ...localProductionPorts,
+      missions:{...localProductionPorts.missions,list:async()=>remote,save:async()=>undefined,delete:remove},
+      jobs:{...localProductionPorts.jobs,list:async()=>[],put:async()=>undefined},
+      events:{...localProductionPorts.events,list:async()=>[],append:async()=>undefined},
+    },"http");
+    await initializeProductionSync();
+    deleteLocalProject(project.id);
+    await vi.advanceTimersByTimeAsync(350);
+    expect(productionSyncStatus().realtimeStatus).toBe("http-error");
+    expect(missionSyncJournal().pendingDeleteIds).toContain(project.id);
+    expect(getLocalProject(project.id)).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(remove).toHaveBeenCalledTimes(2);
+    expect(missionSyncJournal().pendingDeleteIds).not.toContain(project.id);
+    expect(getLocalProject(project.id)).toBeUndefined();
+  });
+  it("replays an offline local deletion after sync restarts without rehydrating it",async()=>{
+    vi.useFakeTimers();
+    const project={...demoProject,id:"mission-pending-delete",updatedAt:"2026-09-22T10:00:00.000Z"};
+    let remote=[project];
+    const save=vi.fn(async()=>undefined);
+    const remove=vi.fn(async(id:string)=>{remote=remote.filter((item)=>item.id!==id);});
+    configureProductionRuntime({
+      ...localProductionPorts,
+      missions:{...localProductionPorts.missions,list:async()=>remote,save,delete:remove},
+      jobs:{...localProductionPorts.jobs,list:async()=>[],put:async()=>undefined},
+      events:{...localProductionPorts.events,list:async()=>[],append:async()=>undefined},
+    },"http");
+    await initializeProductionSync();
+    deleteLocalProject(project.id);
+    expect(getLocalProject(project.id)).toBeUndefined();
+    expect(missionSyncJournal().pendingDeleteIds).toContain(project.id);
+    await stopProductionSync();
+    await initializeProductionSync();
+    expect(remove).toHaveBeenCalledWith(project.id);
+    expect(getLocalProject(project.id)).toBeUndefined();
+    expect(missionSyncJournal().pendingDeleteIds).not.toContain(project.id);
+    expect(save).not.toHaveBeenCalled();
   });
 });

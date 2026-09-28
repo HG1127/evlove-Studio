@@ -1,5 +1,5 @@
 import { deliveryReadiness } from "./delivery-readiness";
-import {databaseProjects,saveDatabaseProjects,initializeProjectDatabase} from "./project-database";
+import {databaseProjects,saveDatabaseProjects,initializeProjectDatabase,missionSyncJournal,updateMissionSyncJournal} from "./project-database";
 
 import { EvolveProjectSchema, type EvolveProject, type EvaluationResult } from "../schemas";
 import { materializeChampionOutputs, maybeUpdateSearchChampion } from "./evolution-search";
@@ -150,6 +150,8 @@ export function listLocalProjects() { return readAll(); }
 export function getLocalProject(id: string) { return readAll().find((project) => project.id === id); }
 
 export function saveLocalProject(project: EvolveProject) {
+  const pending=missionSyncJournal().pendingDeleteIds;
+  if(pending.includes(project.id))updateMissionSyncJournal((current)=>({...current,pendingDeleteIds:current.pendingDeleteIds.filter((id)=>id!==project.id)}));
   if (typeof window === "undefined") return;
   const projects = readAll();
   const next = [project, ...projects.filter((item) => item.id !== project.id)];
@@ -157,7 +159,11 @@ export function saveLocalProject(project: EvolveProject) {
   window.dispatchEvent(new CustomEvent("evolve-projects-changed"));
 }
 
-export function deleteLocalProject(id: string) {
+export function deleteLocalProject(id: string, options?: { fromRemote?: boolean }) {
+  const journal=missionSyncJournal();
+  if(!options?.fromRemote&&journal.knownRemoteIds.includes(id)){
+    updateMissionSyncJournal((current)=>({...current,pendingDeleteIds:[...new Set([...current.pendingDeleteIds,id])]}));
+  }
   if (typeof window === "undefined") return;
   const next = readAll().filter((item) => item.id !== id);
   if(databaseProjects()) saveDatabaseProjects(next); else window.localStorage.setItem(KEY, JSON.stringify(next));

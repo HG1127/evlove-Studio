@@ -220,7 +220,9 @@ async function prepareActualFiles(project: EvolveProject, candidate: Candidate):
     const built = await buildDownloadBlob(source, snapshot);
     const verified = await verifyGeneratedArtifact(source, snapshot, built.blob);
     const frozenArtifact = await freezeArtifact({sourceArtifactId:source.id,content:snapshot.content,blob:built.blob,name:built.name,...verified});
-    prepared.push({...snapshot,frozenArtifact});
+    // The frozen receipt identifies the file actually tested; builder FNV hashes and source names are provisional.
+    prepared.push({...snapshot,name:frozenArtifact.name,mimeType:frozenArtifact.mimeType,
+      contentHash:frozenArtifact.snapshotHash,frozenArtifact});
   }
   return {...candidate,artifactSnapshots:prepared,artifactBuildStatus:"ready",artifactBuildSummary:`${prepared.length} 份实际文件已生成并完成结构核对；继续验证用户目标。`};
 }
