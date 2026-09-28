@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
-import type { ArtifactAcceptance, Candidate, EvaluationResult, SearchChampion, TestCase, ValidationRun } from "@evolution/contracts";
+import type { ArtifactAcceptance, Candidate, EvolveProject, EvaluationResult, SearchChampion, TestCase, ValidationRun } from "@evolution/contracts";
 import { updateSearchChampion } from "./search-champion-settlement";
+import { evidenceFingerprint } from "./evidence-binding";
 
 const suite = [{ id: "H1", criterionIds: ["CONTENT"] }] as TestCase[];
-const candidate = { id: "new", patches: [] } as unknown as Candidate;
-const acceptance = { status: "passed", candidateId: "new", overallScore: 90, hardGatePass: true } as ArtifactAcceptance;
+const frozen = { sourceArtifactId: "target", snapshotHash: "content-hash", blobId: "blob", sha256: "sha", size: 7, name: "new.txt", mimeType: "text/plain", verifiedAt: "2026-09-28T00:00:00.000Z", checks: ["hash"], limitations: [] };
+const candidate = { id: "new", patches: [], artifactSnapshots: [{ sourceArtifactId: "target", name: "new.txt", mimeType: "text/plain", content: "new text", frozenArtifact: frozen }] } as unknown as Candidate;
+const project = { sourceArtifacts: [{ id: "target", role: "target" }], goal: "goal", evolutionCommand: "command", protectedItems: [], acceptanceRubric: [], hiddenEvalSuite: suite, metrics: [] } as unknown as EvolveProject;
+const acceptance = { status: "passed", candidateId: "new", overallScore: 90, hardGatePass: true, evidenceFingerprint: evidenceFingerprint(project, candidate), frozenArtifacts: [frozen] } as unknown as ArtifactAcceptance;
 function evaluation(score: number): EvaluationResult {
   return {
     accuracy: score, evidence: score, riskCoverage: score, completeness: score,
@@ -35,10 +38,14 @@ function validation(candidateScore: number, incumbentScore: number): ValidationR
     checks: [],
   } as ValidationRun;
 }
-function settle(champion: SearchChampion, run: ValidationRun, liveTarget = true) {
+function settle(champion: SearchChampion, run: ValidationRun, liveTarget = true, stale?: "project" | "validation" | "acceptance" | "frozen") {
+  const binding = evidenceFingerprint(project, candidate);
   return updateSearchChampion({
-    current: champion, round: 2, winner: candidate, validation: run,
-    artifactAcceptance: acceptance, baseline: evaluation(80),
+    project: stale === "project" ? { ...project, goal: "changed" } : project,
+    current: champion, round: 2, winner: candidate,
+    validation: { ...run, evidenceFingerprint: stale === "validation" ? "old" : binding },
+    artifactAcceptance: { ...acceptance, evidenceFingerprint: stale === "acceptance" ? "old" : binding, frozenArtifacts: stale === "frozen" ? [] : acceptance.frozenArtifacts },
+    baseline: evaluation(80),
     parentVersionId: "S1", minImprovement: 1,
     liveTarget, hiddenSuite: suite,
   });
@@ -64,6 +71,13 @@ describe("live Target Champion settlement", () => {
     expect(result.comparisonPending).toBe(true);
     expect(result.changed).toBe(false);
     expect(result.champion?.id).toBe("old");
+  });
+  it("rejects stale project, Hidden, Gate F, or frozen Artifact proof before promotion", () => {
+    for (const stale of ["project", "validation", "acceptance", "frozen"] as const) {
+      const result = settle(current(10), validation(80, 60), true, stale);
+      expect(result.changed, stale).toBe(false);
+      expect(result.champion?.id, stale).toBe("old");
+    }
   });
   it("preserves historical static Target score comparison", () => {
     const result = settle(current(100), validation(80, 60), false);

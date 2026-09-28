@@ -90,6 +90,7 @@ function repairMissingChampion(project: EvolveProject) {
     return;
   }
   const update = maybeUpdateSearchChampion({
+    project,
     current: undefined,
     round: project.roundHistory.length + 1,
     winner,

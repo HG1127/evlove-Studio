@@ -1009,6 +1009,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
       // 就把「刚被测试的快照」登记为当前最佳版本；否则跑完一轮成果中心仍会认为没有成果。
       const championUpdate = accepted
         ? maybeUpdateSearchChampion({
+          project: { ...current, acceptanceRubric: rubric },
           current: current.searchChampion,
           round: current.roundHistory.length + 1,
           winner: candidate,
@@ -1982,6 +1983,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
         parentVersionId,
       });
       const championUpdate = maybeUpdateSearchChampion({
+        project: working,
         current: working.searchChampion,
         round,
         winner: finalWinner,

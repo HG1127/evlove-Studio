@@ -1,6 +1,8 @@
-import type {ArtifactAcceptance,Candidate,EvaluationResult,SearchChampion,TestCase,ValidationRun} from "@evolution/contracts";
+import type {ArtifactAcceptance,Candidate,EvolveProject,EvaluationResult,SearchChampion,TestCase,ValidationRun} from "@evolution/contracts";
 import {reusableHoldoutBaseline} from "./baseline-readiness";
 import {hasAuthoritativeHiddenRelease} from "./hidden-validation-evidence";
+import {hasExactFrozenArtifactSet} from "./artifact-identity";
+import {evidenceFingerprint} from "./evidence-binding";
 
 function clamp(value:number,min=0,max=100){return Math.max(min,Math.min(max,value));}
 
@@ -27,6 +29,7 @@ function dominates(a:EvaluationResult,b:EvaluationResult){
 }
 
 export function updateSearchChampion(args:{
+  project:EvolveProject;
   current?:SearchChampion;
   round:number;
   winner?:Candidate;
@@ -42,6 +45,12 @@ export function updateSearchChampion(args:{
   if(!args.winner||args.artifactAcceptance?.status!=="passed")return {champion:args.current,changed:false,improvement:0};
   if(!hasAuthoritativeHiddenRelease(args.validation,args.winner.id)
     ||!args.artifactAcceptance.hardGatePass||args.artifactAcceptance.candidateId!==args.winner.id)return {champion:args.current,changed:false,improvement:0};
+  const binding=evidenceFingerprint(args.project,args.winner);
+  if(args.validation.evidenceFingerprint!==binding
+    ||args.artifactAcceptance.evidenceFingerprint!==binding
+    ||!hasExactFrozenArtifactSet(args.project,args.winner,args.artifactAcceptance)){
+    return {champion:args.current,changed:false,improvement:0};
+  }
   const evaluation=args.validation.evaluation!;
   const paired=args.liveTarget&&args.current?args.validation.baselineEvaluation:undefined;
   if(args.liveTarget&&args.current){

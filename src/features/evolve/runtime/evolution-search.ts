@@ -203,6 +203,7 @@ export function buildRoundArchive(args: {
 }
 
 export function maybeUpdateSearchChampion(args: {
+  project: EvolveProject;
   current?: SearchChampion;
   round: number;
   winner?: Candidate;

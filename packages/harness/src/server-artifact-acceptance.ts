@@ -63,6 +63,7 @@ function settleRound(project:EvolveProject,candidate:Candidate,accepted:boolean,
   const round=project.campaign.checkpoint?.round??project.campaign.currentRound+1;
   const parentVersionId=project.searchChampion?.versionLabel??project.version;
   const championUpdate=accepted?updateSearchChampion({
+    project,
     current:project.searchChampion,
     round,
     winner:candidate,
@@ -193,6 +194,7 @@ export async function runServerArtifactAcceptance(
   if(acceptance.status==="passed"){
     if(campaignObservesLiveTarget(project)&&project.searchChampion){
       const comparison=updateSearchChampion({
+        project,
         current:project.searchChampion,
         round,
         winner:candidate,
