@@ -1,4 +1,5 @@
 import type { EvolveProject } from "../schemas";
+import { assertDeliverablePackageIdentity } from "@evolution/core";
 import { saveLocalProject } from "./local-store";
 
 const KEY = "evolve-studio:mission-review:v1";
@@ -27,24 +28,24 @@ function legacyRecord(project: EvolveProject): ReviewRecord | undefined {
 }
 
 export function missionArtifactFingerprint(project: EvolveProject) {
-  const primary = project.outputArtifacts
-    .filter((artifact) => artifact.kind === "primary" && artifact.accepted)
-    .map((artifact) => `${artifact.id}:${artifact.versionLabel}:${artifact.candidateId ?? ""}:${artifact.createdAt}:${hash(artifact.content ?? "")}`)
+  const packageRows = project.outputArtifacts
+    .map((artifact) => [artifact.id, artifact.kind, artifact.projectId, artifact.candidateId ?? "",
+      artifact.versionLabel, artifact.sourceArtifactIds.join(","), artifact.isChampion, artifact.accepted,
+      artifact.frozenArtifact?.blobId ?? "", artifact.frozenArtifact?.sha256 ?? "",
+      artifact.createdAt, hash(artifact.content ?? "")].join(":"))
     .sort();
-  return hash(primary.join("|"));
+  return hash(JSON.stringify([project.id, packageRows]));
 }
 
 export function isMissionUserAccepted(project: EvolveProject) {
-  const primary = project.outputArtifacts.some((artifact) => artifact.kind === "primary" && artifact.accepted);
-  if (!primary) return false;
+  try { assertDeliverablePackageIdentity(project); } catch { return false; }
   const fingerprint = missionArtifactFingerprint(project);
   const record = project.userAcceptance ?? legacyRecord(project);
   return Boolean(record && record.fingerprint === fingerprint);
 }
 
 export function acceptMissionOutputs(project: EvolveProject) {
-  const primary = project.outputArtifacts.some((artifact) => artifact.kind === "primary" && artifact.accepted);
-  if (!primary) throw new Error("当前没有已通过系统验收的正式成果，无法确认用户验收");
+  assertDeliverablePackageIdentity(project);
   const acceptedAt = new Date().toISOString();
   const record = { fingerprint: missionArtifactFingerprint(project), acceptedAt };
   const updated: EvolveProject = { ...project, userAcceptance: record, updatedAt: acceptedAt };
@@ -63,6 +64,7 @@ export function acceptMissionOutputs(project: EvolveProject) {
 }
 
 export function missionAcceptedAt(project: EvolveProject) {
+  try { assertDeliverablePackageIdentity(project); } catch { return undefined; }
   const fingerprint = missionArtifactFingerprint(project);
   const record = project.userAcceptance ?? legacyRecord(project);
   return record && record.fingerprint === fingerprint ? record.acceptedAt : undefined;

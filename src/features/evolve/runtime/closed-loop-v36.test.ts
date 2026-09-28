@@ -1,7 +1,9 @@
 import { evidenceFingerprint } from "./evidence-binding";
+import { assertDeliverablePackageIdentity, materializeAcceptedCandidatePackage, materializeAcceptedChampionPackage } from "@evolution/core";
+import { buildDeliverableZip } from "./artifact-output-builders";
 import { describe, expect, it } from "vitest";
 import { demoProject } from "../data/mock-project";
-import { CandidateArtifactSnapshotSchema, CandidateSchema, EvolveProjectSchema, OutputArtifactSchema, type SourceArtifact } from "../schemas";
+import { CandidateArtifactSnapshotSchema, CandidateSchema, EvolveProjectSchema, OutputArtifactSchema, type SourceArtifact, type SearchChampion } from "../schemas";
 import { deliveryReadiness } from "./delivery-readiness";
 import { stepCompleted, stepUnlocked } from "./real-evolution-workflow";
 import { buildCandidateDeterministically, normalizeCandidateArtifactOutputs, repairHtmlEnvelope } from "./candidate-builder";
@@ -32,6 +34,44 @@ function candidate(operation: "add" | "update", target: string, content: string)
 }
 
 describe("真实交付闭环", () => {
+  it("已验收但未夺冠的单轮候选交付自身文件、评分和清单", () => {
+    const project = ready();
+    project.searchChampion = { id: "old-champion", versionLabel: "S1", candidate: { id: "old" } } as SearchChampion;
+    const candidate = project.candidates[0]!;
+    const artifacts = materializeAcceptedCandidatePackage(project, candidate, project.artifactAcceptance);
+    expect(new Set(artifacts.map((item) => item.candidateId))).toEqual(new Set([candidate.id]));
+    expect(artifacts.every((item) => item.accepted && !item.isChampion)).toBe(true);
+    expect(artifacts.find((item) => item.kind === "primary")?.content).toBe("tested content");
+    const manifest = JSON.parse(artifacts.find((item) => item.kind === "manifest")!.content);
+    expect(manifest).toMatchObject({ packageKind: "accepted-candidate", candidateId: candidate.id, currentSearchChampionId: "old-champion" });
+    expect(artifacts.find((item) => item.kind === "scorecard")?.name).toBe("candidate-scorecard.json");
+    project.outputArtifacts = artifacts;
+    expect(assertDeliverablePackageIdentity(project)).toBe(candidate.id);
+  });
+  it("当前 Champion 的完整成果包仍通过 exact 身份检查", () => {
+    const project=ready();
+    const candidate=project.candidates[0]!;
+    project.validationRun.evaluation=project.baselineRun.result;
+    project.searchChampion={id:"champ-C",versionLabel:"S1",round:1,score:90,candidate,
+      evaluation:project.validationRun.evaluation,validation:project.validationRun,
+      artifactAcceptance:project.artifactAcceptance,patches:[],reason:"accepted",selectedAt:"2026-09-20T00:00:00Z"} as SearchChampion;
+    project.outputArtifacts=materializeAcceptedChampionPackage(project);
+    expect(project.outputArtifacts.every((item)=>item.isChampion&&item.candidateId===candidate.id)).toBe(true);
+    expect(assertDeliverablePackageIdentity(project)).toBe(candidate.id);
+  });
+  it("ZIP 拒绝混装旧 Champion 元数据与新候选主文件", async () => {
+    const project = ready();
+    const candidate = project.candidates[0]!;
+    const artifacts = materializeAcceptedCandidatePackage(project, candidate, project.artifactAcceptance);
+    project.outputArtifacts = artifacts.map((item) => item.kind === "manifest" ? { ...item, candidateId: "old" } : item);
+    expect(() => assertDeliverablePackageIdentity(project)).toThrow(/候选身份不一致/);
+    await expect(buildDeliverableZip(project)).rejects.toThrow(/候选身份不一致/);
+  });
+  it("候选验收绑定失效时不生成已接受交付包", () => {
+    const project = ready();
+    project.validationRun.evidenceFingerprint = "stale";
+    expect(() => materializeAcceptedCandidatePackage(project, project.candidates[0]!, project.artifactAcceptance)).toThrow(/冻结身份尚未一致/);
+  });
   it("同一候选通过两类验收后才解锁交付", () => {
     expect(deliveryReadiness(ready()).ready).toBe(true);
     expect(stepUnlocked(ready(), "deliver")).toBe(true);

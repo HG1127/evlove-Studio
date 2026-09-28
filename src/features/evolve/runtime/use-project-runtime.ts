@@ -1,4 +1,4 @@
-import { campaignObservesLiveTarget, campaignRootBaselineForMeasurement, campaignScoringInputBlocker, campaignScoringInputFingerprint, applyProductionLearningGovernance, applyReleaseResultToProject, beginReleaseCycle, completeAutonomousMission, experimentNeedsEvidenceRepair, buildExperimentGapAdvicePayload, buildGapAdvicePayload, fallbackExperimentAdvice, integrateDistilledLesson, mergeGovernedNextQueue, nextDurableReleaseAction, prepareCampaignRetry, productionOutcomeFreshness, productionOutcomeTrend, projectHasStableHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, projectUsesConnectorRelease, projectUsesHttpRelease, projectUsesVercelRelease, transitionReleaseTarget } from "@evolution/core";
+import { campaignObservesLiveTarget, campaignRootBaselineForMeasurement, materializeAcceptedCandidatePackage, campaignScoringInputBlocker, campaignScoringInputFingerprint, applyProductionLearningGovernance, applyReleaseResultToProject, beginReleaseCycle, completeAutonomousMission, experimentNeedsEvidenceRepair, buildExperimentGapAdvicePayload, buildGapAdvicePayload, fallbackExperimentAdvice, integrateDistilledLesson, mergeGovernedNextQueue, nextDurableReleaseAction, prepareCampaignRetry, productionOutcomeFreshness, productionOutcomeTrend, projectHasStableHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, projectUsesConnectorRelease, projectUsesHttpRelease, projectUsesVercelRelease, transitionReleaseTarget } from "@evolution/core";
 import { deliveryReadiness } from "./delivery-readiness";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -1017,6 +1017,8 @@ export function useProjectRuntime(initialProject: EvolveProject) {
           baseline: current.campaign.rootBaseline ?? current.baselineRun.result,
           parentVersionId: current.searchChampion?.versionLabel ?? current.version,
           minImprovement: current.campaign.stopCriteria.minImprovement,
+          liveTarget: campaignObservesLiveTarget(current),
+          hiddenSuite: current.hiddenEvalSuite,
         })
         : { champion: current.searchChampion, changed: false, improvement: 0 };
       const settled: EvolveProject = {
@@ -1035,15 +1037,14 @@ export function useProjectRuntime(initialProject: EvolveProject) {
         currentVersionId: versionSnapshot ? versionSnapshot.id : current.currentVersionId,
         gates: current.gates.map((item) => {
           if (item.id === "artifact-ready") return { ...item, status: accepted ? "approved" as const : "blocked" as const, approvedAt: accepted ? now() : undefined, note: acceptance.summary };
-          if (item.id === "release-ready") return { ...item, status: validation.recommendation === "release" && accepted ? "ready" as const : "blocked" as const, approvedAt: undefined, note: accepted ? "Hidden Validation + Gate F 已通过" : "Artifact Ready 未通过" };
+          if (item.id === "release-ready") return { ...item, status: validation.recommendation === "release" && accepted ? "ready" as const : "blocked" as const, approvedAt: undefined, note: accepted ? championUpdate.comparisonPending ? "候选已通过验收；缺少同卷 Champion 对照，保留历史 Champion" : "Hidden Validation + Gate F 已通过" : "Artifact Ready 未通过" };
           return item;
         }),
         stage: "validation",
       };
-      // 成果包一次冻齐：主成果始终用真实通过验收的 Candidate 快照，manifest / scorecard / lineage
-      // 等元数据按 Champion 补齐，与「准备发布最佳版本」和 Campaign 结算的包结构保持一致。
+      // 单轮交付固定同一 Candidate 身份；未夺冠的候选使用自己的清单与评分。
       const outputArtifacts = accepted
-        ? [...acceptanceArtifacts(settled, candidate, acceptance), ...materializeChampionOutputs(settled).filter((artifact) => artifact.kind !== "primary").map((artifact) => ({ ...artifact, accepted: true }))]
+        ? materializeAcceptedCandidatePackage(settled, candidate, acceptance)
         : current.outputArtifacts.filter((artifact) => !artifact.isChampion);
       return { ...settled, outputArtifacts };
     });

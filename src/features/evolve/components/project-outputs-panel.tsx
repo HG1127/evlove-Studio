@@ -149,6 +149,8 @@ export function ProjectOutputsPanel({ runtime }: { runtime: ProjectRuntime }) {
   const { project } = runtime;
   const champion = project.searchChampion;
   const artifacts = project.outputArtifacts;
+  const packagePrimary = artifacts.find((item) => item.kind === "primary" && item.accepted);
+  const packageIsChampion = Boolean(packagePrimary?.isChampion && packagePrimary.candidateId === champion?.candidate?.id);
   const downloadOne = async (artifact: DownloadableArtifact) => {
     try {
       if (artifact.kind === "primary" || artifact.frozenArtifact) {
@@ -164,7 +166,7 @@ export function ProjectOutputsPanel({ runtime }: { runtime: ProjectRuntime }) {
     }
   };
   const acceptedPrimary = artifacts.filter((artifact) => artifact.kind === "primary" && artifact.accepted).length;
-  const artifactGate = champion?.artifactAcceptance;
+  const artifactGate = packageIsChampion ? champion?.artifactAcceptance : project.artifactAcceptance;
   const [preview, setPreview] = useState<{ title: string; artifacts: Array<{ id: string; name: string; content: string }>; index: number } | null>(null);
   const [rollbackArm, setRollbackArm] = useState<string | null>(null);
   const [diffPair, setDiffPair] = useState<{ olderId: string; newerId: string } | null>(null);
@@ -200,10 +202,10 @@ export function ProjectOutputsPanel({ runtime }: { runtime: ProjectRuntime }) {
     window.setTimeout(() => setRollbackArm((current) => (current === versionId ? null : current)), 4000);
   };
   const downloadZip = async () => {
-    if (!champion) return;
+    if (!packagePrimary) return;
     try {
       const blob = await buildDeliverableZip(project);
-      downloadBlob(`${project.name.replace(/\s+/g, "-")}-${champion.versionLabel}-artifacts.zip`, blob);
+      downloadBlob(`${project.name.replace(/\s+/g, "-")}-${packagePrimary.versionLabel}-artifacts.zip`, blob);
     } catch (error) { toast.error(error instanceof Error ? error.message : "成果包下载失败"); }
   };
   const previewArtifact = preview?.artifacts[preview.index];
@@ -211,14 +213,14 @@ export function ProjectOutputsPanel({ runtime }: { runtime: ProjectRuntime }) {
     <CardHeader className="border-b pb-4">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div><div className="flex items-center gap-2 text-xs font-semibold text-emerald-700"><PackageCheck className="size-4" />Evolution Outputs</div><CardTitle className="mt-1 text-xl">进化成果物与版本</CardTitle><p className="mt-1 max-w-3xl text-xs leading-5 text-slate-500">正式成果只冻结 Hidden Validation + Gate F · Artifact Ready 实际验收过的同一 Candidate Artifact Snapshot。成果中心不会在下载时重新生成另一份内容，从而保证“被测试对象 = 最终交付对象”。版本历史仍用于回滚与差异对比。</p></div>
-        <div className="flex flex-wrap gap-2"><Badge className="border-emerald-200 bg-emerald-50 text-emerald-700">{artifacts.length} files</Badge><Badge className="border-indigo-200 bg-indigo-50 text-indigo-700">{project.versions.length} 个版本</Badge>{acceptedPrimary>0&&<Badge className="border-sky-200 bg-sky-50 text-sky-700">Accepted Primary {acceptedPrimary}</Badge>}{artifactGate&&<Badge className={artifactGate.status === "passed" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-rose-200 bg-rose-50 text-rose-700"}>Gate F · {artifactGate.status} · {artifactGate.overallScore}</Badge>}{champion&&<Badge className="border-amber-200 bg-amber-50 text-amber-700"><Trophy className="mr-1 size-3" />{champion.versionLabel}</Badge>}</div>
+        <div className="flex flex-wrap gap-2"><Badge className="border-emerald-200 bg-emerald-50 text-emerald-700">{artifacts.length} files</Badge><Badge className="border-indigo-200 bg-indigo-50 text-indigo-700">{project.versions.length} 个版本</Badge>{acceptedPrimary>0&&<Badge className="border-sky-200 bg-sky-50 text-sky-700">Accepted Primary {acceptedPrimary}</Badge>}{artifactGate&&<Badge className={artifactGate.status === "passed" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-rose-200 bg-rose-50 text-rose-700"}>Gate F · {artifactGate.status} · {artifactGate.overallScore}</Badge>}{champion&&<Badge className="border-amber-200 bg-amber-50 text-amber-700"><Trophy className="mr-1 size-3" />历史 Champion {champion.versionLabel}</Badge>}{packagePrimary&&!packageIsChampion&&<Badge className="border-sky-200 bg-sky-50 text-sky-700">当前交付 Candidate {packagePrimary.candidateId}</Badge>}</div>
       </div>
     </CardHeader>
     <CardContent className="pt-5">
       {!!project.archivedOutputs?.length && <details className="mb-5 rounded-xl border bg-slate-50 p-4"><summary className="cursor-pointer text-sm font-semibold">历史目标成果 · {project.archivedOutputs.length} 份</summary><p className="mt-2 text-xs text-slate-600">目标或材料调整前的成果保留在这里，不参与当前目标验收。下载仍校验原始冻结文件。</p><div className="mt-3 space-y-2">{project.archivedOutputs.map((artifact, index) => <div key={`${artifact.id}-${index}`} className="flex items-center justify-between gap-3 rounded-lg bg-white p-3"><div className="min-w-0"><div className="truncate text-sm">{artifact.name}</div><div className="text-xs text-slate-500">{artifact.versionLabel} · {artifact.createdAt}</div></div><Button variant="secondary" size="sm" onClick={() => void downloadOne(artifact)}>下载</Button></div>)}</div></details>}
 
       {champion ? <>
-        <div className="flex flex-wrap gap-2"><Button onClick={() => void runtime.materializeOutputs()} disabled={artifactGate?.status !== "passed"}><PackageCheck className="size-4" />{artifacts.length ? "重新冻结已验收成果" : "冻结 Gate F 已验收成果"}</Button><Button variant="secondary" disabled={!artifacts.length} onClick={() => void downloadZip()}><Download className="size-4" />下载完整 ZIP</Button></div>
+        <div className="flex flex-wrap gap-2"><Button onClick={() => void runtime.materializeOutputs()} disabled={artifactGate?.status !== "passed"}><PackageCheck className="size-4" />{artifacts.length && !packageIsChampion ? "切换为历史 Champion 成果包" : artifacts.length ? "重新冻结 Champion 成果" : "冻结 Gate F 已验收成果"}</Button><Button variant="secondary" disabled={!artifacts.length} onClick={() => void downloadZip()}><Download className="size-4" />下载完整 ZIP</Button></div>
         {project.targetConnection.adapter==="git"&&artifactGate?.status==="passed"&&<div className="mt-4 rounded-2xl border border-sky-200 bg-sky-50/70 p-4 text-xs leading-5 text-sky-900">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div className="min-w-0">
@@ -241,7 +243,7 @@ export function ProjectOutputsPanel({ runtime }: { runtime: ProjectRuntime }) {
             <div className="mt-3 flex items-center justify-between gap-2">
               <span className="text-[10px] text-slate-400">{artifact.versionLabel} · Round {artifact.round} · {(artifact.content.length/1024).toFixed(1)} KB</span>
               <div className="flex shrink-0 gap-1.5">
-                <Button size="sm" variant="secondary" onClick={() => setPreview({ title: "最佳版本成果包", artifacts, index: artifacts.findIndex((item) => item.id === artifact.id) })}><Eye className="size-3.5" />查看</Button>
+                <Button size="sm" variant="secondary" onClick={() => setPreview({ title: packageIsChampion ? "Champion 成果包" : "已验收 Candidate 成果包", artifacts, index: artifacts.findIndex((item) => item.id === artifact.id) })}><Eye className="size-3.5" />查看</Button>
                 <Button size="sm" variant="ghost" onClick={() => void downloadOne(artifact)}><Download className="size-3.5" />下载</Button>
               </div>
             </div>

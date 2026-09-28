@@ -162,3 +162,109 @@ export function materializeAcceptedChampionPackage(
     .map((artifact)=>({...artifact,accepted:true}));
   return [...primaryAndAcceptance,...metadata];
 }
+
+/** A manually accepted Candidate may be deliverable without replacing the historical Search Champion. */
+export function materializeAcceptedCandidatePackage(
+  project:EvolveProject,
+  candidate:Candidate,
+  acceptance:ArtifactAcceptance,
+  createdAt=new Date().toISOString(),
+):OutputArtifact[]{
+  if(project.searchChampion?.candidate?.id===candidate.id
+    &&project.searchChampion.validation?.evidenceFingerprint===project.validationRun.evidenceFingerprint
+    &&project.searchChampion.artifactAcceptance?.id===acceptance.id){
+    return materializeAcceptedChampionPackage(project,createdAt);
+  }
+  if(project.experimentRun.winnerId!==candidate.id||project.validationRun.candidateId!==candidate.id
+    ||project.artifactAcceptance.candidateId!==candidate.id||project.artifactAcceptance.id!==acceptance.id
+    ||!deliveryReadiness(project).ready){
+    throw new Error("Candidate 的 Hidden Validation 与 Gate F 冻结身份尚未一致，禁止生成交付包");
+  }
+  const versionLabel=project.validationRun.versionSnapshot?.label??`Accepted ${candidate.id}`;
+  const round=project.campaign.currentRound;
+  const accepted=acceptanceArtifacts(project,candidate,acceptance,createdAt)
+    .map((artifact)=>({...artifact,round,versionLabel,isChampion:false}));
+  if(accepted.some((artifact)=>!artifact.accepted)){
+    throw new Error("Candidate 的冻结成果身份或验证绑定不完整，禁止生成交付包");
+  }
+  const base={projectId:project.id,round,versionLabel,candidateId:candidate.id,
+    sourceArtifactIds:[] as string[],isChampion:false,accepted:true,createdAt};
+  const manifest={
+    packageKind:"accepted-candidate",
+    projectId:project.id,
+    candidateId:candidate.id,
+    validationId:project.validationRun.id,
+    acceptanceId:acceptance.id,
+    evidenceFingerprint:project.validationRun.evidenceFingerprint,
+    currentSearchChampionId:project.searchChampion?.id,
+    frozenArtifacts:acceptance.frozenArtifacts,
+    generatedAt:createdAt,
+  };
+  const metadata:OutputArtifact[]=[
+    {...base,id:`candidate-manifest-${candidate.id}`,name:"candidate-manifest.json",mimeType:"application/json",kind:"manifest",
+      content:JSON.stringify(manifest,null,2),description:"本次验收候选的版本与冻结成果身份。"},
+    {...base,id:`candidate-score-${candidate.id}`,name:"candidate-scorecard.json",mimeType:"application/json",kind:"scorecard",
+      content:JSON.stringify(project.validationRun.evaluation??null,null,2),description:"本次候选在 Hidden Validation 上的评测结果。"},
+    {...base,id:`candidate-patches-${candidate.id}`,name:"candidate-patches.json",mimeType:"application/json",kind:"patch-bundle",
+      content:JSON.stringify(candidate.patches,null,2),description:"本次验收候选的结构化修改。"},
+    {...base,id:`candidate-notes-${candidate.id}`,name:"RELEASE_NOTES.md",mimeType:"text/markdown",kind:"release-notes",
+      content:`# ${project.name} · ${versionLabel}\n\n本次交付的是通过 Hidden Validation 和 Gate F 的 Candidate ${candidate.id}。\n历史 Search Champion ${project.searchChampion?.versionLabel??"尚未建立"} 未被本次验收替换。\n`,
+      description:"本次候选的交付说明与 Champion 关系。"},
+  ];
+  return [...accepted,...metadata];
+}
+
+/** Prevent a valid primary file from being zipped with metadata for another Candidate. */
+export function assertDeliverablePackageIdentity(project:EvolveProject):string{
+  const artifacts=project.outputArtifacts;
+  const primary=artifacts.filter((item)=>item.kind==="primary");
+  const candidateId=primary[0]?.candidateId;
+  if(!candidateId||!primary.length||artifacts.some((item)=>item.projectId!==project.id
+    ||item.candidateId!==candidateId||!item.accepted||item.isChampion!==primary[0]!.isChampion
+    ||item.versionLabel!==primary[0]!.versionLabel||item.round!==primary[0]!.round)){
+    throw new Error("成果包的主文件、验收证据与元数据候选身份不一致；请重新生成成果包");
+  }
+  const champion=primary[0]!.isChampion?project.searchChampion:undefined;
+  if(primary[0]!.isChampion?champion?.candidate?.id!==candidateId:project.experimentRun.winnerId!==candidateId){
+    throw new Error("成果包不是当前已验收版本；请重新生成成果包");
+  }
+  const candidate=champion?.candidate??project.candidates.find((item)=>item.id===candidateId);
+  const acceptance=champion?.artifactAcceptance??project.artifactAcceptance;
+  const validation=champion?.validation??project.validationRun;
+  if(!candidate||!acceptance||!validation||acceptance.status!=="passed"||!acceptance.hardGatePass
+    ||acceptance.candidateId!==candidateId||validation.status!=="completed"||validation.recommendation!=="release"
+    ||validation.candidateId!==candidateId||validation.evaluation?.demoJudged
+    ||!hasExactFrozenArtifactSet(project,candidate,acceptance)){
+    throw new Error("成果包缺少当前 Candidate 的真实 Hidden Validation 或 Gate F 冻结证据");
+  }
+  const binding=evidenceFingerprint(project,candidate);
+  if(validation.evidenceFingerprint!==binding||acceptance.evidenceFingerprint!==binding){
+    throw new Error("成果包验证指纹与当前 Candidate 不一致；请重新验收");
+  }
+  if(primary.length!==candidate.artifactSnapshots.length||primary.some((item)=>{
+    if(item.sourceArtifactIds.length!==1)return true;
+    const sourceId=item.sourceArtifactIds[0];
+    const snapshot=candidate.artifactSnapshots.find((entry)=>entry.sourceArtifactId===sourceId);
+    const frozen=acceptance.frozenArtifacts?.find((entry)=>entry.sourceArtifactId===sourceId);
+    return !snapshot||!frozen||item.content!==snapshot.content
+      ||!item.frozenArtifact||item.frozenArtifact.blobId!==frozen.blobId||item.frozenArtifact.sha256!==frozen.sha256
+      ||item.frozenArtifact.snapshotHash!==frozen.snapshotHash||item.frozenArtifact.name!==frozen.name
+      ||item.frozenArtifact.sourceArtifactId!==frozen.sourceArtifactId
+      ||item.frozenArtifact.size!==frozen.size||item.frozenArtifact.mimeType!==frozen.mimeType;
+  })){
+    throw new Error("成果包主文件与当前 Candidate 的冻结 Artifact 不一致；请重新生成成果包");
+  }
+  const manifests=artifacts.filter((item)=>item.kind==="manifest");
+  let manifestCandidateId:unknown;
+  try {
+    const parsed=JSON.parse(manifests[0]?.content??"") as {
+      candidateId?:unknown;
+      searchChampion?:{candidate?:{id?:unknown}};
+    };
+    manifestCandidateId=primary[0]!.isChampion?parsed.searchChampion?.candidate?.id:parsed.candidateId;
+  } catch { /* A malformed or missing manifest is not deliverable. */ }
+  if(manifests.length!==1||manifestCandidateId!==candidateId){
+    throw new Error("成果包清单与当前 Candidate 身份不一致；请重新生成成果包");
+  }
+  return candidateId;
+}

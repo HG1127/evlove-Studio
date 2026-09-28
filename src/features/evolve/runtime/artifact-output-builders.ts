@@ -1,4 +1,5 @@
 import JSZip from "jszip";
+import { assertDeliverablePackageIdentity } from "@evolution/core";
 import * as XLSX from "xlsx";
 import type { CandidateArtifactSnapshot, SourceArtifact } from "../schemas";
 import { getArtifactBlob } from "./artifact-blob-store";
@@ -101,6 +102,7 @@ export async function buildDownloadBlob(source: SourceArtifact, snapshot: Candid
 }
 
 export async function buildDeliverableZip(project: import("../schemas").EvolveProject) {
+  assertDeliverablePackageIdentity(project);
   const zip=new JSZip();
   for(const artifact of project.outputArtifacts){
     const entryName = artifact.kind === "primary" ? artifact.frozenArtifact?.name : artifact.name;
