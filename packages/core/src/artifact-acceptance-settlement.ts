@@ -61,7 +61,7 @@ export function settleArtifactAcceptanceFromValidation(args:{
         && receipt.mimeType===frozen.mimeType
         && (!snapshot.contentHash||snapshot.contentHash===receipt.snapshotHash));
     });
-  const validationReusable=hasFullHiddenMeasurement(args.validation,args.candidate.id)
+  const validationReusable=hasFullHiddenMeasurement(args.validation,args.candidate.id,args.project.hiddenEvalSuite)
     && args.validation.evidenceFingerprint===binding;
   const {byId:scoreById,duplicateIds}=indexScopedAcceptanceResults([{
     requestedCriterionIds:args.project.acceptanceRubric.map((item)=>item.id),
@@ -96,7 +96,7 @@ export function settleArtifactAcceptanceFromValidation(args:{
   });
   const thresholdsPass=overallScore>=85&&coverageScore>=90&&integrityScore>=90&&(pairwiseScore>=80||!args.project.acceptanceRubric.some((item)=>item.id==="SYS-PAIRWISE"));
   const passed=validationReusable
-    && hasAuthoritativeHiddenRelease(args.validation,args.candidate.id)
+    && hasAuthoritativeHiddenRelease(args.validation,args.candidate.id,args.project.hiddenEvalSuite)
     && allTargetsFrozen
     && hardGatePass
     && !missingEvidence

@@ -43,7 +43,7 @@ export function updateSearchChampion(args:{
   selectedAt?:string;
 }){
   if(!args.winner||args.artifactAcceptance?.status!=="passed")return {champion:args.current,changed:false,improvement:0};
-  if(!hasAuthoritativeHiddenRelease(args.validation,args.winner.id)
+  if(!hasAuthoritativeHiddenRelease(args.validation,args.winner.id,args.project.hiddenEvalSuite)
     ||!args.artifactAcceptance.hardGatePass||args.artifactAcceptance.candidateId!==args.winner.id)return {champion:args.current,changed:false,improvement:0};
   const binding=evidenceFingerprint(args.project,args.winner);
   if(args.validation.evidenceFingerprint!==binding

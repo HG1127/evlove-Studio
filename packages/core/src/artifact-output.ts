@@ -24,7 +24,7 @@ export function acceptanceArtifacts(
     && acceptance.status==="passed"
     && acceptance.hardGatePass
     && acceptance.candidateId===candidate.id
-    && Boolean(validation&&hasAuthoritativeHiddenRelease(validation,candidate.id))
+    && Boolean(validation&&hasAuthoritativeHiddenRelease(validation,candidate.id,project.hiddenEvalSuite))
     && hasExactFrozenArtifactSet(project,candidate,acceptance);
 
   const primary:OutputArtifact[]=candidate.artifactSnapshots.map((artifact,index)=>({
@@ -230,7 +230,7 @@ export function assertDeliverablePackageIdentity(project:EvolveProject):string{
   const acceptance=champion?.artifactAcceptance??project.artifactAcceptance;
   const validation=champion?.validation??project.validationRun;
   if(!candidate||!acceptance||!validation||acceptance.status!=="passed"||!acceptance.hardGatePass
-    ||acceptance.candidateId!==candidateId||!hasAuthoritativeHiddenRelease(validation,candidateId)
+    ||acceptance.candidateId!==candidateId||!hasAuthoritativeHiddenRelease(validation,candidateId,project.hiddenEvalSuite)
     ||!hasExactFrozenArtifactSet(project,candidate,acceptance)){
     throw new Error("成果包缺少当前 Candidate 的真实 Hidden Validation 或 Gate F 冻结证据");
   }

@@ -8,7 +8,7 @@ export function campaignGoalSatisfied(project: EvolveProject) {
   if (!champion?.candidate || !champion.validation || !champion.artifactAcceptance) return false;
   const binding = evidenceFingerprint(project, champion.candidate);
   return Boolean(
-    hasAuthoritativeHiddenRelease(champion.validation, champion.candidate.id)
+    hasAuthoritativeHiddenRelease(champion.validation, champion.candidate.id, project.hiddenEvalSuite)
     && champion.validation.evidenceFingerprint === binding
     && champion.artifactAcceptance.evidenceFingerprint === binding
     && hasExactFrozenArtifactSet(project, champion.candidate, champion.artifactAcceptance)

@@ -7,7 +7,7 @@ import type { EvolveProject } from "@evolution/contracts";
 export function deliveryReadiness(project: EvolveProject) {
   const reasons: string[] = [];
   const winnerId = project.experimentRun.winnerId;
-  if (!hasAuthoritativeHiddenRelease(project.validationRun, winnerId ?? "")) reasons.push("独立 Hidden Validation 缺少完整非演示评测或未通过");
+  if (!hasAuthoritativeHiddenRelease(project.validationRun, winnerId ?? "", project.hiddenEvalSuite)) reasons.push("独立 Hidden Validation 缺少完整非演示评测或未通过");
   if (project.artifactAcceptance.status !== "passed" || !project.artifactAcceptance.hardGatePass) reasons.push("成果完整性或必要要求尚未通过");
   if (!winnerId || project.artifactAcceptance.candidateId !== winnerId || project.validationRun.candidateId !== winnerId) reasons.push("验收结果与当前候选版本不一致");
   const candidate = project.candidates.find((item) => item.id === winnerId);

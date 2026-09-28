@@ -10,7 +10,7 @@ function fixture(){
       {id:"FORMAT",title:"格式",requirement:"保持",weight:10,hardGate:true,minScore:90,validationMethod:"format-roundtrip",artifactIds:["source"],protectedConstraint:true},
     ],
     artifactAcceptance:{attempts:0,maxRepairAttempts:3},
-    hiddenEvalSuite:[],metrics:[],goal:"g",evolutionCommand:"e",protectedItems:[],
+    hiddenEvalSuite:[{id:"H1"},{id:"H2"}],metrics:[],goal:"g",evolutionCommand:"e",protectedItems:[],
   } as unknown as EvolveProject;
   const frozen={sourceArtifactId:"source",snapshotHash:"hash",blobId:"blob",name:"a.md",mimeType:"text/markdown",sha256:"sha",size:3,verifiedAt:"2026-09-20T00:00:00Z",checks:["ok"],limitations:[]};
   const candidate={id:"C1",name:"c",patches:[],artifactSnapshots:[{id:"s",sourceArtifactId:"source",name:"a.md",mimeType:"text/markdown",content:"new",contentHash:"hash",buildMode:"ai-full",notes:[],createdAt:"2026-09-20T00:00:00Z",frozenArtifact:frozen}],artifactBuildStatus:"ready"} as unknown as Candidate;
@@ -18,7 +18,7 @@ function fixture(){
     {criterionId:"CONTENT",score:90,pass:true,verificationStatus:"verified",evidence:["hidden"],gaps:[],testCaseIds:["H1"]},
     {criterionId:"FORMAT",score:100,pass:true,verificationStatus:"verified",evidence:["roundtrip"],gaps:[],testCaseIds:["H2"]},
   ]};
-  const validation={id:"v",status:"completed",validationMode:"full",candidateId:"C1",recommendation:"release",evaluation,runs:[],baselineRuns:[],checks:[],evidenceFingerprint:evidenceFingerprint(project,candidate)} as ValidationRun;
+  const validation={id:"v",status:"completed",validationMode:"full",candidateId:"C1",recommendation:"release",evaluation,runs:[{testCaseId:"H1",output:"ok",latencyMs:1,cost:0,trace:[],verificationStatus:"verified"},{testCaseId:"H2",output:"ok",latencyMs:1,cost:0,trace:[],verificationStatus:"verified"}],baselineRuns:[],checks:[],evidenceFingerprint:evidenceFingerprint(project,candidate)} as ValidationRun;
   return {project,candidate,validation,frozen};
 }
 

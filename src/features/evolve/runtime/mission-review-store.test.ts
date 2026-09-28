@@ -18,7 +18,8 @@ function projectWithOutput(content="v1"): EvolveProject {
   project.experimentRun={...project.experimentRun,winnerId:candidate.id};
   const binding=evidenceFingerprint(project,candidate);
   project.validationRun={...project.validationRun,status:"completed",validationMode:"full",candidateId:candidate.id,
-    recommendation:"release",evaluation:project.baselineRun.result,evidenceFingerprint:binding};
+    recommendation:"release",evaluation:project.baselineRun.result,evidenceFingerprint:binding,
+    runs:project.hiddenEvalSuite.map((testCase)=>({testCaseId:testCase.id,output:"ok",latencyMs:1,cost:0,trace:[],verificationStatus:"verified"}))};
   project.artifactAcceptance={...project.artifactAcceptance,status:"passed",hardGatePass:true,
     candidateId:candidate.id,frozenArtifacts:[frozen],evidenceFingerprint:binding};
   project.outputArtifacts=materializeAcceptedCandidatePackage(project,candidate,project.artifactAcceptance);
