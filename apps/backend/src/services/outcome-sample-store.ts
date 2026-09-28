@@ -1,4 +1,4 @@
-import {randomUUID} from "node:crypto";
+import {createHash} from "node:crypto";
 import {isDeepStrictEqual} from "node:util";
 import {
   OutcomeMetricBatchRequestSchema,
@@ -72,12 +72,22 @@ function afterSample(sample:Pick<OutcomeMetricSample,"observedAt"|"id">){
     +",and(observed_at.eq."+at+",id.gt."+filterValue(sample.id)+"))";
 }
 
+function generatedOutcomeSampleId(args:{workspaceId:string;missionId:string;candidateId?:string;sample:OutcomeMetricBatchRequest["samples"][number]}){
+  const observedMs=Date.parse(args.sample.observedAt);
+  if(!Number.isFinite(observedMs))throw new Error("Outcome sample observedAt is invalid");
+  const identity=[
+    args.workspaceId,args.missionId,args.sample.candidateId??args.candidateId??null,
+    args.sample.deploymentId??null,args.sample.arm,args.sample.metricKey,
+    args.sample.segment,args.sample.source.trim(),new Date(observedMs).toISOString(),
+  ];
+  return "outcome-"+createHash("sha256").update(JSON.stringify(identity)).digest("hex");
+}
 export async function insertOutcomeSamples(raw:OutcomeMetricBatchRequest){
   const input=OutcomeMetricBatchRequestSchema.parse(raw);
   const workspaceId=getEvolutionWorkspaceId();
   if(!workspaceId)throw new Error("EVOLUTION_WORKSPACE_ID is required");
   const rows=input.samples.map((sample)=>({
-    id:sample.id??"outcome-"+randomUUID(),workspace_id:workspaceId,mission_id:input.missionId,
+    id:sample.id??generatedOutcomeSampleId({workspaceId,missionId:input.missionId,candidateId:input.candidateId,sample}),workspace_id:workspaceId,mission_id:input.missionId,
     candidate_id:sample.candidateId??input.candidateId??null,deployment_id:sample.deploymentId??null,
     arm:sample.arm,metric_key:sample.metricKey,metric_kind:sample.metricKind,direction:sample.direction,
     value:sample.value,unit:sample.unit??null,segment:sample.segment,source:sample.source,

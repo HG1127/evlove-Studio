@@ -1,5 +1,6 @@
 // @vitest-environment node
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
+import type {OutcomeMetricBatchRequest} from "@evolution/contracts";
 import {insertOutcomeSamples,OutcomeSampleIdConflictError,probeOutcomeSampleStore,readOutcomeSamples} from "./outcome-sample-store";
 
 const originalEnv={...process.env};
@@ -34,7 +35,7 @@ describe("Outcome sample store",()=>{
     vi.unstubAllGlobals();
   });
 
-  function sampleBatch(id="sample-1"){
+  function sampleBatch(id="sample-1"):OutcomeMetricBatchRequest{
     return {missionId:"mission/test",candidateId:"candidate/a",samples:[{
       id,candidateId:"candidate/a",arm:"candidate" as const,metricKey:"conversion",
       metricKind:"business" as const,direction:"higher" as const,value:1,segment:"all",
@@ -42,6 +43,39 @@ describe("Outcome sample store",()=>{
     }]};
   }
 
+  it("uses a stable generated ID for an omitted-ID replay and detects changed content",async()=>{
+    const stored=new Map<string,ReturnType<typeof row>>();
+    const fetchMock=vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
+      if(init?.method==="POST"){
+        const posted=JSON.parse(String(init.body)) as ReturnType<typeof row>[];
+        const inserted=posted.filter((sample)=>!stored.has(sample.id));
+        for(const sample of inserted)stored.set(sample.id,sample);
+        return new Response(JSON.stringify(inserted),{status:201});
+      }
+      const filter=new URL(String(input)).searchParams.get("id")??"";
+      const match=/^in\.\("([^"]+)"\)$/.exec(filter);
+      if(!match)throw new Error("Unexpected Outcome ID filter: "+filter);
+      return new Response(JSON.stringify([stored.get(match[1]!)].filter(Boolean)),{status:200});
+    });
+    vi.stubGlobal("fetch",fetchMock);
+    const batch=sampleBatch();
+    delete batch.samples[0]!.id;
+    expect((await insertOutcomeSamples(batch)).inserted).toBe(1);
+    batch.samples[0]!.observedAt="2026-09-24T00:00:00.000+00:00";
+    expect((await insertOutcomeSamples(batch)).inserted).toBe(0);
+    expect(stored.size).toBe(1);
+    batch.samples[0]!.value=2;
+    await expect(insertOutcomeSamples(batch)).rejects.toBeInstanceOf(OutcomeSampleIdConflictError);
+  });
+  it("rejects two omitted-ID samples with the same observation identity before writing",async()=>{
+    const fetchMock=vi.fn();
+    vi.stubGlobal("fetch",fetchMock);
+    const batch=sampleBatch();
+    delete batch.samples[0]!.id;
+    batch.samples.push({...batch.samples[0]!,value:2});
+    await expect(insertOutcomeSamples(batch)).rejects.toBeInstanceOf(OutcomeSampleIdConflictError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
   it("confirms a new insert from the returned canonical row",async()=>{
     const fetchMock=vi.fn(async()=>new Response(JSON.stringify([row("sample-1")]),{status:201}));
     vi.stubGlobal("fetch",fetchMock);
