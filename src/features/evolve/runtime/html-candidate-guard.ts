@@ -2,6 +2,8 @@ import type { CandidateArtifactSnapshot, EvolveProject } from "../schemas";
 
 const normalize = (text: string) => text.replace(/\s+/g, " ").trim();
 const retains = (original: string[], candidate: string[]) => { let index = 0; for (const token of candidate) if (token === original[index]) index++; return index === original.length; };
+const protectsSlideStructure = (items: string[]) => items.some((item) => /slide.{0,16}(?:章节|结构|页面|页数|card)|(?:章节|结构|页面|页数).{0,16}slide/i.test(item));
+const slideCardIds = (doc: Document) => [...doc.querySelectorAll("article.slide-card[id]")].map((node) => node.id);
 
 /** Full-file checks ground named HTML protection scopes; generic protection stays with the judge. */
 export function htmlCandidateGuard(project: EvolveProject, snapshots: CandidateArtifactSnapshot[]) {
@@ -21,6 +23,10 @@ export function htmlCandidateGuard(project: EvolveProject, snapshots: CandidateA
     const counts = (doc: Document) => { const map = new Map<string, number>(); for (const node of doc.querySelectorAll("[id]")) map.set(node.id, (map.get(node.id) ?? 0) + 1); return map; };
     const originalIds = counts(original), candidateIds = counts(candidate);
     const newDuplicateIds = [...candidateIds].filter(([id, count]) => count > 1 && count > (originalIds.get(id) ?? 1)).map(([id]) => id);
+    // Ground generic slide protection in source IDs: AI prose may guess the wrong page count.
+    const originalSlideIds = protectsSlideStructure(project.protectedItems) ? slideCardIds(original) : [];
+    const candidateSlideIds = new Set(slideCardIds(candidate));
+    const missingSlideIds = [...new Set(originalSlideIds)].filter((id) => !candidateSlideIds.has(id));
     const protectedSections = [...protectedIds].flatMap((id) => {
       const before = original.getElementById(id);
       if (!before) return [];
@@ -36,7 +42,9 @@ export function htmlCandidateGuard(project: EvolveProject, snapshots: CandidateA
       return [{ id, originalFound: true, candidateFound: Boolean(after), textRetained, structureRetained, titleRetained, originalCharacters: beforeText.length, candidateCharacters: afterText.length }];
     });
     const unresolvedProtectedIds = [...protectedIds].filter((id) => !original.getElementById(id));
-    const issues = [...newDuplicateIds.map((id) => `新增重复 ID: ${id}`), ...protectedSections.filter((section) => !section.textRetained || !section.structureRetained || !section.titleRetained).map((section) => `保护章节 ${section.id} 的原内容、标题或结构未完整保留`)];
-    return [{ sourceArtifactId: source.id, readWholeFiles: true, newDuplicateIds, protectedSections, unresolvedProtectedIds, issues }];
+    const issues = [...newDuplicateIds.map((id) => `新增重复 ID: ${id}`),
+      ...(missingSlideIds.length ? [`保护的原始 slide-card 缺失 ${missingSlideIds.length}/${originalSlideIds.length}：${missingSlideIds.slice(0, 6).join("、")}`] : []),
+      ...protectedSections.filter((section) => !section.textRetained || !section.structureRetained || !section.titleRetained).map((section) => `保护章节 ${section.id} 的原内容、标题或结构未完整保留`)];
+    return [{ sourceArtifactId: source.id, readWholeFiles: true, newDuplicateIds, protectedSections, unresolvedProtectedIds, originalSlideCount: originalSlideIds.length, missingSlideIds, issues }];
   });
 }

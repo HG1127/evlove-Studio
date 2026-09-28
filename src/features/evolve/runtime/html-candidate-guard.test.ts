@@ -33,3 +33,18 @@ it("does not fabricate proof for a protection scope missing from the original", 
   expect(result.unresolvedProtectedIds).toEqual(["slide-99"]);
   expect(result.protectedSections).toEqual([]);
 });
+
+it("protects every actual source slide ID even when an inferred count is wrong", () => {
+  const { project, snapshot } = fixture();
+  const original = '<html><body><article class="slide-card" id="slide-1">A</article><article class="slide-card" id="slide-2">B</article><article class="slide-card" id="slide-3">C</article></body></html>';
+  project.sourceArtifacts[0]!.textContent = original;
+  project.protectedItems = ["保留 83 个 slide 章节结构"];
+  snapshot.content = original.replace('<article class="slide-card" id="slide-2">B</article>', "");
+  const [missing] = htmlCandidateGuard(project, [snapshot]);
+  expect(missing.originalSlideCount).toBe(3);
+  expect(missing.missingSlideIds).toEqual(["slide-2"]);
+  expect(missing.issues.join(" ")).toContain("slide-2");
+  snapshot.content = original.replace("</body>", '<article class="slide-card" id="slide-4">D</article></body>');
+  const [additive] = htmlCandidateGuard(project, [snapshot]);
+  expect(additive.issues).toEqual([]);
+});
