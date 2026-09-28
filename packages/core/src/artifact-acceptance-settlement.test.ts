@@ -18,7 +18,7 @@ function fixture(){
     {criterionId:"CONTENT",score:90,pass:true,verificationStatus:"verified",evidence:["hidden"],gaps:[],testCaseIds:["H1"]},
     {criterionId:"FORMAT",score:100,pass:true,verificationStatus:"verified",evidence:["roundtrip"],gaps:[],testCaseIds:["H2"]},
   ]};
-  const validation={id:"v",status:"completed",validationMode:"full",candidateId:"C1",recommendation:"release",evaluation,runs:[{testCaseId:"H1",output:"ok",latencyMs:1,cost:0,trace:[],verificationStatus:"verified"},{testCaseId:"H2",output:"ok",latencyMs:1,cost:0,trace:[],verificationStatus:"verified"}],baselineRuns:[],checks:[],evidenceFingerprint:evidenceFingerprint(project,candidate)} as ValidationRun;
+  const validation={id:"v",status:"completed",validationMode:"full",candidateId:"C1",recommendation:"release",evaluation,runs:[{testCaseId:"H1",output:"ok",latencyMs:1,cost:0,trace:[],verificationStatus:"verified"},{testCaseId:"H2",output:"ok",latencyMs:1,cost:0,trace:[],verificationStatus:"verified"}],baselineRuns:[{testCaseId:"H1",output:"ok",latencyMs:1,cost:0,trace:[],verificationStatus:"verified"},{testCaseId:"H2",output:"ok",latencyMs:1,cost:0,trace:[],verificationStatus:"verified"}],baselineEvaluation:evaluation,baselineSuiteIds:["H1","H2"],baselineContextFingerprint:"same-paper",baselineObservedAt:123456,checks:[],evidenceFingerprint:evidenceFingerprint(project,candidate)} as ValidationRun;
   return {project,candidate,validation,frozen};
 }
 
@@ -29,6 +29,13 @@ describe("artifact acceptance settlement",()=>{
     expect(result.status).toBe("passed");
     expect(result.hardGatePass).toBe(true);
     expect(result.frozenArtifacts?.[0]?.blobId).toBe("blob");
+  });
+  it("keeps a missing same-paper baseline unverified rather than calling the product failed",()=>{
+    const x=fixture();
+    x.validation.baselineRuns=[];
+    const result=settleArtifactAcceptanceFromValidation({project:x.project,candidate:x.candidate,validation:x.validation,frozenArtifacts:[x.frozen]});
+    expect(result.status).toBe("unverified");
+    expect(result.acceptedAt).toBeUndefined();
   });
   it("does not pass Gate F when a release recommendation has no full evaluation",()=>{
     const x=fixture();

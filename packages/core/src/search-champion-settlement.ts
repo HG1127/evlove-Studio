@@ -1,6 +1,6 @@
 import type {ArtifactAcceptance,Candidate,EvolveProject,EvaluationResult,SearchChampion,TestCase,ValidationRun} from "@evolution/contracts";
 import {reusableHoldoutBaseline} from "./baseline-readiness";
-import {hasAuthoritativeHiddenRelease} from "./hidden-validation-evidence";
+import {hasAuthoritativeHiddenRelease,hasFullHiddenMeasurement} from "./hidden-validation-evidence";
 import {hasExactFrozenArtifactSet} from "./artifact-identity";
 import {evidenceFingerprint} from "./evidence-binding";
 
@@ -43,13 +43,23 @@ export function updateSearchChampion(args:{
   selectedAt?:string;
 }){
   if(!args.winner||args.artifactAcceptance?.status!=="passed")return {champion:args.current,changed:false,improvement:0};
-  if(!hasAuthoritativeHiddenRelease(args.validation,args.winner.id,args.project.hiddenEvalSuite)
-    ||!args.artifactAcceptance.hardGatePass||args.artifactAcceptance.candidateId!==args.winner.id)return {champion:args.current,changed:false,improvement:0};
+  if(!args.artifactAcceptance.hardGatePass||args.artifactAcceptance.candidateId!==args.winner.id)return {champion:args.current,changed:false,improvement:0};
   const binding=evidenceFingerprint(args.project,args.winner);
   if(args.validation.evidenceFingerprint!==binding
     ||args.artifactAcceptance.evidenceFingerprint!==binding
     ||!hasExactFrozenArtifactSet(args.project,args.winner,args.artifactAcceptance)){
     return {champion:args.current,changed:false,improvement:0};
+  }
+  if(!hasAuthoritativeHiddenRelease(args.validation,args.winner.id,args.project.hiddenEvalSuite)){
+    const candidateMeasured=hasFullHiddenMeasurement(args.validation,args.winner.id,args.project.hiddenEvalSuite)
+      &&args.validation.runs.every((run)=>run.verificationStatus==="verified")
+      &&args.validation.recommendation==="release"
+      &&args.validation.evaluation?.safety!=="FAIL"
+      &&!args.validation.evaluation?.unverifiedCriterionIds?.length;
+    return {
+      champion:args.current,changed:false,improvement:0,
+      ...(args.liveTarget&&args.current&&candidateMeasured?{comparisonPending:true}:{}),
+    };
   }
   const evaluation=args.validation.evaluation!;
   const paired=args.liveTarget&&args.current?args.validation.baselineEvaluation:undefined;

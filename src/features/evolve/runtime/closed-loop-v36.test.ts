@@ -18,6 +18,11 @@ function ready() {
   });
   project.candidates = [CandidateSchema.parse({ id: "C", name: "candidate", change: "edit", artifactSnapshots: [CandidateArtifactSnapshotSchema.parse({ id: "s", sourceArtifactId: "demo-prompt", name: "page.html", mimeType: "text/html", content: "tested content", contentHash: "caller-hash", buildMode: "deterministic", createdAt: "now" })] })];
   project.validationRun.runs = project.hiddenEvalSuite.map((testCase) => ({testCaseId:testCase.id,output:"ok",latencyMs:1,cost:0,trace:[],verificationStatus:"verified"}));
+  project.validationRun.baselineRuns = project.validationRun.runs.map((run) => ({...run}));
+  project.validationRun.baselineEvaluation = project.baselineRun.result;
+  project.validationRun.baselineSuiteIds = project.hiddenEvalSuite.map((testCase) => testCase.id);
+  project.validationRun.baselineContextFingerprint = "same-paper";
+  project.validationRun.baselineObservedAt = 123456;
   project.artifactAcceptance.frozenArtifacts = [{
     sourceArtifactId: "demo-prompt", snapshotHash: "snapshot-proof", blobId: "blob-proof",
     name: "page.html", mimeType: "text/html", sha256: "bytes-proof", size: 14,

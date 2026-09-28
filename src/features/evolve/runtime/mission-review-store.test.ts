@@ -19,7 +19,10 @@ function projectWithOutput(content="v1"): EvolveProject {
   const binding=evidenceFingerprint(project,candidate);
   project.validationRun={...project.validationRun,status:"completed",validationMode:"full",candidateId:candidate.id,
     recommendation:"release",evaluation:project.baselineRun.result,evidenceFingerprint:binding,
-    runs:project.hiddenEvalSuite.map((testCase)=>({testCaseId:testCase.id,output:"ok",latencyMs:1,cost:0,trace:[],verificationStatus:"verified"}))};
+    runs:project.hiddenEvalSuite.map((testCase)=>({testCaseId:testCase.id,output:"ok",latencyMs:1,cost:0,trace:[],verificationStatus:"verified"})),
+    baselineRuns:project.hiddenEvalSuite.map((testCase)=>({testCaseId:testCase.id,output:"ok",latencyMs:1,cost:0,trace:[],verificationStatus:"verified"})),
+    baselineEvaluation:project.baselineRun.result,baselineSuiteIds:project.hiddenEvalSuite.map((testCase)=>testCase.id),
+    baselineContextFingerprint:"same-paper",baselineObservedAt:123456};
   project.artifactAcceptance={...project.artifactAcceptance,status:"passed",hardGatePass:true,
     candidateId:candidate.id,frozenArtifacts:[frozen],evidenceFingerprint:binding};
   project.outputArtifacts=materializeAcceptedCandidatePackage(project,candidate,project.artifactAcceptance);

@@ -6,7 +6,7 @@ import type {
   ValidationRun,
 } from "@evolution/contracts";
 import { evidenceFingerprint } from "./evidence-binding";
-import { hasAuthoritativeHiddenRelease, hasFullHiddenMeasurement } from "./hidden-validation-evidence";
+import { hasAuthoritativeHiddenRelease, hasFullHiddenMeasurement, hasVerifiedHiddenBaseline } from "./hidden-validation-evidence";
 import { indexScopedAcceptanceResults } from "./acceptance-result-identity";
 import { indexUniqueById } from "./identity-index";
 
@@ -95,6 +95,9 @@ export function settleArtifactAcceptanceFromValidation(args:{
     return score?.verificationStatus!=="verified";
   });
   const thresholdsPass=overallScore>=85&&coverageScore>=90&&integrityScore>=90&&(pairwiseScore>=80||!args.project.acceptanceRubric.some((item)=>item.id==="SYS-PAIRWISE"));
+  const measurementEvidenceIncomplete=!hasVerifiedHiddenBaseline(args.validation,args.project.hiddenEvalSuite)
+    ||args.validation.runs.some((run)=>run.verificationStatus!=="verified")
+    ||Boolean(args.validation.evaluation?.unverifiedCriterionIds?.length);
   const passed=validationReusable
     && hasAuthoritativeHiddenRelease(args.validation,args.candidate.id,args.project.hiddenEvalSuite)
     && allTargetsFrozen
@@ -103,7 +106,7 @@ export function settleArtifactAcceptanceFromValidation(args:{
     && thresholdsPass;
   const status:ArtifactAcceptance["status"]=passed
     ?"passed"
-    : missingEvidence||!validationReusable||!allTargetsFrozen
+    : missingEvidence||!validationReusable||!allTargetsFrozen||measurementEvidenceIncomplete
       ?"unverified"
       :"failed";
   return {

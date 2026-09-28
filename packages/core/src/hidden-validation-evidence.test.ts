@@ -8,7 +8,7 @@ const evaluation={accuracy:90,evidence:90,riskCoverage:90,completeness:90,safety
   averageCost:1,averageLatencyMs:1,notes:[],failures:[]} as EvaluationResult;
 function validation(overrides:Partial<ValidationRun>={}):ValidationRun{
   return {id:"holdout",status:"completed",validationMode:"full",candidateId:"C1",
-    recommendation:"release",evaluation,runs:[run],baselineRuns:[],checks:[],...overrides};
+    recommendation:"release",evaluation,runs:[run],baselineRuns:[run],baselineEvaluation:evaluation,baselineSuiteIds:["H1"],baselineContextFingerprint:"same-paper",baselineObservedAt:123456,checks:[],...overrides};
 }
 describe("authoritative Hidden evidence",()=>{
   it("accepts a full measured non-demo release for the exact Candidate",()=>{
@@ -38,6 +38,22 @@ describe("authoritative Hidden evidence",()=>{
   it("rejects empty or repeated current Hidden Test Case identities",()=>{
     expect(hasFullHiddenMeasurement(validation(),"C1",[])).toBe(false);
     expect(hasFullHiddenMeasurement(validation({runs:[run,run]}),"C1",[suite[0]!,suite[0]!])).toBe(false);
+  });
+  it.each([
+    ["missing baseline evaluation",{baselineEvaluation:undefined}],
+    ["demo baseline evaluation",{baselineEvaluation:{...evaluation,demoJudged:true}}],
+    ["missing baseline run",{baselineRuns:[]}],
+    ["wrong baseline run",{baselineRuns:[{...run,testCaseId:"H2"}]}],
+    ["duplicate baseline run",{baselineRuns:[run,run]}],
+    ["partial baseline run",{baselineRuns:[{...run,verificationStatus:"partial" as const}]}],
+    ["missing paper identity",{baselineSuiteIds:undefined}],
+    ["wrong paper identity",{baselineSuiteIds:["H2"]}],
+    ["missing baseline context",{baselineContextFingerprint:undefined}],
+    ["missing observation time",{baselineObservedAt:undefined}],
+  ])("rejects %s as an authoritative release",(_label,override)=>{
+    const measured=validation(override);
+    expect(hasFullHiddenMeasurement(measured,"C1",suite)).toBe(true);
+    expect(hasAuthoritativeHiddenRelease(measured,"C1",suite)).toBe(false);
   });
   it("keeps partial and unverified execution available for diagnosis but not release",()=>{
     for(const verificationStatus of ["partial","unverified","failed"] as const){
