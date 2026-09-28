@@ -121,6 +121,25 @@ function drift(rows:OutcomeMetricSample[],segment:string,minPerArm:number){
   };
 }
 
+function deploymentScopeIssue(samples:OutcomeMetricSample[]){
+  const idsFor=(arm:OutcomeMetricSample["arm"])=>new Set(samples
+    .filter((sample)=>sample.arm===arm)
+    .map((sample)=>sample.deploymentId??""));
+  const stable=idsFor("stable");
+  const candidate=idsFor("candidate");
+  if(stable.size>1||candidate.size>1){
+    return "Outcome 样本跨多个 Deployment 或缺少部分 Deployment 身份，不能合并为同一次 Stable/Candidate 比较。";
+  }
+  if(stable.has("")||candidate.has("")){
+    return "Outcome 样本缺少 Deployment 身份，不能确认它属于本次 Release。";
+  }
+  const stableId=[...stable][0];
+  const candidateId=[...candidate][0];
+  if(stableId&&candidateId&&stableId===candidateId){
+    return "Stable 和 Candidate 样本绑定同一个 Deployment，不能作为两个独立实验组比较。";
+  }
+  return undefined;
+}
 export function analyzeOutcomeSamples(input:{
   missionId:string;
   candidateId?:string;
@@ -144,6 +163,15 @@ export function analyzeOutcomeSamples(input:{
     return Number.isFinite(observedAt)&&observedAt<=checkedAtMs+PRODUCTION_OUTCOME_MAX_FUTURE_SKEW_MS;
   });
   const dropped=input.samples.length-samples.length;
+  const scopeIssue=deploymentScopeIssue(samples);
+  if(scopeIssue){
+    return OutcomeAnalyticsResponseSchema.parse({
+      missionId:input.missionId,candidateId,checkedAt,sampleCount:samples.length,
+      minimumSamplesPerArm:input.minimumSamplesPerArm,
+      metrics:[],drift:[],regressions:[],verdict:"insufficient",
+      message:scopeIssue+" 请按单一 Release 部署周期补齐可比样本。",
+    });
+  }
   assertComparableMetricContracts(samples);
   const grouped=groups(samples);
   const metrics=grouped.map((group)=>analyzeGroup(group.rows,group.segment,input.minimumSamplesPerArm));

@@ -13,8 +13,8 @@ function samples(input:{
   const segment=input.segment??"all";
   const base={workspaceId:"w1",missionId:"m1",candidateId:"c1",metricKey:input.metricKey,metricKind:input.kind,direction:input.direction,segment,source:"test",metadata:{}};
   return [
-    ...input.stable.map((value,index)=>({...base,id:`s-${input.metricKey}-${index}`,arm:"stable" as const,value,observedAt:`2026-09-21T00:${String(index).padStart(2,"0")}:00.000Z`})),
-    ...input.candidate.map((value,index)=>({...base,id:`c-${input.metricKey}-${index}`,arm:"candidate" as const,value,observedAt:`2026-09-21T01:${String(index).padStart(2,"0")}:00.000Z`})),
+    ...input.stable.map((value,index)=>({...base,id:`s-${input.metricKey}-${index}`,arm:"stable" as const,deploymentId:"stable-deployment",value,observedAt:`2026-09-21T00:${String(index).padStart(2,"0")}:00.000Z`})),
+    ...input.candidate.map((value,index)=>({...base,id:`c-${input.metricKey}-${index}`,arm:"candidate" as const,deploymentId:"candidate-deployment",value,observedAt:`2026-09-21T01:${String(index).padStart(2,"0")}:00.000Z`})),
   ];
 }
 
@@ -199,6 +199,26 @@ describe("outcome statistics",()=>{
     })).toThrow(/candidateId is required/);
   });
 
+  it("requires one distinct Deployment per arm before producing Outcome statistics",()=>{
+    const values=Array.from({length:5},(_,i)=>0.5+i*0.01);
+    const rows=samples({metricKey:"conversion",kind:"business",direction:"higher",stable:values,candidate:values});
+    for(const sample of rows)sample.deploymentId=sample.arm==="stable"?"stable-1":"candidate-1";
+    const input={missionId:"m1",candidateId:"c1",minimumSamplesPerArm:5,samples:rows};
+    expect(analyzeOutcomeSamples(input).verdict).toBe("healthy");
+    rows[rows.length-1]!.deploymentId="candidate-2";
+    const mixed=analyzeOutcomeSamples(input);
+    expect(mixed.verdict).toBe("insufficient");
+    expect(mixed.metrics).toEqual([]);
+    expect(mixed.message).toContain("多个 Deployment");
+    rows[rows.length-1]!.deploymentId="candidate-1";
+    rows[0]!.deploymentId=undefined;
+    expect(analyzeOutcomeSamples(input).verdict).toBe("insufficient");
+    rows[0]!.deploymentId="candidate-1";
+    for(const sample of rows)sample.deploymentId="candidate-1";
+    const same=analyzeOutcomeSamples(input);
+    expect(same.verdict).toBe("insufficient");
+    expect(same.message).toContain("同一个 Deployment");
+  });
   it("refuses Stable/Candidate comparisons when a metric contract changes across stored samples",()=>{
     const rows=samples({
       metricKey:"latency",kind:"latency",direction:"lower",

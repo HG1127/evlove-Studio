@@ -15,12 +15,12 @@ function restore(name:string,value:string|undefined){
 }
 
 function measuredRows():OutcomeMetricSample[]{
-  const base={workspaceId:"w1",missionId:"m1",candidateId:"c1",deploymentId:"deployment-1",
+  const base={workspaceId:"w1",missionId:"m1",candidateId:"c1",
     metricKey:"conversion",metricKind:"business" as const,direction:"higher" as const,
     segment:"all",source:"product",metadata:{},observedAt:"2026-09-21T00:00:00.000Z"};
   return [
-    ...Array.from({length:5},(_,i)=>({...base,id:`stable-${i}`,arm:"stable" as const,value:0.5})),
-    ...Array.from({length:5},(_,i)=>({...base,id:`candidate-${i}`,arm:"candidate" as const,value:0.6})),
+    ...Array.from({length:5},(_,i)=>({...base,id:`stable-${i}`,arm:"stable" as const,deploymentId:"deployment-stable",value:0.5})),
+    ...Array.from({length:5},(_,i)=>({...base,id:`candidate-${i}`,arm:"candidate" as const,deploymentId:"deployment-candidate",value:0.6})),
   ];
 }
 

@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import type { EvolveProject, ReleaseState } from "../schemas";
 import { useLocalProjects } from "../runtime/use-local-projects";
+import { OutcomeAnalyticsCard } from "./outcome-analytics-card";
 import { projectHasOnlineReleaseTarget } from "@evolution/core";
 
 const releaseSteps: Array<{ label: string; statuses: ReleaseState["status"][]; traffic: string }> = [
@@ -80,6 +81,7 @@ export function ReleasesOverview() {
           <Card><CardContent className="pt-5"><div className="flex items-center gap-2 font-semibold"><History className="size-4 text-indigo-600"/>Release Audit Trail</div><div className="mt-4 space-y-2">{selected.release.history.length?selected.release.history.slice().reverse().map((item,index)=><div key={`${item.at}-${index}`} className="flex gap-3 rounded-xl border p-3"><div className={`mt-1 size-2 shrink-0 rounded-full ${item.action==='rollback'?'bg-rose-500':item.action==='promote'?'bg-emerald-500':'bg-indigo-400'}`}/><div><div className="text-xs font-semibold">{item.action}</div><div className="mt-0.5 text-[10px] text-slate-400">{new Date(item.at).toLocaleString()}</div><p className="mt-1 text-xs leading-5 text-slate-500">{item.note}</p></div></div>):<div className="rounded-xl border bg-slate-50 p-4 text-xs text-slate-400">尚未进入真实发布动作。</div>}</div></CardContent></Card>
         </div>
 
+        <OutcomeAnalyticsCard key={`${selected.id}:${selected.release.candidateId??""}:${selected.release.deploymentId??""}`} project={selected}/>
         {(selected.release.healthy===false || selected.release.status==='rolled-back') && <div className="flex items-start gap-3 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800"><RotateCcw className="mt-0.5 size-4 shrink-0"/><div><b>回滚/异常不是终点。</b><p className="mt-1 text-xs leading-5 text-rose-700">失败的 Online Trace、触发指标和运行环境会进入 Experience Center 的 Failure Pattern / Anti-pattern，并作为下一轮 Evolve 的诊断证据。</p></div></div>}
       </div>}
     </div>}

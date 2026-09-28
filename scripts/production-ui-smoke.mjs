@@ -5,6 +5,7 @@ const baseUrl=process.env.PRODUCTION_URL??'https://500ipo-evolve-studio.vercel.a
 const routes=[
   ['home','/','工作台'],
   ['projects','/projects','进化任务'],
+  ['releases','/releases','发布治理'],
   ['settings','/settings',undefined],
   ['outputs','/outputs',undefined],
 ];

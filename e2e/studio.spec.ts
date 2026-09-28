@@ -37,3 +37,8 @@ test("user can upload a source artifact and create an evolve project", async ({ 
   await page.getByRole("button", { name: /1 · 输入任务/ }).click();
   await expect(page.getByRole("button", { name: /1 · 输入任务/ })).toHaveAttribute("aria-pressed", "true");
 });
+
+test("release governance route renders its real Outcome entry point", async ({ page }) => {
+  await page.goto("/#/releases");
+  await expect(page.getByRole("heading", { name: "发布治理" })).toBeVisible();
+});
