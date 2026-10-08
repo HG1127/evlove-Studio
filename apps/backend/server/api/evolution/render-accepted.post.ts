@@ -4,25 +4,35 @@ import {
   AcceptedArtifactRenderResponseSchema,
   createEvolutionEvent,
 } from "@evolution/contracts";
-import {materializeAcceptedChampionPackage} from "@evolution/core";
+import {materializeAcceptedCandidatePackage,materializeAcceptedChampionPackage} from "@evolution/core";
 import {renderAcceptedProjectArtifacts} from "../../../src/services/server-artifact-renderer";
 import {getServerProductionRuntime} from "../../../src/services/production-runtime";
 import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 
 export default defineEventHandler(async(event)=>{
   await requireGovernedEvolutionPermission(event,"target.write");
-  const input=AcceptedArtifactRenderRequestSchema.parse(await readBody(event));
+  const parsed=AcceptedArtifactRenderRequestSchema.safeParse(await readBody(event));
+  if(!parsed.success)throw createError({statusCode:400,statusMessage:"Invalid accepted Artifact render request"});
+  const input=parsed.data;
   const runtime=getServerProductionRuntime();
   const mission=await runtime.missions.get(input.missionId);
   if(!mission)throw createError({statusCode:404,statusMessage:"Mission not found"});
   const champion=mission.searchChampion;
-  if(!champion?.candidate)throw createError({statusCode:409,statusMessage:"Mission has no Search Champion"});
-  const artifacts=materializeAcceptedChampionPackage(mission);
+  const candidateId=input.candidateId??champion?.candidate?.id;
+  const candidate=candidateId===champion?.candidate?.id?champion?.candidate:mission.candidates.find((item)=>item.id===candidateId);
+  if(!candidate)throw createError({statusCode:409,statusMessage:"Requested accepted Candidate not found"});
+  let artifacts;
+  try{
+    artifacts=candidate.id===champion?.candidate?.id
+      ?materializeAcceptedChampionPackage(mission)
+      :materializeAcceptedCandidatePackage(mission,candidate,mission.artifactAcceptance);
+  }catch(error){
+    throw createError({statusCode:409,statusMessage:error instanceof Error?error.message:"Candidate is not deliverable"});
+  }
   const rendered=await renderAcceptedProjectArtifacts(mission,artifacts);
   const updated={
     ...mission,
     outputArtifacts:rendered.outputArtifacts,
-    artifactAcceptance:champion.artifactAcceptance!,
     stage:"learning" as const,
     updatedAt:new Date().toISOString(),
   };
@@ -33,7 +43,7 @@ export default defineEventHandler(async(event)=>{
     source:"server-artifact-renderer",
     payload:{
       action:"render-accepted",
-      candidateId:champion.candidate.id,
+      candidateId:candidate.id,
       renderedCount:rendered.receipts.length,
       artifactRefs:rendered.receipts.map((item)=>item.artifactRef),
       artifactHashes:rendered.receipts.map((item)=>item.sha256),
@@ -41,7 +51,7 @@ export default defineEventHandler(async(event)=>{
   }));
   return AcceptedArtifactRenderResponseSchema.parse({
     missionId:mission.id,
-    candidateId:champion.candidate.id,
+    candidateId:candidate.id,
     renderedCount:rendered.receipts.length,
     receipts:rendered.receipts,
     observedAt:new Date().toISOString(),

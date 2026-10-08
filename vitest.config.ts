@@ -20,6 +20,6 @@ export default defineConfig({
     // 给一个真实 origin，注册表 / BYOK 等读 localStorage 的模块才能在测试里跑。
     environmentOptions: { jsdom: { url: "http://localhost/" } },
     setupFiles: ["./src/test/setup.ts"],
-    include: ["src/**/*.test.ts", "src/**/*.test.tsx", "packages/**/*.test.ts", "packages/**/*.test.tsx", "apps/backend/src/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "src/**/*.test.tsx", "packages/**/*.test.ts", "packages/**/*.test.tsx", "apps/backend/src/**/*.test.ts", "tests/integration/**/*.test.ts"],
   },
 });

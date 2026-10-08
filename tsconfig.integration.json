@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.integration.tsbuildinfo",
+    "types": [
+      "node",
+      "vite/client"
+    ],
+    "erasableSyntaxOnly": false
+  },
+  "include": [
+    "tests/integration/**/*.ts"
+  ]
+}

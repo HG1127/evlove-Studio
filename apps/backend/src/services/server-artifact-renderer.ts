@@ -2,7 +2,7 @@ import {createHash} from "node:crypto";
 import JSZip from "jszip";
 import * as XLSX from "xlsx";
 import type {ArtifactStorePort,CandidateArtifactSnapshot,EvolveProject,OutputArtifact,SourceArtifact} from "@evolution/contracts";
-import {describeArtifact,hasExactFrozenArtifactSet} from "@evolution/core";
+import {assertDeliverablePackageIdentity,describeArtifact,hasExactFrozenArtifactSet} from "@evolution/core";
 import {getServerArtifactStore} from "./artifact-runtime";
 
 type TextRun=string|{index:number;text:string};
@@ -191,16 +191,16 @@ export async function renderAcceptedProjectArtifacts(
   artifacts:OutputArtifact[],
   store:ArtifactStorePort=getServerArtifactStore(),
 ){
-  const champion=project.searchChampion;
-  const candidate=champion?.candidate;
-  const acceptance=champion?.artifactAcceptance;
-  if(!candidate||!acceptance||acceptance.status!=="passed"||acceptance.candidateId!==candidate.id
-    ||!hasExactFrozenArtifactSet(project,candidate,acceptance)){
-    throw new Error("Server Renderer 只允许 Gate F 已通过且冻结身份完整的 Search Champion。");
-  }
   const targets=project.sourceArtifacts.filter((source)=>source.role==="target");
   const primary=artifacts.filter((artifact)=>artifact.kind==="primary");
   if(primary.length!==targets.length)throw new Error("Primary artifact 集合未完整覆盖 Gate F Target。");
+  const champion=primary[0]?.isChampion?project.searchChampion:undefined;
+  const candidate=champion?.candidate??project.candidates.find((item)=>item.id===project.experimentRun.winnerId);
+  const acceptance=champion?.artifactAcceptance??project.artifactAcceptance;
+  if(!candidate||!acceptance||acceptance.status!=="passed"||acceptance.candidateId!==candidate.id
+    ||!hasExactFrozenArtifactSet(project,candidate,acceptance)){
+    throw new Error("Server Renderer 只允许 Gate F 已通过且冻结身份完整的 Candidate 成果包。");
+  }
   const sourceById=new Map(targets.map((source)=>[source.id,source]));
   const snapshotBySource=new Map(candidate.artifactSnapshots.map((snapshot)=>[snapshot.sourceArtifactId,snapshot]));
   const frozenBySource=new Map(acceptance.frozenArtifacts!.map((item)=>[item.sourceArtifactId,item]));
@@ -212,12 +212,6 @@ export async function renderAcceptedProjectArtifacts(
       throw new Error("Primary artifact 无法唯一绑定当前已验收 Target/Candidate。");
     }
     seen.add(sourceId);
-  }
-  const receipts:Array<{sourceArtifactId:string;artifactRef:string;sha256:string;size:number;name:string}>=[];
-  const rendered:OutputArtifact[]=[];
-  for(const artifact of artifacts){
-    if(artifact.kind!=="primary"){rendered.push(artifact);continue;}
-    const sourceId=artifact.sourceArtifactIds[0]!;
     const snapshot=snapshotBySource.get(sourceId)!;
     const frozen=frozenBySource.get(sourceId)!;
     if(snapshot.contentHash&&frozen.snapshotHash!==snapshot.contentHash){
@@ -232,6 +226,18 @@ export async function renderAcceptedProjectArtifacts(
       ||artifact.frozenArtifact.name!==frozen.name
       ||artifact.frozenArtifact.mimeType!==frozen.mimeType
     ))throw new Error("Primary artifact "+artifact.name+" 的冻结引用与 Gate F 不一致。");
+  }
+  assertDeliverablePackageIdentity({...project,outputArtifacts:artifacts});
+  const receipts:Array<{sourceArtifactId:string;artifactRef:string;sha256:string;size:number;name:string}>=[];
+  const rendered:OutputArtifact[]=[];
+  for(const artifact of artifacts){
+    if(artifact.kind!=="primary"){rendered.push(artifact);continue;}
+    const sourceId=artifact.sourceArtifactIds[0]!;
+    const snapshot=snapshotBySource.get(sourceId)!;
+    const frozen=frozenBySource.get(sourceId)!;
+    if(createHash("sha256").update(snapshot.content,"utf8").digest("hex")!==frozen.snapshotHash){
+      throw new Error("Candidate Snapshot 正文与 Gate F snapshot hash 不一致。");
+    }
     const blob=await store.get(frozen.blobId);
     if(!blob)throw new Error("找不到 Gate F 冻结 Artifact Blob "+frozen.blobId+"。");
     if(blob.size!==frozen.size)throw new Error("Gate F 冻结 Artifact Blob 大小与凭证不一致。");

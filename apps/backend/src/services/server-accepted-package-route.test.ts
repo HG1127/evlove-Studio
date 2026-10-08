@@ -1,0 +1,100 @@
+// @vitest-environment node
+import { createHash } from "node:crypto";
+import { H3 } from "nitro/h3";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { AcceptedArtifactRenderRequestSchema, type EvolveProject } from "@evolution/contracts";
+import { assertDeliverablePackageIdentity, evidenceFingerprint } from "@evolution/core";
+import render from "../../server/api/evolution/render-accepted.post";
+import download from "../../server/api/evolution/artifacts/[id].get";
+import { acceptedPackageFixture } from "@evolution/testkit";
+
+const mocks = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn(), append: vi.fn(), getBlob: vi.fn(), putBlob: vi.fn(), deleteBlob: vi.fn() }));
+vi.mock("./production-runtime", () => ({ getServerProductionRuntime: () => ({ missions: { get: mocks.get, save: mocks.save }, events: { append: mocks.append } }) }));
+vi.mock("./artifact-runtime", () => ({ getServerArtifactStore: () => ({ get: mocks.getBlob, put: mocks.putBlob, delete: mocks.deleteBlob }) }));
+vi.mock("./security-policy", () => ({ requireGovernedEvolutionPermission: vi.fn(async () => undefined) }));
+const app = new H3().post("/render-accepted", render).get("/artifacts/:id", download);
+const request = (candidateId?: string) => app.fetch(new Request("http://localhost/render-accepted", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ missionId: "mission", ...(candidateId ? { candidateId } : {}) }) }));
+function setup(withChampion = true) {
+  const args = acceptedPackageFixture(withChampion);
+  mocks.get.mockResolvedValue(args.project);
+  mocks.getBlob.mockImplementation(async (id: string) => args.blobs.get(id));
+  return args;
+}
+beforeEach(() => vi.resetAllMocks());
+describe("accepted current Candidate server package and physical download", () => {
+  it("preserves an optional explicit Candidate identity across the request boundary", () => {
+    expect(AcceptedArtifactRenderRequestSchema.parse({ missionId: "mission", candidateId: "current" })).toEqual({ missionId: "mission", candidateId: "current" });
+    expect(AcceptedArtifactRenderRequestSchema.parse({ missionId: "mission" })).toEqual({ missionId: "mission" });
+    expect(AcceptedArtifactRenderRequestSchema.safeParse({ missionId: "mission", candidateId: "" }).success).toBe(false);
+  });
+  it("rejects malformed explicit identity instead of silently selecting the Champion", async () => {
+    setup();
+    const response = await app.fetch(new Request("http://localhost/render-accepted", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ missionId: "mission", candidateId: "" }) }));
+    expect(response.status).toBe(400);
+    expect(mocks.get).not.toHaveBeenCalled();
+    expect(mocks.save).not.toHaveBeenCalled();
+    expect(mocks.append).not.toHaveBeenCalled();
+  });
+  it.each([false, true])("serves current accepted bytes without changing Champion (%s)", async (withChampion) => {
+    const args = setup(withChampion);
+    const priorState = structuredClone(args.project);
+    const response = await request(args.current.id);
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    const frozen = args.current.artifactSnapshots[0]!.frozenArtifact!;
+    expect(body).toMatchObject({ missionId: "mission", candidateId: args.current.id, renderedCount: 1, receipts: [{ artifactRef: frozen.blobId, sha256: frozen.sha256, size: frozen.size }] });
+    const saved = mocks.save.mock.calls[0]![0] as EvolveProject;
+    expect(saved.searchChampion).toEqual(priorState.searchChampion);
+    expect(saved.artifactAcceptance).toEqual(priorState.artifactAcceptance);
+    expect(saved.validationRun).toEqual(priorState.validationRun);
+    expect(saved.experimentRun).toEqual(priorState.experimentRun);
+    expect(assertDeliverablePackageIdentity(saved)).toBe(args.current.id);
+    expect(new Set(saved.outputArtifacts.map((item) => item.candidateId))).toEqual(new Set([args.current.id]));
+    expect(saved.outputArtifacts.every((item) => item.accepted && !item.isChampion)).toBe(true);
+    expect(mocks.append).toHaveBeenCalledWith(expect.objectContaining({ payload: expect.objectContaining({ candidateId: args.current.id, artifactHashes: [frozen.sha256] }) }));
+    const read = await app.fetch(new Request("http://localhost/artifacts/" + encodeURIComponent(frozen.blobId)));
+    expect(read.status).toBe(200);
+    const bytes = new Uint8Array(await read.arrayBuffer());
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe(frozen.sha256);
+    expect(mocks.putBlob).not.toHaveBeenCalled();
+    expect(mocks.deleteBlob).not.toHaveBeenCalled();
+  });
+  it("retains the Champion default while preserving a different current Candidate's evidence", async () => {
+    const args = setup();
+    const response = await request();
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ candidateId: args.prior.id });
+    const saved = mocks.save.mock.calls[0]![0] as EvolveProject;
+    expect(assertDeliverablePackageIdentity(saved)).toBe(args.prior.id);
+    expect(saved.artifactAcceptance).toEqual(args.project.artifactAcceptance);
+    expect(saved.validationRun).toEqual(args.project.validationRun);
+  });
+  it.each(["unknown", "stale", "demo", "partial", "missing-paired"])("rejects %s explicit delivery without falling back to the historical Champion", async (kind) => {
+    const args = setup();
+    if (kind === "stale") args.project.validationRun.evidenceFingerprint = "stale";
+    if (kind === "demo") args.project.validationRun.evaluation!.demoJudged = true;
+    if (kind === "partial") args.project.validationRun.runs[0]!.verificationStatus = "partial";
+    if (kind === "missing-paired") args.project.validationRun.baselineRuns = [];
+    const response = await request(kind === "unknown" ? "unknown" : args.current.id);
+    expect(response.status).toBe(409);
+    expect(mocks.save).not.toHaveBeenCalled();
+    expect(mocks.append).not.toHaveBeenCalled();
+    expect(mocks.putBlob).not.toHaveBeenCalled();
+  });
+  it.each(["missing", "changed-bytes", "changed-snapshot", "changed-snapshot-rebound"])("blocks %s after acceptance instead of recreating a download", async (kind) => {
+    const args = setup(false), snapshot = args.current.artifactSnapshots[0]!, frozen = snapshot.frozenArtifact!;
+    if (kind === "missing") args.blobs.delete(frozen.blobId);
+    if (kind === "changed-bytes") args.blobs.set(frozen.blobId, new Blob(["x".repeat(frozen.size)], { type: frozen.mimeType }));
+    if (kind.startsWith("changed-snapshot")) snapshot.content += "untested";
+    if (kind === "changed-snapshot-rebound") {
+      const binding = evidenceFingerprint(args.project, args.current);
+      args.project.validationRun.evidenceFingerprint = binding;
+      args.project.artifactAcceptance.evidenceFingerprint = binding;
+    }
+    const response = await request(args.current.id);
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(mocks.save).not.toHaveBeenCalled();
+    expect(mocks.append).not.toHaveBeenCalled();
+    expect(mocks.putBlob).not.toHaveBeenCalled();
+  });
+});

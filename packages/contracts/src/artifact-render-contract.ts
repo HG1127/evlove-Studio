@@ -2,6 +2,8 @@ import {z} from "zod";
 
 export const AcceptedArtifactRenderRequestSchema=z.object({
   missionId:z.string().min(1),
+  /** Explicitly deliver a current accepted Candidate; omission retains the Champion default. */
+  candidateId:z.string().min(1).optional(),
 });
 export type AcceptedArtifactRenderRequest=z.infer<typeof AcceptedArtifactRenderRequestSchema>;
 
