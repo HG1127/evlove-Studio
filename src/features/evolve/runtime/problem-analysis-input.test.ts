@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { demoProject } from "../data/mock-project";
 import type { EvolveProject } from "../schemas";
-import { compactProblemAnalysisInput } from "./problem-analysis-input";
+import { compactDiagnosisInput, compactProblemAnalysisInput } from "./problem-analysis-input";
 
 function oversizedInput() {
   const marker = "SCREENSHOT_BYTES_MUST_NOT_LEAK";
@@ -46,5 +46,23 @@ describe("problem-analysis input budget", () => {
   it("fails locally when even the smallest evidence summary exceeds the available budget", () => {
     const { input } = oversizedInput();
     expect(() => compactProblemAnalysisInput(input, 500)).toThrow(/输入预算/);
+  });
+});
+
+describe("diagnosis input budget", () => {
+  it("keeps the selected problem and failed-run evidence without oversized source or screenshot bytes", () => {
+    const { input, marker } = oversizedInput();
+    const problem: EvolveProject["problems"][number] = {
+      id: "navigation", title: "Navigation does not open", impact: 20, severity: "high", status: "selected",
+      summary: "User cannot navigate", evidence: ["Navigation click failed"], evidenceRefs: [],
+    };
+    const compact = compactDiagnosisInput({ ...input, problem });
+    const serialized = JSON.stringify(compact);
+    expect(serialized.length).toBeLessThanOrEqual(16_000);
+    expect(serialized).toContain("Navigation click failed");
+    expect(serialized).not.toContain(marker);
+    expect(serialized).not.toContain("STRUCTURED_BODY");
+    expect(compact.problem.id).toBe(problem.id);
+    expect(compact.baseline?.runs[0]?.testCaseId).toBe("failed");
   });
 });

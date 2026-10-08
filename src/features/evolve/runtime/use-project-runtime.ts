@@ -43,7 +43,7 @@ import { buildSearchMemory, nextExploreRatio } from "./search-memory";
 import { baselineFingerprint, baselineScoringRouteFingerprint, campaignScoringRouteBlocker, canReuseVisibleBaseline, canReusePriorDiagnosis, getVisibleBaseline, setVisibleBaseline } from "./round-cache";
 import { flagUngroundedCandidates } from "./plan-grounding";
 import { baselineRubricProblem, buildFocusedPlanPayload, focusedTask, focusedSourceContext, prioritizeProblems, limitPlanToTask } from "./focused-task";
-import { compactProblemAnalysisInput } from "./problem-analysis-input";
+import { compactDiagnosisInput, compactProblemAnalysisInput } from "./problem-analysis-input";
 import { baselineReadiness } from "./baseline-readiness";
 import { resolveEvidenceRefs } from "./evidence-provenance";
 import { acceptanceArtifacts, ensureAcceptanceRubric } from "./artifact-quality";
@@ -716,11 +716,11 @@ export function useProjectRuntime(initialProject: EvolveProject) {
   const diagnose = useCallback(async () => {
     const selected = project.problems.find((problem) => problem.id === project.selectedProblemId) ?? project.problems[0];
     if (!selected) throw new Error("请先选择一个问题");
-    const result = DiagnosisAiResultSchema.parse(await run("AI 根因诊断", async () => { reportProgress("正在对比成功 / 失败 Trace",0,1,"根因诊断","diagnose"); const output=await runProjectAi("diagnose", {
+    const result = DiagnosisAiResultSchema.parse(await run("AI 根因诊断", async () => { reportProgress("正在对比成功 / 失败 Trace",0,1,"根因诊断","diagnose"); const output=await runProjectAi("diagnose", compactDiagnosisInput({
       project: { goal: project.goal, metrics: project.metrics, protectedItems: project.protectedItems, editableItems: project.editableItems, ...sourceEvidence(project, `围绕问题 ${selected.title} 定位根因，读取相关成果片段、结构、Trace 和依赖`) },
       problem: selected,
       baseline: project.baselineRun,
-    }, (notice) => reportProgress(notice.kind === "retry"
+    }), (notice) => reportProgress(notice.kind === "retry"
       ? `连接 ${notice.model} 失败：${notice.message.slice(0, 120)}；自动重试/换下一个连接`
       : `真实连接均失败，回落内置演示引擎：${notice.message.slice(0, 120)}`, 0, 1, "根因诊断", "diagnose", notice)); reportProgress("根因诊断已完成",1,1,"根因诊断","diagnose"); return output; }));
     const diagnosis = { ...result, evidenceRefs: resolveEvidenceRefs(projectAtSearchChampion(project), result.evidence) };
@@ -1700,12 +1700,12 @@ export function useProjectRuntime(initialProject: EvolveProject) {
         if (reusePriorDiagnosis && !resumed("diagnose")) checkpointAt("diagnose");
       } else {
         phaseDone(`Round ${round} 问题分析完成 · 开始 AI 根因诊断`);
-        const diagnosisResult = DiagnosisAiResultSchema.parse(await runProjectAi("diagnose", {
+        const diagnosisResult = DiagnosisAiResultSchema.parse(await runProjectAi("diagnose", compactDiagnosisInput({
           project: { goal: working.goal, metrics: working.metrics, protectedItems: working.protectedItems, editableItems: working.editableItems, ...sourceEvidence(working, `Campaign 根因诊断：围绕 ${selectedProblem.title} 读取相关成果、依赖和 Trace`) },
           problem: selectedProblem,
           baseline: working.baselineRun,
           previousRounds: working.roundHistory.slice(-8),
-        }));
+        })));
         diagnosis = { ...diagnosisResult, evidenceRefs: resolveEvidenceRefs(projectAtSearchChampion(working), diagnosisResult.evidence) };
         working = persist({ ...working, diagnosis, stage: "diagnosis" });
         checkpointAt("diagnose");

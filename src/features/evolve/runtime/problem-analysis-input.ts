@@ -142,3 +142,26 @@ export function compactProblemAnalysisInput(input: Input, maxChars = 24_000) {
   }
   throw new Error("问题分析的证据摘要仍超过输入预算；请缩短任务说明或拆分材料，系统不会将超限请求反复发送给模型。");
 }
+/** Diagnosis needs the selected problem, but must not resend the full Source and Baseline. */
+export function compactDiagnosisInput(input: Input & { problem: EvolveProject["problems"][number] }, maxChars = 16_000) {
+  const problem = {
+    id: input.problem.id,
+    title: excerpt(input.problem.title, 180),
+    summary: excerpt(input.problem.summary, 500),
+    impact: input.problem.impact,
+    severity: input.problem.severity,
+    confidence: input.problem.confidence,
+    affectedComponent: input.problem.affectedComponent,
+    evidence: input.problem.evidence.slice(0, 8).map((item) => excerpt(item, 240)),
+    evidenceRefs: input.problem.evidenceRefs.slice(0, 8).map((ref) => ({
+      id: ref.id, kind: ref.kind, verified: ref.verified, artifactId: ref.artifactId,
+      path: ref.path, testCaseId: ref.testCaseId, traceId: ref.traceId,
+      excerpt: excerpt(ref.excerpt, 180),
+    })),
+  };
+  const problemChars = JSON.stringify({ problem }).length;
+  const evidence = compactProblemAnalysisInput(input, maxChars - problemChars);
+  const payload = { ...evidence, problem };
+  if (JSON.stringify(payload).length > maxChars) throw new Error("根因诊断输入超过证据预算");
+  return payload;
+}
