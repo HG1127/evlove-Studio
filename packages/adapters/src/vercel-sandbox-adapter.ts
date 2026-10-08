@@ -1,5 +1,5 @@
 import JSZip from "jszip";
-import { Sandbox, type NetworkPolicy, type SandboxRegion } from "@vercel/sandbox";
+import { APIError, Sandbox, Snapshot, type NetworkPolicy, type SandboxRegion } from "@vercel/sandbox";
 import {
   SandboxBrowserHealthSchema,
   SandboxHealthSchema,
@@ -259,18 +259,28 @@ function isUnavailableError(error:unknown){
 async function ensureBrowserRuntimeSnapshot(){
   if(browserSnapshotPromise)return browserSnapshotPromise;
   browserSnapshotPromise=(async()=>{
-    const base=await Sandbox.getOrCreate({
-      // Resolve the persistent session so SDK recovery replaces a missing snapshot.
-      resume:true,
+    const runtimeOptions={
+      resume:false,
       name:BROWSER_RUNTIME_NAME,
       image:UNIVERSAL_RUNTIME_IMAGE,
       timeout:10*60_000,
       resources:{vcpus:SANDBOX_DEFAULT_VCPUS},
-      networkPolicy:"deny-all",
+      networkPolicy:"deny-all" as const,
       persistent:true,
       tags:{product:"evolution-os",purpose:"browser-runtime",version:BROWSER_RUNTIME_VERSION},
-    });
-    if(base.currentSnapshotId)return base.currentSnapshotId;
+    };
+    let base=await Sandbox.getOrCreate(runtimeOptions);
+    if(base.currentSnapshotId){
+      try{
+        await Snapshot.get({snapshotId:base.currentSnapshotId});
+        return base.currentSnapshotId;
+      }catch(error){
+        if(!(error instanceof APIError&&error.response.status===404))throw error;
+        // This named cache contains only trusted runtime files, never Mission bytes.
+        await base.delete({deleteOrphanSnapshots:false});
+        base=await Sandbox.getOrCreate(runtimeOptions);
+      }
+    }
 
     await base.updateNetworkPolicy("allow-all");
     const mkdir=await base.runCommand("mkdir",["-p",".evolution/browser",".evolution/runtime"],{timeoutMs:10_000});
