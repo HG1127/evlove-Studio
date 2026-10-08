@@ -123,7 +123,7 @@ export async function runServerFrozenArtifactStaticEvidence(args: {
   if (snapshots.length !== 1) return unavailable(testCase, "Candidate 没有唯一的 Target Snapshot。");
   const snapshot = snapshots[0]!;
   const receipt = snapshot.frozenArtifact;
-  if (!receipt || receipt.name !== source.name) return unavailable(testCase, "Candidate 冻结文件缺少对应 Target 的凭证。");
+  if (!receipt || receipt.sourceArtifactId !== source.id || receipt.name !== snapshot.name) return unavailable(testCase, "Candidate 冻结文件缺少对应 Target 的凭证。");
   try {
     if (!await verifyServerCandidateFrozenArtifact(snapshot)) return unavailable(testCase, "Candidate 冻结文件与 Snapshot 或存储字节不一致。");
     const blob = await getServerArtifactStore().get(receipt.blobId);
@@ -139,7 +139,7 @@ export async function runServerFrozenArtifactStaticEvidence(args: {
     const status: TargetRunResult["verificationStatus"] = !complete || testCase.evidenceScope === "product-behavior" ? "partial" : "verified";
     return {
       testCaseId: testCase.id,
-      output: `SERVER FROZEN ARTIFACT STATIC EVIDENCE · SHA-256 ${receipt.sha256}\n${source.name} · ${extension}\n${actual.slice(0, MAX_OUTPUT_CHARS)}\n${complete ? "已读取此格式受支持的冻结文件静态文本索引。" : "文本索引超过输出预算，仅展示前段；不得视为完整证据。"}\n静态证据不能证明真实交互、公式重算或视觉保真。`,
+      output: `SERVER FROZEN ARTIFACT STATIC EVIDENCE · SHA-256 ${receipt.sha256}\n${snapshot.name} · ${extension}\n${actual.slice(0, MAX_OUTPUT_CHARS)}\n${complete ? "已读取此格式受支持的冻结文件静态文本索引。" : "文本索引超过输出预算，仅展示前段；不得视为完整证据。"}\n静态证据不能证明真实交互、公式重算或视觉保真。`,
       latencyMs: 0, cost: 0, verificationStatus: status, artifactHash: receipt.sha256,
       trace: [{ id: `server-frozen-static-${testCase.id}`, stage: "server-frozen-static", summary: "已从冻结文件字节建立静态索引", status: "pass", detail: JSON.stringify([source.id, receipt.sha256, fastHash(snapshot.content)]) }],
     };

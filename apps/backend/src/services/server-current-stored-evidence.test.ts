@@ -45,6 +45,22 @@ async function acceptChampion(project: EvolveProject, content: string) {
 beforeEach(() => { blobs.clear(); vi.stubGlobal("crypto", webcrypto); });
 
 describe("Server current-version stored evidence", () => {
+  it("reads a renamed accepted Champion's static evidence in the next current-version cycle", async () => {
+    const current = project();
+    await storeSource(current, "ORIGINAL SOURCE GUIDE");
+    await acceptChampion(current, "ACTUAL RENAMED CHAMPION GUIDE");
+    const snapshot = current.searchChampion!.candidate!.artifactSnapshots[0]!;
+    snapshot.name = snapshot.frozenArtifact!.name = "guide-evolved.md";
+    const run = await runServerCurrentStoredEvidence({ project: current, testCase: testCase("static-evidence") });
+    expect(run.verificationStatus, run.output).toBe("verified");
+    expect(run.output).toContain("guide-evolved.md");
+    expect(run.output).toContain("ACTUAL RENAMED CHAMPION GUIDE");
+    expect(run.output).not.toContain("ORIGINAL SOURCE GUIDE");
+    expect(run.artifactHash).toBe(snapshot.frozenArtifact!.sha256);
+    const context = await buildServerCurrentSemanticArtifactContext({ project: current });
+    expect(context[0]?.artifactSha256).toBe(run.artifactHash);
+  });
+
   it("builds semantic context from actual Source and Champion bytes", async () => {
     const current = project();
     await storeSource(current, "ACTUAL SOURCE GUIDE");

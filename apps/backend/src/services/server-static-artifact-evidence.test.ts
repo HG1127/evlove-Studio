@@ -50,6 +50,27 @@ beforeEach(() => {
 });
 
 describe("Server frozen Artifact static evidence", () => {
+  it.each(["md", "docx"])("extracts a legitimately renamed %s Candidate from its exact frozen bytes", async (extension) => {
+    const content = "ACTUAL RENAMED FINAL GUIDE";
+    const blob = extension === "docx" ? await ooxml("word/document.xml", '<w:t>ACTUAL RENAMED FINAL GUIDE</w:t>') : new NodeBlob([content], { type: "text/markdown" }) as Blob;
+    const variant = await candidate(extension, blob, extension === "md" ? content : "BLUEPRINT ONLY");
+    const snapshot = variant.artifactSnapshots[0]!;
+    snapshot.name = snapshot.frozenArtifact!.name = `guide-evolved.${extension}`;
+    const run = await runServerFrozenArtifactStaticEvidence({ project: project(extension), candidate: variant, testCase });
+    expect(run.verificationStatus, run.output).toBe("verified");
+    expect(run.artifactHash).toBe(snapshot.frozenArtifact!.sha256);
+    expect(run.output).toContain(snapshot.name);
+    expect(run.output).toContain(content);
+    expect(run.output).not.toContain("BLUEPRINT ONLY");
+  });
+  it.each(["name", "mimeType", "sourceArtifactId"] as const)("refuses changed frozen receipt %s before extracting bytes", async (field) => {
+    const variant = await candidate("md", new NodeBlob(["REAL FINAL GUIDE"], { type: "text/markdown" }) as Blob, "REAL FINAL GUIDE");
+    variant.artifactSnapshots[0]!.frozenArtifact![field] = "wrong-binding";
+    const run = await runServerFrozenArtifactStaticEvidence({ project: project("md"), candidate: variant, testCase });
+    expect(run.verificationStatus).toBe("unverified");
+    expect(reads.count).toBe(0);
+  });
+
   it("extracts final DOCX text from frozen bytes instead of the change blueprint", async () => {
     const blob = await ooxml("word/document.xml", '<w:document xmlns:w="w"><w:p><w:r><w:t>REAL FROZEN GUIDE TEXT</w:t></w:r></w:p></w:document>');
     const variant = await candidate("docx", blob);
