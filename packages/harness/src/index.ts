@@ -13,3 +13,5 @@ export * from "./server-holdout";
 export * from "./server-artifact-acceptance";
 export * from "./server-release-orchestration";
 export * from "./server-release-reconciliation";
+
+export * from "./server-control-capability";

@@ -13,12 +13,14 @@ import {
   serverCampaignScoringRouteBlocker,
   canReuseServerBaseline,
   buildServerHarnessPlan,
+  serverControlCapabilityWaitPlan,
   normalizeLocallyVerifiableCandidateRuns,
   reconcileAttentionRequest,
   type ServerHarnessPlan,
 } from "@evolution/harness";
 import { getServerProductionRuntime } from "../../apps/backend/src/services/production-runtime";
-import { runServerAi, serverAiScoringRouteFingerprint } from "../../apps/backend/src/services/ai-gateway";
+import { serverAiScoringRouteFingerprint } from "../../apps/backend/src/services/ai-gateway";
+import { runServerControlAi as runServerAi, ServerControlAiUnavailableError } from "../../apps/backend/src/services/server-control-ai";
 import { runServerMissionBaseline } from "../../apps/backend/src/services/server-baseline";
 import { runServerMissionExperiment } from "../../apps/backend/src/services/server-experiment";
 import { runServerMissionHoldout } from "../../apps/backend/src/services/server-holdout";
@@ -41,6 +43,7 @@ function controlJob(input:EvolutionWorkflowRunInput,args:{
   finishedAt?:string;
   progress?:{percent?:number;detail?:string};
   error?:string;
+  checkpointId?:string;
 }){
   const now=new Date().toISOString();
   return EvolutionJobSchema.parse({
@@ -55,6 +58,7 @@ function controlJob(input:EvolutionWorkflowRunInput,args:{
     attempts:1,
     priority:70,
     progress:args.progress,
+    checkpointId:args.checkpointId,
     error:args.error,
     createdAt:args.createdAt??input.requestedAt,
     startedAt:args.startedAt,
@@ -465,6 +469,34 @@ export async function executeServerControlStep(
   iteration:number,
 ):Promise<{control:"continue"|"stop";result?:EvolutionWorkflowResult;sleepMs?:number}>{
   "use step";
+  try {
+    return await executeServerControlAction(input,plan,iteration);
+  } catch (error) {
+    if (!(error instanceof ServerControlAiUnavailableError)) throw error;
+    const runtime=getServerProductionRuntime();
+    const currentJob=await runtime.jobs.get(input.controlJobId);
+    // An old Step must not reopen a cancelled, settled or replaced control generation.
+    if(!currentJob || currentJob.missionId!==input.missionId || currentJob.generation!==1
+      || ["completed","partial","failed","cancelled"].includes(currentJob.status)) {
+      return {control:"stop",result:result(input,{
+        status:"blocked",iterations:iteration+1,nextAction:plan.decision.action,
+        checkpointId:plan.checkpoint.id,reason:"控制 Job 已结束或被替换；未写入能力等待状态。",
+      })};
+    }
+    const mission=await runtime.missions.get(input.missionId);
+    if(!mission)throw new FatalError(`Mission 不存在：${input.missionId}`);
+    const waitPlan=serverControlCapabilityWaitPlan(plan,{
+      stage:mission.stage,reason:error.message,at:new Date().toISOString(),
+    });
+    return executeServerControlAction(input,waitPlan,iteration);
+  }
+}
+
+async function executeServerControlAction(
+  input:EvolutionWorkflowRunInput,
+  plan:ServerHarnessPlan,
+  iteration:number,
+):Promise<{control:"continue"|"stop";result?:EvolutionWorkflowResult;sleepMs?:number}>{
   const runtime=getServerProductionRuntime();
   const mission=await runtime.missions.get(input.missionId);
   if(!mission)throw new FatalError(`Mission 不存在：${input.missionId}`);
@@ -1312,6 +1344,7 @@ export async function executeServerControlStep(
     await runtime.jobs.put(controlJob(input,{
       status:"waiting",
       startedAt:input.requestedAt,
+      checkpointId:plan.checkpoint.id,
       progress:{percent:50,detail:`等待人工：${plan.decision.attention?.title??plan.decision.reason}`},
     }));
     await runtime.events.append(createEvolutionEvent({
