@@ -1,10 +1,11 @@
+import {missionBlobReferences} from "@evolution/core";
 import {MissionRevisionConflictError} from "@evolution/adapters";
 import type {EvolutionJob} from "@evolution/contracts";
 import { cacheLocalEvolutionEvent, listPendingLocalEvolutionEvents, markLocalEvolutionEventSynced } from "./event-contract";
 import { getLocalProject, listLocalProjects, saveLocalProject, deleteLocalProject } from "./local-store";
 import { cacheRemoteEvolutionJob, localProductionPorts } from "./local-production-adapters";
 import { getProductionRuntime, productionRuntimeMode } from "./production-runtime";
-import { flushPendingArtifactSync } from "./artifact-blob-store";
+import { flushPendingArtifactSync, queueExistingLocalArtifactUploads } from "./artifact-blob-store";
 import { flushProjectDatabase, missionSyncJournal, updateMissionSyncJournal } from "./project-database";
 
 const HTTP_POLL_BASE_DELAY_MS=3_000;
@@ -330,6 +331,9 @@ export async function initializeProductionSync(){
       pendingDeleteIds:current.pendingDeleteIds.filter((id)=>remoteIds.has(id)),
     }));
     await flushProjectDatabase();
+    // Local-mode writes predating the HTTP outbox still need their original bytes uploaded.
+    // Only the merged, non-deleted Missions' references are eligible for migration.
+    await queueExistingLocalArtifactUploads(listLocalProjects().flatMap(missionBlobReferences));
     // Seed new local Missions and replay durable deletes after a restart or outage.
     if(localToPush.length||missionSyncJournal().pendingDeleteIds.length){
       await pushLocalProjection({projects:localToPush});

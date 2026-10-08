@@ -17,6 +17,7 @@ import {
   flushPendingArtifactSync,
   getArtifactBlob,
   putArtifactBlob,
+  queueExistingLocalArtifactUploads,
 } from "./artifact-blob-store";
 
 function runtime(artifacts:ProductionRuntimePorts["artifacts"]):ProductionRuntimePorts{
@@ -82,4 +83,39 @@ describe("artifact degraded sync",()=>{
     expect(recoveredPut).toHaveBeenCalledWith("missing",expect.any(Blob));
     expect(artifactSyncStatus()).toEqual({pendingUploads:0,pendingDeletes:0});
   });
+});
+
+
+it("migrates only referenced existing local bytes after switching to HTTP, without reviving deletes",async()=>{
+  window.localStorage.clear();localBlobs.clear();
+  const source=new Blob(["original\u0000bytes"],{type:"text/html"});
+  configureProductionRuntime(runtime({put:async()=>undefined,get:async()=>undefined,delete:async()=>undefined}),"local");
+  await putArtifactBlob("source",source);
+  await putArtifactBlob("unreferenced",new Blob(["draft"]));
+  const upload=vi.fn(async()=>undefined);
+  configureProductionRuntime(runtime({put:upload,get:async()=>undefined,delete:async()=>{throw new Error("offline");}}),"http");
+  await putArtifactBlob("deleted",new Blob(["old"]));
+  await deleteArtifactBlob("deleted");
+  upload.mockClear();
+  await queueExistingLocalArtifactUploads(["source","source","missing","deleted"]);
+  expect(artifactSyncStatus()).toEqual({pendingUploads:1,pendingDeletes:1});
+  configureProductionRuntime(runtime({put:upload,get:async()=>undefined,delete:async()=>undefined}),"http");
+  await flushPendingArtifactSync();
+  expect(upload).toHaveBeenCalledTimes(1);
+  expect(upload).toHaveBeenCalledWith("source",source);
+  expect(await localBlobs.get("source")!.text()).toBe("original\u0000bytes");
+  expect(localBlobs.has("missing")).toBe(false);
+  resetProductionRuntime();window.localStorage.clear();localBlobs.clear();
+});
+
+
+it("refuses a corrupt historical content-addressed frozen file before uploading it",async()=>{
+  window.localStorage.clear();localBlobs.clear();
+  const id="verified-file:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+  localBlobs.set(id,new Blob(["tampered bytes"]));
+  const upload=vi.fn(async()=>undefined);
+  configureProductionRuntime(runtime({put:upload,get:async()=>undefined,delete:async()=>undefined}),"http");
+  await expect(queueExistingLocalArtifactUploads([id])).rejects.toThrow("Frozen Artifact bytes mismatch");
+  expect(upload).not.toHaveBeenCalled();
+  resetProductionRuntime();window.localStorage.clear();localBlobs.clear();
 });

@@ -111,6 +111,27 @@ export async function deleteArtifactBlob(id:string){
   }
 }
 
+/** Seed the outbox when a historical local Mission first connects to the server. */
+export async function queueExistingLocalArtifactUploads(ids: string[]) {
+  if(productionRuntimeMode()==="local")return;
+  const deleted=readPending(PENDING_DELETES_KEY);
+  const uploads=readPending(PENDING_UPLOADS_KEY);
+  for(const id of new Set(ids)) {
+    if(deleted.has(id)||uploads.has(id))continue;
+    // Missing bytes must be restored by the operator, never rebuilt from parsed text.
+    const blob=await getLocalArtifactBlob(id);
+    if(!blob)continue;
+    const addressed=/^verified-file:([a-f0-9]{64})$/.exec(id);
+    if(addressed){
+      const digest=await crypto.subtle.digest("SHA-256",await blob.arrayBuffer());
+      const actual=[...new Uint8Array(digest)].map(value=>value.toString(16).padStart(2,"0")).join("");
+      if(actual!==addressed[1])throw new Error(`Frozen Artifact bytes mismatch: ${id}`);
+    }
+    uploads.add(id);
+  }
+  writePending(PENDING_UPLOADS_KEY,uploads);
+}
+
 export async function flushPendingArtifactSync(){
   if(productionRuntimeMode()==="local")return artifactSyncStatus();
   const remote=getProductionRuntime().artifacts;

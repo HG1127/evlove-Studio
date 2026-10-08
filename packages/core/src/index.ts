@@ -40,3 +40,5 @@ export * from "./outcome-statistics";
 export * from "./learning-governance";
 
 export * from "./hidden-validation-evidence";
+
+export * from "./mission-blob-references";
