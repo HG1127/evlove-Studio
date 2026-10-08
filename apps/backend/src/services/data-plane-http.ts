@@ -50,23 +50,56 @@ function safeError(args:{
   });
 }
 
+const READ_RETRY_DELAYS_MS=[200,800];
+const MAX_READ_RETRY_DELAY_MS=2000;
+
+async function pauseReadRetry(delayMs:number,signal?:AbortSignal|null){
+  if(signal?.aborted)return false;
+  return new Promise<boolean>((resolve)=>{
+    const finish=(retry:boolean)=>{clearTimeout(timer);signal?.removeEventListener("abort",abort);resolve(retry);};
+    const abort=()=>finish(false);
+    const timer=setTimeout(()=>finish(true),delayMs);
+    signal?.addEventListener("abort",abort,{once:true});
+  });
+}
+
+function readRetryDelay(response:Response|undefined,attempt:number){
+  const fallback=READ_RETRY_DELAYS_MS[attempt];
+  if(fallback===undefined)return undefined;
+  const raw=response?.headers.get("retry-after");
+  if(!raw)return fallback;
+  const seconds=Number(raw);
+  const requested=Number.isFinite(seconds)&&seconds>=0?seconds*1000:Date.parse(raw)-Date.now();
+  if(!Number.isFinite(requested))return fallback;
+  if(requested>MAX_READ_RETRY_DELAY_MS)return undefined;
+  return Math.max(fallback,requested,0);
+}
+
 export async function dataPlaneFetch(
   service:string,
   input:string|URL|Request,
   init:RequestInit={},
 ):Promise<Response>{
-  let response:Response;
-  try{
-    response=await fetch(input,init);
-  }catch{
-    throw safeError({service,reason:"network-error"});
+  const request=input instanceof Request?input:undefined;
+  const method=(init.method??request?.method??"GET").toUpperCase();
+  const canRetry=(method==="GET"||method==="HEAD")&&init.body==null&&request?.body==null;
+  const signal=init.signal??request?.signal;
+  for(let attempt=0;;attempt++){
+    if(signal?.aborted)throw safeError({service,reason:"network-error"});
+    let response:Response|undefined;
+    let reason:DataPlaneUpstreamReason="network-error";
+    try{response=await fetch(input,init);}
+    catch{reason="network-error";}
+    if(response?.ok)return response;
+    if(response){
+      const detail=await response.text().catch(()=>"");
+      reason=classifyDataPlaneUpstreamFailure(response.status,detail);
+    }
+    const retryable=reason!=="schema-unavailable"&&(
+      !response||[408,425,429,500,502,503,504].includes(response.status)
+    );
+    const delay=canRetry&&retryable?readRetryDelay(response,attempt):undefined;
+    if(delay!==undefined&&await pauseReadRetry(delay,signal))continue;
+    throw safeError({service,reason,upstreamStatus:response?.status});
   }
-  if(response.ok)return response;
-
-  const detail=await response.text().catch(()=>"");
-  throw safeError({
-    service,
-    upstreamStatus:response.status,
-    reason:classifyDataPlaneUpstreamFailure(response.status,detail),
-  });
 }
