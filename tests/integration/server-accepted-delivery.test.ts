@@ -41,4 +41,26 @@ describe("frontend ZIP delivery of explicitly accepted server Candidate", () => 
     expect(mocks.putBlob).not.toHaveBeenCalled();
     expect(mocks.deleteBlob).not.toHaveBeenCalled();
   });
+  it.each(["manifest", "acceptance-report", "scorecard"] as const)("blocks changed %s JSON contents before any frontend download read", async (kind) => {
+    const args = acceptedPackageFixture(true);
+    mocks.get.mockResolvedValue(args.project);
+    mocks.getBlob.mockImplementation(async (id: string) => args.blobs.get(id));
+    const response = await app.fetch(new Request("http://localhost/render-accepted", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ missionId: args.project.id, candidateId: args.current.id }) }));
+    expect(response.status).toBe(200);
+    const project = mocks.save.mock.calls[0]![0] as EvolveProject;
+    const primary = structuredClone(project.outputArtifacts.find((item) => item.kind === "primary"));
+    const item = project.outputArtifacts.find((artifact) => artifact.kind === kind)!;
+    const data = JSON.parse(item.content) as Record<string, unknown>;
+    if (kind === "manifest") data.acceptanceId = "old-acceptance";
+    if (kind === "acceptance-report") data.candidateId = "old-candidate";
+    if (kind === "scorecard") data.accuracy = 1;
+    item.content = JSON.stringify(data);
+    mocks.getBlob.mockClear();
+    await expect(buildDeliverableZip(project)).rejects.toThrow();
+    expect(project.outputArtifacts.find((artifact) => artifact.kind === "primary")).toEqual(primary);
+    expect(mocks.getBlob).not.toHaveBeenCalled();
+    expect(mocks.putBlob).not.toHaveBeenCalled();
+    expect(mocks.deleteBlob).not.toHaveBeenCalled();
+  });
+
 });

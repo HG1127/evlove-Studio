@@ -8,6 +8,7 @@ import { deliveryReadiness } from "./delivery-readiness";
 import { hasExactFrozenArtifactSet } from "./artifact-identity";
 import { evidenceFingerprint } from "./evidence-binding";
 import { hasAuthoritativeHiddenRelease } from "./hidden-validation-evidence";
+import { assertPackageEvidenceContents, requirementCoverageContent } from "./artifact-package-evidence";
 
 export function acceptanceArtifacts(
   project:EvolveProject,
@@ -71,10 +72,7 @@ export function acceptanceArtifacts(
     name:"REQUIREMENT_COVERAGE.md",
     mimeType:"text/markdown",
     kind:"requirement-matrix",
-    content:`# Requirement Coverage\n\n${project.acceptanceRubric.map((criterion)=>{
-      const result=acceptance.results.find((item)=>item.criterionId===criterion.id);
-      return `- ${result?.pass?"✅":"❌"} **${criterion.id} · ${criterion.title}** — ${result?.score??0}/100${criterion.hardGate?" · HARD GATE":""}\n  - Requirement: ${criterion.requirement}\n  - Evidence: ${(result?.evidence??[]).join("；")||"无"}\n  - Gaps: ${(result?.gaps??[]).join("；")||"无"}`;
-    }).join("\n")}`,
+    content:requirementCoverageContent(project,acceptance),
     description:"用户原始进化要求到最终成果的逐项覆盖矩阵。",
     sourceArtifactIds:[],
     isChampion:true,
@@ -251,17 +249,6 @@ export function assertDeliverablePackageIdentity(project:EvolveProject):string{
   })){
     throw new Error("成果包主文件与当前 Candidate 的冻结 Artifact 不一致；请重新生成成果包");
   }
-  const manifests=artifacts.filter((item)=>item.kind==="manifest");
-  let manifestCandidateId:unknown;
-  try {
-    const parsed=JSON.parse(manifests[0]?.content??"") as {
-      candidateId?:unknown;
-      searchChampion?:{candidate?:{id?:unknown}};
-    };
-    manifestCandidateId=primary[0]!.isChampion?parsed.searchChampion?.candidate?.id:parsed.candidateId;
-  } catch { /* A malformed or missing manifest is not deliverable. */ }
-  if(manifests.length!==1||manifestCandidateId!==candidateId){
-    throw new Error("成果包清单与当前 Candidate 身份不一致；请重新生成成果包");
-  }
+  assertPackageEvidenceContents({project,artifacts,candidate,champion,acceptance,validation});
   return candidateId;
 }
