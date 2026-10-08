@@ -8,7 +8,7 @@ export default defineConfig({
       "@evolution/contracts": path.resolve(__dirname, "./packages/contracts/src/index.ts"),
       "@evolution/core": path.resolve(__dirname, "./packages/core/src/index.ts"),
       "@evolution/harness": path.resolve(__dirname, "./packages/harness/src/index.ts"),
-      "@evolution/adapters/sandbox": path.resolve(__dirname, "./packages/adapters/src/vercel-sandbox-adapter.ts"),
+      "@evolution/adapters/sandbox": path.resolve(__dirname, "./packages/adapters/src/sandbox.ts"),
       "@evolution/adapters": path.resolve(__dirname, "./packages/adapters/src/index.ts"),
       "@evolution/ui": path.resolve(__dirname, "./packages/ui/src/index.ts"),
       "@evolution/testkit": path.resolve(__dirname, "./packages/testkit/src/index.ts"),

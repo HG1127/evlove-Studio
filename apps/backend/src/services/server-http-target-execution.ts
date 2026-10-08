@@ -28,7 +28,7 @@ function targetArtifacts(project:EvolveProject){
 
 type TargetArtifact=EvolveProject["sourceArtifacts"][number];
 
-function targetForTest(project:EvolveProject,testCase:TestCase):TargetArtifact|undefined{
+export function resolveServerTestTargetArtifact(project:EvolveProject,testCase:TestCase):TargetArtifact|undefined{
   const targets=targetArtifacts(project);
   if(!targets.length)return undefined;
   const criteria=new Set(testCase.criterionIds);
@@ -37,7 +37,7 @@ function targetForTest(project:EvolveProject,testCase:TestCase):TargetArtifact|u
     .flatMap((criterion)=>criterion.artifactIds));
   const selected=scopedIds.size?targets.filter((artifact)=>scopedIds.has(artifact.id)):targets;
   if(selected.length!==1){
-    throw new Error(`HTTP Test Case ${testCase.id} 没有唯一的 Target Artifact 绑定，不能选用首个 Source。`);
+    throw new Error(`Test Case ${testCase.id} 没有唯一的 Target Artifact 绑定，不能选用首个 Source。`);
   }
   return selected[0];
 }
@@ -193,7 +193,7 @@ export async function runServerHttpTargetBatch(
   const results=await Promise.all(testCases.map(async(testCase):Promise<TargetRunResult>=>{
     let binding:TargetBinding;
     try{
-      const target=targetForTest(project,testCase);
+      const target=resolveServerTestTargetArtifact(project,testCase);
       const key=target?.id??"no-target";
       let pending=bindings.get(key);
       if(!pending){

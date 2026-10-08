@@ -1,3 +1,4 @@
+import {runServerHtmlArtifactBatch,serverHtmlArtifactTargetEnabled} from "./server-html-artifact-execution";
 import type { EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
 import { runVercelSandboxCodebaseValidation } from "@evolution/adapters/sandbox";
 import { runServerBaseline, trustedServerBaselineChampion } from "@evolution/harness";
@@ -74,6 +75,7 @@ function unavailableExternal(testCase: TestCase, detail: string): TargetRunResul
 export async function executeServerBaselineExternal(current:EvolveProject,testCases:TestCase[]){
   if(serverConnectorTargetEnabled(current))return runServerConnectorTargetBatch(current,testCases);
   if (serverHttpTargetEnabled(current)) return runServerHttpTargetBatch(current, testCases);
+  if(serverHtmlArtifactTargetEnabled(current))return runServerHtmlArtifactBatch(current,testCases);
   const binding = resolveServerBaselineCodebaseBinding(current);
   if (!binding.source || !binding.blobId) {
     return testCases.map((testCase) => unavailableExternal(

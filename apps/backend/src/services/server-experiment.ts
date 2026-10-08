@@ -1,3 +1,4 @@
+import {runServerHtmlArtifactBatch,serverHtmlArtifactTargetEnabled} from "./server-html-artifact-execution";
 import type { Candidate, EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
 import { runVercelSandboxCodebaseValidation } from "@evolution/adapters/sandbox";
 import { runServerExperiment } from "@evolution/harness";
@@ -51,6 +52,7 @@ function unavailableExternal(testCase: TestCase, detail: string): TargetRunResul
 async function executeServerCandidateExternal(project: EvolveProject, candidate: Candidate, testCases: TestCase[]) {
   if(serverConnectorTargetEnabled(project))return runServerConnectorTargetBatch(project,testCases,candidate);
   if (serverHttpTargetEnabled(project)) return runServerHttpTargetBatch(project, testCases, candidate);
+  if(serverHtmlArtifactTargetEnabled(project))return runServerHtmlArtifactBatch(project,testCases,candidate);
   const source = codebaseTarget(project);
   if (!source) return testCases.map((testCase) => unavailableExternal(testCase, "当前 Server External Runner 仅支持 codebase/package ZIP Target。"));
   const snapshots = candidate.artifactSnapshots.filter((item) => item.sourceArtifactId === source.id);

@@ -25,3 +25,4 @@ export * from "./artifact-contract";
 export * from "./read-query-contract";
 
 export * from "./text-edit-contract";
+export * from "./html-execution-contract";

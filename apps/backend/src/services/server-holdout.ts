@@ -1,3 +1,4 @@
+import {runServerHtmlArtifactBatch,serverHtmlArtifactTargetEnabled} from "./server-html-artifact-execution";
 import type { Candidate, EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
 import { runVercelSandboxCodebaseValidation } from "@evolution/adapters/sandbox";
 import { runServerHoldout } from "@evolution/harness";
@@ -32,6 +33,7 @@ function codebaseTarget(project:EvolveProject){
 async function executeCurrentExternal(project:EvolveProject,testCases:TestCase[]){
   if(serverConnectorTargetEnabled(project))return runServerConnectorTargetBatch(project,testCases);
   if(serverHttpTargetEnabled(project))return runServerHttpTargetBatch(project,testCases);
+  if(serverHtmlArtifactTargetEnabled(project))return runServerHtmlArtifactBatch(project,testCases);
   const binding=resolveServerBaselineCodebaseBinding(project);
   if(!binding.source||!binding.blobId)return testCases.map((testCase)=>unavailable(testCase,binding.reason??"当前版本 External Runner 尚未连接。"));
   try{
@@ -60,6 +62,7 @@ async function executeCurrentExternal(project:EvolveProject,testCases:TestCase[]
 async function executeCandidateExternal(project:EvolveProject,candidate:Candidate,testCases:TestCase[]){
   if(serverConnectorTargetEnabled(project))return runServerConnectorTargetBatch(project,testCases,candidate);
   if(serverHttpTargetEnabled(project))return runServerHttpTargetBatch(project,testCases,candidate);
+  if(serverHtmlArtifactTargetEnabled(project))return runServerHtmlArtifactBatch(project,testCases,candidate);
   const source=codebaseTarget(project);
   if(!source)return testCases.map((testCase)=>unavailable(testCase,"Candidate External Runner 当前仅支持 codebase/package ZIP Target。"));
   const snapshots=candidate.artifactSnapshots.filter((item)=>item.sourceArtifactId===source.id);
