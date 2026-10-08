@@ -8,11 +8,12 @@ import {
   type SourceArtifact,
 } from "@evolution/contracts";
 import { trustedServerBaselineChampion } from "@evolution/harness";
+import { applyExactEdits } from "@evolution/core";
+import { buildServerCandidateTargetContext, isServerTextEditBlueprint, SERVER_TEXT_FAMILY as TEXT_FAMILY } from "./server-candidate-context";
 import { runServerAi } from "./ai-gateway";
 import { getServerArtifactStore } from "./artifact-runtime";
 import { renderSnapshot, verifyRendered } from "./server-artifact-renderer";
 
-const TEXT_FAMILY = /^(txt|md|markdown|mdx|csv|tsv|json|yaml|yml|css|js|jsx|ts|tsx|html|htm|xml|svg)$/i;
 type CodebaseOverlay = { files: Array<{ path: string; content: string }>; deletions: string[] };
 
 function safeArchivePath(path: string) {
@@ -73,58 +74,6 @@ async function sha256Text(text: string) {
   return serverArtifactSha256(new TextEncoder().encode(text));
 }
 
-function compactStructured(artifact: SourceArtifact, candidate: Candidate) {
-  const data = artifact.structuredContent as Record<string, unknown> | undefined;
-  if (!data) return undefined;
-  const query = [
-    ...(candidate.designRationale?.sourceEvidence ?? []),
-    ...candidate.patches.map((patch) => `${patch.target} ${patch.rationale}`),
-  ].join(" ").toLowerCase();
-  const entries = Array.isArray(data.entries) ? data.entries as Array<Record<string, unknown>> : [];
-  const ranked = entries.map((entry) => {
-    const path = String(entry.path ?? "");
-    const content = String(entry.content ?? "");
-    const haystack = `${path}\n${content}`.toLowerCase();
-    const score = query.split(/\s+/).filter((token) => token.length >= 3 && haystack.includes(token)).length;
-    return { path, content: content.slice(0, 5000), score };
-  }).filter((entry) => entry.path || entry.content)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 18);
-  return {
-    kind: data.kind,
-    manifest: Array.isArray(data.manifest) ? data.manifest.slice(0, 240) : artifact.structure.slice(0, 240),
-    relevantEntries: ranked,
-  };
-}
-
-function currentTargetContext(project: EvolveProject, candidate: Candidate) {
-  const champion = trustedServerBaselineChampion(project);
-  const championBySource = new Map((champion?.artifactSnapshots ?? []).map((snapshot) => [snapshot.sourceArtifactId, snapshot]));
-  let remaining = 72_000;
-  return project.sourceArtifacts.filter((artifact) => artifact.role === "target").map((artifact) => {
-    const parent = championBySource.get(artifact.id);
-    const source = parent?.content || artifact.textContent || artifact.textExcerpt || "";
-    const allowance = Math.max(0, Math.min(22_000, remaining));
-    const content = source.slice(0, allowance);
-    remaining = Math.max(0, remaining - content.length);
-    return {
-      id: artifact.id,
-      name: artifact.name,
-      mimeType: artifact.mimeType,
-      extension: artifact.extension,
-      artifactKind: artifact.artifactKind,
-      descriptor: artifact.artifactDescriptor,
-      structure: artifact.structure.slice(0, 120),
-      currentVersion: parent ? (project.searchChampion?.versionLabel ?? champion?.id) : project.version,
-      currentSnapshotHash: parent?.contentHash,
-      content,
-      originalChars: source.length,
-      truncated: content.length < source.length,
-      structuredContext: compactStructured(artifact, candidate),
-    };
-  });
-}
-
 function currentParentSnapshot(project: EvolveProject, sourceArtifactId: string) {
   const matches=trustedServerBaselineChampion(project)?.artifactSnapshots.filter((snapshot)=>snapshot.sourceArtifactId===sourceArtifactId)??[];
   return matches.length===1?matches[0]:undefined;
@@ -168,6 +117,23 @@ async function currentBaseBlob(project: EvolveProject, source: SourceArtifact) {
   if (binding.size !== undefined && blob.size !== binding.size) throw new Error("Search Champion Artifact 大小校验失败。");
   if (binding.sha256 && await serverArtifactSha256(await blob.arrayBuffer()) !== binding.sha256) throw new Error("Search Champion Artifact SHA-256 校验失败。");
   return blob;
+}
+
+/** Decode the actual current text file; parsed upload indexes cannot be a mutation base. */
+async function readCurrentText(project: EvolveProject, source: SourceArtifact) {
+  const parent = currentParentSnapshot(project, source.id);
+  if (project.searchChampion && !parent) throw new Error(`当前 Search Champion 缺少 ${source.name} 的唯一可信父代。`);
+  if (!parent && source.inputMode === "paste" && !source.storageRef?.trim()) {
+    if (source.textContent === undefined) throw new Error(`${source.name} 缺少完整粘贴正文。`);
+    return source.textContent;
+  }
+  if (parent && !await verifyServerCandidateFrozenArtifact(parent)) throw new Error(`${source.name} 的父代冻结文件与 Snapshot 身份不一致。`);
+  const blob = await currentBaseBlob(project, source);
+  if (!parent && blob.size !== source.size) throw new Error(`${source.name} 的原文件大小与 Source 不一致。`);
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  if (await sha256Text(text) !== await serverArtifactSha256(bytes)) throw new Error(`${source.name} 不能逐字节还原为 UTF-8 文本。`);
+  return text;
 }
 
 async function persistFrozenArtifact(
@@ -333,7 +299,12 @@ export async function materializeServerCandidateArtifacts(
       ||source.artifactDescriptor?.family==="codebase"
       ||source.artifactDescriptor?.family==="package";
     const parent=currentParentSnapshot(project,source.id);
-    const snapshotContent=code?composeServerCodebaseOverlay(parent?.content,artifact.content):artifact.content;
+    let parentText=parent?.content??source.textContent??"";
+    let snapshotContent=code?composeServerCodebaseOverlay(parent?.content,artifact.content):artifact.content;
+    if (!code && TEXT_FAMILY.test(source.extension) && isServerTextEditBlueprint(artifact.content)) {
+      parentText=await readCurrentText(project,source);
+      snapshotContent=applyExactEdits(parentText,artifact.content,{strict:true});
+    }
     const snapshot:CandidateArtifactSnapshot={
       id:`server-candidate-${candidate.id}-${source.id}-${index}`,
       sourceArtifactId:source.id,
@@ -345,8 +316,7 @@ export async function materializeServerCandidateArtifacts(
       notes:[...(artifact.notes??[]),"Durable Workflow Server Materializer：实际文件已物化并冻结。"],
       createdAt:new Date().toISOString(),
     };
-    const parentText=parent?.content??source.textContent??"";
-    if(!code&&artifact.content.trim()===parentText.trim()){
+    if(!code&&snapshotContent.trim()===parentText.trim()){
       throw new Error(`${source.name} Candidate 与当前父代完全相同，没有产生可验证变异。`);
     }
     snapshots.push(await materializeSnapshot(project,source,snapshot,artifact.content));
@@ -362,6 +332,7 @@ export async function materializeServerCandidateArtifacts(
 export async function buildServerExperimentCandidate(project: EvolveProject, candidate: Candidate): Promise<Candidate> {
   const targets = project.sourceArtifacts.filter((artifact) => artifact.role === "target");
   if (!targets.length) throw new Error("Mission 没有 Target Source Artifact。");
+  const contexts = await buildServerCandidateTargetContext(project, candidate, (source) => readCurrentText(project, source));
   const response = await runServerAi("build-candidate", {
     project: {
       name: project.name,
@@ -371,7 +342,7 @@ export async function buildServerExperimentCandidate(project: EvolveProject, can
       protectedItems: project.protectedItems,
       editableItems: project.editableItems,
       acceptanceRubric: project.acceptanceRubric,
-      currentTargets: currentTargetContext(project, candidate),
+      currentTargets: contexts,
       currentParent: project.searchChampion ? {
         id: project.searchChampion.id,
         versionLabel: project.searchChampion.versionLabel,
@@ -387,7 +358,13 @@ export async function buildServerExperimentCandidate(project: EvolveProject, can
       risks: candidate.risks,
       designRationale: candidate.designRationale,
     },
-    outputInstruction: "Return exactly one artifact for every currentTargets item. For text/html/md/json return the COMPLETE evolved file. For codebase/package return content as JSON {kind:'codebase',overlay:true,files:[{path,content}],deletions:[path]} with actual changed/deleted files only; never return prose or fake test results. sourceArtifactId must exactly match currentTargets.id.",
+    outputInstruction: "Return exactly one artifact for every currentTargets item. For a text target with mutationMode text-edits, return content as JSON {kind:'text-edits',edits:[{before,after,start?,end?}]}. Copy before verbatim from the provided current source chunks, without chunk markers or ellipses; offsets are zero-based and end is exclusive. The server applies those edits to the complete current file and preserves every untouched byte. Never regenerate a whole file from truncated context. For other text/html/md/json targets return the COMPLETE evolved file. For codebase/package return content as JSON {kind:'codebase',overlay:true,files:[{path,content}],deletions:[path]} with actual changed/deleted files only; never return prose or fake test results. sourceArtifactId must exactly match currentTargets.id.",
   });
+  for (const context of contexts) {
+    const output = response.artifacts.find((artifact) => artifact.sourceArtifactId === context.id);
+    if (context.mutationMode === "text-edits" && output && !isServerTextEditBlueprint(output.content)) {
+      throw new Error(`${context.name} 的 AI 上下文只是原文件片段，必须返回 text-edits；禁止用片段重写完整成果。`);
+    }
+  }
   return materializeServerCandidateArtifacts(project,candidate,response.artifacts,response.summary);
 }

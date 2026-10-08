@@ -42,3 +42,5 @@ export * from "./learning-governance";
 export * from "./hidden-validation-evidence";
 
 export * from "./mission-blob-references";
+
+export * from "./exact-edits";

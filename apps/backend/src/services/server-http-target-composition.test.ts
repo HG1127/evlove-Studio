@@ -1,8 +1,12 @@
 // @vitest-environment node
 import {afterEach,describe,expect,it,vi} from "vitest";
 import {createHash} from "node:crypto";
+import {Blob as NodeBlob} from "node:buffer";
 import type {EvolveProject,TestCase} from "@evolution/contracts";
 import {executeServerBaselineExternal} from "./server-baseline";
+
+const {getBlob}=vi.hoisted(()=>({getBlob:vi.fn()}));
+vi.mock("./artifact-runtime",()=>({getServerArtifactStore:()=>({get:getBlob})}));
 
 const previousRunUrl=process.env.EVOLUTION_TARGET_RUN_URL;
 const previousToken=process.env.EVOLUTION_TARGET_BEARER_TOKEN;
@@ -20,13 +24,14 @@ describe("server campaign HTTP Target composition",()=>{
     process.env.EVOLUTION_TARGET_RUN_URL="https://runner.internal/run";
     process.env.EVOLUTION_TARGET_BEARER_TOKEN="server-secret";
     const html="<html><body>LIVE TARGET</body></html>";
+    getBlob.mockReset().mockResolvedValue(new NodeBlob([html],{type:"text/html"}));
     const expectedHash=createHash("sha256").update(html).digest("hex");
     const project={
       id:"http-baseline",
       targetConnection:{adapter:"http",connectionId:"prod-runner",status:"connected",label:"HTTP Target"},
       sourceArtifacts:[{
         id:"html",name:"index.html",role:"target",artifactKind:"document",mimeType:"text/html",size:html.length,extension:"html",
-        inputMode:"upload",parseStatus:"ready",textContent:html,textExcerpt:html,structure:[],warnings:[],createdAt:"2026-09-22T00:00:00.000Z",
+        inputMode:"upload",parseStatus:"ready",textContent:"STALE PARSED INDEX",textExcerpt:"STALE PARSED INDEX",structure:[],warnings:[],createdAt:"2026-09-22T00:00:00.000Z",
       }],
     } as unknown as EvolveProject;
     const testCase={
@@ -51,5 +56,6 @@ describe("server campaign HTTP Target composition",()=>{
     expect(result?.verificationStatus).toBe("verified");
     expect(result?.output).toBe("remote verified");
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(getBlob).toHaveBeenCalledWith("html");
   });
 });
