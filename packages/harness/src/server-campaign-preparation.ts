@@ -16,6 +16,8 @@ import {
   resolveEvidenceRefs,
 } from "@evolution/core";
 
+import { retrieveTextContext } from "./context-retrieval";
+
 export type ServerCampaignAiPort = {
   problemAnalysis(payload: unknown): Promise<ProblemAnalysisAiResult>;
   diagnose(payload: unknown): Promise<DiagnosisAiResult>;
@@ -70,6 +72,17 @@ function compactBaseline(project: EvolveProject) {
 }
 
 function compactCampaignArtifacts(project: EvolveProject) {
+  const problem = project.problems.find((item) => item.id === project.selectedProblemId) ?? project.problems[0];
+  // Put specific evidence before general goals: retrieval limits query tokens as well as output.
+  const query = [
+    ...(problem?.evidence ?? []),
+    ...(project.diagnosis?.evidence ?? []),
+    problem?.title, problem?.summary, problem?.rootCause,
+    project.diagnosis?.rootCause, project.diagnosis?.summary,
+    ...(project.baselineRun.result?.failures ?? []),
+    project.goal, project.evolutionCommand,
+    ...project.acceptanceRubric.map((criterion) => criterion.requirement),
+  ].filter(Boolean).join("\n");
   const championBySource = new Map((project.searchChampion?.candidate?.artifactSnapshots ?? []).map((snapshot) => [snapshot.sourceArtifactId, snapshot]));
   const ordered = [...project.sourceArtifacts].sort((a, b) => Number(b.role === "target") - Number(a.role === "target"));
   let remaining = 48_000;
@@ -77,7 +90,7 @@ function compactCampaignArtifacts(project: EvolveProject) {
     const champion = championBySource.get(artifact.id);
     const full = champion?.content || artifact.textContent || artifact.textExcerpt || "";
     const allowance = Math.max(0, Math.min(10_000, remaining));
-    const content = full.slice(0, allowance);
+    const content = retrieveTextContext(full, query, { maxChars: allowance, maxChunks: 4 });
     remaining = Math.max(0, remaining - content.length);
     return {
       id: artifact.id,
@@ -88,6 +101,7 @@ function compactCampaignArtifacts(project: EvolveProject) {
       content,
       contentSource: champion ? `search-champion:${project.searchChampion?.versionLabel ?? project.searchChampion?.id}` : "source",
       originalChars: full.length,
+      truncated: content !== full,
     };
   });
 }

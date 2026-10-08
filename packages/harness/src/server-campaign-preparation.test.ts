@@ -33,6 +33,108 @@ function fixture(): EvolveProject {
 }
 
 describe("server campaign preparation",()=>{
+  it("shows the selected diagnosis source late in a large file to the Plan model",async()=>{
+    const project=fixture();
+    const quote="退款审批 REFUND_APPROVAL_CASE 必须由主管批准并保留流水编号。";
+    const source="/* irrelevant presentation styles */\n".repeat(3000)+quote+"\n"+"unrelated appendix\n".repeat(3000);
+    project.sourceArtifacts[0]!.textContent=source;
+    project.problems=[{id:"P",title:"退款审批缺口",impact:90,severity:"high",status:"recommended",summary:"缺少审批流水",rootCause:"没有审批编号",evidence:[quote],evidenceRefs:[],confidence:0.9,affectedComponent:"source"}];
+    project.selectedProblemId="P";
+    project.diagnosis={problemId:"P",rootCause:"退款审批编号缺失",summary:"补齐审批流水",affectedComponent:"source",confidence:0.9,evidence:[quote],evidenceRefs:[],counterEvidence:[],falsifier:"编号仍缺失",suggestedScopes:["code"],trace:[]};
+    project.campaign.checkpoint={round:1,completedPhase:"diagnose",at:project.updatedAt};
+    let called=false;
+    const outcome=await advanceServerCampaignPreparation(project,{
+      problemAnalysis:async()=>{throw new Error("completed phase");},
+      diagnose:async()=>{throw new Error("completed phase");},
+      plan:async(payload)=>{
+        called=true;
+        const request=payload as {project:{sourceArtifacts:Array<{content:string;originalChars:number;truncated:boolean}>}};
+        expect(request.project.sourceArtifacts[0]!.content).toContain(quote);
+        expect(request.project.sourceArtifacts[0]!.content.length).toBeLessThanOrEqual(10000);
+        expect(request.project.sourceArtifacts[0]).toMatchObject({originalChars:source.length,truncated:true});
+        return {candidates:[],recommendedCandidateIds:[],summary:"source context checked",experimentDesign:[]};
+      },
+    });
+    expect(called).toBe(true);
+    expect(outcome.phase).toBe("plan");
+    expect(project.sourceArtifacts[0]!.textContent).toBe(source);
+  });
+
+  it("keeps complete small files unchanged in planning context",async()=>{
+    const project=fixture();
+    project.diagnosis={problemId:"P",rootCause:"缺少闭环",summary:"补齐闭环",affectedComponent:"source",confidence:0.9,evidence:["流程缺口"],evidenceRefs:[],counterEvidence:[],falsifier:"仍有缺口",suggestedScopes:["code"],trace:[]};
+    const original=project.sourceArtifacts[0]!.textContent!;
+    project.campaign.checkpoint={round:1,completedPhase:"diagnose",at:project.updatedAt};
+    const never=async()=>{throw new Error("completed phase");};
+    let called=false;
+    await advanceServerCampaignPreparation(project,{
+      problemAnalysis:never,diagnose:never,
+      plan:async(payload)=>{
+        called=true;
+        const request=payload as {project:{sourceArtifacts:Array<{content:string;truncated:boolean;originalChars:number}>}};
+        expect(request.project.sourceArtifacts[0]).toMatchObject({content:original,truncated:false,originalChars:original.length});
+        return {candidates:[],recommendedCandidateIds:[],summary:"checked",experimentDesign:[]};
+      },
+    });
+    expect(called).toBe(true);
+    expect(project.sourceArtifacts[0]!.textContent).toBe(original);
+  });
+
+  it("retains Target priority, file-count and aggregate context limits",async()=>{
+    const project=fixture();
+    project.diagnosis={problemId:"P",rootCause:"缺少闭环",summary:"补齐闭环",affectedComponent:"source",confidence:0.9,evidence:["流程缺口"],evidenceRefs:[],counterEvidence:[],falsifier:"仍有缺口",suggestedScopes:["code"],trace:[]};
+    const artifact=project.sourceArtifacts[0]!;
+    project.sourceArtifacts=Array.from({length:14},(_,index)=>({
+      ...artifact,id:"source-"+index,role:index===0?"reference" as const:"target" as const,
+      textContent:("unrelated content "+index+"\n").repeat(5000),
+    }));
+    const originals=project.sourceArtifacts.map((source)=>source.textContent);
+    project.campaign.checkpoint={round:1,completedPhase:"diagnose",at:project.updatedAt};
+    const never=async()=>{throw new Error("completed phase");};
+    let called=false;
+    await advanceServerCampaignPreparation(project,{
+      problemAnalysis:never,diagnose:never,
+      plan:async(payload)=>{
+        called=true;
+        const request=payload as {project:{sourceArtifacts:Array<{id:string;role:string;content:string;truncated:boolean}>}};
+        const artifacts=request.project.sourceArtifacts;
+        expect(artifacts).toHaveLength(12);
+        expect(artifacts.every((source)=>source.role==="target")).toBe(true);
+        expect(artifacts.every((source)=>source.content.length<=10_000&&source.truncated)).toBe(true);
+        expect(artifacts.reduce((total,source)=>total+source.content.length,0)).toBeLessThanOrEqual(48_000);
+        expect(artifacts.some((source)=>source.content==="")).toBe(true);
+        return {candidates:[],recommendedCandidateIds:[],summary:"checked",experimentDesign:[]};
+      },
+    });
+    expect(called).toBe(true);
+    expect(project.sourceArtifacts.map((source)=>source.textContent)).toEqual(originals);
+  });
+
+  it("retrieves late selected-problem evidence for diagnosis too",async()=>{
+    const project=fixture();
+    const quote="库存核销 INVENTORY_AUDIT_CASE 必须记录批次和审批流水。";
+    const source="unrelated header\n".repeat(5000)+quote+"\n"+"unrelated appendix\n".repeat(3000);
+    project.sourceArtifacts[0]!.textContent=source;
+    project.problems=[{id:"P",title:"库存核销",impact:90,severity:"high",status:"recommended",summary:"批次丢失",rootCause:"缺少批次",evidence:[quote],evidenceRefs:[],confidence:0.9,affectedComponent:"source"}];
+    project.selectedProblemId="P";
+    project.campaign.checkpoint={round:1,completedPhase:"problem",at:project.updatedAt};
+    const never=async()=>{throw new Error("wrong phase");};
+    let called=false;
+    const outcome=await advanceServerCampaignPreparation(project,{
+      problemAnalysis:never,plan:never,
+      diagnose:async(payload)=>{
+        called=true;
+        const request=payload as {project:{artifacts:Array<{content:string;truncated:boolean}>}};
+        expect(request.project.artifacts[0]!.content.includes(quote)).toBe(true);
+        expect(request.project.artifacts[0]!.truncated).toBe(true);
+        return {problemId:"P",rootCause:"缺少批次",summary:"补齐记录",affectedComponent:"source",confidence:0.9,evidence:[quote],evidenceRefs:[],counterEvidence:[],falsifier:"仍未记录",suggestedScopes:["code"],trace:[]};
+      },
+    });
+    expect(called).toBe(true);
+    expect(outcome.phase).toBe("diagnose");
+    expect(project.sourceArtifacts[0]!.textContent).toBe(source);
+  });
+
   it("advances problem -> diagnosis -> plan and hands off to Server Experiment",async()=>{
     const ai={
       problemAnalysis:async()=>({problems:[{id:"P",title:"流程缺口",impact:90,severity:"high" as const,status:"recommended" as const,summary:"流程未闭环",rootCause:"缺少证据闭环",evidence:["当前文本存在流程缺口"],evidenceRefs:[],confidence:0.9,affectedComponent:"source"}],recommendedProblemId:"P",summary:"问题"}),
