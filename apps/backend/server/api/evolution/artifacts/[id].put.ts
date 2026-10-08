@@ -1,4 +1,5 @@
-import {assertBodySize,createError,defineEventHandler,getHeader,getRouterParam,readRawBody} from "nitro/h3";
+import {artifactRouteId} from "../../../../src/services/artifact-route-id";
+import {assertBodySize,createError,defineEventHandler,getHeader,readRawBody} from "nitro/h3";
 import {BinaryArtifactUploadMetadataSchema,MAX_BINARY_ARTIFACT_BYTES} from "@evolution/contracts";
 import {getServerArtifactStore} from "../../../../src/services/artifact-runtime";
 import {requireGovernedEvolutionPermission} from "../../../../src/services/security-policy";
@@ -6,7 +7,7 @@ import {requireGovernedEvolutionPermission} from "../../../../src/services/secur
 export default defineEventHandler(async(event)=>{
   await requireGovernedEvolutionPermission(event,"target.write");
   const parsed=BinaryArtifactUploadMetadataSchema.safeParse({
-    id:getRouterParam(event,"id"),
+    id:artifactRouteId(event),
     mimeType:getHeader(event,"content-type")?.split(";")[0]?.trim()||"application/octet-stream",
   });
   if(!parsed.success)throw createError({statusCode:400,statusMessage:"Invalid Artifact upload metadata",data:parsed.error.flatten()});

@@ -151,10 +151,20 @@ describe("supabase production adapter contracts", () => {
     const secondHash=createHash("sha256").update(secondText).digest("hex");
     const firstPath=first.upload.mock.calls[0]?.[0];
     const secondPath=second.upload.mock.calls[0]?.[0];
-    expect(firstPath).toMatch(new RegExp(`^artifacts/a1/${firstHash}/[0-9a-f-]{36}$`));
-    expect(secondPath).toMatch(new RegExp(`^artifacts/a1/${secondHash}/[0-9a-f-]{36}$`));
+    expect(firstPath).toMatch(new RegExp(`^artifacts/${createHash("sha256").update("a1").digest("hex")}/${firstHash}/[0-9a-f-]{36}$`));
+    expect(secondPath).toMatch(new RegExp(`^artifacts/${createHash("sha256").update("a1").digest("hex")}/${secondHash}/[0-9a-f-]{36}$`));
     expect(first.insert.mock.calls[0]?.[0]).toMatchObject({id:"a1",sha256:firstHash,object_path:firstPath});
     expect(second.insert.mock.calls[0]?.[0]).toMatchObject({id:"a1",sha256:secondHash,object_path:secondPath});
+  });
+
+  it.each(["visual-evidence:mission:screenshot:自动验证-1440px.png", "visual-evidence:%E8%87%AA%E5%8A%A8.png", "path/../with%percent#fragment"])("stores complex Artifact IDs using safe bounded keys: %s",async(id)=>{
+    const scratch=artifactUploadPorts();
+    const blob=new Blob(["screenshot bytes"],{type:"image/png"});
+    await scratch.ports.artifacts.put(id,blob);
+    const path=scratch.upload.mock.calls[0]?.[0];
+    const identityHash=createHash("sha256").update(id).digest("hex");
+    expect(path).toMatch(new RegExp(`^artifacts/${identityHash}/[0-9a-f]{64}/[0-9a-f-]{36}$`));
+    expect(scratch.insert.mock.calls[0]?.[0]).toMatchObject({id,object_path:path,mime_type:"image/png"});
   });
 
   it("preserves a legacy object path on an idempotent retry",async()=>{

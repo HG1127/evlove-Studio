@@ -144,8 +144,11 @@ export function supabaseRowToEvent(row: JsonRecord): EvolutionEvent {
   });
 }
 
-function objectPath(id: string,digest:string) {
-  return `artifacts/${encodeURIComponent(id)}/${digest}/${crypto.randomUUID()}`;
+async function objectPath(id: string,digest:string) {
+  // Logical IDs may contain Unicode, slashes or percent escapes rejected by Storage.
+  // Keep identity in metadata; use a bounded ASCII digest only for the physical key.
+  const identityDigest = await blobSha256(new Blob([id]));
+  return `artifacts/${identityDigest}/${digest}/${crypto.randomUUID()}`;
 }
 
 async function blobSha256(blob: Blob) {
@@ -276,7 +279,7 @@ export function createSupabaseProductionPorts(
         if(existingMetadata.kind&&safeBinding.kind&&existingMetadata.kind!==safeBinding.kind){
           throw new Error(`Artifact id ${id} is already registered with another kind`);
         }
-        const path=existing?.object_path?String(existing.object_path):objectPath(id,digest);
+        const path=existing?.object_path?String(existing.object_path):await objectPath(id,digest);
         const bucket=existing?.bucket?String(existing.bucket):config.artifactBucket;
         const { error: uploadError } = await client.storage.from(bucket).upload(path, blob, {
           upsert: true,

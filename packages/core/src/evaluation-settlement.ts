@@ -46,11 +46,11 @@ export function deriveCriterionScores(
     const mappedCases = mappedTests.map((testCase) => testCase.id);
     // Generated search smoke covers one interaction, not the complete protection contract.
     // Preserve the Runner's truthful assertion result while limiting criterion-level claims.
-    const limitedCoverage = mappedTests.some((testCase) => testCase.tags.includes("source-grounded-html-assertions"));
+    const limitedCoverage = mappedTests.some((testCase) => testCase.tags?.includes("source-grounded-html-assertions"));
     const coverageGaps = limitedCoverage ? ["自动生成的 HTML 检查仅覆盖搜索交互，尚未覆盖该保护标准的全部要求；需补齐对应的执行、视觉或人工证据"] : [];
     const mappedStatuses = mappedTests.map((testCase) => {
       const status = runMap.get(testCase.id)?.verificationStatus ?? "unverified";
-      return status === "verified" && testCase.tags.includes("source-grounded-html-assertions") ? "partial" : status;
+      return status === "verified" && testCase.tags?.includes("source-grounded-html-assertions") ? "partial" : status;
     });
     if (mappedCases.some((id) => repeatedRuns.has(id))) return {
       criterionId: criterion.id,
