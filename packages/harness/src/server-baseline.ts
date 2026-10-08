@@ -37,7 +37,7 @@ export { trustedServerBaselineChampion, serverBaselineFingerprint } from "./serv
 export function serverCampaignScoringRouteBlocker(project: EvolveProject, routeFingerprint?: string): string | undefined {
   if (!routeFingerprint || project.campaign.currentRound === 0) return undefined;
   if (project.campaign.scoringRouteFingerprint === routeFingerprint) return undefined;
-  return "[server-campaign-scoring-route-changed] 服务端执行或评审模型已变化，旧 Campaign 分数不可直接比较；请重置搜索后重新运行。生产发布状态不会被重置。";
+  return "[server-campaign-scoring-route-changed] 服务端执行或评审配置已变化，旧 Campaign 分数不可直接比较；请重置搜索后重新运行。生产发布状态不会被重置。";
 }
 /** A ready score is reusable only for the exact current Target, tests, Champion and Server AI route. */
 export function canReuseServerBaseline(project: EvolveProject, routeFingerprint?: string, nowMs = Date.now()): boolean {
@@ -55,7 +55,7 @@ export type ServerBaselinePorts = {
     artifactContext: Array<Record<string, unknown>>;
   }): Promise<ExecuteArtifactBatchAiResult>;
   executeStoredEvidence?(args: { project: EvolveProject; testCase: TestCase }): Promise<TargetRunResult>;
-  buildCurrentArtifactContext?(args: { project: EvolveProject }): Promise<Array<Record<string, unknown>>>;
+  buildCurrentArtifactContext?(args: { project: EvolveProject; testCases?: TestCase[] }): Promise<Array<Record<string, unknown>>>;
   executeExternalBatch?(args: {
     project: EvolveProject;
     testCases: TestCase[];
@@ -176,7 +176,7 @@ export async function runServerBaseline(
   if (semanticCases.length) {
     const semanticStarted = Date.now();
     try {
-      const artifactContext = await currentSemanticArtifactContext(project, ports.buildCurrentArtifactContext);
+      const artifactContext = await currentSemanticArtifactContext(project, ports.buildCurrentArtifactContext, semanticCases);
       const result = await ports.executeSemanticBatch({
         project,
         testCases: semanticCases,

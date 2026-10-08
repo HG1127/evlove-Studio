@@ -1,6 +1,8 @@
 import type { EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
 import { campaignScoringInputFingerprint, citesHistoricalEvidence, fastHash } from "@evolution/core";
 
+import { compactServerSourceText, serverSemanticContextQuery, SERVER_SEMANTIC_CONTEXT_VERSION } from "./server-source-context";
+
 const TEXT_ROUNDTRIP = /^(txt|md|markdown|csv|json|yaml|yml|css|js|jsx|ts|tsx)$/i;
 
 export function trustedServerBaselineChampion(project: EvolveProject) {
@@ -52,14 +54,16 @@ function artifactText(project: EvolveProject, artifact: EvolveProject["sourceArt
   return entryText || artifact.structure.slice(0, 300).join("\n");
 }
 
-export function boundedBaselineArtifacts(project: EvolveProject, budget = 56_000) {
+export function boundedBaselineArtifacts(project: EvolveProject, budget = 56_000, testCases: TestCase[] = project.evalSuite) {
   const ordered = [...project.sourceArtifacts].sort((a, b) => Number(b.role === "target") - Number(a.role === "target"));
+  const query = serverSemanticContextQuery(project, testCases);
   let remaining = budget;
   return ordered.slice(0, 12).map((artifact) => {
     const snapshot = trustedSnapshot(project, artifact.id);
     const source = artifactText(project, artifact);
     const allowance = Math.max(0, Math.min(18_000, remaining));
-    const content = source.slice(0, allowance);
+    const html = /^(html|htm)$/i.test(artifact.extension) || /^text\/html(?:;|$)/i.test(artifact.mimeType);
+    const content = compactServerSourceText(source, query, allowance, html);
     remaining = Math.max(0, remaining - content.length);
     return {
       id: artifact.id,
@@ -73,20 +77,21 @@ export function boundedBaselineArtifacts(project: EvolveProject, budget = 56_000
       currentVersion: snapshot ? (project.searchChampion?.versionLabel ?? project.searchChampion?.id) : project.version,
       snapshotHash: snapshot?.contentHash,
       originalChars: source.length,
-      truncated: content.length < source.length,
+      truncated: content !== source || (!snapshot && !artifact.textContent && Boolean(artifact.textExcerpt)),
     };
   });
 }
 
 export async function currentSemanticArtifactContext(
   project: EvolveProject,
-  build?: (args: { project: EvolveProject }) => Promise<Array<Record<string, unknown>>>,
+  build?: (args: { project: EvolveProject; testCases?: TestCase[] }) => Promise<Array<Record<string, unknown>>>,
+  testCases: TestCase[] = project.evalSuite,
 ): Promise<Array<Record<string, unknown>>> {
   const stored = Boolean(project.searchChampion) || project.sourceArtifacts.some((artifact) => Boolean(artifact.storageRef?.trim())
     || artifact.inputMode === "upload" || artifact.inputMode === "remote");
-  if (!stored) return boundedBaselineArtifacts(project);
+  if (!stored) return boundedBaselineArtifacts(project, 56_000, testCases);
   if (!build) throw new Error("当前版本缺少实际文件语义上下文端口，不能让过期解析索引产生 VERIFIED 结论。");
-  const context = await build({ project });
+  const context = await build({ project, testCases });
   const targets = project.sourceArtifacts.filter((artifact) => artifact.role === "target");
   if (!Array.isArray(context) || !targets.length || targets.some((target) => context.filter((item) => item.id === target.id).length !== 1)) {
     throw new Error("当前版本语义上下文没有覆盖全部唯一 Target。");
@@ -279,7 +284,8 @@ export function serverBaselineFingerprint(project: EvolveProject, scoringRouteFi
       ? champion.candidate
       : undefined;
   return fastHash({
-    version: "server-baseline-v2",
+    version: "server-baseline-v3",
+    semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION,
     scoringInputFingerprint: campaignScoringInputFingerprint(project),
     scoringRouteFingerprint,
     goal: project.goal,

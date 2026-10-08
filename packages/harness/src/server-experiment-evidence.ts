@@ -1,6 +1,8 @@
 import type { Candidate, EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
 import { citesHistoricalEvidence } from "@evolution/core";
 
+import { compactServerSourceText, serverSemanticContextQuery } from "./server-source-context";
+
 const TEXT_ROUNDTRIP = /^(txt|md|markdown|mdx|csv|json|yaml|yml|css|js|jsx|ts|tsx|html|htm)$/i;
 
 export function unavailableExperimentRun(testCase: TestCase, detail: string): TargetRunResult {
@@ -107,13 +109,15 @@ export function candidateLocalEvidence(
   }  return undefined;
 }
 
-export function candidateArtifactContext(project: EvolveProject, candidate: Candidate, budget = 64_000) {
+export function candidateArtifactContext(project: EvolveProject, candidate: Candidate, budget = 64_000, testCases: TestCase[] = project.evalSuite) {
   const sourceById = new Map(project.sourceArtifacts.map((artifact) => [artifact.id, artifact]));
+  const query = serverSemanticContextQuery(project, testCases);
   let remaining = budget;
   return candidate.artifactSnapshots.slice(0, 12).map((snapshot) => {
     const source = sourceById.get(snapshot.sourceArtifactId);
     const allowance = Math.max(0, Math.min(20_000, remaining));
-    const content = snapshot.content.slice(0, allowance);
+    const html = /^(html|htm)$/i.test(source?.extension ?? "") || /^text\/html(?:;|$)/i.test(snapshot.mimeType);
+    const content = compactServerSourceText(snapshot.content, query, allowance, html);
     remaining = Math.max(0, remaining - content.length);
     return {
       id: snapshot.sourceArtifactId,
@@ -124,7 +128,7 @@ export function candidateArtifactContext(project: EvolveProject, candidate: Cand
       extension: source?.extension,
       content,
       originalChars: snapshot.content.length,
-      truncated: content.length < snapshot.content.length,
+      truncated: content !== snapshot.content,
       contentHash: snapshot.contentHash,
       frozenSha256: snapshot.frozenArtifact?.sha256,
       buildMode: snapshot.buildMode,

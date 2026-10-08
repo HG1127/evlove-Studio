@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { EvaluateAiResult, EvolveProject, TargetRunResult } from "@evolution/contracts";
-import { campaignScoringInputFingerprint } from "@evolution/core";
+import { campaignScoringInputFingerprint, fastHash } from "@evolution/core";
 import { canReuseServerBaseline, runServerBaseline } from "./server-baseline";
 import { serverBaselineFingerprint } from "./server-baseline-evidence";
 
@@ -315,6 +315,26 @@ describe("server baseline",()=>{
 });
 
 describe("server Baseline evidence provenance", () => {
+  it("requires a fresh Baseline after the former prefix-only context policy",async()=>{
+    const project=fixture();
+    const legacy=fastHash({
+      version:"server-baseline-v2",scoringInputFingerprint:campaignScoringInputFingerprint(project),
+      scoringRouteFingerprint:undefined,goal:project.goal,command:project.evolutionCommand,
+      rubric:project.acceptanceRubric,evalSuite:project.evalSuite,hiddenEvalSuite:project.hiddenEvalSuite,
+      protectedItems:project.protectedItems,clarifications:project.inputClarifications,
+      metrics:project.metrics.map(({key,target,direction})=>({key,target,direction})),
+      targets:project.sourceArtifacts.map(artifact=>({id:artifact.id,role:artifact.role,text:artifact.textContent??artifact.textExcerpt??"",structure:artifact.structure,descriptor:artifact.artifactDescriptor})),
+      champion:undefined,
+    });
+    const outcome=await runServerBaseline(project,{
+      executeSemanticBatch:async({testCases})=>({results:testCases.map(testCase=>({testCaseId:testCase.id,output:"当前说明包含安装步骤，但验证与回滚说明不足。",trace:[]}))}),
+      judge:async()=>judge(),
+    });
+    expect(outcome.ready).toBe(true);
+    expect(serverBaselineFingerprint(project)).not.toBe(legacy);
+    expect(canReuseServerBaseline({...outcome.project,baselineRun:{...outcome.baseline,measurementFingerprint:legacy}})).toBe(false);
+  });
+
   it("includes the actual scoring route in the measurement fingerprint", () => {
     const project = fixture();
     expect(serverBaselineFingerprint(project, "route-a")).not.toBe(serverBaselineFingerprint(project, "route-b"));

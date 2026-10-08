@@ -165,11 +165,12 @@ export async function executeServerExperimentCandidate(
   if (semanticCases.length) {
     const started = Date.now();
     try {
+      const artifactContext = candidateArtifactContext(project, candidate, 64_000, semanticCases);
       const result = await ports.executeSemanticBatch({
         project,
         candidate,
         testCases: semanticCases,
-        artifactContext: candidateArtifactContext(project, candidate),
+        artifactContext,
       });
       const { byId, duplicateIds } = indexUniqueBatchResults(result.results);
       const latency = Math.max(1, Math.round((Date.now() - started) / Math.max(1, semanticCases.length)));
@@ -182,7 +183,7 @@ export async function executeServerExperimentCandidate(
           output: item.output,
           latencyMs: latency,
           cost: 0,
-          verificationStatus: serverExperimentSemanticStatus(item.output),
+          verificationStatus: artifactContext.some(artifact => artifact.truncated) && serverExperimentSemanticStatus(item.output) === "verified" ? "partial" : serverExperimentSemanticStatus(item.output),
           trace: [{
             id: `server-candidate-semantic-${candidate.id}-${testCase.id}`,
             stage: "AI 语义核查",

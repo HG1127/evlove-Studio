@@ -1,5 +1,5 @@
-import type { EvolveProject } from "@evolution/contracts";
-import { trustedServerBaselineChampion } from "@evolution/harness";
+import type { EvolveProject, TestCase } from "@evolution/contracts";
+import { compactServerSourceText, serverSemanticContextQuery, trustedServerBaselineChampion } from "@evolution/harness";
 import { getServerArtifactStore } from "./artifact-runtime";
 import { serverArtifactSha256, verifyServerCandidateFrozenArtifact } from "./server-experiment-artifacts";
 import { extractServerStaticArtifactText } from "./server-static-artifact-evidence";
@@ -21,7 +21,7 @@ async function codebaseSemanticText(bytes: Uint8Array, project: EvolveProject) {
 }
 
 /** Construct AI context from the same current bytes used by deterministic evidence. */
-export async function buildServerCurrentSemanticArtifactContext({ project }: { project: EvolveProject }): Promise<Array<Record<string, unknown>>> {
+export async function buildServerCurrentSemanticArtifactContext({ project, testCases = project.evalSuite }: { project: EvolveProject; testCases?: TestCase[] }): Promise<Array<Record<string, unknown>>> {
   const champion = project.searchChampion ? trustedServerBaselineChampion(project) : undefined;
   if (project.searchChampion && !champion) throw new Error("当前 Search Champion 尚未通过可信验收。");
   const ordered = [...project.sourceArtifacts].sort((a, b) => Number(b.role === "target") - Number(a.role === "target"));
@@ -29,6 +29,7 @@ export async function buildServerCurrentSemanticArtifactContext({ project }: { p
     throw new Error("当前版本成果数量为空、重复或超出语义索引范围。");
   }
   const store = getServerArtifactStore();
+  const query = serverSemanticContextQuery(project, testCases);
   let remaining = MAX_TOTAL_CHARS;
   const context: Array<Record<string, unknown>> = [];
   for (const source of ordered) {
@@ -60,14 +61,15 @@ export async function buildServerCurrentSemanticArtifactContext({ project }: { p
       content = source.textContent;
     }
     const allowance = Math.max(0, Math.min(MAX_ARTIFACT_CHARS, remaining));
-    const bounded = content.slice(0, allowance);
+    const html = /^(html|htm)$/i.test(source.extension) || /^text\/html(?:;|$)/i.test(receipt?.mimeType ?? source.mimeType);
+    const bounded = compactServerSourceText(content, query, allowance, html);
     remaining -= bounded.length;
     context.push({
       id: source.id, name: source.name, role: source.role, mimeType: source.mimeType,
       artifactKind: source.artifactKind, extension: source.extension, content: bounded,
       currentVersion: snapshot ? (project.searchChampion?.versionLabel ?? champion?.id) : project.version,
       snapshotHash: snapshot?.contentHash, artifactSha256: sha256,
-      originalChars: content.length, truncated: bounded.length < content.length || source.extension.toLowerCase() === "zip",
+      originalChars: content.length, truncated: bounded !== content || source.extension.toLowerCase() === "zip",
     });
   }
   return context;

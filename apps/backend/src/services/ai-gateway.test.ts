@@ -1,4 +1,6 @@
 // @vitest-environment node
+import {createHash} from "node:crypto";
+import {SERVER_SEMANTIC_CONTEXT_VERSION} from "@evolution/harness";
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
 import {isServerAiUnavailable,runServerAi,serverAiScoringRouteFingerprint,serverAiUnavailableReason} from "./ai-gateway";
 
@@ -40,6 +42,17 @@ describe("Server AI provider availability classification",()=>{
 });
 
 describe("server AI scoring route identity",()=> {
+  it("binds semantic context policy instead of reusing the old provider-only score route",()=>{
+    process.env.EVOLUTION_AI_API_KEY="test-key";
+    process.env.EVOLUTION_AI_MODEL="model-a";
+    process.env.EVOLUTION_AI_BASE_URL="https://ai.example.test/v1";
+    const route=["openai-compatible","https://ai.example.test/v1","model-a"];
+    const legacy=createHash("sha256").update(JSON.stringify(route)).digest("hex");
+    const expected=createHash("sha256").update(JSON.stringify({route,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION})).digest("hex");
+    expect(serverAiScoringRouteFingerprint()).toBe(expected);
+    expect(serverAiScoringRouteFingerprint()).not.toBe(legacy);
+  });
+
   it("changes with provider/model but excludes credentials and timeout",()=> {
     process.env.EVOLUTION_AI_API_KEY="secret-first";
     process.env.EVOLUTION_AI_MODEL="model-a";

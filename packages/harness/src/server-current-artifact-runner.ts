@@ -24,7 +24,7 @@ export type ServerCurrentArtifactPorts = {
     artifactContext: Array<Record<string, unknown>>;
   }): Promise<ExecuteArtifactBatchAiResult>;
   executeStoredEvidence?(args: { project: EvolveProject; testCase: TestCase }): Promise<TargetRunResult>;
-  buildCurrentArtifactContext?(args: { project: EvolveProject }): Promise<Array<Record<string, unknown>>>;
+  buildCurrentArtifactContext?(args: { project: EvolveProject; testCases?: TestCase[] }): Promise<Array<Record<string, unknown>>>;
   executeExternalBatch?(args: {
     project: EvolveProject;
     testCases: TestCase[];
@@ -78,7 +78,7 @@ export async function executeServerCurrentArtifactSuite(
   if(semanticCases.length){
     const started=Date.now();
     try{
-      const artifactContext=await currentSemanticArtifactContext(project,ports.buildCurrentArtifactContext);
+      const artifactContext=await currentSemanticArtifactContext(project,ports.buildCurrentArtifactContext,semanticCases);
       const result=await ports.executeSemanticBatch({project,testCases:semanticCases,artifactContext});
       const {byId,duplicateIds}=indexUniqueBatchResults(result.results);
       const latency=Math.max(1,Math.round((Date.now()-started)/Math.max(1,semanticCases.length)));

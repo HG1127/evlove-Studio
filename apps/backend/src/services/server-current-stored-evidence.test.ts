@@ -13,7 +13,7 @@ vi.mock("./artifact-runtime", () => ({ getServerArtifactStore: () => ({ get: asy
 
 function project(extension = "md"): EvolveProject {
   return {
-    id: "mission", version: "V1", sourceArtifacts: [{ id: "guide", role: "target", name: `guide.${extension}`, extension, artifactKind: "document", storageRef: "raw-guide", size: 0, textContent: "STALE PARSED INDEX" }],
+    id: "mission", version: "V1", goal: "Inspect current guide", evolutionCommand: "Inspect current guide", evalSuite: [], sourceArtifacts: [{ id: "guide", role: "target", name: `guide.${extension}`, extension, artifactKind: "document", storageRef: "raw-guide", size: 0, textContent: "STALE PARSED INDEX" }],
     acceptanceRubric: [{ id: "STRUCT", artifactIds: ["guide"] }],
   } as unknown as EvolveProject;
 }

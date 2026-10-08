@@ -53,6 +53,7 @@ import {
   type UnderstandAiResult,
   type VisualJudgeAiResult,
 } from "@evolution/contracts";
+import { SERVER_SEMANTIC_CONTEXT_VERSION } from "@evolution/harness";
 import { getServerAiConfig } from "../server-env";
 
 export type ServerAiOperation=AiOperation;
@@ -63,7 +64,7 @@ export function serverAiScoringRouteFingerprint(): string | undefined {
   const route = config.mode === "openai-compatible"
     ? [config.mode, config.baseUrl, config.model]
     : [config.mode, config.model];
-  return createHash("sha256").update(JSON.stringify(route)).digest("hex");
+  return createHash("sha256").update(JSON.stringify({ route, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION })).digest("hex");
 }
 
 type StructuredSchema={name:string;schema:Record<string,unknown>};
