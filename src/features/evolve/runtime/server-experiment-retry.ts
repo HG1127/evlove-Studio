@@ -1,10 +1,10 @@
 import type { EvolveProject } from "@evolution/contracts";
-import { serverExperimentJudgeWait } from "@evolution/harness";
+import { serverExperimentRecoveryWait } from "@evolution/harness";
 import { productionRuntimeMode } from "./production-runtime";
 import { startServerEvolutionWorkflow } from "./server-workflow-client";
 
 export function canRetryStoredServerExperiment(project: EvolveProject) {
-  return productionRuntimeMode() === "http" && Boolean(serverExperimentJudgeWait(project));
+  return productionRuntimeMode() === "http" && Boolean(serverExperimentRecoveryWait(project));
 }
 
 /** The same persisted wait always has the same key, including a lost start response or page reload. */

@@ -1,7 +1,7 @@
 import type { AttentionRequest, EvolveProject } from "../schemas";
 import { deliveryReadiness } from "./delivery-readiness";
 import { projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget } from "@evolution/core";
-import { deriveAttentionRequest, isLocalBaselineJudgePause, serverExperimentJudgeWait, serverControlAiWait } from "@evolution/harness";
+import { deriveAttentionRequest, isLocalBaselineJudgePause, serverExperimentRecoveryWait, serverControlAiWait } from "@evolution/harness";
 
 export { autonomousClarificationPlan, clarificationNeedsHuman } from "./autonomy-policy";
 
@@ -37,7 +37,7 @@ export function autonomousAttention(project: EvolveProject): AutonomousAttention
   const request = deriveAttentionRequest(project);
   if (!request) return undefined;
   return {
-    kind: serverExperimentJudgeWait(project) || serverControlAiWait(project) || isLocalBaselineJudgePause(project) || request.diagnosticCode === "artifact-repair-recovery" || request.diagnosticCode === "judge-recovery" ? "model" : legacyKind(request.type),
+    kind: serverExperimentRecoveryWait(project) || serverControlAiWait(project) || isLocalBaselineJudgePause(project) || request.diagnosticCode === "artifact-repair-recovery" || request.diagnosticCode === "judge-recovery" ? "model" : legacyKind(request.type),
     title: request.title,
     detail: request.reason,
     stage: request.stage,

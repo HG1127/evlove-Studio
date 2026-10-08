@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EvolveProjectSchema, EvolutionJobSchema, InputUnderstandingSchema, type Candidate, type EvolveProject, type TestCase } from "@evolution/contracts";
 import { deriveAttentionRequest, serverBaselineFingerprint } from "@evolution/harness";
@@ -53,8 +54,12 @@ beforeEach(() => {
   m.save.mockImplementation(async (p: EvolveProject) => { stored = EvolveProjectSchema.parse(JSON.parse(JSON.stringify(p))); });
   m.job.mockResolvedValue(job);
   m.probe.mockResolvedValue({ ready: true, status: "ready" });
-  m.ai.mockRejectedValueOnce(new Error("independent model timeout")).mockImplementation(async () => ({ accuracy: 92, evidence: 92, riskCoverage: 92, completeness: 92, safety: "PASS", notes: [], failures: [], cases: [{ testCaseId: "V1", accuracy: 92, evidence: 92, completeness: 92, reason: "improved" }], criteria: stored.acceptanceRubric.map(c => ({ criterionId: c.id, score: 92, pass: true, evidence: ["improved actual content"], gaps: [], testCaseIds: ["V1"] })) }));
-  m.browser.mockImplementation(async (_p: EvolveProject, tests: TestCase[], c: Candidate) => tests.map(t => ({ testCaseId: t.id, output: "improved actual content", artifactHash: c.artifactSnapshots[0]!.frozenArtifact!.sha256, verificationStatus: "verified", cost: 0, latencyMs: 1, trace: [] })));
+  m.ai.mockRejectedValueOnce(new Error("independent model timeout")).mockImplementation(async (_role: string, payload: { mode?: string }) => {
+    const score = payload.mode === "server-baseline" ? 60 : 92;
+    const output = payload.mode === "server-baseline" ? "original content" : "improved actual content";
+    return { accuracy: score, evidence: score, riskCoverage: score, completeness: score, safety: "PASS", notes: [], failures: [], cases: [{ testCaseId: "V1", accuracy: score, evidence: score, completeness: score, reason: output }], criteria: stored.acceptanceRubric.map(c => ({ criterionId: c.id, score, pass: score >= 80, evidence: [output], gaps: [], testCaseIds: ["V1"] })) };
+  });
+  m.browser.mockImplementation(async (p: EvolveProject, tests: TestCase[], c?: Candidate) => tests.map(t => ({ testCaseId: t.id, output: c ? "improved actual content" : "original content", artifactHash: c?.artifactSnapshots[0]!.frozenArtifact!.sha256 ?? createHash("sha256").update(p.sourceArtifacts[0]!.textContent!).digest("hex"), verificationStatus: "verified", cost: 0, latencyMs: 1, trace: [] })));
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
 describe("explicit durable run restores the stored Experiment Judge checkpoint", () => {
@@ -115,9 +120,10 @@ describe("explicit durable run restores the stored Experiment Judge checkpoint",
     await expect(planMissionStep(input, 0)).rejects.toThrow("健康探测未通过");
     expect(m.save).not.toHaveBeenCalled(); expect(m.append).not.toHaveBeenCalled();
   });
-  it("does not replace frozen files when physical readback fails after the probe recovers", async () => {
+  it.each([1, 11])("recovers both persisted pauses with observations aged %s minutes", async minutes => {
     const first = await paused();
     const frozen = first.project.candidates[0]!.artifactSnapshots[0]!.frozenArtifact!;
+    const bytes = m.blobs.get(frozen.blobId)!;
     const next = await planMissionStep(input, 0);
     m.blobs.delete(frozen.blobId);
     const outcome = await executeServerControlStep(input, next, 0);
@@ -125,5 +131,26 @@ describe("explicit durable run restores the stored Experiment Judge checkpoint",
     expect(stored.candidates[0]!.artifactBuildStatus).toBe("ready");
     expect(stored.candidates[0]!.artifactSnapshots).toEqual(first.project.candidates[0]!.artifactSnapshots);
     expect(m.put).toHaveBeenCalledTimes(1); expect(m.browser).toHaveBeenCalledTimes(1); expect(m.ai).toHaveBeenCalledTimes(1);
+    expect(stored.campaign.stopReason).toContain("experiment-build-pending");
+    stored.attentionRequests!.push(deriveAttentionRequest(stored)!);
+    expect(stored.experimentRun.executionCheckpoints).toEqual(first.experiment.executionCheckpoints);
+    const unavailable = await planMissionStep(input, 1);
+    expect(unavailable.decision.action).toBe("run-campaign");
+    expect(await executeServerControlStep(input, unavailable, 1)).toMatchObject({ control: "stop", result: { status: "waiting-action" } });
+    expect(stored.experimentRun.executionCheckpoints).toEqual(first.experiment.executionCheckpoints);
+    expect(m.put).toHaveBeenCalledTimes(1); expect(m.ai).toHaveBeenCalledTimes(1);
+    stored.attentionRequests!.push(deriveAttentionRequest(stored)!);
+    m.blobs.set(frozen.blobId, bytes);
+    vi.setSystemTime(new Date(Date.parse(at) + minutes * 60_000));
+    const recovered = await planMissionStep(input, 1);
+    expect(recovered.decision.action).toBe("run-campaign");
+    expect(await executeServerControlStep(input, recovered, 1)).toEqual({ control: "continue" });
+    expect(stored.experimentRun.status).toBe("completed");
+    expect(stored.candidates[0]!.artifactSnapshots).toEqual(first.project.candidates[0]!.artifactSnapshots);
+    expect(m.put).toHaveBeenCalledTimes(1); expect(m.browser).toHaveBeenCalledTimes(minutes < 10 ? 1 : 3); expect(m.ai).toHaveBeenCalledTimes(minutes < 10 ? 2 : 3);
+    expect(stored.campaign.startedAt).toBe(first.project.campaign.startedAt);
+    expect(stored.campaign.currentRound).toBe(first.project.campaign.currentRound);
+    expect(stored.campaign.noImprovementRounds).toBe(first.project.campaign.noImprovementRounds);
+    expect(m.probe).toHaveBeenCalledTimes(3);
   });
 });

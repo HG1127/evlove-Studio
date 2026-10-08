@@ -15,17 +15,22 @@ beforeEach(() => {
   host = document.createElement("div"); document.body.append(host); root = createRoot(host);
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.useRealTimers(); vi.unstubAllGlobals(); });
-const button = () => [...host.querySelectorAll("button")].find(b => b.textContent?.includes("重试已保存的评审"));
-async function render(busy = false) {
+const button = () => [...host.querySelectorAll("button")].find(b => b.textContent?.includes("重试已保存的实验"));
+async function render(busy = false, readback = false) {
   const runtime = { project: experimentRecoveryWaitFixture(), status: { busy }, runAutoPilot: vi.fn(), resumeAutonomousEvolution: vi.fn() } as unknown as ProjectRuntime;
+  if (readback) {
+    const p = runtime.project, reason = "[server-campaign-experiment-build-pending] frozen file unavailable";
+    p.campaign.stopReason = reason; p.experimentRun.summary = reason;
+    p.experimentRun.buildFailures = [{ candidateId: p.selectedCandidateIds[0]!, message: "frozen file unavailable" }];
+  }
   await act(async () => root.render(<AutonomousEvolutionPanel runtime={runtime} onOpenSource={vi.fn()} onOpenOutputs={vi.fn()} onOpenAdvanced={vi.fn()} onOpenRuntime={vi.fn()}/>));
   return runtime;
 }
 describe("main Mission panel can retry the stored backend Experiment", () => {
-  it("starts one backend request through the actual panel, even for repeated clicks", async () => {
+  it.each([false, true])("starts one backend request for Judge or frozen readback wait (%s)", async readback => {
     let complete!: () => void;
     m.retry.mockImplementation(() => new Promise<void>(resolve => { complete = resolve; }));
-    const runtime = await render(); const retry = button()!; expect(retry).toBeDefined();
+    const runtime = await render(false, readback); const retry = button()!; expect(retry).toBeDefined();
     await act(async () => { retry.click(); retry.click(); });
     expect(m.retry).toHaveBeenCalledTimes(1); expect(retry.disabled).toBe(true);
     expect(runtime.runAutoPilot).not.toHaveBeenCalled(); expect(runtime.resumeAutonomousEvolution).not.toHaveBeenCalled();

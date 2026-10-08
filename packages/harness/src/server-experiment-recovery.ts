@@ -33,7 +33,7 @@ function buildInputs(project: EvolveProject, candidate: Candidate) {
     editableItems: project.editableItems, rubric: project.acceptanceRubric, sources: project.sourceArtifacts,
     parent: project.searchChampion, selectedProblemId: project.selectedProblemId, diagnosis: project.diagnosis };
 }
-function completeFrozenSet(project: EvolveProject, candidate: Candidate) {
+export function hasCompleteServerExperimentFrozenSet(project: EvolveProject, candidate: Candidate) {
   const targets = project.sourceArtifacts.filter(s => s.role === "target");
   return candidate.artifactBuildStatus === "ready" && targets.length > 0
     && new Set(targets.map(t => t.id)).size === targets.length
@@ -54,7 +54,7 @@ export async function restoreServerExperimentCandidate(project: EvolveProject, c
   if (matches.length !== 1) return undefined;
   const parsed = ExperimentCandidateCheckpointSchema.safeParse(matches[0]);
   if (!parsed.success || parsed.data.buildInputFingerprint !== await digest(ports, buildInputs(project, candidate))) return undefined;
-  if (!completeFrozenSet(project, candidate) || parsed.data.artifactFingerprint !== await digest(ports, candidate.artifactSnapshots)) {
+  if (!hasCompleteServerExperimentFrozenSet(project, candidate) || parsed.data.artifactFingerprint !== await digest(ports, candidate.artifactSnapshots)) {
     throw new ServerExperimentFrozenRecoveryError("已执行 Candidate 的冻结记录发生变化；不能在评审重试中重新生成另一份文件。");
   }
   for (const snapshot of candidate.artifactSnapshots) {
@@ -65,7 +65,7 @@ export async function restoreServerExperimentCandidate(project: EvolveProject, c
   return candidate;
 }
 export async function serverExperimentBuildCheckpoint(project: EvolveProject, candidate: Candidate, ports: ServerExperimentRecoveryPorts): Promise<ExperimentCandidateCheckpoint | undefined> {
-  if (project.targetConnection.adapter !== "artifact" || !completeFrozenSet(project, candidate)) return undefined;
+  if (project.targetConnection.adapter !== "artifact" || !hasCompleteServerExperimentFrozenSet(project, candidate)) return undefined;
   const buildInputFingerprint = await digest(ports, buildInputs(project, candidate));
   const artifactFingerprint = await digest(ports, candidate.artifactSnapshots);
   return buildInputFingerprint && artifactFingerprint ? { candidateId: candidate.id, buildInputFingerprint, artifactFingerprint } : undefined;

@@ -30,6 +30,7 @@ import {
   unavailableBaselineRun,
 } from "./server-baseline-evidence";
 import { indexUniqueBatchResults } from "./server-batch-results";
+import { serverExperimentRecoveryCheckpoint } from "./server-experiment-wait";
 
 export { trustedServerBaselineChampion, serverBaselineFingerprint } from "./server-baseline-evidence";
 
@@ -382,14 +383,16 @@ export async function runServerBaseline(
   }
 
   const checkpointAt = now();
+  // A fresh comparison reruns observations without discarding checkpoint-bound frozen construction.
+  const experimentCheckpoint = serverExperimentRecoveryCheckpoint(inputProject) ? inputProject.campaign.checkpoint : undefined;
   const readyProject: EvolveProject = {
     ...measured,
-    stage: "problem",
+    stage: experimentCheckpoint ? "experiment" : "problem",
     campaign: {
       ...measured.campaign,
       status: "running",
       stopReason: undefined,
-      checkpoint: {
+      checkpoint: experimentCheckpoint ?? {
         round: measured.campaign.currentRound + 1,
         completedPhase: "baseline",
         at: checkpointAt,

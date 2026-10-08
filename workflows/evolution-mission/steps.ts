@@ -20,7 +20,7 @@ import {
   type WorkflowControlJobUpdate,
   serverControlCapabilityWaitPlan,
   serverControlAiWait,
-  serverExperimentJudgeWait,
+  serverExperimentRecoveryWait,
   normalizeLocallyVerifiableCandidateRuns,
   reconcileAttentionRequest,
   type ServerHarnessPlan,
@@ -409,7 +409,7 @@ export async function planMissionStep(input:EvolutionWorkflowRunInput,iteration:
       mission=materialized;
     }
   }
-  if(serverControlAiWait(mission)||serverExperimentJudgeWait(mission)){
+  if(serverControlAiWait(mission)||serverExperimentRecoveryWait(mission)){
     const currentJob=await runtime.jobs.get(input.controlJobId);
     if(!currentJob || currentJob.missionId!==input.missionId || currentJob.generation!==1
       || !["queued","running","waiting"].includes(currentJob.status)){

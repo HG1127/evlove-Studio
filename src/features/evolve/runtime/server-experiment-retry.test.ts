@@ -13,8 +13,14 @@ beforeEach(() => {
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 describe("explicit stored server Experiment retry", () => {
-  it("sends only Mission identity and a stable SHA key through the governed start API", async () => {
-    const p = experimentRecoveryWaitFixture(); expect(canRetryStoredServerExperiment(p)).toBe(true);
+  it.each([false, true])("sends only Mission identity and a stable SHA key for stored recovery (%s)", async readback => {
+    const p = experimentRecoveryWaitFixture();
+    if (readback) {
+      const reason = "[server-campaign-experiment-build-pending] frozen file unavailable";
+      p.campaign.stopReason = reason; p.experimentRun.summary = reason;
+      p.experimentRun.buildFailures = [{ candidateId: p.selectedCandidateIds[0]!, message: "frozen file unavailable" }];
+    }
+    expect(canRetryStoredServerExperiment(p)).toBe(true);
     expect(await retryStoredServerExperiment(p)).toEqual(receipt);
     await retryStoredServerExperiment(structuredClone(p));
     expect(m.fetch.mock.calls.map(c => c[0])).toEqual(["/api/evolution/start", "/api/evolution/start"]);

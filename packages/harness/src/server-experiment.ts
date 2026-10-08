@@ -155,7 +155,7 @@ export async function runServerExperiment(
   }
 
   if (!built.length) {
-    const reason = `[server-campaign-experiment-build-pending] ${selected.length} 个 Candidate 均未能生成并冻结实际成果：${buildFailures.map((item) => `${item.candidateId}: ${item.message}`).join("；")}`;
+    const reason = `[server-campaign-experiment-build-pending] ${selected.length} 个 Candidate 均未能准备可核验的冻结成果：${buildFailures.map((item) => `${item.candidateId}: ${item.message}`).join("；")}`;
     const experiment: ExperimentRun = {
       id: `experiment-r${round}-server`,
       status: "failed",
