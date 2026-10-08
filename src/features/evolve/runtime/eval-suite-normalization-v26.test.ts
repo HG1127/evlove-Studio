@@ -90,6 +90,20 @@ describe("V2.6 evidence-aware eval normalization",()=>{
     expect(criterionCanUseLocalSnapshotEvidence(htmlProject,criterion)).toBe(true);
     expect(evidenceRouteForCriterion({...htmlProject,hiddenEvalSuite:[hidden]},criterion)).toBe("local");
   });
+  it("routes scripted HTML workflow and protection checks to real execution while keeping prose local",()=>{
+    const workflow={...project.acceptanceRubric[0]!,id:"WORKFLOW",title:"流程闭环",requirement:"用户点击下一步并保存后可继续",validationMethod:"user-scenario",artifactIds:["tutorial"]} as EvolveProject["acceptanceRubric"][number];
+    const prose={...workflow,id:"READ",title:"解释清晰",requirement:"概念解释直白，示例清楚"};
+    const protection={...workflow,id:"PROTECT-ALL",title:"保护交互",requirement:"原有交互保持可用",validationMethod:"semantic-judge",protectedConstraint:true};
+    const htmlProject={...project,objectType:"document",semanticEvolution:undefined,sourceArtifacts:[{
+      id:"tutorial",role:"target",artifactKind:"document",name:"tutorial.html",extension:"html",mimeType:"text/html",
+      textContent:"<html><body><button>下一步</button><script>document.querySelector('button').onclick = () => true</script></body></html>",
+    }],acceptanceRubric:[workflow,prose,protection]} as unknown as EvolveProject;
+    const hidden=[tc("workflow",["WORKFLOW"],"点击下一步并保存",["可以继续"]),tc("prose",["READ"],"检查说明",["文字清楚"]),tc("protect",["PROTECT-ALL"],"检查保护项",["原有交互可用"])];
+    const normalized=normalizeEvalSuiteForProject(htmlProject,[],hidden).hiddenCases;
+    expect(normalized.map((item)=>item.executionMode)).toEqual(["external-runner","artifact-runtime","external-runner"]);
+    expect(evidenceRouteForCriterion({...htmlProject,hiddenEvalSuite:hidden},workflow)).toBe("runner");
+    expect(evidenceRouteForCriterion({...htmlProject,hiddenEvalSuite:hidden},prose)).toBe("local");
+  });
   it("removes neighbouring tool expectations from a single-criterion case",()=>{
     const toolProject={...project,objectType:"document",sourceArtifacts:[],semanticEvolution:undefined,acceptanceRubric:[
       {...project.acceptanceRubric[0]!,id:"GIT",title:"Git 配置零起点可达",requirement:"Git 从账号注册到首次 push 可执行",evidenceExpected:["Git 注册、安装、SSH、push 步骤完整"]},

@@ -72,3 +72,21 @@ describe("evaluation result identity", () => {
     expect(result.criterionScores[0]).toMatchObject({ score: 100, pass: true, verificationStatus: "verified" });
   });
 });
+
+
+describe("generated HTML protection coverage", () => {
+  it.each([true, false])("keeps search-only proof partial even when the Judge awards 100 (hardGate=%s)", (hardGate) => {
+    const c = { ...criterion("PROTECT-ALL"), hardGate };
+    const t = { ...testCase("search-smoke", c.id), executionMode: "external-runner" as const, tags: ["source-grounded-html-assertions"] };
+    const execution = run(t.id);
+    for (const judge of [true, false]) {
+      const result = deriveCriterionScores([c], [t], [{ testCaseId: t.id, accuracy: 100, evidence: 100, completeness: 100, reason: "search assertions passed" }], [execution], judge ? [judgement(c.id, t.id, 100)] : undefined);
+      expect(result.criterionScores[0]).toMatchObject({ score: 100, pass: false, verificationStatus: "partial" });
+      expect(result.criterionScores[0]?.gaps.join(" ")).toContain("搜索交互");
+      expect(result.verifiedRubricCoverage).toBe(0);
+      expect(execution.verificationStatus).toBe("verified");
+    }
+    const explicit = deriveCriterionScores([c], [{ ...t, tags: [] }], [], [execution], [judgement(c.id, t.id, 100)]);
+    expect(explicit.criterionScores[0]).toMatchObject({ pass: true, verificationStatus: "verified" });
+  });
+});

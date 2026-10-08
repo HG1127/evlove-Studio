@@ -1,5 +1,6 @@
 import type { AcceptanceCriterion, EvolveProject, TestCase } from "@evolution/contracts";
 import { criterionCanUseLocalSnapshotEvidence } from "./criterion-evidence";
+import { sourceGroundedHtmlProtectionSteps } from "./html-protection-browser-steps";
 export { criterionCanUseLocalSnapshotEvidence } from "./criterion-evidence";
 
 const INTERNAL_PATTERN = /(src\/|docs\/|\.tsx?\b|\.jsx?\b|\.test\.|\.spec\.|typeid\b|semantic-evolution|workflow-engine|artifact-compatibility|tailwind|css\s*token|theme\s*token|index\.css|schema\.ts|local-store|validation-report|vitest|playwright|babel|parser\/builder|undefined\s*断点)/i;
@@ -33,21 +34,32 @@ function isCodebaseProject(project: EvolveProject) {
     || project.semanticEvolution?.semanticObject.typeId === "software-system";
 }
 
+function hasExecutableHtmlTarget(project: EvolveProject) {
+  return project.sourceArtifacts.some((artifact) => artifact.role === "target"
+    && /^(html|htm)$/i.test(artifact.extension) && /<script\b/i.test(artifact.textContent ?? ""));
+}
+
 function executionForProject(project: EvolveProject, criteria: AcceptanceCriterion[], test: TestCase) {
   const methods = criteria.map((item) => item.validationMethod);
+  const combined = `${test.title} ${test.input} ${test.expected.join(" ")} ${criteria.map((item) => `${item.title} ${item.requirement}`).join(" ")}`;
   if (methods.includes("executable-test")) return { executionMode: "external-runner" as const, evidenceScope: "implementation" as const };
   if (methods.includes("visual-review")) return { executionMode: "visual-review" as const, evidenceScope: "product-behavior" as const };
   if (methods.includes("format-roundtrip")) return { executionMode: "roundtrip" as const, evidenceScope: "format" as const };
   if (methods.includes("cross-artifact")) return { executionMode: "static-evidence" as const, evidenceScope: "cross-artifact" as const };
   if (methods.includes("static-structure")) return { executionMode: "static-evidence" as const, evidenceScope: "implementation" as const };
   if (methods.includes("manual-review")) return { executionMode: "manual" as const, evidenceScope: "product-behavior" as const };
+  // A scripted HTML document can be both readable content and an interactive product.
+  // Text projection may prove prose, but cannot execute workflow or protection behavior.
+  if (hasExecutableHtmlTarget(project) && (criteria.some((item) => item.protectedConstraint)
+    || (methods.includes("user-scenario") && RUNTIME_PATTERN.test(combined)))) {
+    return { executionMode: "external-runner" as const, evidenceScope: "product-behavior" as const };
+  }
   if (methods.length > 0 && methods.every((method) => method === "semantic-judge")) return { executionMode: "artifact-runtime" as const, evidenceScope: "product-behavior" as const };
 
   // Evidence requirements belong to the acceptance contract, not to the currently
   // selected adapter. Connecting a Runner must not silently turn a real runtime
   // scenario back into an AI-simulated artifact-runtime check.
   if (isCodebaseProject(project)) {
-    const combined = `${test.title} ${test.input} ${test.expected.join(" ")} ${criteria.map((item)=>`${item.title} ${item.requirement}`).join(" ")}`;
     if (VISUAL_PATTERN.test(combined)) return { executionMode: "visual-review" as const, evidenceScope: "product-behavior" as const };
     if (RUNTIME_PATTERN.test(combined)) return { executionMode: "external-runner" as const, evidenceScope: "product-behavior" as const };
     // Codebase product goals that do not require runtime interaction can at least collect static implementation evidence.
@@ -56,6 +68,12 @@ function executionForProject(project: EvolveProject, criteria: AcceptanceCriteri
 
   const method = methods[0] ?? "semantic-judge";
   return { executionMode: methodMode(method), evidenceScope: scopeFor(method) };
+}
+
+function bindExecutionEvidence(project: EvolveProject, criteria: AcceptanceCriterion[], test: TestCase, mode: ReturnType<typeof executionForProject>): TestCase {
+  const routed = { ...test, ...mode };
+  const browserSteps = sourceGroundedHtmlProtectionSteps(project, criteria, routed);
+  return browserSteps ? { ...routed, browserSteps, tags: [...new Set([...routed.tags, "source-grounded-html-assertions"]) ] } : routed;
 }
 
 function cleanImplementationSentences(value: string) {
@@ -119,7 +137,7 @@ export function normalizeEvalSuiteForProject(project: EvolveProject, validationC
     const scoped = constrainSingleCriterionCase(project, sanitized, mapped);
     if (mapped.length <= 1) {
       const mode = executionForProject(project, mapped, scoped);
-      return [{ ...scoped, ...mode, hidden }];
+      return [bindExecutionEvidence(project, mapped, { ...scoped, hidden }, mode)];
     }
 
     // One generated test can accidentally bind semantic/format/visual/E2E criteria together. If the
@@ -136,7 +154,7 @@ export function normalizeEvalSuiteForProject(project: EvolveProject, validationC
     }
     if (groups.size === 1) {
       const mode = [...groups.values()][0]!.mode;
-      return [{ ...scoped, ...mode, hidden }];
+      return [bindExecutionEvidence(project, mapped, { ...scoped, hidden }, mode)];
     }
     return [...groups.values()].map((group, index) => {
       const criterionIds = group.criteria.map((criterion) => criterion.id);
@@ -148,7 +166,7 @@ export function normalizeEvalSuiteForProject(project: EvolveProject, validationC
         expected,
         tags: [...new Set([...scoped.tags, "evidence-route-split"])],
       }, group.criteria);
-      return { ...separated, ...group.mode, hidden };
+      return bindExecutionEvidence(project, group.criteria, { ...separated, hidden }, group.mode);
     });
   };
   return {

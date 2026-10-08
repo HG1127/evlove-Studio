@@ -42,8 +42,16 @@ export function deriveCriterionScores(
   const { byId: caseMap, duplicateIds: repeatedCases } = indexUniqueById(caseScores, (item) => item.testCaseId);
   const { byId: runMap, duplicateIds: repeatedRuns } = indexUniqueById(runs, (item) => item.testCaseId);
   const criterionScores: CriterionScore[] = criteria.map((criterion) => {
-    const mappedCases = testCases.filter((testCase) => testCase.criterionIds.includes(criterion.id)).map((testCase) => testCase.id);
-    const mappedStatuses = mappedCases.map((id) => runMap.get(id)?.verificationStatus ?? "unverified");
+    const mappedTests = testCases.filter((testCase) => testCase.criterionIds.includes(criterion.id));
+    const mappedCases = mappedTests.map((testCase) => testCase.id);
+    // Generated search smoke covers one interaction, not the complete protection contract.
+    // Preserve the Runner's truthful assertion result while limiting criterion-level claims.
+    const limitedCoverage = mappedTests.some((testCase) => testCase.tags.includes("source-grounded-html-assertions"));
+    const coverageGaps = limitedCoverage ? ["自动生成的 HTML 检查仅覆盖搜索交互，尚未覆盖该保护标准的全部要求；需补齐对应的执行、视觉或人工证据"] : [];
+    const mappedStatuses = mappedTests.map((testCase) => {
+      const status = runMap.get(testCase.id)?.verificationStatus ?? "unverified";
+      return status === "verified" && testCase.tags.includes("source-grounded-html-assertions") ? "partial" : status;
+    });
     if (mappedCases.some((id) => repeatedRuns.has(id))) return {
       criterionId: criterion.id,
       score: 0,
@@ -98,7 +106,7 @@ export function deriveCriterionScores(
     if (ai && verificationStatus !== "unverified") {
       const score = normalizeEvaluationScore(ai.score);
       const scorePass = ai.pass && score >= criterion.minScore;
-      const pass = criterion.hardGate ? verificationStatus === "verified" && scorePass : scorePass;
+      const pass = !limitedCoverage && (criterion.hardGate ? verificationStatus === "verified" && scorePass : scorePass);
       const verificationGap = verificationStatus === "partial"
         ? ["当前只有部分/静态证据，尚不足以证明该项已在真实运行环境完全通过"]
         : [];
@@ -108,7 +116,7 @@ export function deriveCriterionScores(
         pass,
         verificationStatus,
         evidence: ai.evidence.slice(0, 6),
-        gaps: [...verificationGap, ...ai.gaps.slice(0, 6)],
+        gaps: [...coverageGaps, ...verificationGap, ...ai.gaps.slice(0, 6)],
         testCaseIds: ai.testCaseIds.filter((id) => mappedCases.includes(id)).length
           ? ai.testCaseIds.filter((id) => mappedCases.includes(id))
           : mappedCases,
@@ -118,7 +126,7 @@ export function deriveCriterionScores(
       ? Math.round(related.reduce((sum, item) => sum + (item.accuracy + item.evidence + item.completeness) / 3, 0) / related.length)
       : 0;
     const scorePass = score >= criterion.minScore;
-    const pass = verificationStatus === "unverified"
+    const pass = limitedCoverage || verificationStatus === "unverified"
       ? false
       : criterion.hardGate
         ? verificationStatus === "verified" && scorePass
@@ -139,7 +147,7 @@ export function deriveCriterionScores(
       pass,
       verificationStatus,
       evidence: related.map((item) => `${item.testCaseId}: ${item.reason}`).slice(0, 4),
-      gaps,
+      gaps: [...coverageGaps, ...gaps],
       testCaseIds: mappedCases,
     };
   });

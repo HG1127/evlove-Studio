@@ -15,6 +15,7 @@ export * from "./downstream";
 export * from "./artifact-output";
 export * from "./acceptance-rubric";
 export * from "./eval-suite-normalization";
+export * from "./html-protection-browser-steps";
 export * from "./release-target";
 export * from "./deterministic-criterion-evidence";
 export * from "./baseline-readiness";

@@ -121,13 +121,51 @@ describe("candidate snapshot evidence",()=>{
     const content=`<!doctype html><html><body>${"<p>背景资料</p>".repeat(3000)}<h2>概念解释</h2><p>用真实项目举例，让初学者看懂。</p></body></html>`;
     const candidate={artifactSnapshots:[{id:"html-snapshot",sourceArtifactId:"tutorial",name:"tutorial.html",content}]} as Candidate;
     const [run]=normalizeLocallyVerifiableCandidateRuns(project,candidate,[testCase],[seed]);
-    expect(run?.verificationStatus).toBe("partial");
+    expect(run?.verificationStatus).toBe("verified");
     expect(run?.output).toContain("真实项目举例");
+    expect(run?.output).toContain("HTML 证据边界");
     expect(run?.output).not.toContain("旧版教程");
+    const hugeVisible={artifactSnapshots:[{...candidate.artifactSnapshots[0]!,content:`<html><body>${"<p>完整可读内容</p>".repeat(6000)}</body></html>`}]} as Candidate;
+    expect(normalizeLocallyVerifiableCandidateRuns(project,hugeVisible,[testCase],[seed])[0]?.verificationStatus).toBe("partial");
     const shortCandidate={artifactSnapshots:[{...candidate.artifactSnapshots[0]!,content:"<html><body><h2>概念解释</h2><p>具体示例</p></body></html>"}]} as Candidate;
     expect(normalizeLocallyVerifiableCandidateRuns(project,shortCandidate,[testCase],[seed])[0]?.verificationStatus).toBe("verified");
     const malformed={artifactSnapshots:[{...candidate.artifactSnapshots[0]!,content:"<main>只有片段</main>"}]} as Candidate;
     expect(normalizeLocallyVerifiableCandidateRuns(project,malformed,[testCase],[seed])[0]?.verificationStatus).toBe("unverified");
+  });
+
+  it("reviews a long HTML file's complete text projection without mistaking CSS and scripts for prose",()=>{
+    const style=`<style>${".card{padding:12px;color:#123456;}".repeat(2500)}</style>`;
+    const script=`<script>${"function noop(){return true;}".repeat(1000)}</script>`;
+    const original=`<html><head>${style}</head><body><h1>旧版说明</h1>${"<p>背景资料</p>".repeat(2000)}${script}</body></html>`;
+    const changed=`<html><head>${style}</head><body><h1>新版说明</h1>${"<p>背景资料</p>".repeat(2000)}<p>清晰的操作步骤和示例</p>${script}</body></html>`;
+    const project={evolutionCommand:"优化说明",acceptanceRubric:[
+      {id:"READ",artifactIds:["html"],validationMethod:"semantic-judge"},
+      {id:"SYS-PAIRWISE",artifactIds:["html"],validationMethod:"semantic-judge"},
+      {id:"PROTECT-ALL",artifactIds:["html"],validationMethod:"semantic-judge"},
+    ],sourceArtifacts:[{id:"html",name:"guide.html",extension:"html",artifactKind:"document",role:"target",textContent:original}]} as unknown as EvolveProject;
+    const candidate={artifactSnapshots:[{id:"snapshot",sourceArtifactId:"html",name:"guide.html",content:changed}]} as Candidate;
+    const cases=[
+      {id:"read",title:"可读性",input:"检查说明",expected:["清晰步骤"],criterionIds:["READ"],executionMode:"artifact-runtime",evidenceScope:"document-content"},
+      {id:"pair",title:"相对改进",input:"对比原版",expected:["明确改进"],criterionIds:["SYS-PAIRWISE"],executionMode:"artifact-runtime",evidenceScope:"document-content"},
+      {id:"protect",title:"保护交互",input:"检查原有交互",expected:["不变"],criterionIds:["PROTECT-ALL"],executionMode:"artifact-runtime",evidenceScope:"product-behavior"},
+    ] as TestCase[];
+    const seeds=cases.map((testCase)=>({testCaseId:testCase.id,output:"pending",latencyMs:0,cost:0,trace:[],verificationStatus:"unverified" as const}));
+    const [read,pair,protect]=normalizeLocallyVerifiableCandidateRuns(project,candidate,cases,seeds);
+    expect(read?.verificationStatus).toBe("verified");
+    expect(read?.output).toContain("清晰的操作步骤和示例");
+    expect(pair?.verificationStatus).toBe("verified");
+    expect(pair?.output).toContain("旧版说明");
+    expect(pair?.output).toContain("新版说明");
+    expect(protect?.verificationStatus).toBe("partial");
+    expect(protect?.output).toContain("需 Runner 验证");
+    const runnerCase={...cases[2]!,executionMode:"external-runner" as const};
+    const [pendingRunner]=normalizeLocallyVerifiableCandidateRuns(project,candidate,[runnerCase],[seeds[2]!]);
+    expect(pendingRunner).toEqual(seeds[2]);
+    const runnerResult={...seeds[2]!,output:"真实浏览器已完成保护项操作",verificationStatus:"verified" as const,artifactHash:"candidate-sha256",
+      trace:[{id:"real-runner",stage:"browser-runtime",summary:"点击、状态与保护项均已检查",status:"pass" as const}]};
+    expect(normalizeLocallyVerifiableCandidateRuns(project,candidate,[runnerCase],[runnerResult])[0]).toEqual(runnerResult);
+    const changedScript={...candidate,artifactSnapshots:[{...candidate.artifactSnapshots[0]!,content:changed.replace(script,"<script>window.changed = true</script>") }]} as Candidate;
+    expect(normalizeLocallyVerifiableCandidateRuns(project,changedScript,cases,seeds)[1]?.verificationStatus).toBe("partial");
   });
 });
 

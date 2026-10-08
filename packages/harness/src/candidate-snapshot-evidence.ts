@@ -1,6 +1,7 @@
 import type { Candidate, EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
 import { criterionCanUseLocalSnapshotEvidence, fastHash } from "@evolution/core";
 import { retrieveTextContext } from "./context-retrieval";
+import { htmlSnapshotReview } from "./html-snapshot-review";
 
 const LOCALLY_ROUNDTRIPPABLE_TEXT = /^(txt|md|markdown|csv|json|yaml|yml|css|js|jsx|ts|tsx)$/i;
 
@@ -67,12 +68,6 @@ function isCodebaseOverlay(content: string) {
     return false;
   }
 }
-function htmlCandidateText(content: string) {
-  if (!/<html\b[^>]*>/i.test(content) || !/<\/html\s*>/i.test(content)
-    || !/<body\b[^>]*>/i.test(content) || !/<\/body\s*>/i.test(content)) return undefined;
-  return content;
-}
-
 /**
  * Bind locally provable validation evidence to the exact Candidate snapshot.
  *
@@ -107,6 +102,12 @@ export function normalizeLocallyVerifiableCandidateRuns(
       return criterion ? [criterion] : [];
     });
     if (!mapped.length) return run;
+
+    // An explicit external/visual/manual route must run through its own executor. In particular,
+    // PROTECT-ALL can request scripted HTML interaction evidence: a local original-vs-candidate
+    // text projection must neither pre-empt that Runner call nor overwrite its SHA-bound result.
+    if (testCase.executionMode === "external-runner" || testCase.executionMode === "visual-review"
+      || testCase.executionMode === "manual") return run;
 
     // Server roundtrip evidence is backed by a fresh Blob read. Do not let the legacy
     // text-only UTF-8 shortcut replace a missing or stale frozen-file result.
@@ -174,7 +175,7 @@ export function normalizeLocallyVerifiableCandidateRuns(
       };
     }
 
-    if (testCase.criterionIds.length > 0 && testCase.criterionIds.every((id) => id === "SYS-PAIRWISE")) {
+    if (testCase.criterionIds.length > 0 && testCase.criterionIds.every((id) => id === "SYS-PAIRWISE" || id === "PROTECT-ALL")) {
       const scopedIds = new Set(mapped.flatMap((criterion) => criterion.artifactIds));
       const snapshots = candidate.artifactSnapshots.filter((snapshot) => !scopedIds.size || scopedIds.has(snapshot.sourceArtifactId));
       const query = `${project.evolutionCommand}\n${testCase.title}\n${testCase.input}\n${testCase.expected.join(" ")}`;
@@ -189,14 +190,23 @@ export function normalizeLocallyVerifiableCandidateRuns(
         const originalFull = source.textContent || structured;
         const originalAvailable = originalFull || source.textExcerpt || "";
         if (!originalAvailable) return [];
-        const originalComplete = Boolean(originalFull) && originalAvailable.length <= maxSideChars;
-        const evolvedComplete = snapshot.content.length <= maxSideChars;
-        const originalEvidence = originalAvailable.length <= maxSideChars
-          ? originalAvailable
-          : retrieveTextContext(originalAvailable, query, { maxChars: maxSideChars, maxChunks: 6 });
-        const evolvedEvidence = snapshot.content.length <= maxSideChars
-          ? snapshot.content
-          : retrieveTextContext(snapshot.content, query, { maxChars: maxSideChars, maxChunks: 6 });
+        const html = /^(html|htm)$/i.test(source.extension);
+        const originalHtml = html && originalFull ? htmlSnapshotReview(originalFull) : undefined;
+        const evolvedHtml = html ? htmlSnapshotReview(snapshot.content) : undefined;
+        const originalReview = originalHtml ? `${originalHtml.summary}\n正文全文：\n${originalHtml.text}` : originalAvailable;
+        const evolvedReview = evolvedHtml ? `${evolvedHtml.summary}\n正文全文：\n${evolvedHtml.text}` : snapshot.content;
+        const originalComplete = Boolean(originalFull) && (!html || Boolean(originalHtml)) && originalReview.length <= maxSideChars;
+        const evolvedComplete = (!html || Boolean(evolvedHtml)) && evolvedReview.length <= maxSideChars;
+        const embeddedChanged = Boolean(originalHtml && evolvedHtml
+          && (JSON.stringify(originalHtml.scripts) !== JSON.stringify(evolvedHtml.scripts)
+            || JSON.stringify(originalHtml.styles) !== JSON.stringify(evolvedHtml.styles)));
+        const behaviorUnproven = testCase.criterionIds.includes("PROTECT-ALL") && Boolean(evolvedHtml?.scripts.length);
+        const originalEvidence = originalReview.length <= maxSideChars
+          ? originalReview
+          : retrieveTextContext(originalReview, query, { maxChars: maxSideChars, maxChunks: 6 });
+        const evolvedEvidence = evolvedReview.length <= maxSideChars
+          ? evolvedReview
+          : retrieveTextContext(evolvedReview, query, { maxChars: maxSideChars, maxChunks: 6 });
         return [{
           name: snapshot.name,
           sourceArtifactId: snapshot.sourceArtifactId,
@@ -204,12 +214,16 @@ export function normalizeLocallyVerifiableCandidateRuns(
           evolvedEvidence,
           originalComplete,
           evolvedComplete,
+          embeddedChanged,
+          behaviorUnproven,
+          htmlProjection: Boolean(originalHtml && evolvedHtml),
           originalLength: originalAvailable.length,
           evolvedLength: snapshot.content.length,
         }];
       });
       if (pairs.length) {
-        const complete = pairs.length === snapshots.length && pairs.every((pair) => pair.originalComplete && pair.evolvedComplete);
+        const complete = pairs.length === snapshots.length && pairs.every((pair) => pair.originalComplete && pair.evolvedComplete
+          && !pair.embeddedChanged && !pair.behaviorUnproven);
         return {
           ...run,
           output: [
@@ -218,8 +232,9 @@ export function normalizeLocallyVerifiableCandidateRuns(
             `用户进化目标：${project.evolutionCommand}`,
             ...pairs.flatMap((pair) => [
               `--- ${pair.name} (${pair.sourceArtifactId}) ---`,
-              `ORIGINAL (${pair.originalLength} chars${pair.originalComplete ? ", complete" : ", retrieved context"}):\n${pair.originalEvidence}`,
-              `EVOLVED (${pair.evolvedLength} chars${pair.evolvedComplete ? ", complete" : ", retrieved context"}):\n${pair.evolvedEvidence}`,
+              `ORIGINAL (${pair.originalLength} raw chars${pair.originalComplete ? pair.htmlProjection ? ", complete text projection" : ", complete" : ", retrieved context"}):\n${pair.originalEvidence}`,
+              `EVOLVED (${pair.evolvedLength} raw chars${pair.evolvedComplete ? pair.htmlProjection ? ", complete text projection" : ", complete" : ", retrieved context"}):\n${pair.evolvedEvidence}`,
+              ...(pair.htmlProjection ? [`HTML 对照边界：已完整扫描两份源文件并审阅正文投影；${pair.embeddedChanged ? "内嵌脚本或样式有变化，不能由正文证明其行为与视觉。" : "内嵌脚本与样式逐段相同。"}${pair.behaviorUnproven ? "保护项包含未实际执行的脚本交互，需 Runner 验证。" : "未执行浏览器交互。"}`] : []),
             ]),
             "证据说明：以上只提供真实原版与当前 Candidate 的同题对照；是否达到“更好”仍由独立 Rubric evaluator 判定。",
           ].join("\n\n"),
@@ -227,9 +242,9 @@ export function normalizeLocallyVerifiableCandidateRuns(
           trace: [...run.trace, {
             id: `pairwise-snapshot-${testCase.id}`,
             stage: "pairwise-snapshot",
-            summary: complete ? "已提供完整原版与 Candidate 双快照" : "已提供原版与 Candidate 对照上下文",
+            summary: complete ? "已提供完整原版与 Candidate 双快照可读内容" : "已提供原版与 Candidate 对照上下文",
             status: complete ? "pass" : "warning",
-            detail: pairs.map((pair) => `${pair.name}: ${pair.originalLength}→${pair.evolvedLength}`).join("；"),
+            detail: `${pairs.map((pair) => `${pair.name}: ${pair.originalLength}→${pair.evolvedLength}${pair.htmlProjection ? "（HTML 全文件扫描/正文投影）" : ""}${pair.embeddedChanged ? "（脚本/样式有变）" : ""}${pair.behaviorUnproven ? "（交互待实测）" : ""}`).join("；")}；单侧完整审阅上限 ${maxSideChars} 字；超出部分仅检索相关片段，不能证明全文`,
           }],
         };
       }
@@ -281,18 +296,27 @@ export function normalizeLocallyVerifiableCandidateRuns(
         const docx = source?.extension.toLowerCase() === "docx"
           && (!source.artifactDescriptor || source.artifactDescriptor.adapterId === "document-docx-ooxml");
         const html = source && /^(html|htm)$/i.test(source.extension);
+        const htmlReview = html ? htmlSnapshotReview(snapshot.content) : undefined;
         const reviewable = docx
           ? docxCandidateText(source, snapshot.content)
-          : html ? htmlCandidateText(snapshot.content)
+          : html ? htmlReview && `${htmlReview.summary}\n正文全文：\n${htmlReview.text}`
           : testCase.executionMode === "static-evidence" ? staticSnapshotText(snapshot.content) : snapshot.content;
         if (!reviewable) return [];
         const overlay = source?.artifactKind === "codebase" && isCodebaseOverlay(snapshot.content);
+        const sourceHtml = html && source?.textContent ? htmlSnapshotReview(source.textContent) : undefined;
+        const embeddedChanged = Boolean(htmlReview && sourceHtml
+          && (JSON.stringify(htmlReview.scripts) !== JSON.stringify(sourceHtml.scripts)
+            || JSON.stringify(htmlReview.styles) !== JSON.stringify(sourceHtml.styles)));
+        const integrityWithUnreviewedCode = mapped.some((criterion) => criterion.id === "SYS-INTEGRITY")
+          && Boolean(htmlReview) && (!sourceHtml || embeddedChanged);
         return [{
           name: snapshot.name,
           sourceArtifactId: snapshot.sourceArtifactId,
           length: reviewable.length,
-          complete: reviewable.length <= maxSideChars && !overlay,
+          complete: reviewable.length <= maxSideChars && !overlay && !integrityWithUnreviewedCode,
           overlay,
+          htmlProjection: Boolean(htmlReview),
+          embeddedChanged,
           content: reviewable.length <= maxSideChars
             ? reviewable
             : retrieveTextContext(reviewable, query, { maxChars: maxSideChars, maxChunks: 6 }),
@@ -310,8 +334,9 @@ export function normalizeLocallyVerifiableCandidateRuns(
             `验收目标：${testCase.title}`,
 
             ...evidence.flatMap((item) => [
-              `--- ${item.name} (${item.sourceArtifactId}) · ${item.length} chars${item.overlay ? ", overlay only" : item.complete ? ", complete" : ", retrieved context"} ---`,
+              `--- ${item.name} (${item.sourceArtifactId}) · ${item.length} review chars${item.overlay ? ", overlay only" : item.complete ? item.htmlProjection ? ", complete text projection" : ", complete" : item.length > maxSideChars ? ", retrieved context" : ", non-text scope pending"} ---`,
               item.content,
+              ...(item.htmlProjection ? [`HTML 证据边界：已扫描完整 Candidate 源码，但正文投影不包含脚本、样式、视觉和实际交互。${item.embeddedChanged ? "相对原版内嵌脚本或样式有变化；完整性验收还需真实运行证据。" : ""}`] : []),
             ]),
             "证据说明：以上内容直接来自当前 Candidate Artifact Snapshot；代码库 overlay 只包含候选修改，不能代替完整包验证。Runtime 只提供当前成果证据，是否满足验收要求仍由独立 Rubric evaluator 判定。",
           ].join("\n\n"),
@@ -323,7 +348,7 @@ export function normalizeLocallyVerifiableCandidateRuns(
               ? "已绑定当前 Candidate 的静态文件证据"
               : complete ? "已提供当前 Candidate 可审阅内容" : "已提供当前 Candidate 相关内容上下文",
             status: complete ? "pass" : "warning",
-            detail: evidence.map((item) => `${item.name}:${item.length}`).join("；"),
+            detail: `${evidence.map((item) => `${item.name}:${item.length}${item.htmlProjection ? "（HTML 全文件扫描/正文投影）" : ""}${item.embeddedChanged ? "（脚本/样式有变）" : ""}${item.overlay ? "（仅修改片段）" : item.complete ? "（完整可读内容）" : "（仅检索片段或非文本部分待验证）"}`).join("；")}；单文件完整审阅上限 ${maxSideChars} 字`,
           }],
         };
       }

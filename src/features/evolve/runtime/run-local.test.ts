@@ -159,6 +159,24 @@ describe("local Target execution identity", () => {
     expect(validation.runs.find((run)=>run.testCaseId===testCase.id)?.verificationStatus).toBe("verified");
     expect(validation.evaluation?.unverifiedCriterionIds).not.toContain(criterion.id);
   });
+
+  it("does not let a local PROTECT-ALL projection swallow a scripted HTML Runner case", async () => {
+    const criterion = AcceptanceCriterionSchema.parse({ id:"PROTECT-ALL", title:"保护交互", requirement:"原有交互可用", source:"protected-item", weight:100, hardGate:true, judgeType:"pairwise", validationMethod:"semantic-judge", minScore:95, evidenceExpected:["真实点击保持可用"], protectedConstraint:true, artifactIds:["tutorial"], category:"protected" });
+    const html="<html><body><button>下一步</button><script>document.querySelector('button').onclick = () => true</script></body></html>";
+    const project={ ...demoProject, objectType:"document" as const, sourceArtifacts:[{
+      ...demoProject.sourceArtifacts[0]!, id:"tutorial", name:"tutorial.html", extension:"html", mimeType:"text/html", artifactKind:"document" as const, role:"target" as const, textContent:html,
+    }], acceptanceRubric:[criterion] } as typeof demoProject;
+    const candidate=CandidateSchema.parse({id:"HTML-PROTECT",name:"教程新版",change:"补强说明",artifactSnapshots:[{
+      id:"html-protect-snapshot",sourceArtifactId:"tutorial",name:"tutorial.html",mimeType:"text/html",content:html.replace("下一步","继续"),createdAt:"2026-09-27T00:00:00.000Z",
+    }]});
+    const testCase={id:"H-PROTECT",title:"保护交互",input:"真实点击下一步",expected:["可继续"],tags:[],hidden:true,criterionIds:[criterion.id],executionMode:"external-runner" as const,evidenceScope:"product-behavior" as const};
+    let calls=0;
+    const result={testCaseId:testCase.id,output:"浏览器点击已完成",latencyMs:100,cost:0,trace:[{id:"browser",stage:"browser-runtime",summary:"实测",status:"pass" as const}],verificationStatus:"verified" as const,artifactHash:"sha256-of-current-candidate"};
+    const adapter={run:async()=>{calls++;return result;}} as unknown as ReturnType<typeof getTargetAdapter>;
+    const runs=await executeCandidateAwareCaseSet({adapter,project,testCases:[testCase],variant:candidate,batchSize:1});
+    expect(calls).toBe(1);
+    expect(runs).toEqual([result]);
+  });
 });
 
 describe("browser runtime smoke", () => {
