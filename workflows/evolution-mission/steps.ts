@@ -10,6 +10,8 @@ import {
 import { advanceCampaignScheduleAfterServerRun, applyDeterministicRoundtripEvidence, applyProductionLearningGovernance, campaignGoalSatisfied, campaignStopReason, completeAutonomousMission, integrateDistilledLesson, mapTestsToRubric, materializeAcceptedChampionPackage, mergeGovernedNextQueue, normalizeAcceptanceRubric, normalizeEvalSuiteForProject, productionOutcomeFreshness, productionOutcomeTrend, projectHasStableHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, resetDownstream, rubricSuiteCoverage, rubricValidation } from "@evolution/core";
 import {
   advanceServerCampaignPreparation,
+  compactServerSourceArtifacts,
+  SERVER_SOURCE_CONTEXT_INSTRUCTION,
   serverCampaignScoringRouteBlocker,
   canReuseServerBaseline,
   buildServerHarnessPlan,
@@ -450,15 +452,9 @@ function result(input:EvolutionWorkflowRunInput,args:Omit<EvolutionWorkflowResul
   return {missionId:input.missionId,controlJobId:input.controlJobId,...args};
 }
 
+// Compatibility shim: source budgeting belongs to Harness.
 function compactArtifacts(project:Awaited<ReturnType<ReturnType<typeof getServerProductionRuntime>["missions"]["get"]>>){
-  if(!project)return[];
-  let remaining=60_000;
-  return project.sourceArtifacts.map((artifact)=>{
-    const source=artifact.textContent||artifact.textExcerpt||"";
-    const content=source.slice(0,Math.max(0,Math.min(source.length,remaining,20_000)));
-    remaining=Math.max(0,remaining-content.length);
-    return {id:artifact.id,name:artifact.name,role:artifact.role,artifactKind:artifact.artifactKind,content};
-  }).filter((item)=>item.content||item.role==="target");
+  return compactServerSourceArtifacts(project);
 }
 
 export async function executeServerControlStep(
@@ -565,6 +561,7 @@ async function executeServerControlAction(
     const understood=await runServerAi("understand",{
       command:mission.evolutionCommand,
       goal:mission.goal,
+      sourceContextInstruction:SERVER_SOURCE_CONTEXT_INSTRUCTION,
       semanticObject:mission.semanticEvolution?.semanticObject,
       artifacts:compactArtifacts(mission),
       answered:mission.inputClarifications,
@@ -599,6 +596,7 @@ async function executeServerControlAction(
         semanticEvolution:mission.semanticEvolution,
       },
       targetArtifacts:compactArtifacts(mission).filter((artifact)=>artifact.role==="target"),
+      sourceContextInstruction:SERVER_SOURCE_CONTEXT_INSTRUCTION,
     });
     const criteria=normalizeAcceptanceRubric(generated.criteria,mission);
     const validation=rubricValidation(criteria);
@@ -636,6 +634,7 @@ async function executeServerControlAction(
     const rubricCheck=rubricValidation(mission.acceptanceRubric);
     if(!rubricCheck.ready)throw new FatalError("Acceptance Rubric 尚未 Ready："+rubricCheck.warnings.join("；"));
     const generated=await runServerAi("eval-suite",{
+      sourceContextInstruction:SERVER_SOURCE_CONTEXT_INSTRUCTION,
       project:{
         objectType:mission.objectType,
         department:mission.department,

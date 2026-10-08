@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { EvolutionJobSchema, type EvolveProject } from "@evolution/contracts";
+import { AcceptanceCriterionSchema, SourceArtifactSchema, EvolutionJobSchema, type EvolveProject } from "@evolution/contracts";
 import { buildServerHarnessPlan, serverControlCapabilityWaitPlan, type ServerHarnessPlan } from "@evolution/harness";
 import {demoProject} from "../../../../src/features/evolve/data/mock-project";
 import { executeServerControlStep, planMissionStep } from "../../../../workflows/evolution-mission/steps";
@@ -141,5 +141,33 @@ describe("new durable run resumes the actual stored AI wait",()=>{
     mocks.get.mockResolvedValue(fullPausedMission());mocks.probe.mockResolvedValue({ready:false,status:"error",reasonCode:"runtime-error"});
     await expect(planMissionStep(input,0)).rejects.toThrow("健康探测未通过");
     expect(mocks.save).not.toHaveBeenCalled();expect(mocks.append).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("durable input context for a long HTML document",()=>{
+  it.each(["understand","compile-contract","build-eval"] as const)("shows real body content to %s instead of only the long style header",async(action)=>{
+    const stored=structuredClone(demoProject);stored.id=input.missionId;
+    const quote="退款审批 REFUND_APPROVAL_CASE 必须由主管批准并保留流水编号。";
+    const html="<html><head><title>操作手册</title><style>"+".presentation-style { color: red; }\n".repeat(2000)+"</style></head><body><article>"+quote+"</article>"+"<p>原始章节正文</p>".repeat(3000)+"</body></html>";
+    stored.sourceArtifacts=[SourceArtifactSchema.parse({id:"source",name:"large-sop.html",role:"target",artifactKind:"document",mimeType:"text/html",extension:"html",inputMode:"upload",parseStatus:"ready",textContent:html,textExcerpt:html.slice(0,1000),size:Buffer.byteLength(html),createdAt:at})];
+    stored.goal="细化退款流程";stored.evolutionCommand="让主管审批步骤更明确";
+    stored.acceptanceRubric=["CONTENT","STRUCTURE","PROTECT"].map((id,index)=>AcceptanceCriterionSchema.parse({id,title:id,requirement:quote,weight:index===0?40:30,hardGate:true,evidenceExpected:[quote],artifactIds:["source"],category:index===1?"integrity":index===2?"protected":"outcome"}));
+    stored.evalSuite=[];stored.hiddenEvalSuite=[];stored.baselineRun={...stored.baselineRun,status:"idle",runs:[],result:undefined};
+    mocks.get.mockResolvedValue(stored);mocks.probe.mockResolvedValue({ready:true,status:"ready"});
+    mocks.ai.mockImplementation(async(operation:string,payload:unknown)=>{
+      const data=payload as {sourceContextInstruction?:string;artifacts?:Array<{content:string;originalChars:number;truncated:boolean}>;targetArtifacts?:Array<{content:string;originalChars:number;truncated:boolean}>;project?:{artifacts:Array<{content:string;originalChars:number;truncated:boolean}>}};
+      const artifacts=data.artifacts??data.targetArtifacts??data.project?.artifacts;
+      expect(data.sourceContextInstruction).toContain("not proof of complete Storage bytes or runtime behavior");
+      expect(artifacts?.[0]?.content.includes(quote)).toBe(true);
+      expect(artifacts?.[0]?.content.length).toBeLessThanOrEqual(20_000);
+      expect(artifacts?.[0]).toMatchObject({originalChars:html.length,truncated:true});
+      if(operation==="rubric")return {criteria:stored.acceptanceRubric,summary:"source-grounded rubric"};
+      if(operation==="eval-suite")return {validationCases:[],hiddenCases:[],summary:"source-grounded tests"};
+      return {summary:"source-grounded understanding",confidence:0.9};
+    });
+    const result=await executeServerControlStep(input,{...plan,decision:{...plan.decision,action}},0);
+    expect(result.control).toBe("continue");expect(mocks.ai).toHaveBeenCalledOnce();
+    expect(mocks.save.mock.calls[0][0].sourceArtifacts[0].textContent).toBe(html);
   });
 });
