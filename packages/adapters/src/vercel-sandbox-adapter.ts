@@ -260,6 +260,8 @@ async function ensureBrowserRuntimeSnapshot(){
   if(browserSnapshotPromise)return browserSnapshotPromise;
   browserSnapshotPromise=(async()=>{
     const base=await Sandbox.getOrCreate({
+      // Resolve the persistent session so SDK recovery replaces a missing snapshot.
+      resume:true,
       name:BROWSER_RUNTIME_NAME,
       image:UNIVERSAL_RUNTIME_IMAGE,
       timeout:10*60_000,

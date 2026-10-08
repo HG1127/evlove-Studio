@@ -26,6 +26,17 @@ beforeEach(() => {
   });
 });
 describe("standalone HTML through the real Sandbox adapter composition", () => {
+  it("requests SDK recovery of a stale named runtime before creating the isolated Target", async () => {
+    vi.resetModules();
+    getOrCreate.mockImplementation(async (options: { resume?: boolean }) => ({ currentSnapshotId: options.resume ? "recovered-browser-runtime" : "missing-old-snapshot" }));
+    const { runVercelSandboxHtmlValidation: recoveredValidation } = await import("./vercel-sandbox-html");
+    const result = await recoveredValidation({ html, expectedSha256, testCases: [testCase] });
+    expect(getOrCreate).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ resume: true, persistent: true, networkPolicy: "deny-all" }));
+    expect(create).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ source: { type: "snapshot", snapshotId: "recovered-browser-runtime" }, persistent: false, networkPolicy: "deny-all" }));
+    expect(result.results[0]?.verificationStatus).toBe("verified");
+    expect(result.artifactHash).toBe(expectedSha256);
+  });
+
   it("selects a real static preview root, keeps Hidden runtime files outside it and binds original bytes", async () => {
     const result = await runVercelSandboxHtmlValidation({ html, expectedSha256, testCases: [testCase] });
     expect(files.get("dist/index.html")).toEqual(html);
@@ -34,6 +45,7 @@ describe("standalone HTML through the real Sandbox adapter composition", () => {
     const preview = commands.find((command) => command.detached);
     expect(preview?.args).toEqual(["/vercel/sandbox/.evolution/runtime/static-server.mjs", "dist", "4173"]);
     expect(commands.some((command) => command.args[0]?.endsWith("browser-runner.mjs"))).toBe(true);
+    expect(getOrCreate).toHaveBeenCalledWith(expect.objectContaining({ resume: true }));
     expect(result.previewHealthy).toBe(true);
     expect(result.results[0]!.verificationStatus).toBe("verified");
     expect(result.artifactHash).toBe(expectedSha256);
