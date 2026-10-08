@@ -132,7 +132,7 @@ describe("Evolution API route security invariants",()=>{
     const route=routes.find((item)=>item.relative==="parse-start.post.ts");
     expect(route).toBeTruthy();
     const guard=route!.source.indexOf("assertBodySize(event,");
-    const read=route!.source.indexOf("readMultipartFormData(event)");
+    const read=route!.source.indexOf("readMultipartFormData(");
     expect(guard).toBeGreaterThanOrEqual(0);
     expect(read).toBeGreaterThan(guard);
   });

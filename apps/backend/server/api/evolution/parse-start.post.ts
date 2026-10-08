@@ -1,5 +1,5 @@
 import {randomUUID} from "node:crypto";
-import {assertBodySize,createError,defineEventHandler,readMultipartFormData} from "nitro/h3";
+import {assertBodySize,createError,defineEventHandler,H3Event,readMultipartFormData} from "nitro/h3";
 import {start} from "workflow/api";
 import {
   EvolutionJobSchema,
@@ -62,7 +62,16 @@ export default defineEventHandler(async(event)=>{
     throw createError({statusCode:503,statusMessage:"Server Parse 数据面未配置",data:{code:"SERVER_PARSE_UNAVAILABLE"}});
   }
   assertBodySize(event,MAX_MULTIPART_BYTES);
-  const parts=await readMultipartFormData(event);
+  // The capped Request formData reader loses MIME context in this H3 version.
+  // Rebuild readers over the already limited stream; neither size cap is bypassed.
+  const bounded=event.req;
+  const multipartEvent=new H3Event(new Request(bounded.url,{
+    method:bounded.method,headers:bounded.headers,body:bounded.body,signal:bounded.signal,duplex:"half",
+  } as RequestInit & {duplex:"half"}),event.context,event.app);
+  const parts=await readMultipartFormData(multipartEvent).catch((error:unknown)=>{
+    if(error instanceof TypeError)throw createError({statusCode:400,statusMessage:"Invalid multipart upload"});
+    throw error;
+  });
   const file=parts?.find((part)=>part.name==="file"&&part.filename);
   if(!file)throw createError({statusCode:400,statusMessage:"缺少 file"});
   if(file.data.byteLength>MAX_FILE_BYTES)throw createError({statusCode:413,statusMessage:"单文件不能超过 25MB"});
