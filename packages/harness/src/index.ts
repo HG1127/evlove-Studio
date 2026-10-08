@@ -18,3 +18,5 @@ export * from "./server-control-capability";
 export * from "./workflow-control-job";
 
 export * from "./server-source-context";
+
+export * from "./server-experiment-wait";
