@@ -44,3 +44,5 @@ export * from "./hidden-validation-evidence";
 export * from "./mission-blob-references";
 
 export * from "./exact-edits";
+
+export * from "./html-candidate-protection";

@@ -264,6 +264,9 @@ importers:
       '@evolution/contracts':
         specifier: workspace:*
         version: link:../contracts
+      parse5:
+        specifier: 8.0.1
+        version: 8.0.1
 
   packages/harness:
     dependencies:

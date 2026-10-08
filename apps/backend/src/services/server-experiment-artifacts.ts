@@ -11,6 +11,7 @@ import { trustedServerBaselineChampion } from "@evolution/harness";
 import { applyExactEdits } from "@evolution/core";
 import { buildServerCandidateTargetContext, buildServerExactCandidateArtifacts, isServerTextEditBlueprint, requireServerCandidateOutputModes, SERVER_TEXT_FAMILY as TEXT_FAMILY } from "./server-candidate-context";
 import { runServerAi } from "./ai-gateway";
+import { checkServerHtmlCandidateProtection } from "./server-html-candidate-protection";
 import { getServerArtifactStore } from "./artifact-runtime";
 import { renderSnapshot, verifyRendered } from "./server-artifact-renderer";
 
@@ -329,12 +330,18 @@ export async function materializeServerCandidateArtifacts(
       notes:[...(artifact.notes??[]),"Durable Workflow Server Materializer：实际文件已物化并冻结。"],
       createdAt:new Date().toISOString(),
     };
+    const protection=text?await checkServerHtmlCandidateProtection({
+      project,source,candidateContent:snapshotContent,parentText,hasParent:Boolean(parent),
+      readOriginal:()=>readServerCandidateParentText({...project,searchChampion:undefined},source),
+    }):{checks:[],limitations:[]};
     if(unchanged&&parent){
       if(!await verifyServerCandidateFrozenArtifact(parent)) throw new Error(`${source.name} 的父代 Candidate 冻结文件不可用或身份不一致。`);
       prepared.push({source,snapshot:{...parent,id:snapshot.id},unchanged:true});
       continue;
     }
     const built=await buildSnapshotFile(project,source,snapshot,artifact.content,parentCandidate);
+    built.checks.push(...protection.checks);
+    built.limitations.push(...protection.limitations);
     prepared.push({source,snapshot,built,unchanged});
   }
   if(prepared.every((item)=>item.unchanged)){

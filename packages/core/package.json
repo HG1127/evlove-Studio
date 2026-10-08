@@ -1,1 +1,1 @@
-{"name":"@evolution/core","private":true,"version":"0.1.0","type":"module","exports":{".":"./src/index.ts"},"dependencies":{"@evolution/contracts":"workspace:*"}}
+{"name":"@evolution/core","private":true,"version":"0.1.0","type":"module","exports":{".":"./src/index.ts"},"dependencies":{"@evolution/contracts":"workspace:*","parse5":"8.0.1"}}
