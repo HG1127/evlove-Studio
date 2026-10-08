@@ -1,4 +1,4 @@
-import { TestCaseSchema } from "@evolution/contracts";
+import { InputUnderstandingSchema, TestCaseSchema } from "@evolution/contracts";
 import { acceptedPackageFixture } from "./accepted-package-fixture";
 export const experimentRecoveryAt = "2026-10-09T02:00:00.000Z";
 /** Synthetic Mission/physical files for recovery composition; no real model or execution proof. */
@@ -20,4 +20,19 @@ export function experimentRecoveryFixture(count = 1) {
   project.artifactAcceptance = { ...project.artifactAcceptance, status: "idle", candidateId: undefined, evidenceFingerprint: undefined, frozenArtifacts: undefined, acceptedAt: undefined };
   x.blobs.set(project.sourceArtifacts[0]!.id, new Blob([project.sourceArtifacts[0]!.textContent!], { type: "text/html" }));
   return x;
+}
+
+/** Synthetic structural wait for client/UI contracts; these digests are not execution proof. */
+export function experimentRecoveryWaitFixture() {
+  const x = experimentRecoveryFixture();
+  const p = x.project, reason = "[server-campaign-experiment-judge-pending] independent Judge unavailable";
+  p.inputUnderstanding = InputUnderstandingSchema.parse({ status: "ready", confidence: .9 });
+  p.candidates = [x.current];
+  p.stage = "experiment";
+  p.campaign = { ...p.campaign, status: "paused", stopReason: reason };
+  p.experimentRun = { ...p.experimentRun, status: "failed", summary: reason, executionCheckpoints: [{
+    candidateId: x.current.id, buildInputFingerprint: "a".repeat(64), artifactFingerprint: "b".repeat(64),
+    execution: { inputFingerprint: "c".repeat(64), evidenceFingerprint: "d".repeat(64), observedAt: Date.parse(experimentRecoveryAt), runs: p.baselineRun.runs },
+  }] };
+  return p;
 }

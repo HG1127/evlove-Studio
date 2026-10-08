@@ -1,5 +1,5 @@
 import { ExperimentCandidateCheckpointSchema, type EvolveProject } from "@evolution/contracts";
-import { campaignPreflightStopReason } from "@evolution/core";
+import { campaignPreflightStopReason, goalReadiness } from "@evolution/core";
 
 /** Recognize only the server-written, current-round frozen Experiment Judge pause. */
 export function serverExperimentJudgeWait(project: EvolveProject) {
@@ -11,7 +11,7 @@ export function serverExperimentJudgeWait(project: EvolveProject) {
     || experiment.summary !== reason || experiment.status !== "failed"
     || experiment.id !== "experiment-r" + round + "-server"
     || campaign.checkpoint?.round !== round || campaign.checkpoint.completedPhase !== "plan"
-    || campaignPreflightStopReason(project)) return undefined;
+    || campaignPreflightStopReason(project) || !goalReadiness(project).ready) return undefined;
   const selected = project.selectedCandidateIds;
   if (!selected.length || new Set(selected).size !== selected.length
     || selected.some(id => project.candidates.filter(c => c.id === id).length !== 1)) return undefined;

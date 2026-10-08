@@ -3,6 +3,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { autonomousAttention, autonomousEvolutionState, autonomousProgress } from "../runtime/autonomous-evolution";
 import type { ProjectRuntime } from "../runtime/use-project-runtime";
+import { canRetryStoredServerExperiment } from "../runtime/server-experiment-retry";
+import { ServerExperimentRetry } from "./server-experiment-retry";
 
 export function AutonomousEvolutionPanel({
   runtime,
@@ -66,7 +68,8 @@ export function AutonomousEvolutionPanel({
         {state === "waiting-input" && <Button onClick={onOpenSource}>输入任务</Button>}
         {(state === "ready" || state === "preparing") && !runtime.status.busy && <Button onClick={() => void runtime.runAutoPilot()}><Play className="size-4" />{project.campaign.status === "paused" ? "继续自主进化" : "开始自主进化"}</Button>}
         {state === "running" && <Button variant="secondary" onClick={runtime.pauseCampaign}><CirclePause className="size-4" />暂停</Button>}
-        {state === "attention" && <Button onClick={resolveAttention}><AlertTriangle className="size-4" />{attention?.request?.diagnosticCode === "local-evidence-incomplete" ? "查看证据详情" : "处理这个问题"}</Button>}
+        {state === "attention" && canRetryStoredServerExperiment(project) && <ServerExperimentRetry key={project.id + ":" + project.updatedAt} project={project} busy={runtime.status.busy} onOpenRuntime={onOpenRuntime}/> }
+        {state === "attention" && !canRetryStoredServerExperiment(project) && <Button onClick={resolveAttention}><AlertTriangle className="size-4" />{attention?.request?.diagnosticCode === "local-evidence-incomplete" ? "查看证据详情" : "处理这个问题"}</Button>}
         {state === "completed" && <Button onClick={onOpenOutputs}><PackageCheck className="size-4" />验收成果</Button>}
       </div>
     </div>

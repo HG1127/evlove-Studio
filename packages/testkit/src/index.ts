@@ -2,4 +2,4 @@
 
 export { acceptedAt, acceptedPackageFixture } from "./accepted-package-fixture";
 
-export { experimentRecoveryAt, experimentRecoveryFixture } from "./experiment-recovery-fixture";
+export { experimentRecoveryAt, experimentRecoveryFixture, experimentRecoveryWaitFixture } from "./experiment-recovery-fixture";
