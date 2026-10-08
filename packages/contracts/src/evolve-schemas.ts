@@ -683,6 +683,10 @@ export const ValidationRunSchema = z.object({
   baselineSuiteIds: z.array(z.string()).optional(),
   baselineContextFingerprint:z.string().optional(),
   baselineObservedAt:z.number().optional(),
+  /** Physical current/Candidate byte binding; older rows without it are never resumed. */
+  executionArtifactFingerprint:z.string().regex(/^[0-9a-f]{64}$/).optional(),
+  /** Detect changed answer sheets before resuming their independent assessment. */
+  executionEvidenceFingerprint:z.string().regex(/^[0-9a-f]{1,8}-[0-9]+$/).optional(),
   /** 补考前一轮的评审结果：用于「旧 → 新」分数对比，直观看到补考带来的变化。 */
   previousEvaluation: EvaluationResultSchema.optional(),
   /** 执行完自动生成的 AI 优化建议：把分数与差距翻译成"该调什么、怎么调"，不给用户留下没有方向的空白。 */

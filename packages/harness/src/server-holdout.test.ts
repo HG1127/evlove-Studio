@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {ValidationRunSchema,type EvaluateAiResult,type EvolveProject,type TargetRunResult} from "@evolution/contracts";
-import { runServerHoldout } from "./server-holdout";
+import { runServerHoldout, type ServerHoldoutPorts } from "./server-holdout";
 import { executeServerCurrentArtifactSuite } from "./server-current-artifact-runner";
 
 function judged(score:number,testCaseId="H1"):EvaluateAiResult{
@@ -47,7 +47,7 @@ function fixture(executionMode:"artifact-runtime"|"external-runner"="artifact-ru
 function semanticPorts(baselineScore=82,candidateScore=92){
   const currentCases:string[]=[]; const candidateCases:string[]=[];
   let reviewPayload:unknown;
-  const ports={
+  const ports:ServerHoldoutPorts={
     current:{
       executeSemanticBatch:async({testCases}:{testCases:EvolveProject["hiddenEvalSuite"]})=>{currentCases.push(...testCases.map((item)=>item.id));return {results:testCases.map((item)=>({testCaseId:item.id,output:"当前版本 Hidden 同卷证据",trace:[]}))};},
       judge:async()=>judged(baselineScore),
@@ -215,4 +215,136 @@ it("holds Release when a non-Hard Criterion has no independent judgment",async()
     expect(review).not.toHaveBeenCalled();
     expect(outcome.readyForArtifactAcceptance).toBe(true);
   });
+});
+
+
+describe("server Hidden assessment recovery",()=>{
+  const artifactBinding="a".repeat(64);
+  async function paused(failingArm:"current"|"candidate"|"review"="current",partial=false){
+    const setup=semanticPorts();
+    const ports={...setup.ports,readArtifactFingerprint:vi.fn(async()=>artifactBinding)};
+    if(failingArm==="review")ports.releaseReview=async()=>{throw Error("temporary review outage");};
+    else ports[failingArm].judge=async()=>{throw Error("temporary Judge outage");};
+    if(partial)ports.current.executeSemanticBatch=async({testCases})=>({results:testCases.map(item=>({testCaseId:item.id,output:"Observed excerpt; UNVERIFIED outside supplied evidence",trace:[]}))});
+    const prior=await runServerHoldout(fixture(),ports);
+    return prior.project;
+  }
+  it.each(["current","candidate","review"] as const)("resumes only the missing %s assessment from exact paired evidence",async(failingArm)=>{
+    const p=await paused(failingArm);
+    const setup=semanticPorts();
+    const currentExecute=vi.fn(setup.ports.current.executeSemanticBatch);
+    const candidateExecute=vi.fn(setup.ports.candidate.executeSemanticBatch);
+    const currentJudge=vi.fn(setup.ports.current.judge);
+    const candidateJudge=vi.fn(setup.ports.candidate.judge);
+    const review=vi.fn(setup.ports.releaseReview);
+    const result=await runServerHoldout(p,{
+      ...setup.ports,readArtifactFingerprint:async()=>artifactBinding,
+      current:{...setup.ports.current,executeSemanticBatch:currentExecute,judge:currentJudge},
+      candidate:{...setup.ports.candidate,executeSemanticBatch:candidateExecute,judge:candidateJudge},releaseReview:review,
+    });
+    expect(result.readyForArtifactAcceptance).toBe(true);
+    expect(currentExecute).not.toHaveBeenCalled();expect(candidateExecute).not.toHaveBeenCalled();
+    expect(currentJudge).toHaveBeenCalledTimes(failingArm==="current"?1:0);
+    expect(candidateJudge).toHaveBeenCalledTimes(failingArm==="candidate"?1:0);
+    expect(review).toHaveBeenCalledOnce();
+    expect(result.validation.runs).toEqual(p.validationRun.runs);
+    expect(result.validation.baselineRuns).toEqual(p.validationRun.baselineRuns);
+    expect(result.validation.baselineObservedAt).toBe(p.validationRun.baselineObservedAt);
+  });
+  it.each([
+    ["legacy binding",(p:EvolveProject)=>{p.validationRun.executionArtifactFingerprint=undefined;}],
+    ["missing record binding",(p:EvolveProject)=>{p.validationRun.executionEvidenceFingerprint=undefined;}],
+    ["changed answer text",(p:EvolveProject)=>{p.validationRun.runs[0]!.output="altered evidence";}],
+    ["expired observation",(p:EvolveProject)=>{p.validationRun.baselineObservedAt=Date.now()-10*60_000;}],
+    ["future observation",(p:EvolveProject)=>{p.validationRun.baselineObservedAt=Date.now()+60_000;}],
+    ["missing observation",(p:EvolveProject)=>{p.validationRun.baselineObservedAt=undefined;}],
+    ["changed paper",(p:EvolveProject)=>{p.hiddenEvalSuite=[{...p.hiddenEvalSuite[0]!,input:"changed hidden input"}];}],
+    ["changed Candidate",(p:EvolveProject)=>{p.candidates[0]!.artifactSnapshots[0]!.content+=" changed";}],
+    ["wrong answer identity",(p:EvolveProject)=>{p.validationRun.runs=[{...p.validationRun.runs[0]!,testCaseId:"another"}];}],
+    ["duplicate answers",(p:EvolveProject)=>{p.validationRun.baselineRuns.push(p.validationRun.baselineRuns[0]!);}],
+    ["unavailable execution",(p:EvolveProject)=>{p.validationRun.runs[0]!.verificationStatus="unverified";}],
+    ["failed execution",(p:EvolveProject)=>{p.validationRun.baselineRuns[0]!.error="execution failed";}],
+    ["empty observation",(p:EvolveProject)=>{p.validationRun.runs[0]!.output="";}],
+    ["wrong round",(p:EvolveProject)=>{p.validationRun.id="validation-server-r2";}],
+    ["non-artifact target",(p:EvolveProject)=>{p.targetConnection={...p.targetConnection,adapter:"http"};}],
+  ] as const)("remeasures both sheets for %s",async(_label,change)=>{
+    const p=await paused();change(p);
+    const setup=semanticPorts();
+    await runServerHoldout(p,{...setup.ports,readArtifactFingerprint:async()=>artifactBinding});
+    expect(setup.currentCases).toEqual(["H1"]);expect(setup.candidateCases).toEqual(["H1"]);
+  });
+  it.each(["changed","missing","invalid","read-error","scoring-route"] as const)("remeasures for a %s physical/configuration read",async(kind)=>{
+    const p=await paused();const setup=semanticPorts();
+    await runServerHoldout(p,{...setup.ports,scoringRouteFingerprint:kind==="scoring-route"?"different":undefined,
+      readArtifactFingerprint:kind==="missing"?undefined:async()=>{
+        if(kind==="read-error")throw Error("read unavailable");
+        return kind==="invalid"?"not-a-sha":kind==="changed"?"b".repeat(64):artifactBinding;
+      },
+    });
+    expect(setup.currentCases).toEqual(["H1"]);expect(setup.candidateCases).toEqual(["H1"]);
+  });
+  it("retains the observation time and fulfilled assessment across repeated Judge outages",async()=>{
+    const p=await paused();const setup=semanticPorts();
+    setup.ports.current.judge=async()=>{throw Error("still unavailable");};
+    const candidateJudge=vi.fn(setup.ports.candidate.judge);setup.ports.candidate.judge=candidateJudge;
+    const result=await runServerHoldout(p,{...setup.ports,readArtifactFingerprint:async()=>artifactBinding});
+    expect(result.control).toBe("stop");expect(result.validation.baselineObservedAt).toBe(p.validationRun.baselineObservedAt);
+    expect(result.validation.executionArtifactFingerprint).toBe(artifactBinding);
+    expect(result.validation.evaluation).toEqual(p.validationRun.evaluation);expect(candidateJudge).not.toHaveBeenCalled();
+    expect(setup.currentCases).toEqual([]);expect(setup.candidateCases).toEqual([]);
+    expect(ValidationRunSchema.parse(result.validation).executionArtifactFingerprint).toBe(artifactBinding);
+  });
+  it("rejudges an incomplete or demo assessment without rerunning valid execution",async()=>{
+    const p=await paused();p.validationRun.evaluation={...p.validationRun.evaluation!,demoJudged:true};
+    const setup=semanticPorts();const candidateJudge=vi.fn(setup.ports.candidate.judge);setup.ports.candidate.judge=candidateJudge;
+    const result=await runServerHoldout(p,{...setup.ports,readArtifactFingerprint:async()=>artifactBinding});
+    expect(result.readyForArtifactAcceptance).toBe(true);expect(candidateJudge).toHaveBeenCalledOnce();
+    expect(setup.currentCases).toEqual([]);expect(setup.candidateCases).toEqual([]);
+  });
+  it("keeps bounded partial evidence partial when resuming a missing assessment",async()=>{
+    const p=await paused("current",true);
+    const setup=semanticPorts();
+    const result=await runServerHoldout(p,{...setup.ports,readArtifactFingerprint:async()=>artifactBinding});
+    expect(result.validation.baselineRuns[0]!.verificationStatus).toBe("partial");
+    expect(result.readyForArtifactAcceptance).toBe(false);
+    expect(setup.currentCases).toEqual([]);expect(setup.candidateCases).toEqual([]);
+  });
+  it.each(["execution","judging"] as const)("pauses if physical bytes change during %s",async(phase)=>{
+    const setup=semanticPorts();let reads=0;
+    const result=await runServerHoldout(fixture(),{...setup.ports,readArtifactFingerprint:async()=>{
+      reads++;return reads>=(phase==="execution"?2:3)?"b".repeat(64):artifactBinding;
+    }});
+    expect(result.readyForArtifactAcceptance).toBe(false);expect(result.validation.status).toBe("failed");
+    expect(result.validation.executionArtifactFingerprint).toBeUndefined();
+    expect(result.reason).toContain("字节已变化");
+    expect(result.validation.runs).toHaveLength(1);expect(result.validation.baselineRuns).toHaveLength(1);
+  });
+
+  it("resumes after JSON storage removes undefined optional evidence fields",async()=>{
+    const first=semanticPorts();
+    first.ports.current.executeSemanticBatch=async({testCases})=>({results:testCases.map(item=>({
+      testCaseId:item.id,output:"actual current evidence",trace:[{id:"read",stage:"read",summary:"read source",status:"info" as const,detail:undefined}],
+    }))});
+    first.ports.candidate.judge=async()=>{throw Error("temporary Judge outage");};
+    const pausedResult=await runServerHoldout(fixture(),{...first.ports,readArtifactFingerprint:async()=>artifactBinding});
+    const p={...pausedResult.project,validationRun:ValidationRunSchema.parse(JSON.parse(JSON.stringify(pausedResult.validation)))};
+    const setup=semanticPorts();
+    const result=await runServerHoldout(p,{...setup.ports,readArtifactFingerprint:async()=>artifactBinding});
+    expect(result.readyForArtifactAcceptance).toBe(true);
+    expect(setup.currentCases).toEqual([]);expect(setup.candidateCases).toEqual([]);
+  });
+
+  it.each([[10*60_000-1,true],[10*60_000,false],[-1,false]] as const)("checks the unchanged observation at elapsed %s ms",async(elapsed,reusable)=>{
+    vi.useFakeTimers({toFake:["Date"]});
+    const observed=Date.parse("2026-10-08T00:00:00.000Z");vi.setSystemTime(observed);
+    try{
+      const p=await paused();vi.setSystemTime(observed+elapsed);
+      const setup=semanticPorts();
+      const result=await runServerHoldout(p,{...setup.ports,readArtifactFingerprint:async()=>artifactBinding});
+      expect(setup.currentCases).toHaveLength(reusable?0:1);
+      expect(setup.candidateCases).toHaveLength(reusable?0:1);
+      expect(result.validation.baselineObservedAt).toBe(reusable?observed:observed+elapsed);
+    }finally{vi.useRealTimers();}
+  });
+
 });

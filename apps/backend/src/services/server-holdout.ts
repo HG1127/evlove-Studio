@@ -13,6 +13,7 @@ import {runServerConnectorTargetBatch} from "./server-connector-target-execution
 import {serverConnectorTargetEnabled} from "./connector-target-source";
 import { resolveServerBaselineCodebaseBinding } from "./server-baseline";
 import { serverArtifactSha256, verifyServerCandidateFrozenArtifact } from "./server-experiment-artifacts";
+import { readServerHoldoutArtifactFingerprint } from "./server-holdout-artifact-binding";
 
 function unavailable(testCase:TestCase,detail:string):TargetRunResult{
   return {
@@ -95,6 +96,7 @@ async function executeCandidateExternal(project:EvolveProject,candidate:Candidat
 export async function runServerMissionHoldout(project:EvolveProject){
   return runServerHoldout(project,{
     scoringRouteFingerprint:serverAiScoringRouteFingerprint(),
+    readArtifactFingerprint:readServerHoldoutArtifactFingerprint,
     current:{
       executeSemanticBatch:({project:current,testCases,artifactContext})=>runServerAi("execute-artifact-batch",{
         project:{name:current.name,objectType:current.objectType,goal:current.goal,evolutionCommand:current.evolutionCommand,protectedItems:current.protectedItems,editableItems:current.editableItems,sourceArtifacts:artifactContext},

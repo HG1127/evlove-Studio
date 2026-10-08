@@ -25,10 +25,12 @@ import {
   type ServerExperimentExecutionPorts,
 } from "./server-experiment-runner";
 import { serverBaselineFingerprint } from "./server-baseline-evidence";
+import { readServerHoldoutArtifactFingerprint, recoverableServerHoldout, reusableServerHoldoutAssessment, serverHoldoutExecutionEvidenceFingerprint, type ServerHoldoutArtifactReader } from "./server-holdout-recovery";
 import { exactServerHoldoutSuite, pauseServerHoldoutPreflight } from "./server-holdout-preflight";
 
 export type ServerHoldoutPorts = {
   scoringRouteFingerprint?: string;
+  readArtifactFingerprint?: ServerHoldoutArtifactReader;
   current: ServerCurrentArtifactPorts;
   candidate: ServerExperimentExecutionPorts;
   releaseReview(payload: unknown): Promise<ReleaseReviewAiResult>;
@@ -189,23 +191,52 @@ export async function runServerHoldout(
   }
   const baseFingerprint = serverBaselineFingerprint({ ...inputProject, evalSuite: suite }, ports.scoringRouteFingerprint);
 
+  const beforeArtifactFingerprint = await readServerHoldoutArtifactFingerprint(inputProject, candidate, ports.readArtifactFingerprint);
+  const prior = recoverableServerHoldout(inputProject, candidate, suite, round, baseFingerprint, beforeArtifactFingerprint, Date.now());
+  let executionArtifactFingerprint: string | undefined;
   let baselineRuns:TargetRunResult[]=[];
   let runs:TargetRunResult[]=[];
   let baselineEvaluation;
   let evaluation;
-  let baselineObservedAt:number|undefined;
+  let baselineObservedAt:number|undefined = prior?.baselineObservedAt;
   try {
-    [baselineRuns, runs] = await Promise.all([
-      executeServerCurrentArtifactSuite(inputProject, suite, ports.current).then(value=>{baselineObservedAt=Date.now();return value;}),
-      executeServerExperimentCandidate(inputProject, candidate, ports.candidate, suite),
-    ]);
+    if (prior) {
+      baselineRuns = prior.baselineRuns;
+      runs = prior.runs;
+      executionArtifactFingerprint = beforeArtifactFingerprint;
+    } else {
+      const [currentExecution, candidateExecution] = await Promise.allSettled([
+        executeServerCurrentArtifactSuite(inputProject, suite, ports.current).then(value=>{baselineObservedAt=Date.now();return value;}),
+        executeServerExperimentCandidate(inputProject, candidate, ports.candidate, suite),
+      ]);
+      if (currentExecution.status === "fulfilled") baselineRuns = currentExecution.value;
+      if (candidateExecution.status === "fulfilled") runs = candidateExecution.value;
+      if (currentExecution.status === "rejected") throw currentExecution.reason;
+      if (candidateExecution.status === "rejected") throw candidateExecution.reason;
+      if (beforeArtifactFingerprint) {
+        const after = await readServerHoldoutArtifactFingerprint(inputProject, candidate, ports.readArtifactFingerprint);
+        if (after !== beforeArtifactFingerprint) throw new Error("Hidden 执行期间当前版本或 Candidate 文件字节已变化；必须重新执行。");
+        executionArtifactFingerprint = after;
+      }
+    }
     const [currentJudge,candidateJudge] = await Promise.allSettled([
-      judgeServerCurrentArtifactSuite(inputProject, suite, baselineRuns, ports.current),
-      judgeServerExperimentCandidate(inputProject, candidate, runs, ports.candidate, suite, "server-hidden-holdout-candidate"),
+      prior && reusableServerHoldoutAssessment(inputProject, suite, baselineRuns, prior.baselineEvaluation)
+        ? Promise.resolve(prior.baselineEvaluation!)
+        : judgeServerCurrentArtifactSuite(inputProject, suite, baselineRuns, ports.current),
+      prior && reusableServerHoldoutAssessment(inputProject, suite, runs, prior.evaluation)
+        ? Promise.resolve(prior.evaluation!)
+        : judgeServerExperimentCandidate(inputProject, candidate, runs, ports.candidate, suite, "server-hidden-holdout-candidate"),
     ]);
     // Keep the fulfilled arm before propagating the other arm's failure.
     if(currentJudge.status==="fulfilled")baselineEvaluation=currentJudge.value;
     if(candidateJudge.status==="fulfilled")evaluation=candidateJudge.value;
+    if (executionArtifactFingerprint) {
+      const after = await readServerHoldoutArtifactFingerprint(inputProject, candidate, ports.readArtifactFingerprint);
+      if (after !== executionArtifactFingerprint) {
+        executionArtifactFingerprint = undefined;
+        throw new Error("Hidden 评审期间文件字节已变化或回读不可用；必须重新执行。");
+      }
+    }
     if(currentJudge.status==="rejected")throw currentJudge.reason;
     if(candidateJudge.status==="rejected")throw candidateJudge.reason;
     baselineEvaluation=currentJudge.value;
@@ -226,11 +257,13 @@ export async function runServerHoldout(
       baselineSuiteIds:suite.map(testCase=>testCase.id),
       baselineContextFingerprint:baseFingerprint,
       baselineObservedAt,
+      executionArtifactFingerprint,
       checks: [],
       evidenceFingerprint: evidenceFingerprint(inputProject, candidate),
       error: reason,
       summary: reason,
     };
+    validation.executionEvidenceFingerprint = executionArtifactFingerprint ? serverHoldoutExecutionEvidenceFingerprint(validation) : undefined;
     const project: EvolveProject = {
       ...inputProject,
       validationRun: validation,
@@ -283,12 +316,14 @@ export async function runServerHoldout(
         baselineSuiteIds: suite.map((testCase) => testCase.id),
         baselineContextFingerprint: baseFingerprint,
         baselineObservedAt,
+        executionArtifactFingerprint,
         checks,
         recommendation: "hold",
         evidenceFingerprint: evidenceFingerprint(inputProject, candidate),
         versionSnapshot: versionSnapshot(inputProject, candidate, "hold", evaluation, completedAt),
         summary: reason,
       };
+      validation.executionEvidenceFingerprint = executionArtifactFingerprint ? serverHoldoutExecutionEvidenceFingerprint(validation) : undefined;
       const project: EvolveProject = {
         ...inputProject,
         validationRun: validation,
@@ -314,12 +349,14 @@ export async function runServerHoldout(
     baselineSuiteIds: suite.map((testCase) => testCase.id),
     baselineContextFingerprint: baseFingerprint,
     baselineObservedAt,
+    executionArtifactFingerprint,
     checks,
     recommendation,
     evidenceFingerprint: evidenceFingerprint(inputProject, candidate),
     versionSnapshot: versionSnapshot(inputProject, candidate, recommendation, evaluation, completedAt),
     summary: reviewSummary,
   };
+  validation.executionEvidenceFingerprint = executionArtifactFingerprint ? serverHoldoutExecutionEvidenceFingerprint(validation) : undefined;
   const evidenceReason = decision.evidenceIncomplete
     ? `[server-campaign-holdout-evidence-pending] Hidden Holdout 已执行，但真实证据未完成：${[
       ...decision.unverifiedHardCriteria.map((criterion) => criterion.id),
