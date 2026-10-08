@@ -85,6 +85,7 @@ async function bindingFor(
     }
     let content:string|undefined;
     let expectedHash:string|undefined;
+    let usesInlineSource=false;
     if(snapshot){
       const frozen=snapshot.frozenArtifact;
       if(!frozen)throw new Error(`当前版本 ${current?.id??"candidate"} 的 HTML Target 尚未冻结真实文件。`);
@@ -101,19 +102,21 @@ async function bindingFor(
         throw new Error("HTTP Target HTML 冻结字节与 Candidate Snapshot 不一致。");
       }
       expectedHash=frozen.sha256;
-    }else if(html.storageRef?.trim()){
-      const blob=await getArtifact(html.storageRef.trim());
-      if(!blob)throw new Error(`找不到 HTTP Target 原始 HTML Blob ${html.storageRef.trim()}。`);
+    }else if(html.storageRef?.trim()||html.inputMode==="upload"){
+      const blobId=html.storageRef?.trim()||html.id;
+      const blob=await getArtifact(blobId);
+      if(!blob)throw new Error(`找不到 HTTP Target 原始 HTML Blob ${blobId}。`);
       const bytes=new Uint8Array(await blob.arrayBuffer());
       content=new TextDecoder().decode(bytes);
       if(digest(content)!==digest(bytes))throw new Error("HTTP Target 原始 HTML 不是可逐字节还原的 UTF-8 文本。");
       expectedHash=digest(bytes);
     }else{
+      usesInlineSource=true;
       content=html.textContent;
       expectedHash=content?digest(content):undefined;
     }
     if(!content?.trim()||!expectedHash||content.includes("[...truncated by Evolve Studio...]")
-      ||(!snapshot&&html.warnings?.some((item)=>/Studio 已截断进入|进入 AI 上下文的部分已截断/.test(item)))){
+      ||(usesInlineSource&&html.warnings?.some((item)=>/Studio 已截断进入|进入 AI 上下文的部分已截断/.test(item)))){
       throw new Error(`HTML Target ${html.id} 没有可执行的完整内容。`);
     }
     return{artifact:{name:snapshot?.name??html.name,content},expectedHash};

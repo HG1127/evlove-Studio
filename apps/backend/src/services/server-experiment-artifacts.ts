@@ -190,7 +190,7 @@ async function persistFrozenArtifact(
     sourceArtifactId: source.id,
     snapshotHash: await sha256Text(snapshot.content),
     blobId,
-    name: source.name,
+    name: snapshot.name,
     mimeType: blob.type || source.mimeType,
     sha256,
     size: blob.size,
@@ -203,7 +203,8 @@ async function persistFrozenArtifact(
 /** Recheck the persisted bytes at execution time, not just at materialization time. */
 export async function verifyServerCandidateFrozenArtifact(snapshot: CandidateArtifactSnapshot): Promise<boolean> {
   const receipt = snapshot.frozenArtifact;
-  if (!receipt || receipt.sourceArtifactId !== snapshot.sourceArtifactId || receipt.size <= 0) return false;
+  if (!receipt || receipt.sourceArtifactId !== snapshot.sourceArtifactId || receipt.size <= 0
+    || receipt.name !== snapshot.name || receipt.mimeType !== snapshot.mimeType) return false;
   const contentHash = await sha256Text(snapshot.content);
   if (receipt.snapshotHash !== contentHash || (snapshot.contentHash && snapshot.contentHash !== contentHash)) return false;
   const blob = await getServerArtifactStore().get(receipt.blobId);
@@ -310,7 +311,7 @@ async function materializeSnapshot(
     built=await materializeText(source,snapshot);
   }
   const frozenArtifact = await persistFrozenArtifact(source, snapshot, built.blob, built.checks, built.limitations);
-  return { ...snapshot, frozenArtifact };
+  return { ...snapshot, name: frozenArtifact.name, mimeType: frozenArtifact.mimeType, frozenArtifact };
 }
 
 export async function materializeServerCandidateArtifacts(

@@ -2,9 +2,11 @@ import JSZip from "jszip";
 import { Blob as NodeBlob } from "node:buffer";
 import { webcrypto } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import type { CandidateArtifactSnapshot, EvolveProject, SourceArtifact } from "@evolution/contracts";
+import type { CandidateArtifactSnapshot, EvolveProject, SourceArtifact, TargetRunResult, TestCase } from "@evolution/contracts";
 import { applyServerCodebaseOverlay, composeServerCodebaseOverlay, resolveServerExperimentParentBinding } from "./server-experiment";
 import { materializeServerCandidateArtifacts, serverArtifactSha256, verifyServerCandidateFrozenArtifact } from "./server-experiment-artifacts";
+
+import { runServerHttpTargetBatch } from "./server-http-target-execution";
 
 const {getBlob,putBlob}=vi.hoisted(()=>({getBlob:vi.fn(),putBlob:vi.fn()}));
 vi.mock("./artifact-runtime",()=>({getServerArtifactStore:()=>({get:getBlob,put:putBlob})}));
@@ -229,5 +231,46 @@ describe("server frozen receipt execution recheck", () => {
     getBlob.mockResolvedValue(undefined);
     expect(await verifyServerCandidateFrozenArtifact(snapshot)).toBe(false);
     vi.unstubAllGlobals();
+  });
+});
+
+
+describe("server renamed Candidate byte identity", () => {
+  it("materializes and executes the same renamed HTML file with actual MIME metadata", async () => {
+    vi.stubGlobal("crypto", webcrypto);
+    vi.stubGlobal("Blob", NodeBlob);
+    try {
+      const project = projectWithChampion(false);
+      const candidate = project.searchChampion!.candidate!;
+      project.searchChampion = undefined;
+      const original = project.sourceArtifacts[0]!;
+      Object.assign(original, {name: "index.html", extension: "html", mimeType: "text/html", artifactKind: "document", artifactDescriptor: undefined, textContent: "<html><body>original</body></html>"});
+      project.targetConnection = {adapter: "http", connectionId: "runner", status: "connected", label: "runner"};
+      const saved = new Map<string, Blob>();
+      getBlob.mockReset().mockImplementation(async (id: string) => saved.get(id));
+      putBlob.mockReset().mockImplementation(async (id: string, blob: Blob) => {saved.set(id, blob);});
+      const content = "<html><body>changed actual file</body></html>";
+      const built = await materializeServerCandidateArtifacts(project, candidate, [{sourceArtifactId: original.id, name: "index-evolved.html", mimeType: "application/json", content}], "candidate");
+      const snapshot = built.artifactSnapshots[0]!;
+      const receipt = snapshot.frozenArtifact!;
+      expect(snapshot).toMatchObject({name: "index-evolved.html", mimeType: "text/html"});
+      expect(receipt).toMatchObject({name: snapshot.name, mimeType: snapshot.mimeType, snapshotHash: snapshot.contentHash});
+      expect(await verifyServerCandidateFrozenArtifact(snapshot)).toBe(true);
+      const testCase = {id: "BROWSER", title: "actual candidate", input: "run", expected: [], tags: [], hidden: true, criterionIds: [], executionMode: "external-runner", evidenceScope: "product-behavior"} as TestCase;
+      const runTarget = vi.fn(async (raw: unknown) => {
+        expect((raw as {artifact: {name: string; content: string}}).artifact).toEqual({name: snapshot.name, content});
+        return {testCaseId: testCase.id, output: "observed", verificationStatus: "verified", artifactHash: receipt.sha256, latencyMs: 1, cost: 0, trace: []} as TargetRunResult;
+      });
+      const [result] = await runServerHttpTargetBatch(project, [testCase], built, {getArtifact: getBlob, runTarget, attachVisual: async (_p, _t, runs) => runs});
+      expect(result?.verificationStatus, result?.output).toBe("verified");
+      expect(runTarget).toHaveBeenCalledOnce();
+      expect(await saved.get(receipt.blobId)!.text()).toBe(content);
+      snapshot.frozenArtifact = {...receipt, name: "old.html"};
+      expect(await verifyServerCandidateFrozenArtifact(snapshot)).toBe(false);
+      snapshot.frozenArtifact = {...receipt, mimeType: "application/json"};
+      expect(await verifyServerCandidateFrozenArtifact(snapshot)).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

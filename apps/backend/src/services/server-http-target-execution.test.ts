@@ -94,9 +94,9 @@ describe("server HTTP Target execution",()=>{
     expect(runTarget).toHaveBeenCalledOnce();
   });
 
-  it("refuses a known truncated HTML Source when no original Blob reference exists",async()=>{
+  it("refuses a known truncated pasted HTML Source",async()=>{
     const p=project();
-    p.sourceArtifacts=[{...p.sourceArtifacts[0]!,textContent:"<html>[...truncated by Evolve Studio...]</html>"}];
+    p.sourceArtifacts=[{...p.sourceArtifacts[0]!,inputMode:"paste",textContent:"<html>[...truncated by Evolve Studio...]</html>"}];
     const runTarget=vi.fn();
     const [result]=await runServerHttpTargetBatch(p,[testCase],undefined,{runTarget,getArtifact:vi.fn(),attachVisual:async(_p,_t,runs)=>runs});
     expect(result?.verificationStatus).toBe("unverified");
@@ -443,5 +443,48 @@ describe("server HTTP Target execution",()=>{
     expect(serverHttpTargetEnabled(p)).toBe(true);
     p.targetConnection.adapter="artifact";
     expect(serverHttpTargetEnabled(p)).toBe(false);
+  });
+});
+
+
+describe("server original HTML byte recovery", () => {
+  it.each([undefined, "explicit-upload"])("executes complete uploaded bytes despite parsed-index warnings (storageRef=%s)", async (storageRef) => {
+    const p = project();
+    const source = p.sourceArtifacts[0]!;
+    source.storageRef = storageRef;
+    source.textContent = "<html>[...truncated by Evolve Studio...]</html>";
+    source.warnings = ["Studio 已截断进入 AI 上下文的部分"];
+    const content = "<html><body>完整原文件</body></html>";
+    const blobId = storageRef ?? source.id;
+    const getArtifact = vi.fn(async (id: string) => id === blobId ? new Blob([content]) : undefined);
+    const runTarget = vi.fn(async (raw: unknown) => {
+      expect((raw as {artifact: {content: string}}).artifact.content).toBe(content);
+      return {testCaseId: testCase.id, output: "observed", latencyMs: 1, cost: 0, verificationStatus: "verified", artifactHash: createHash("sha256").update(content).digest("hex"), trace: []} as TargetRunResult;
+    });
+    const [result] = await runServerHttpTargetBatch(p, [testCase], undefined, {getArtifact, runTarget, attachVisual: async (_p, _t, runs) => runs});
+    expect(result?.verificationStatus).toBe("verified");
+    expect(getArtifact).toHaveBeenCalledWith(blobId);
+    expect(runTarget).toHaveBeenCalledOnce();
+  });
+
+  it("does not execute parsed upload text when its historical Source-id Blob is missing", async () => {
+    const p = project();
+    const getArtifact = vi.fn(async () => undefined);
+    const runTarget = vi.fn();
+    const [result] = await runServerHttpTargetBatch(p, [testCase], undefined, {getArtifact, runTarget, attachVisual: async (_p, _t, runs) => runs});
+    expect(result?.verificationStatus).toBe("unverified");
+    expect(getArtifact).toHaveBeenCalledWith("html-source");
+    expect(runTarget).not.toHaveBeenCalled();
+  });
+
+  it("retains full pasted HTML without claiming an uploaded file", async () => {
+    const p = project();
+    const source = p.sourceArtifacts[0]!;
+    source.inputMode = "paste";
+    const getArtifact = vi.fn();
+    const runTarget = vi.fn(async () => ({testCaseId: testCase.id, output: "observed", latencyMs: 1, cost: 0, verificationStatus: "verified", artifactHash: createHash("sha256").update(source.textContent!).digest("hex"), trace: []}) as TargetRunResult);
+    const [result] = await runServerHttpTargetBatch(p, [testCase], undefined, {getArtifact, runTarget, attachVisual: async (_p, _t, runs) => runs});
+    expect(result?.verificationStatus).toBe("verified");
+    expect(getArtifact).not.toHaveBeenCalled();
   });
 });
