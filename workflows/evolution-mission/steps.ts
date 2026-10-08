@@ -14,6 +14,7 @@ import {
   canReuseServerBaseline,
   buildServerHarnessPlan,
   serverControlCapabilityWaitPlan,
+  serverControlAiWait,
   normalizeLocallyVerifiableCandidateRuns,
   reconcileAttentionRequest,
   type ServerHarnessPlan,
@@ -21,6 +22,7 @@ import {
 import { getServerProductionRuntime } from "../../apps/backend/src/services/production-runtime";
 import { serverAiScoringRouteFingerprint } from "../../apps/backend/src/services/ai-gateway";
 import { runServerControlAi as runServerAi, ServerControlAiUnavailableError } from "../../apps/backend/src/services/server-control-ai";
+import { restoreServerControlAiWait } from "../../apps/backend/src/services/server-control-ai-recovery";
 import { runServerMissionBaseline } from "../../apps/backend/src/services/server-baseline";
 import { runServerMissionExperiment } from "../../apps/backend/src/services/server-experiment";
 import { runServerMissionHoldout } from "../../apps/backend/src/services/server-holdout";
@@ -418,6 +420,18 @@ export async function planMissionStep(input:EvolutionWorkflowRunInput,iteration:
         }));
       }
       mission=materialized;
+    }
+  }
+  if(serverControlAiWait(mission)){
+    const currentJob=await runtime.jobs.get(input.controlJobId);
+    if(!currentJob || currentJob.missionId!==input.missionId || currentJob.generation!==1
+      || !["queued","running","waiting"].includes(currentJob.status)){
+      throw new FatalError("控制 Job 不再活动；未恢复模型等待状态。");
+    }
+    const recovered=await restoreServerControlAiWait(mission);
+    if(recovered!==mission){
+      await runtime.missions.save(recovered);
+      mission=recovered;
     }
   }
   const plan=buildServerHarnessPlan(mission);

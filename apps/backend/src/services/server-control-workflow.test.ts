@@ -1,8 +1,9 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EvolutionJobSchema, type EvolveProject } from "@evolution/contracts";
-import type { ServerHarnessPlan } from "@evolution/harness";
-import { executeServerControlStep } from "../../../../workflows/evolution-mission/steps";
+import { buildServerHarnessPlan, serverControlCapabilityWaitPlan, type ServerHarnessPlan } from "@evolution/harness";
+import {demoProject} from "../../../../src/features/evolve/data/mock-project";
+import { executeServerControlStep, planMissionStep } from "../../../../workflows/evolution-mission/steps";
 
 const mocks = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn(), jobGet: vi.fn(), put: vi.fn(), append: vi.fn(), probe: vi.fn(), ai: vi.fn() }));
 vi.mock("./production-runtime", () => ({ getServerProductionRuntime: () => ({
@@ -92,5 +93,53 @@ describe("Durable Workflow AI capability wait", () => {
     await executeServerControlStep(input, { ...plan, decision: { action: "wait-human", stage: "diagnosis", reason: "approval" } }, 0);
     expect(mocks.probe).not.toHaveBeenCalled();
     expect(mocks.ai).not.toHaveBeenCalled();
+  });
+});
+
+function fullPausedMission(){
+  const wait=serverControlCapabilityWaitPlan({...plan,checkpoint:{...plan.checkpoint,id:"server-checkpoint-recovery"}}, {stage:"diagnosis",reason:"provider unavailable",at});
+  const base=structuredClone(demoProject);
+  return {...base,id:input.missionId,stage:"diagnosis" as const,attentionRequests:[wait.decision.attention!],campaign:{...base.campaign,status:"paused" as const,stopReason:wait.decision.reason}};
+}
+describe("new durable run resumes the actual stored AI wait",()=>{
+  it("retains a capability request rather than changing it to budget/limit while the model is down",async()=>{
+    const stored=fullPausedMission();mocks.get.mockResolvedValue(stored);
+    const next=await planMissionStep(input,0);
+    expect(next.decision).toMatchObject({action:"wait-human",attention:{id:stored.attentionRequests[0].id,type:"capability"}});
+    expect(mocks.probe).toHaveBeenCalledOnce();
+    expect(mocks.probe).toHaveBeenCalledWith(undefined,{force:true});
+    expect(mocks.save).not.toHaveBeenCalled();
+    expect(mocks.ai).not.toHaveBeenCalled();
+  });
+  it("resolves only the model wait after a real healthy probe, then replans the actual Mission",async()=>{
+    const stored=fullPausedMission();mocks.get.mockResolvedValue(stored);
+    mocks.probe.mockResolvedValue({ready:true,status:"ready"});
+    const next=await planMissionStep(input,0);
+    const recovered=mocks.save.mock.calls[0][0] as EvolveProject;
+    expect(recovered.stage).toBe(stored.stage);
+    expect(recovered.candidates).toEqual(stored.candidates);
+    expect(recovered.baselineRun).toEqual(stored.baselineRun);
+    expect(recovered.validationRun).toEqual(stored.validationRun);
+    expect(recovered.campaign).toEqual({...stored.campaign,status:"idle",stopReason:undefined});
+    expect(recovered.attentionRequests?.[0].status).toBe("resolved");
+    expect(next).toEqual(buildServerHarnessPlan(recovered));
+    expect(next.decision.attention?.id).not.toBe(stored.attentionRequests[0].id);
+    expect(mocks.ai).not.toHaveBeenCalled();
+  });
+  it("does not clear an unrelated pause or spend a probe on it",async()=>{
+    const stored=fullPausedMission();stored.campaign.stopReason="actual budget limit";
+    mocks.get.mockResolvedValue(stored);
+    await planMissionStep(input,0);
+    expect(mocks.probe).not.toHaveBeenCalled();expect(mocks.save).not.toHaveBeenCalled();
+  });
+  it.each([undefined,{...job,status:"cancelled"},{...job,generation:2},{...job,missionId:"another"}])("does not recover an inactive or replaced control generation",async(current)=>{
+    mocks.get.mockResolvedValue(fullPausedMission());mocks.jobGet.mockResolvedValue(current);
+    await expect(planMissionStep(input,0)).rejects.toThrow("控制 Job 不再活动");
+    expect(mocks.probe).not.toHaveBeenCalled();expect(mocks.save).not.toHaveBeenCalled();expect(mocks.append).not.toHaveBeenCalled();
+  });
+  it("keeps unknown runtime errors on the retry path without clearing the pause",async()=>{
+    mocks.get.mockResolvedValue(fullPausedMission());mocks.probe.mockResolvedValue({ready:false,status:"error",reasonCode:"runtime-error"});
+    await expect(planMissionStep(input,0)).rejects.toThrow("健康探测未通过");
+    expect(mocks.save).not.toHaveBeenCalled();expect(mocks.append).not.toHaveBeenCalled();
   });
 });

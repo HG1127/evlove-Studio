@@ -9,8 +9,8 @@ export class ServerControlAiUnavailableError extends Error {
   }
 }
 
-export async function requireServerControlAi(): Promise<void> {
-  const health = await probeServerAiRuntime();
+export async function requireServerControlAi(options: { force?: boolean } = {}): Promise<void> {
+  const health = await probeServerAiRuntime(undefined, options);
   if (health.ready) return;
   if (health.status === "unconfigured") throw new ServerControlAiUnavailableError("not-configured");
   if (health.status === "unavailable" && health.reasonCode) {

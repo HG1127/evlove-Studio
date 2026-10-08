@@ -1,6 +1,7 @@
 import type { EvolveProject } from "@evolution/contracts";
 import { fastHash } from "@evolution/core";
 import { deriveAutonomousDecision, type AutonomousAction, type AutonomousDecision } from "./autonomous-planner";
+import { serverControlAiWait } from "./server-control-capability";
 import type { HarnessExecutionPlan } from "./action-executor";
 
 export type ServerHarnessPlan = HarnessExecutionPlan<AutonomousAction> & {
@@ -9,7 +10,10 @@ export type ServerHarnessPlan = HarnessExecutionPlan<AutonomousAction> & {
 };
 
 export function buildServerHarnessPlan(project:EvolveProject):ServerHarnessPlan {
-  const decision=deriveAutonomousDecision(project);
+  const aiWait=serverControlAiWait(project);
+  const decision:AutonomousDecision=aiWait
+    ? {action:"wait-human",stage:project.stage,reason:aiWait.reason,attention:aiWait}
+    : deriveAutonomousDecision(project);
   const sourceRevision=fastHash([
     project.id,
     project.updatedAt,
