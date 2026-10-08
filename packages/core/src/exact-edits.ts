@@ -1,4 +1,4 @@
-import { TextArtifactEditsSchema, type TextArtifactEdit as TextEdit } from "@evolution/contracts";
+import { TextArtifactEditsSchema, type TextArtifactEdit as TextEdit, type CandidatePatch } from "@evolution/contracts";
 
 function preview(value: string) {
   return value.replace(/\s+/g, " ").trim().slice(0, 54);
@@ -139,4 +139,21 @@ export function applyExactEdits(original: string, payload: string, options: { st
   let result=original;
   for(const edit of edits.reverse()) result=result.slice(0,edit.start)+edit.after+result.slice(edit.end);
   return result;
+}
+
+
+/** Use a complete planned text mutation only when every patch has a unique current anchor. */
+export function buildExactCandidateTextEdits(original: string, patches: CandidatePatch[]): string | undefined {
+  if (!patches.length || new Set(patches.map((patch) => patch.id)).size !== patches.length
+    || patches.some((patch) => ["tool", "memory", "model"].includes(patch.component)
+      || !["update", "remove"].includes(patch.operation) || !patch.target)) return undefined;
+  const payload = JSON.stringify({kind: "text-edits", edits: patches.map((patch) => ({
+    before: patch.target, after: patch.operation === "remove" ? "" : patch.content,
+  }))});
+  try {
+    const result = applyExactEdits(original, payload, {strict: true});
+    return result.trim() !== original.trim() ? payload : undefined;
+  } catch {
+    return undefined;
+  }
 }

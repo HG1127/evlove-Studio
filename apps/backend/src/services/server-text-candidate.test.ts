@@ -11,7 +11,7 @@ const after = '<p id="refund-approval">主管确认退款后才进入执行，�
 const original = '<html><head><meta charset="utf-8"></head><body>' + '<p>保留每个章节和原有说明。</p>'.repeat(10000) + before + '</body></html>';
 function fixture() {
   const source = SourceArtifactSchema.parse({id: "source", name: "large.html", extension: "html", mimeType: "text/html", artifactKind: "document", role: "target", size: Buffer.byteLength(original), inputMode: "upload", parseStatus: "ready", textContent: "STALE INDEX", createdAt: "2026-10-08T00:00:00.000Z"});
-  const candidate = CandidateSchema.parse({id: "child", name: "补充退款审批编号", change: "主管确认退款后记录审批编号", patches: [{id: "patch", component: "code", operation: "update", target: before, artifactId: source.id, content: after, rationale: "在现有退款审批说明中增加编号"}]});
+  const candidate = CandidateSchema.parse({id: "child", name: "补充退款审批编号", change: "主管确认退款后记录审批编号", patches: [{id: "patch", component: "code", operation: "update", target: "退款审批说明段落", artifactId: source.id, content: after, rationale: "在现有退款审批说明中增加编号"}], designRationale: {sourceEvidence: [before]}});
   const project = {id: "text-mission", name: "实际长 HTML", version: "V1", sourceArtifacts: [source], goal: "完整保留文件，并细化退款审批", evolutionCommand: "主管确认退款后记录审批编号", protectedItems: [], editableItems: [], acceptanceRubric: []} as unknown as EvolveProject;
   blobs.set(source.id, new Blob([original], {type: source.mimeType}));
   return {project, candidate, source};
@@ -23,6 +23,43 @@ const edits = (beforeText = before, afterText = after) => JSON.stringify({kind: 
 beforeEach(() => {blobs.clear(); ai.mockReset();});
 
 describe("server full text Candidate construction", () => {
+  it("freezes an exact planned replacement without depending on the AI provider", async () => {
+    const {project,candidate}=fixture();
+    candidate.patches[0]!.target=before;
+    ai.mockRejectedValue(new Error("provider unavailable"));
+    const built=await buildServerExperimentCandidate(project,candidate);
+    const snapshot=built.artifactSnapshots[0]!;
+    expect(snapshot.content).toBe(original.replace(before,after));
+    expect(snapshot.buildMode).toBe("deterministic");
+    expect(await blobs.get(snapshot.frozenArtifact!.blobId)!.text()).toBe(snapshot.content);
+    expect(await verifyServerCandidateFrozenArtifact(snapshot)).toBe(true);
+    expect(ai).not.toHaveBeenCalled();
+  });
+
+  it.each(["ambiguous", "runtime", "unscoped", "foreign", "noop"])("falls back atomically for an unsupported exact plan (%s)", async (mode) => {
+    const {project,candidate,source}=fixture();
+    candidate.patches[0]!.target=before;
+    if(mode==="ambiguous") {
+      const text=original.replace("</body>",before+"</body>");
+      source.size=Buffer.byteLength(text);
+      blobs.set(source.id,new Blob([text],{type:source.mimeType}));
+    }
+    if(mode==="runtime") candidate.patches[0]!.component="tool";
+    if(mode==="foreign") candidate.patches[0]!.artifactId="foreign-source";
+    if(mode==="noop") candidate.patches[0]!.content=before;
+    if(mode==="unscoped") {
+      candidate.patches[0]!.artifactId=undefined;
+      const text="second target";
+      project.sourceArtifacts.push(SourceArtifactSchema.parse({...source,id:"other",name:"other.md",extension:"md",mimeType:"text/markdown",size:Buffer.byteLength(text)}));
+      blobs.set("other",new Blob([text]));
+    }
+    const originalIds=[...blobs.keys()];
+    ai.mockRejectedValue(new Error("provider unavailable"));
+    await expect(buildServerExperimentCandidate(project,candidate)).rejects.toThrow("provider unavailable");
+    expect(ai).toHaveBeenCalledOnce();
+    expect([...blobs.keys()]).toEqual(originalIds);
+  });
+
   it("retrieves late source evidence and applies the model edit to the complete uploaded bytes", async () => {
     const {project, candidate} = fixture();
     ai.mockImplementation(async (_operation: string, payload: {project: {currentTargets: Array<{content: string; originalChars: number; mutationMode: string}>}}) => {
@@ -69,7 +106,7 @@ describe("server full text Candidate construction", () => {
     await expect(materializeServerCandidateArtifacts(project, candidate, output(content).artifacts, "test")).rejects.toThrow();
     expect([...blobs.keys()]).toEqual(["source"]);
   });
-  it("applies child edits to exact accepted Champion bytes, retaining the parent's improvements", async () => {
+  it.each(["AI", "deterministic"])("applies child edits to exact accepted Champion bytes, retaining the parent's improvements (%s)", async (mode) => {
     const {project, candidate, source} = fixture();
     const content = original.replace("<body>", "<body><p>已通过的父代改进</p>");
     const sha256 = await serverArtifactSha256(new TextEncoder().encode(content));
@@ -77,14 +114,16 @@ describe("server full text Candidate construction", () => {
     project.searchChampion = {id: "champion", versionLabel: "S1", candidate: parent, validation: {status: "completed", candidateId: parent.id, recommendation: "release"}, artifactAcceptance: {status: "passed", candidateId: parent.id}} as unknown as EvolveProject["searchChampion"];
     blobs.set("parent-blob", new Blob([content], {type: source.mimeType}));
     blobs.delete("source");
+    if (mode === "deterministic") candidate.patches[0]!.target = before;
     ai.mockResolvedValue(output(edits()));
     const built = await buildServerExperimentCandidate(project, candidate);
     expect(built.artifactSnapshots[0]!.content).toBe(content.replace(before, after));
     expect(built.artifactSnapshots[0]!.content).toContain("已通过的父代改进");
+    expect(built.artifactSnapshots[0]!.name).toBe(mode === "deterministic" ? "parent.html" : "large-evolved.html");
     expect(await verifyServerCandidateFrozenArtifact(built.artifactSnapshots[0]!)).toBe(true);
     const frozen = parent.artifactSnapshots[0]!.frozenArtifact!;
     parent.artifactSnapshots[0]!.frozenArtifact = {...frozen, sha256: "0".repeat(64)};
     await expect(buildServerExperimentCandidate(project, candidate)).rejects.toThrow("冻结文件");
-    expect(ai).toHaveBeenCalledOnce();
+    expect(ai).toHaveBeenCalledTimes(mode === "deterministic" ? 0 : 1);
   });
 });

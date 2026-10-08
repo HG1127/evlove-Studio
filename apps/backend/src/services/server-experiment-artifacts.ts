@@ -9,7 +9,7 @@ import {
 } from "@evolution/contracts";
 import { trustedServerBaselineChampion } from "@evolution/harness";
 import { applyExactEdits } from "@evolution/core";
-import { buildServerCandidateTargetContext, isServerTextEditBlueprint, requireServerCandidateOutputModes, SERVER_TEXT_FAMILY as TEXT_FAMILY } from "./server-candidate-context";
+import { buildServerCandidateTargetContext, buildServerExactCandidateArtifacts, isServerTextEditBlueprint, requireServerCandidateOutputModes, SERVER_TEXT_FAMILY as TEXT_FAMILY } from "./server-candidate-context";
 import { runServerAi } from "./ai-gateway";
 import { getServerArtifactStore } from "./artifact-runtime";
 import { renderSnapshot, verifyRendered } from "./server-artifact-renderer";
@@ -346,6 +346,8 @@ export async function materializeServerCandidateArtifacts(
 export async function buildServerExperimentCandidate(project: EvolveProject, candidate: Candidate): Promise<Candidate> {
   const targets = project.sourceArtifacts.filter((artifact) => artifact.role === "target");
   if (!targets.length) throw new Error("Mission 没有 Target Source Artifact。");
+  const planned = await buildServerExactCandidateArtifacts(project, candidate, (source) => readServerCandidateParentText(project, source));
+  if (planned) return materializeServerCandidateArtifacts(project, candidate, planned, "精确方案已应用到完整父代文件；AI Artifact Builder 未调用。");
   const contexts = await buildServerCandidateTargetContext(project, candidate, (source) => readServerCandidateParentText(project, source));
   const response = await runServerAi("build-candidate", {
     project: {

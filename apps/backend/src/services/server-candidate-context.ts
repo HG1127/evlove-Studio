@@ -1,4 +1,5 @@
 import type { Candidate, EvolveProject, SourceArtifact } from "@evolution/contracts";
+import { buildExactCandidateTextEdits } from "@evolution/core";
 import { retrieveTextContext, trustedServerBaselineChampion } from "@evolution/harness";
 
 export const SERVER_TEXT_FAMILY = /^(txt|md|markdown|mdx|csv|tsv|json|yaml|yml|css|js|jsx|ts|tsx|html|htm|xml|svg)$/i;
@@ -72,4 +73,32 @@ export function requireServerCandidateOutputModes(contexts: Array<{id: string; n
       throw new Error(`${context.name} 的 AI 上下文只是原文件片段，必须返回 text-edits；禁止用片段重写完整成果。`);
     }
   }
+}
+
+
+/** Build all Target edits before freezing any file; otherwise retain the normal AI builder. */
+export async function buildServerExactCandidateArtifacts(
+  project: EvolveProject,
+  candidate: Candidate,
+  readCurrentText: (source: SourceArtifact) => Promise<string>,
+) {
+  const targets = project.sourceArtifacts.filter((source) => source.role === "target");
+  const ids = new Set(targets.map((source) => source.id));
+  if (!targets.length || ids.size !== targets.length || !candidate.patches.length
+    || new Set(candidate.patches.map((patch) => patch.id)).size !== candidate.patches.length
+    || targets.some((source) => !SERVER_TEXT_FAMILY.test(source.extension)
+      || source.artifactKind === "codebase" || ["codebase", "package"].includes(source.artifactDescriptor?.family ?? ""))
+    || candidate.patches.some((patch) => patch.artifactId ? !ids.has(patch.artifactId) : targets.length !== 1)) return undefined;
+  const artifacts = [];
+  const champion = trustedServerBaselineChampion(project);
+  for (const source of targets) {
+    const patches = candidate.patches.filter((patch) => !patch.artifactId || patch.artifactId === source.id);
+    if (!patches.length) return undefined;
+    const content = buildExactCandidateTextEdits(await readCurrentText(source), patches);
+    if (!content) return undefined;
+    const parent = champion?.artifactSnapshots.find((snapshot) => snapshot.sourceArtifactId === source.id);
+    artifacts.push({sourceArtifactId: source.id, name: parent?.name ?? source.name, mimeType: parent?.mimeType ?? source.mimeType, content,
+      buildMode: "deterministic" as const, notes: ["完整父代文件上的精确方案修改；无需再次生成文件内容。"]});
+  }
+  return artifacts;
 }

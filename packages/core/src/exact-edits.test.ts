@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { TextArtifactEditsSchema } from "@evolution/contracts";
-import { applyExactEdits } from "./exact-edits";
+import { TextArtifactEditsSchema, CandidatePatchSchema } from "@evolution/contracts";
+import { applyExactEdits, buildExactCandidateTextEdits } from "./exact-edits";
 
 const blueprint = (edits: unknown[]) => JSON.stringify({kind: "text-edits", edits});
 describe("source-grounded exact text edits", () => {
@@ -35,5 +35,28 @@ describe("source-grounded exact text edits", () => {
     const after = "<html><body>new</body></html>";
     expect(applyExactEdits(source, blueprint([{before: "<html lang='en'><body>old</body></html>", after}]))).toBe(after);
     expect(TextArtifactEditsSchema.safeParse({kind: "text-edits", edits: []}).success).toBe(false);
+  });
+});
+
+
+describe("exact planned Candidate mutations", () => {
+  const patch = (target: string, content: string, extra = {}) => CandidatePatchSchema.parse({id: target, component: "code", operation: "update", target, content, rationale: "planned exact change", ...extra});
+  it("applies all planned updates and removals against the complete original", () => {
+    const original = "unchanged\r\n中文 anchor\r\nremove block\r\nuntouched";
+    const payload = buildExactCandidateTextEdits(original, [patch("中文 anchor", "中文 result"), patch("remove block", "", {operation: "remove"})]);
+    expect(payload).toBeDefined();
+    expect(applyExactEdits(original, payload!, {strict: true})).toBe("unchanged\r\n中文 result\r\n\r\nuntouched");
+  });
+  it.each([
+    {source: "duplicate duplicate", patches: [patch("duplicate", "new")]},
+    {source: "current", patches: [patch("absent", "new")]},
+    {source: "aaabc", patches: [patch("aab", "new"), patch("abc", "other")]},
+    {source: "current", patches: [patch("current", "current")]},
+    {source: "current", patches: [patch("current", "new", {operation: "add"})]},
+    {source: "current", patches: [patch("current", "new", {component: "tool"})]},
+    {source: "first second", patches: [patch("first", "new", {id: "same"}), patch("second", "other", {id: "same"})]},
+    {source: "body { color: red; }", patches: [patch("body{color:blue;}", "body{color:black;}")]},
+  ])("leaves unsupported or ungrounded plans to the normal builder ($source)", ({source, patches}) => {
+    expect(buildExactCandidateTextEdits(source, patches)).toBeUndefined();
   });
 });
