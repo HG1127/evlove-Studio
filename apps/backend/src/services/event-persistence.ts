@@ -53,7 +53,8 @@ function identity(event:EvolutionEvent){
 }
 
 function filterValue(value:string){
-  return encodeURIComponent(value);
+  // PostgREST reserved characters require a quoted literal, including Event ID colons.
+  return encodeURIComponent(JSON.stringify(value));
 }
 
 export async function readServerEventById(request:(path:string)=>Promise<unknown>,id:string){

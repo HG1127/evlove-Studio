@@ -20,7 +20,7 @@ describe("direct Event persistence",()=>{
     await appendServerEvent(request,event,mirror);
     expect(request).toHaveBeenCalledTimes(2);
     expect(request.mock.calls[0][0]).toBe("events?on_conflict=id");
-    expect(request.mock.calls[1][0]).toContain('id=eq.event-1');
+    expect(request.mock.calls[1][0]).toContain('id=eq.%22event-1%22');
     expect(mirror).toHaveBeenCalledWith(expect.objectContaining({
       id:"event-1",at:"2026-09-25T00:00:00+00:00",
     }));
@@ -77,8 +77,32 @@ describe("direct Event persistence",()=>{
     expect(await probeServerEventReadback(request)).toBe(true);
     const query=new URL("https://example.supabase.co/rest/v1/"+paths[0]).searchParams;
     expect(query.get("select")).toBe("*");
-    expect(query.get("id")).toBe('eq.health-probe:no-such-event');
+    expect(query.get("id")).toBe('eq."health-probe:no-such-event"');
     expect(query.get("limit")).toBe("1");
+  });
+
+  it.each([
+    ['colon', 'validation-result:validation:one', 'eq."validation-result:validation:one"'],
+    ['comma', 'event,one', 'eq."event,one"'],
+    ['dot', 'event.one', 'eq."event.one"'],
+    ['asterisk', 'event*one', 'eq."event*one"'],
+    ['parentheses', 'event(one)', 'eq."event(one)"'],
+    ['quote', 'event"one', 'eq."event\\"one"'],
+    ['backslash', 'event\\one', 'eq."event\\\\one"'],
+    ['query characters', 'event&limit=100#one+two', 'eq."event&limit=100#one+two"'],
+    ['literal percent and Unicode', '事件:%22:一', 'eq."事件:%22:一"'],
+  ])("reads %s as one exact PostgREST text literal",async(_label,id,expected)=>{
+    const stored={...event,id};
+    const request=vi.fn(async(path:string)=>{
+      const url=new URL("https://example.supabase.co/rest/v1/"+path);
+      expect(url.searchParams.get("id")).toBe(expected);
+      expect([...url.searchParams.keys()]).toEqual(["select","id","limit"]);
+      expect(url.searchParams.get("limit")).toBe("1");
+      expect(url.hash).toBe("");
+      return [eventRow(stored)];
+    });
+    await expect(readServerEventById(request,id)).resolves.toEqual(stored);
+    expect(request).toHaveBeenCalledTimes(1);
   });
 
   it("rejects an exact-ID lookup that returns another Event",async()=>{

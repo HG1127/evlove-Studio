@@ -13,6 +13,9 @@ import {
   serverCampaignScoringRouteBlocker,
   canReuseServerBaseline,
   buildServerHarnessPlan,
+  buildWorkflowControlJobUpdate,
+  WorkflowControlJobUnavailableError,
+  type WorkflowControlJobUpdate,
   serverControlCapabilityWaitPlan,
   serverControlAiWait,
   normalizeLocallyVerifiableCandidateRuns,
@@ -38,36 +41,14 @@ import { lockConnectorTargetSnapshot,materializeLockedConnectorTargetSource } fr
 import { serverAiConfigured } from "../../apps/backend/src/server-env";
 import {planWorkflowResultFinalization} from "../../apps/backend/src/services/workflow-result-finalization";
 
-function controlJob(input:EvolutionWorkflowRunInput,args:{
-  status:"queued"|"running"|"waiting"|"completed"|"failed";
-  createdAt?:string;
-  startedAt?:string;
-  finishedAt?:string;
-  progress?:{percent?:number;detail?:string};
-  error?:string;
-  checkpointId?:string;
-}){
-  const now=new Date().toISOString();
-  return EvolutionJobSchema.parse({
-    schemaVersion:PRODUCTION_SCHEMA_VERSIONS.job,
-    id:input.controlJobId,
-    missionId:input.missionId,
-    type:"campaign",
-    status:args.status,
-    label:"Evolution Workflow Control",
-    idempotencyKey:`workflow-control:${input.controlJobId}`,
-    generation:1,
-    attempts:1,
-    priority:70,
-    progress:args.progress,
-    checkpointId:args.checkpointId,
-    error:args.error,
-    createdAt:args.createdAt??input.requestedAt,
-    startedAt:args.startedAt,
-    heartbeatAt:now,
-    finishedAt:args.finishedAt,
-    updatedAt:now,
-  });
+async function controlJob(input:EvolutionWorkflowRunInput,args:WorkflowControlJobUpdate){
+  const current=await getServerProductionRuntime().jobs.get(input.controlJobId);
+  try{
+    return buildWorkflowControlJobUpdate(current,input,args,new Date().toISOString());
+  }catch(error){
+    if(error instanceof WorkflowControlJobUnavailableError)throw new FatalError(error.message);
+    throw error;
+  }
 }
 
 export async function initializeWorkflowControlStep(input:EvolutionWorkflowRunInput){
@@ -76,16 +57,18 @@ export async function initializeWorkflowControlStep(input:EvolutionWorkflowRunIn
   const mission=await runtime.missions.get(input.missionId);
   if(!mission)throw new FatalError(`Mission 不存在：${input.missionId}`);
   const startedAt=new Date().toISOString();
-  await runtime.jobs.put(controlJob(input,{
+  const initializedJob=await controlJob(input,{
     status:input.scheduledFor?"waiting":"running",
     startedAt,
     progress:{percent:1,detail:input.scheduledFor?`Durable Scheduler 已武装，等待 ${input.scheduledFor}`:"Durable Workflow 已接管 Mission control loop"},
-  }));
+  });
+  await runtime.jobs.put(initializedJob);
   await runtime.events.append(createEvolutionEvent({
     id:`evt-${input.controlJobId}-started`,
     missionId:input.missionId,
     jobId:input.controlJobId,
     type:"JobStarted",
+    at:initializedJob.startedAt??input.requestedAt,
     source:"vercel-workflow-control",
     payload:{runtime:"workflow",phase:input.scheduledFor?"scheduled-wait":"control-loop",scheduledFor:input.scheduledFor},
   }));
@@ -125,7 +108,7 @@ export async function prepareScheduledTriggerStep(
   );
   if(!bindingMatches||mission.campaign.status==="completed"||mission.campaign.status==="stopped"){
     const now=new Date().toISOString();
-    await runtime.jobs.put(controlJob(input,{
+    await runtime.jobs.put(await controlJob(input,{
       status:"completed",
       startedAt:input.requestedAt,
       finishedAt:now,
@@ -161,7 +144,7 @@ export async function prepareScheduledTriggerStep(
     },
     updatedAt:now,
   });
-  await runtime.jobs.put(controlJob(input,{
+  await runtime.jobs.put(await controlJob(input,{
     status:"running",
     startedAt:input.requestedAt,
     progress:{percent:3,detail:targetRound?`计划触发：执行 Round ${targetRound}`:"计划触发：启动 Auto Campaign"},
@@ -233,7 +216,7 @@ export async function settleScheduledManualRoundStep(
       updatedAt:now,
     };
     await runtime.missions.save(updated);
-    await runtime.jobs.put(controlJob(input,{
+    await runtime.jobs.put(await controlJob(input,{
       status:"completed",
       startedAt:input.requestedAt,
       finishedAt:now,
@@ -305,7 +288,7 @@ export async function settleScheduledManualRoundStep(
 
   if(recurring&&advanced.nextRunAt){
     const sleepMs=Math.max(0,Date.parse(advanced.nextRunAt)-nowDate.getTime());
-    await runtime.jobs.put(controlJob(input,{
+    await runtime.jobs.put(await controlJob(input,{
       status:"waiting",
       startedAt:input.requestedAt,
       progress:{percent:5,detail:`Round ${targetRound} 已完成；下一次计划 ${advanced.nextRunAt}`},
@@ -321,7 +304,7 @@ export async function settleScheduledManualRoundStep(
     return {settled:true,nextScheduledFor:advanced.nextRunAt,sleepMs};
   }
 
-  await runtime.jobs.put(controlJob(input,{
+  await runtime.jobs.put(await controlJob(input,{
     status:"completed",
     startedAt:input.requestedAt,
     finishedAt:now,
@@ -720,7 +703,7 @@ async function executeServerControlAction(
         updatedAt:now,
       };
       await runtime.missions.save(updated);
-      await runtime.jobs.put(controlJob(input,{
+      await runtime.jobs.put(await controlJob(input,{
         status:"waiting",
         startedAt:input.requestedAt,
         progress:{percent:20,detail:"Campaign Planning 已迁到 Server，等待 Server AI 配置"},
@@ -752,7 +735,7 @@ async function executeServerControlAction(
         updatedAt:now,
       };
       await runtime.missions.save(updated);
-      await runtime.jobs.put(controlJob(input,{
+      await runtime.jobs.put(await controlJob(input,{
         status:"waiting",
         startedAt:input.requestedAt,
         progress:{percent:20,detail:scoringBlocker.slice(0,240)},
@@ -792,7 +775,7 @@ async function executeServerControlAction(
         },
       }));
       if(!baselineOutcome.ready){
-        await runtime.jobs.put(controlJob(input,{
+        await runtime.jobs.put(await controlJob(input,{
           status:"waiting",
           startedAt:input.requestedAt,
           progress:{percent:28,detail:baselineOutcome.reason.slice(0,240)},
@@ -802,7 +785,7 @@ async function executeServerControlAction(
           checkpointId:plan.checkpoint.id,reason:baselineOutcome.reason,
         })};
       }
-      await runtime.jobs.put(controlJob(input,{
+      await runtime.jobs.put(await controlJob(input,{
         status:"running",
         startedAt:input.requestedAt,
         progress:{percent:30,detail:"Server Baseline 已完成并达到诊断证据门槛"},
@@ -832,7 +815,7 @@ async function executeServerControlAction(
         },
       }));
       if(holdoutOutcome.control==="stop"){
-        await runtime.jobs.put(controlJob(input,{
+        await runtime.jobs.put(await controlJob(input,{
           status:"waiting",
           startedAt:input.requestedAt,
           progress:{percent:70,detail:holdoutOutcome.reason.slice(0,240)},
@@ -842,7 +825,7 @@ async function executeServerControlAction(
           checkpointId:plan.checkpoint.id,reason:holdoutOutcome.reason,
         })};
       }
-      await runtime.jobs.put(controlJob(input,{
+      await runtime.jobs.put(await controlJob(input,{
         status:"running",
         startedAt:input.requestedAt,
         progress:{percent:72,detail:holdoutOutcome.reason.slice(0,240)},
@@ -873,7 +856,7 @@ async function executeServerControlAction(
         },
       }));
       if(acceptanceOutcome.control==="stop"){
-        await runtime.jobs.put(controlJob(input,{
+        await runtime.jobs.put(await controlJob(input,{
           status:"waiting",
           startedAt:input.requestedAt,
           progress:{percent:80,detail:acceptanceOutcome.reason.slice(0,240)},
@@ -883,7 +866,7 @@ async function executeServerControlAction(
           checkpointId:plan.checkpoint.id,reason:acceptanceOutcome.reason,
         })};
       }
-      await runtime.jobs.put(controlJob(input,{
+      await runtime.jobs.put(await controlJob(input,{
         status:"running",
         startedAt:input.requestedAt,
         progress:{percent:acceptanceOutcome.accepted?86:80,detail:acceptanceOutcome.reason.slice(0,240)},
@@ -913,7 +896,7 @@ async function executeServerControlAction(
         },
       }));
       if(experimentOutcome.control==="stop"){
-        await runtime.jobs.put(controlJob(input,{
+        await runtime.jobs.put(await controlJob(input,{
           status:"waiting",
           startedAt:input.requestedAt,
           progress:{percent:60,detail:experimentOutcome.reason.slice(0,240)},
@@ -923,7 +906,7 @@ async function executeServerControlAction(
           checkpointId:plan.checkpoint.id,reason:experimentOutcome.reason,
         })};
       }
-      await runtime.jobs.put(controlJob(input,{
+      await runtime.jobs.put(await controlJob(input,{
         status:"running",
         startedAt:input.requestedAt,
         progress:{
@@ -958,7 +941,7 @@ async function executeServerControlAction(
     }));
 
     if(outcome.completed){
-      await runtime.jobs.put(controlJob(input,{
+      await runtime.jobs.put(await controlJob(input,{
         status:"running",
         startedAt:input.requestedAt,
         progress:{percent:phasePercent,detail:"Campaign 已满足停止条件；继续进入成果打包/学习闭环"},
@@ -966,14 +949,14 @@ async function executeServerControlAction(
       return {control:"continue"};
     }
     if(outcome.control==="continue"){
-      await runtime.jobs.put(controlJob(input,{
+      await runtime.jobs.put(await controlJob(input,{
         status:"running",
         startedAt:input.requestedAt,
         progress:{percent:phasePercent,detail:`Server Campaign · ${outcome.phase} 已完成，继续下一阶段`},
       }));
       return {control:"continue"};
     }
-    await runtime.jobs.put(controlJob(input,{
+    await runtime.jobs.put(await controlJob(input,{
       status:"waiting",
       startedAt:input.requestedAt,
       progress:{percent:phasePercent,detail:outcome.reason.slice(0,240)},
@@ -1062,7 +1045,7 @@ async function executeServerControlAction(
           updatedAt:now,
         };
         await runtime.missions.save(updated);
-        await runtime.jobs.put(controlJob(input,{
+        await runtime.jobs.put(await controlJob(input,{
           status:"waiting",
           startedAt:input.requestedAt,
           progress:{percent:70,detail:"确定性 Snapshot 复验已完成；等待独立 Release Review"},
@@ -1263,7 +1246,7 @@ async function executeServerControlAction(
       },
     }));
     if(releaseOutcome.control==="stop"){
-      await runtime.jobs.put(controlJob(input,{
+      await runtime.jobs.put(await controlJob(input,{
         status:"waiting",
         startedAt:input.requestedAt,
         progress:{percent:88,detail:releaseOutcome.reason.slice(0,240)},
@@ -1273,7 +1256,7 @@ async function executeServerControlAction(
         checkpointId:plan.checkpoint.id,reason:releaseOutcome.reason,
       })};
     }
-    await runtime.jobs.put(controlJob(input,{
+    await runtime.jobs.put(await controlJob(input,{
       status:"running",
       startedAt:input.requestedAt,
       progress:{percent:releaseOutcome.terminal?94:90,detail:releaseOutcome.reason.slice(0,240)},
@@ -1326,7 +1309,7 @@ async function executeServerControlAction(
       },
     }));
     if(reconcileOutcome.control==="stop"){
-      await runtime.jobs.put(controlJob(input,{
+      await runtime.jobs.put(await controlJob(input,{
         status:"waiting",
         startedAt:input.requestedAt,
         progress:{percent:89,detail:reconcileOutcome.reason.slice(0,240)},
@@ -1336,7 +1319,7 @@ async function executeServerControlAction(
         checkpointId:plan.checkpoint.id,reason:reconcileOutcome.reason,
       })};
     }
-    await runtime.jobs.put(controlJob(input,{
+    await runtime.jobs.put(await controlJob(input,{
       status:"running",
       startedAt:input.requestedAt,
       progress:{
@@ -1355,7 +1338,7 @@ async function executeServerControlAction(
       updatedAt:now,
     };
     await runtime.missions.save(updated);
-    await runtime.jobs.put(controlJob(input,{
+    await runtime.jobs.put(await controlJob(input,{
       status:"waiting",
       startedAt:input.requestedAt,
       checkpointId:plan.checkpoint.id,
@@ -1376,7 +1359,7 @@ async function executeServerControlAction(
   if(action==="complete"){
     const completed=completeAutonomousMission(reconcileAttentionRequest(mission),{at:now,reason:plan.decision.reason});
     await runtime.missions.save(completed);
-    await runtime.jobs.put(controlJob(input,{
+    await runtime.jobs.put(await controlJob(input,{
       status:"completed",startedAt:input.requestedAt,finishedAt:now,
       progress:{percent:100,detail:"Mission durable control loop 已完成"},
     }));
@@ -1423,7 +1406,7 @@ async function executeServerControlAction(
     createdAt:existing?.createdAt??now,
     updatedAt:now,
   }));
-  await runtime.jobs.put(controlJob(input,{
+  await runtime.jobs.put(await controlJob(input,{
     status:"waiting",
     startedAt:input.requestedAt,
     progress:{percent:25,detail:`下一动作 ${capabilityPendingAction} 已持久化，等待所需 Server capability`},
@@ -1465,7 +1448,7 @@ export async function failLoopGuardStep(input:EvolutionWorkflowRunInput,iteratio
   const runtime=getServerProductionRuntime();
   const now=new Date().toISOString();
   const message=`Workflow control loop 超过安全上限 ${iterations}`;
-  await runtime.jobs.put(controlJob(input,{
+  await runtime.jobs.put(await controlJob(input,{
     status:"failed",startedAt:input.requestedAt,finishedAt:now,error:message,
     progress:{percent:100,detail:message},
   }));
