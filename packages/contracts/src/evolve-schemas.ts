@@ -564,7 +564,23 @@ export const BaselineRunSchema = z.object({
 });
 export type BaselineRun = z.infer<typeof BaselineRunSchema>;
 
+/** Persist execution separately from independent assessment; legacy records remain readable. */
+export const ExperimentCandidateCheckpointSchema = z.object({
+  candidateId: z.string().min(1),
+  buildInputFingerprint: z.string().regex(/^[0-9a-f]{64}$/),
+  artifactFingerprint: z.string().regex(/^[0-9a-f]{64}$/),
+  execution: z.object({
+    inputFingerprint: z.string().regex(/^[0-9a-f]{64}$/),
+    artifactFingerprint: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+    evidenceFingerprint: z.string().regex(/^[0-9a-f]{64}$/),
+    observedAt: z.number().finite().positive(),
+    runs: z.array(TargetRunResultSchema),
+  }).optional(),
+});
+export type ExperimentCandidateCheckpoint = z.infer<typeof ExperimentCandidateCheckpointSchema>;
+
 export const ExperimentRunSchema = z.object({
+  executionCheckpoints: z.array(ExperimentCandidateCheckpointSchema).optional(),
   comparisonSuite: z.array(TestCaseSchema).optional(),
   comparisonBaseline: BaselineRunSchema.optional(),
   id: z.string(),

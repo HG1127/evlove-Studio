@@ -1,8 +1,9 @@
 import {runServerHtmlArtifactBatch,serverHtmlArtifactTargetEnabled} from "./server-html-artifact-execution";
 import type { Candidate, EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
 import { runVercelSandboxCodebaseValidation } from "@evolution/adapters/sandbox";
-import { runServerExperiment } from "@evolution/harness";
-import { runServerAi } from "./ai-gateway";
+import { runServerExperiment, SERVER_SEMANTIC_CONTEXT_VERSION } from "@evolution/harness";
+import { runServerAi, serverAiScoringRouteFingerprint } from "./ai-gateway";
+import { readServerHoldoutArtifactFingerprint as readExecutionArtifactFingerprint } from "./server-holdout-artifact-binding";
 import { getServerArtifactStore } from "./artifact-runtime";
 import { runServerFrozenArtifactStaticEvidence } from "./server-static-artifact-evidence";
 import { attachServerVisualEvidence } from "./server-visual-evidence";
@@ -85,6 +86,10 @@ async function executeServerCandidateExternal(project: EvolveProject, candidate:
 /** Production composition root for the server-native Candidate Experiment. */
 export async function runServerMissionExperiment(project: EvolveProject) {
   return runServerExperiment(project, {
+    fingerprint: (wire) => serverArtifactSha256(new TextEncoder().encode(wire)),
+    readExecutionArtifactFingerprint,
+    scoringRouteFingerprint: serverAiScoringRouteFingerprint(),
+    executionRuntimeFingerprint: JSON.stringify([process.env.VERCEL_GIT_COMMIT_SHA ?? "local", SERVER_SEMANTIC_CONTEXT_VERSION]),
     buildCandidate: async({ project: current, candidate }) => {
       const built=await buildServerExperimentCandidate(current,candidate);
       return serverConnectorTargetEnabled(current)

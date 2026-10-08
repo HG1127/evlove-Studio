@@ -2,6 +2,7 @@ import type {
   Candidate,
   EvolveProject,
   ExperimentRun,
+  ExperimentCandidateCheckpoint,
 } from "@evolution/contracts";
 import {
   candidateWinnerDecision,
@@ -15,7 +16,10 @@ import {
   type ServerExperimentExecutionPorts,
 } from "./server-experiment-runner";
 
-export type ServerExperimentPorts = ServerExperimentExecutionPorts & {
+import { recoverableServerExperimentRuns, restoreServerExperimentCandidate, serverExperimentBuildCheckpoint,
+  serverExperimentExecutionCheckpoint, serverExperimentObservationBinding, ServerExperimentFrozenRecoveryError, type ServerExperimentRecoveryPorts } from "./server-experiment-recovery";
+
+export type ServerExperimentPorts = ServerExperimentExecutionPorts & ServerExperimentRecoveryPorts & {
   buildCandidate(args: { project: EvolveProject; candidate: Candidate }): Promise<Candidate>;
 };
 
@@ -111,24 +115,41 @@ export async function runServerExperiment(
   if (!inputProject.baselineRun.result || inputProject.baselineRun.status !== "completed") {
     throw new Error("Server Experiment requires a completed Baseline evaluation");
   }
+  if (new Set(inputProject.selectedCandidateIds).size !== inputProject.selectedCandidateIds.length
+    || inputProject.selectedCandidateIds.some(id => inputProject.candidates.filter(c => c.id === id).length !== 1)) {
+    throw new Error("Server Experiment requires unique, existing selected Candidate identities");
+  }
   const selected = inputProject.selectedCandidateIds
     .flatMap((id) => inputProject.candidates.find((candidate) => candidate.id === id) ? [inputProject.candidates.find((candidate) => candidate.id === id)!] : []);
   if (!selected.length) throw new Error("Server Experiment has no selected Candidates");
 
+  const checkpoints = new Map<string, ExperimentCandidateCheckpoint>();
+  const recoveryFailures = new Set<string>();
   const built: Candidate[] = [];
   const buildFailures: Array<{ candidateId: string; message: string }> = [];
   for (const candidate of selected) {
     try {
-      const result = await ports.buildCandidate({ project: inputProject, candidate });
+      const restored = await restoreServerExperimentCandidate(inputProject, candidate, round, ports);
+      const result = restored ?? await ports.buildCandidate({ project: inputProject, candidate });
       const targets = inputProject.sourceArtifacts.filter((artifact) => artifact.role === "target");
       const snapshots = new Map(result.artifactSnapshots.map((snapshot) => [snapshot.sourceArtifactId, snapshot]));
-      if (result.artifactBuildStatus !== "ready"
+      if (!targets.length || result.id !== candidate.id || result.artifactBuildStatus !== "ready"
+        || new Set(targets.map(t => t.id)).size !== targets.length
+        || new Set(result.artifactSnapshots.map(s => s.sourceArtifactId)).size !== targets.length
+        || result.artifactSnapshots.some(s => s.frozenArtifact?.sourceArtifactId !== s.sourceArtifactId)
         || result.artifactSnapshots.length !== targets.length
         || targets.some((target) => !snapshots.get(target.id)?.frozenArtifact)) {
         throw new Error("Candidate Builder 未返回与全部 Target 绑定的已冻结实际文件");
       }
       built.push(result);
+      const checkpoint = restored
+        ? inputProject.experimentRun.executionCheckpoints?.find(c => c.candidateId === candidate.id)
+        : await serverExperimentBuildCheckpoint(inputProject, result, ports);
+      if (checkpoint) checkpoints.set(candidate.id, checkpoint);
     } catch (error) {
+      if (error instanceof ServerExperimentFrozenRecoveryError) recoveryFailures.add(candidate.id);
+      const prior = inputProject.experimentRun.executionCheckpoints?.filter(c => c.candidateId === candidate.id);
+      if (prior?.length === 1) checkpoints.set(candidate.id, prior[0]!);
       buildFailures.push({ candidateId: candidate.id, message: error instanceof Error ? error.message : String(error) });
     }
   }
@@ -144,13 +165,14 @@ export async function runServerExperiment(
       comparisonSuite: inputProject.evalSuite,
       comparisonBaseline: inputProject.baselineRun,
       buildFailures,
+      executionCheckpoints: [...checkpoints.values()],
       summary: reason,
     };
     const project: EvolveProject = {
       ...inputProject,
       candidates: inputProject.candidates.map((candidate) => {
         const failed = buildFailures.find((item) => item.candidateId === candidate.id);
-        return failed ? { ...candidate, artifactBuildStatus: "failed", artifactBuildSummary: failed.message, status: "failed" } : candidate;
+        return failed && !recoveryFailures.has(candidate.id) ? { ...candidate, artifactBuildStatus: "failed", artifactBuildSummary: failed.message, status: "failed" } : candidate;
       }),
       experimentRun: experiment,
       campaign: {
@@ -167,7 +189,14 @@ export async function runServerExperiment(
 
   const candidateResults: ExperimentRun["candidateResults"] = [];
   for (const candidate of built) {
-    const runs = await executeServerExperimentCandidate(inputProject, candidate, ports);
+    const checkpoint = checkpoints.get(candidate.id);
+    const reused = await recoverableServerExperimentRuns(inputProject, candidate, round, checkpoint, Date.parse(now()), ports);
+    const binding = reused ? undefined : await serverExperimentObservationBinding(inputProject, candidate, checkpoint, ports);
+    const runs = reused ?? await executeServerExperimentCandidate(inputProject, candidate, ports);
+    if (!reused) {
+      const executed = await serverExperimentExecutionCheckpoint(inputProject, candidate, checkpoint, runs, Date.parse(now()), ports, binding);
+      if (executed) checkpoints.set(candidate.id, executed);
+    }
     let evaluation;
     try {
       evaluation = await judgeServerExperimentCandidate(inputProject, candidate, runs, ports);
@@ -182,6 +211,7 @@ export async function runServerExperiment(
         comparisonSuite: inputProject.evalSuite,
         comparisonBaseline: inputProject.baselineRun,
         buildFailures,
+        executionCheckpoints: [...checkpoints.values()],
         summary: reason,
       };
       const builtById = new Map(built.map((item) => [item.id, item]));
@@ -191,7 +221,7 @@ export async function runServerExperiment(
           const actual = builtById.get(item.id);
           if (actual) return actual;
           const failed = buildFailures.find((failure) => failure.candidateId === item.id);
-          return failed ? { ...item, status: "failed", artifactBuildStatus: "failed", artifactBuildSummary: failed.message } : item;
+          return failed && !recoveryFailures.has(item.id) ? { ...item, status: "failed", artifactBuildStatus: "failed", artifactBuildSummary: failed.message } : item;
         }),
         experimentRun: experiment,
         campaign: {
@@ -235,6 +265,7 @@ export async function runServerExperiment(
     comparisonSuite: inputProject.evalSuite,
     comparisonBaseline: inputProject.baselineRun,
     buildFailures,
+    executionCheckpoints: [...checkpoints.values()],
     winnerId: winner?.candidateId,
     pendingEvidenceCandidateId: pendingEvidence?.candidateId,
     summary: winner
@@ -251,7 +282,7 @@ export async function runServerExperiment(
       const actual = builtById.get(candidate.id);
       if (!actual) {
         const failed = buildFailures.find((item) => item.candidateId === candidate.id);
-        return failed ? { ...candidate, status: "failed", artifactBuildStatus: "failed", artifactBuildSummary: failed.message } : candidate;
+        return failed && !recoveryFailures.has(candidate.id) ? { ...candidate, status: "failed", artifactBuildStatus: "failed", artifactBuildSummary: failed.message } : candidate;
       }
       return {
         ...actual,
