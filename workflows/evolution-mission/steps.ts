@@ -39,6 +39,7 @@ import { renderAcceptedProjectArtifacts } from "../../apps/backend/src/services/
 import { lockGitTargetSnapshot,materializeLockedGitTargetSource } from "../../apps/backend/src/services/git-target-source";
 import { lockConnectorTargetSnapshot,materializeLockedConnectorTargetSource } from "../../apps/backend/src/services/connector-target-source";
 import { serverAiConfigured } from "../../apps/backend/src/server-env";
+import {appendWorkflowControlEvent} from "../../apps/backend/src/services/workflow-control-events";
 import {planWorkflowResultFinalization} from "../../apps/backend/src/services/workflow-result-finalization";
 
 async function controlJob(input:EvolutionWorkflowRunInput,args:WorkflowControlJobUpdate){
@@ -418,7 +419,7 @@ export async function planMissionStep(input:EvolutionWorkflowRunInput,iteration:
     }
   }
   const plan=buildServerHarnessPlan(mission);
-  await runtime.events.append(createEvolutionEvent({
+  await appendWorkflowControlEvent(runtime.events,createEvolutionEvent({
     id:`evt-${input.controlJobId}-plan-${iteration}`,
     missionId:input.missionId,
     jobId:input.controlJobId,
@@ -433,7 +434,7 @@ export async function planMissionStep(input:EvolutionWorkflowRunInput,iteration:
       policy:plan.policy.mode,
     },
   }));
-  await runtime.events.append(createEvolutionEvent({
+  await appendWorkflowControlEvent(runtime.events,createEvolutionEvent({
     id:`evt-${input.controlJobId}-checkpoint-${iteration}`,
     missionId:input.missionId,
     jobId:input.controlJobId,

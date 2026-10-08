@@ -5,31 +5,36 @@ import { EvolutionJobSchema, type EvolutionJob, type EvolveProject, type Evoluti
 import type { ServerHarnessPlan } from "@evolution/harness";
 import { demoProject } from "../../../../src/features/evolve/data/mock-project";
 import route from "../../server/api/evolution/start.post";
-import { initializeWorkflowControlStep, executeServerControlStep } from "../../../../workflows/evolution-mission/steps";
+import {EventIdempotencyConflictError} from "./event-persistence";
+import { initializeWorkflowControlStep, executeServerControlStep, planMissionStep } from "../../../../workflows/evolution-mission/steps";
 
-const mocks = vi.hoisted(() => ({ jobs: new Map<string, EvolutionJob>(), events: new Map<string, EvolutionEvent>(), start: vi.fn(), create: vi.fn(), bind: vi.fn(), runtime: vi.fn() }));
+const mocks = vi.hoisted(() => ({ jobs: new Map<string, EvolutionJob>(), events: new Map<string, EvolutionEvent>(), readEvent: vi.fn(), start: vi.fn(), create: vi.fn(), bind: vi.fn(), runtime: vi.fn() }));
 vi.mock("workflow/api", () => ({ start: mocks.start, getRun: vi.fn() }));
 vi.mock("../../../../workflows/evolution-mission", () => ({ evolutionMissionWorkflow: vi.fn() }));
 vi.mock("./security-policy", () => ({ requireGovernedEvolutionPermission: vi.fn(async () => undefined) }));
 vi.mock("./production-runtime", async (original) => ({ ...await original<typeof import("./production-runtime")>(),
-  getServerProductionRuntime: mocks.runtime, createServerJobIdempotentReceipt: mocks.create, bindServerJobWorkflowRun: mocks.bind,
+  getServerProductionRuntime: mocks.runtime, getServerEventById: mocks.readEvent, createServerJobIdempotentReceipt: mocks.create, bindServerJobWorkflowRun: mocks.bind,
 }));
 let mission: EvolveProject;
+let failCheckpointOnce=false;
 const key = "workflow-control:identity-mission:request-one";
 function request() {
   return mockEvent(new Request("http://localhost/api/evolution/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ missionId: mission.id, idempotencyKey: "request-one" }) }));
 }
 beforeEach(() => {
+  failCheckpointOnce=false;
   vi.clearAllMocks(); mocks.jobs.clear(); mocks.events.clear(); vi.useFakeTimers({toFake:["Date"]}); vi.setSystemTime(new Date("2026-10-08T00:00:00Z")); mission = { ...structuredClone(demoProject), id: "identity-mission" };
   mocks.runtime.mockReturnValue({ missions: { get: async () => mission, save: async (value: EvolveProject) => { mission = value; } }, jobs: {
     get: async (id: string) => mocks.jobs.get(id),
     // Model the deployed monotonic RPC's key update and same-generation run-binding retention.
     put: async (value: EvolutionJob) => { const previous = mocks.jobs.get(value.id); mocks.jobs.set(value.id, EvolutionJobSchema.parse({ ...value, outputRef: value.outputRef ?? previous?.outputRef, metadata: { ...previous?.metadata, ...value.metadata } })); },
   }, events: { append: async (event: EvolutionEvent) => {
+    if(failCheckpointOnce&&event.type==="CheckpointCreated"){failCheckpointOnce=false;throw new Error("checkpoint append unavailable");}
     const existing=mocks.events.get(event.id);
-    if(existing && JSON.stringify(existing)!==JSON.stringify(event))throw new Error("Event identity changed on replay");
+    if(existing && JSON.stringify(existing)!==JSON.stringify(event))throw new EventIdempotencyConflictError(event.id);
     mocks.events.set(event.id,event);
   } } });
+  mocks.readEvent.mockImplementation(async(id:string)=>mocks.events.get(id));
   mocks.create.mockImplementation(async (value: EvolutionJob) => {
     const previous = [...mocks.jobs.values()].find((job) => job.idempotencyKey === value.idempotencyKey);
     if (previous) return { job: previous, reused: true };
@@ -64,6 +69,24 @@ describe("start -> control writes -> same-request retry", () => {
     await initializeWorkflowControlStep(startedInput());
     expect([...mocks.events.values()]).toEqual([original]);
     expect(mocks.start).toHaveBeenCalledOnce();
+  });
+  it("replays planning without changing the existing ActionPlanned and CheckpointCreated evidence",async()=>{
+    await startRequest();await initializeWorkflowControlStep(startedInput());
+    const originalPlan=await planMissionStep(startedInput(),0);
+    const original=[...mocks.events.values()];
+    vi.setSystemTime(new Date("2026-10-08T00:01:00Z"));
+    expect(await planMissionStep(startedInput(),0)).toEqual(originalPlan);
+    expect([...mocks.events.values()]).toEqual(original);
+  });
+  it("finishes planning after the first Event committed and the checkpoint append failed",async()=>{
+    await startRequest();await initializeWorkflowControlStep(startedInput());failCheckpointOnce=true;
+    await expect(planMissionStep(startedInput(),0)).rejects.toThrow("checkpoint append unavailable");
+    const planned=[...mocks.events.values()].find(event=>event.type==="ActionPlanned");
+    vi.setSystemTime(new Date("2026-10-08T00:01:00Z"));
+    await planMissionStep(startedInput(),0);
+    expect([...mocks.events.values()].find(event=>event.type==="ActionPlanned")).toEqual(planned);
+    expect([...mocks.events.values()].find(event=>event.type==="CheckpointCreated")?.at).toBe("2026-10-08T00:01:00.000Z");
+    expect(mocks.events.size).toBe(3);expect(mocks.start).toHaveBeenCalledOnce();
   });
   it("retains it after a persisted attention wait without starting another run", async () => {
     const first = await startRequest(); await initializeWorkflowControlStep(startedInput());
