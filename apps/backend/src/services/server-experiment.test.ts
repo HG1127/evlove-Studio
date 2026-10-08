@@ -246,7 +246,8 @@ describe("server renamed Candidate byte identity", () => {
       const original = project.sourceArtifacts[0]!;
       Object.assign(original, {name: "index.html", extension: "html", mimeType: "text/html", artifactKind: "document", artifactDescriptor: undefined, textContent: "<html><body>original</body></html>"});
       project.targetConnection = {adapter: "http", connectionId: "runner", status: "connected", label: "runner"};
-      const saved = new Map<string, Blob>();
+      original.size=Buffer.byteLength(original.textContent!);
+      const saved = new Map<string, Blob>([[original.id,new Blob([original.textContent!],{type:original.mimeType})]]);
       getBlob.mockReset().mockImplementation(async (id: string) => saved.get(id));
       putBlob.mockReset().mockImplementation(async (id: string, blob: Blob) => {saved.set(id, blob);});
       const content = "<html><body>changed actual file</body></html>";

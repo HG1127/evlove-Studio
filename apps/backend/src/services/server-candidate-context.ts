@@ -93,12 +93,12 @@ export async function buildServerExactCandidateArtifacts(
   const champion = trustedServerBaselineChampion(project);
   for (const source of targets) {
     const patches = candidate.patches.filter((patch) => !patch.artifactId || patch.artifactId === source.id);
-    if (!patches.length) return undefined;
-    const content = buildExactCandidateTextEdits(await readCurrentText(source), patches);
+    const current = await readCurrentText(source);
+    const content = patches.length ? buildExactCandidateTextEdits(current, patches) : current;
     if (!content) return undefined;
     const parent = champion?.artifactSnapshots.find((snapshot) => snapshot.sourceArtifactId === source.id);
     artifacts.push({sourceArtifactId: source.id, name: parent?.name ?? source.name, mimeType: parent?.mimeType ?? source.mimeType, content,
-      buildMode: "deterministic" as const, notes: ["完整父代文件上的精确方案修改；无需再次生成文件内容。"]});
+      buildMode: "deterministic" as const, notes: [patches.length ? "完整父代文件上的精确方案修改；无需再次生成文件内容。" : "该 Target 不在本次修改范围；保留完整父代文件。"]});
   }
   return artifacts;
 }

@@ -252,7 +252,7 @@ async function materializeText(source: SourceArtifact, snapshot: CandidateArtifa
   };
 }
 
-async function materializeSnapshot(
+async function buildSnapshotFile(
   project: EvolveProject,
   source: SourceArtifact,
   snapshot: CandidateArtifactSnapshot,
@@ -281,8 +281,7 @@ async function materializeSnapshot(
   }else{
     built=await materializeText(source,snapshot);
   }
-  const frozenArtifact = await persistFrozenArtifact(source, snapshot, built.blob, built.checks, built.limitations);
-  return { ...snapshot, name: frozenArtifact.name, mimeType: frozenArtifact.mimeType, frozenArtifact };
+  return built;
 }
 
 export async function materializeServerCandidateArtifacts(
@@ -297,40 +296,56 @@ export async function materializeServerCandidateArtifacts(
   if(artifacts.length!==targets.length||targets.some((target)=>!bySource.has(target.id))){
     throw new Error(`Server Artifact Builder 返回 ${artifacts.length} 个成果，但当前有 ${targets.length} 个 Target；禁止遗漏、重复或额外成果。`);
   }
-  const snapshots:CandidateArtifactSnapshot[]=[];
+  const prepared:Array<{source:SourceArtifact;snapshot:CandidateArtifactSnapshot;built?:{blob:Blob;checks:string[];limitations:string[]};unchanged:boolean}>=[];
+  // Validate and materialize the entire set before persisting any Candidate bytes.
   for(const [index,source] of targets.entries()){
     const artifact=bySource.get(source.id)!;
     const code=source.artifactKind==="codebase"
       ||source.extension.toLowerCase()==="zip"
       ||source.artifactDescriptor?.family==="codebase"
       ||source.artifactDescriptor?.family==="package";
+    const text=!code&&TEXT_FAMILY.test(source.extension);
     const parent=currentParentSnapshot(project,source.id,parentCandidate);
-    let parentText=parent?.content??source.textContent??"";
+    const parentText=text
+      ?await readServerCandidateParentText(project,source,parentCandidate)
+      :parent?.content??source.textContent??"";
     let snapshotContent=code?composeServerCodebaseOverlay(parent?.content,artifact.content):artifact.content;
-    if (!code && TEXT_FAMILY.test(source.extension) && isServerTextEditBlueprint(artifact.content)) {
-      parentText=await readServerCandidateParentText(project,source,parentCandidate);
+    if (text && isServerTextEditBlueprint(artifact.content)) {
       snapshotContent=applyExactEdits(parentText,artifact.content,{strict:true});
     }
+    const unchanged=snapshotContent.trim()===parentText.trim();
+    if(unchanged&&!parent&&!text){
+      throw new Error(`${source.name} Candidate 与当前父代完全相同，没有产生可验证变异。`);
+    }
+    if(unchanged) snapshotContent=parentText;
     const snapshot:CandidateArtifactSnapshot={
       id:`server-candidate-${candidate.id}-${source.id}-${index}`,
       sourceArtifactId:source.id,
-      name:artifact.name||source.name,
-      mimeType:artifact.mimeType||source.mimeType,
+      name:unchanged?(parent?.name??source.name):(artifact.name||source.name),
+      mimeType:unchanged?(parent?.mimeType??source.mimeType):(artifact.mimeType||source.mimeType),
       content:snapshotContent,
       contentHash:await sha256Text(snapshotContent),
       buildMode:artifact.buildMode??"ai-full",
       notes:[...(artifact.notes??[]),"Durable Workflow Server Materializer：实际文件已物化并冻结。"],
       createdAt:new Date().toISOString(),
     };
-    if(parentCandidate&&parent&&snapshotContent.trim()===parentText.trim()){
-      if(!await verifyServerCandidateFrozenArtifact(parent)) throw new Error(`${source.name} 的待修复 Candidate 冻结文件不可用或身份不一致。`);
-      snapshots.push({...parent,id:snapshot.id});
+    if(unchanged&&parent){
+      if(!await verifyServerCandidateFrozenArtifact(parent)) throw new Error(`${source.name} 的父代 Candidate 冻结文件不可用或身份不一致。`);
+      prepared.push({source,snapshot:{...parent,id:snapshot.id},unchanged:true});
       continue;
     }
-    if(!code&&snapshotContent.trim()===parentText.trim()){
-      throw new Error(`${source.name} Candidate 与当前父代完全相同，没有产生可验证变异。`);
-    }
-    snapshots.push(await materializeSnapshot(project,source,snapshot,artifact.content,parentCandidate));
+    const built=await buildSnapshotFile(project,source,snapshot,artifact.content,parentCandidate);
+    prepared.push({source,snapshot,built,unchanged});
+  }
+  if(prepared.every((item)=>item.unchanged)){
+    throw new Error("Candidate 与当前父代完全相同，没有产生可验证变异。");
+  }
+  const snapshots:CandidateArtifactSnapshot[]=[];
+  for(const item of prepared){
+    if(!item.built){snapshots.push(item.snapshot);continue;}
+    const {blob,checks,limitations}=item.built;
+    const frozenArtifact=await persistFrozenArtifact(item.source,item.snapshot,blob,checks,limitations);
+    snapshots.push({...item.snapshot,name:frozenArtifact.name,mimeType:frozenArtifact.mimeType,frozenArtifact});
   }
   if(parentCandidate&&snapshots.every((snapshot)=>snapshot.frozenArtifact?.sha256===currentParentSnapshot(project,snapshot.sourceArtifactId,parentCandidate)?.frozenArtifact?.sha256)){
     throw new Error("修复 Candidate 与当前父代完全相同，没有产生可验证变异。");
@@ -374,7 +389,7 @@ export async function buildServerExperimentCandidate(project: EvolveProject, can
       risks: candidate.risks,
       designRationale: candidate.designRationale,
     },
-    outputInstruction: "Return exactly one artifact for every currentTargets item. For a text target with mutationMode text-edits, return content as JSON {kind:'text-edits',edits:[{before,after,start?,end?}]}. Copy before verbatim from the provided current source chunks, without chunk markers or ellipses; offsets are zero-based and end is exclusive. The server applies those edits to the complete current file and preserves every untouched byte. Never regenerate a whole file from truncated context. For other text/html/md/json targets return the COMPLETE evolved file. For codebase/package return content as JSON {kind:'codebase',overlay:true,files:[{path,content}],deletions:[path]} with actual changed/deleted files only; never return prose or fake test results. sourceArtifactId must exactly match currentTargets.id.",
+    outputInstruction: "Return exactly one artifact for every currentTargets item. For a text target with mutationMode text-edits, return content as JSON {kind:'text-edits',edits:[{before,after,start?,end?}]}. Copy before verbatim from the provided current source chunks, without chunk markers or ellipses; offsets are zero-based and end is exclusive. The server applies those edits to the complete current file and preserves every untouched byte. Never regenerate a whole file from truncated context. For an unchanged text Target, return one exact text-edit with identical before/after using a unique verbatim anchor; preserve that file rather than inventing another change. For other text/html/md/json targets return the COMPLETE evolved file. For codebase/package return content as JSON {kind:'codebase',overlay:true,files:[{path,content}],deletions:[path]} with actual changed/deleted files only; never return prose or fake test results. sourceArtifactId must exactly match currentTargets.id.",
   });
   requireServerCandidateOutputModes(contexts, response.artifacts);
   return materializeServerCandidateArtifacts(project,candidate,response.artifacts,response.summary);
