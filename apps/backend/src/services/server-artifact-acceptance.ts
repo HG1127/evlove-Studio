@@ -3,11 +3,11 @@ import {indexUniqueById} from "@evolution/core";
 import {runServerArtifactAcceptance,type ServerArtifactVerification} from "@evolution/harness";
 import {runServerAi} from "./ai-gateway";
 import {getServerArtifactStore} from "./artifact-runtime";
-import {materializeServerCandidateArtifacts,readServerCandidateParentText,serverArtifactSha256} from "./server-experiment-artifacts";
+import {materializeServerCandidateArtifacts,readServerCandidateParentText,verifyServerCandidateFrozenArtifact} from "./server-experiment-artifacts";
 
 import {buildServerCandidateTargetContext,requireServerCandidateOutputModes} from "./server-candidate-context";
 
-async function verifyFrozenArtifacts({project,candidate}:{project:EvolveProject;candidate:Candidate}):Promise<ServerArtifactVerification>{
+export async function verifyServerFrozenCandidateArtifacts({project,candidate}:{project:EvolveProject;candidate:Candidate}):Promise<ServerArtifactVerification>{
   const targetIds=project.sourceArtifacts.filter((artifact)=>artifact.role==="target").map((artifact)=>artifact.id);
   const targets=indexUniqueById(targetIds,(id)=>id);
   const snapshots=indexUniqueById(candidate.artifactSnapshots,(item)=>item.sourceArtifactId);
@@ -29,13 +29,8 @@ async function verifyFrozenArtifacts({project,candidate}:{project:EvolveProject;
       unavailable.push(`${targetId}: Artifact Blob ${receipt.blobId} 不可用`);
       continue;
     }
-    const sha256=await serverArtifactSha256(await blob.arrayBuffer());
-    if(sha256!==receipt.sha256||blob.size!==receipt.size){
-      failed.push(`${targetId}: frozen bytes/hash/size 与 receipt 不一致`);
-      continue;
-    }
-    if(snapshot.contentHash&&snapshot.contentHash!==receipt.snapshotHash){
-      failed.push(`${targetId}: Candidate Snapshot hash 与 frozen receipt 不一致`);
+    if(!await verifyServerCandidateFrozenArtifact(snapshot)){
+      failed.push(`${targetId}: frozen bytes/hash/size、Snapshot 正文/hash 或文件名/MIME 与 receipt 不一致`);
       continue;
     }
     verified.push(receipt);
@@ -125,5 +120,5 @@ export async function repairServerArtifactCandidate(args:{
 }
 
 export async function runServerMissionArtifactAcceptance(project:EvolveProject){
-  return runServerArtifactAcceptance(project,{verifyFrozenArtifacts,repairCandidate:repairServerArtifactCandidate});
+  return runServerArtifactAcceptance(project,{verifyFrozenArtifacts:verifyServerFrozenCandidateArtifacts,repairCandidate:repairServerArtifactCandidate});
 }
