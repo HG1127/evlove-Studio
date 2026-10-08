@@ -34,10 +34,10 @@ export async function runServerCurrentStoredEvidence({ project, testCase }: { pr
     return runServerFrozenArtifactStaticEvidence({ project, candidate: champion, testCase });
   }
   const receipt = snapshot?.frozenArtifact;
-  if (champion && (!receipt || receipt.sourceArtifactId !== source.id || receipt.name !== source.name)) {
+  if (champion && (!receipt || receipt.sourceArtifactId !== source.id || receipt.name !== snapshot?.name)) {
     return unavailable(testCase, "当前 Search Champion 缺少对应 Target 的冻结文件凭证。");
   }
-  const blobId = receipt?.blobId ?? source.storageRef?.trim();
+  const blobId = receipt?.blobId ?? (source.storageRef?.trim() || (source.inputMode === "upload" ? source.id : undefined));
   if (!blobId) return unavailable(testCase, "当前 Source 没有实际上传文件引用。");
   try {
     if (snapshot && !await verifyServerCandidateFrozenArtifact(snapshot)) return unavailable(testCase, "当前 Search Champion 冻结文件校验失败。");

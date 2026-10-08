@@ -36,12 +36,12 @@ export async function buildServerCurrentSemanticArtifactContext({ project }: { p
     if (champion && source.role === "target" && snapshots.length !== 1) throw new Error(`${source.name} 缺少唯一的当前 Champion Snapshot。`);
     const snapshot = snapshots[0];
     const receipt = snapshot?.frozenArtifact;
-    if (snapshot && (!receipt || receipt.sourceArtifactId !== source.id || receipt.name !== source.name)) {
+    if (snapshot && (!receipt || receipt.sourceArtifactId !== source.id || receipt.name !== snapshot?.name)) {
       throw new Error(`${source.name} 缺少正确的 Champion 冻结文件凭证。`);
     }
     let content: string;
     let sha256: string | undefined;
-    const blobId = receipt?.blobId ?? source.storageRef?.trim();
+    const blobId = receipt?.blobId ?? (source.storageRef?.trim() || (source.inputMode === "upload" ? source.id : undefined));
     if (blobId) {
       if (snapshot && !await verifyServerCandidateFrozenArtifact(snapshot)) throw new Error(`${source.name} 的 Champion 冻结凭证与文件不一致。`);
       const blob = await store.get(blobId);

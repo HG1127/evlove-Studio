@@ -179,3 +179,32 @@ describe("Server current-version stored evidence", () => {
     expect((await runServerCurrentStoredEvidence({ project: current, testCase: testCase("static-evidence") })).verificationStatus).toBe("unverified");
   });
 });
+
+it("reads a migrated local upload under its Source id without reconstructing the parsed index",async()=>{
+  const current=project();const source=current.sourceArtifacts[0]!;
+  const blob=await storeSource(current,"ACTUAL MIGRATED UPLOAD");
+  source.inputMode="upload";source.storageRef=undefined;
+  blobs.delete("raw-guide");blobs.set(source.id,blob);
+  const roundtrip=await runServerCurrentStoredEvidence({project:current,testCase:testCase("roundtrip")});
+  expect(roundtrip.verificationStatus,roundtrip.output).toBe("verified");
+  expect((await buildServerCurrentSemanticArtifactContext({project:current}))[0]?.content).toBe("ACTUAL MIGRATED UPLOAD");
+  source.storageRef="explicit-missing-binding";
+  expect((await runServerCurrentStoredEvidence({project:current,testCase:testCase("roundtrip")})).verificationStatus).toBe("unverified");
+  await expect(buildServerCurrentSemanticArtifactContext({project:current})).rejects.toThrow();
+  source.storageRef=undefined;blobs.delete(source.id);
+  expect((await runServerCurrentStoredEvidence({project:current,testCase:testCase("roundtrip")})).verificationStatus).toBe("unverified");
+  await expect(buildServerCurrentSemanticArtifactContext({project:current})).rejects.toThrow();
+});
+
+it("uses the accepted Champion filename rather than requiring the original upload filename",async()=>{
+  const current=project();await storeSource(current,"OLD SOURCE");
+  await acceptChampion(current,"ACTUAL EVOLVED CHAMPION");
+  const snapshot=current.searchChampion!.candidate!.artifactSnapshots[0]!;
+  snapshot.name="guide-evolved.md";snapshot.frozenArtifact!.name=snapshot.name;
+  const roundtrip=await runServerCurrentStoredEvidence({project:current,testCase:testCase("roundtrip")});
+  expect(roundtrip.verificationStatus,roundtrip.output).toBe("verified");
+  expect((await buildServerCurrentSemanticArtifactContext({project:current}))[0]?.content).toBe("ACTUAL EVOLVED CHAMPION");
+  snapshot.frozenArtifact!.name="different-file.md";
+  expect((await runServerCurrentStoredEvidence({project:current,testCase:testCase("roundtrip")})).verificationStatus).toBe("unverified");
+  await expect(buildServerCurrentSemanticArtifactContext({project:current})).rejects.toThrow();
+});
