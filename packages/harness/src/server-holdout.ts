@@ -193,15 +193,23 @@ export async function runServerHoldout(
   let runs:TargetRunResult[]=[];
   let baselineEvaluation;
   let evaluation;
+  let baselineObservedAt:number|undefined;
   try {
     [baselineRuns, runs] = await Promise.all([
-      executeServerCurrentArtifactSuite(inputProject, suite, ports.current),
+      executeServerCurrentArtifactSuite(inputProject, suite, ports.current).then(value=>{baselineObservedAt=Date.now();return value;}),
       executeServerExperimentCandidate(inputProject, candidate, ports.candidate, suite),
     ]);
-    [baselineEvaluation, evaluation] = await Promise.all([
+    const [currentJudge,candidateJudge] = await Promise.allSettled([
       judgeServerCurrentArtifactSuite(inputProject, suite, baselineRuns, ports.current),
       judgeServerExperimentCandidate(inputProject, candidate, runs, ports.candidate, suite, "server-hidden-holdout-candidate"),
     ]);
+    // Keep the fulfilled arm before propagating the other arm's failure.
+    if(currentJudge.status==="fulfilled")baselineEvaluation=currentJudge.value;
+    if(candidateJudge.status==="fulfilled")evaluation=candidateJudge.value;
+    if(currentJudge.status==="rejected")throw currentJudge.reason;
+    if(candidateJudge.status==="rejected")throw candidateJudge.reason;
+    baselineEvaluation=currentJudge.value;
+    evaluation=candidateJudge.value;
   } catch (error) {
     const reason = `[server-campaign-holdout-judge-pending] Hidden 同卷已进入 Server 执行，但独立 Judge 未完成：${error instanceof Error ? error.message : String(error)}`;
     const validation: ValidationRun = {
@@ -213,6 +221,11 @@ export async function runServerHoldout(
       candidateId: candidate.id,
       runs: runs ?? [],
       baselineRuns: baselineRuns ?? [],
+      evaluation,
+      baselineEvaluation,
+      baselineSuiteIds:suite.map(testCase=>testCase.id),
+      baselineContextFingerprint:baseFingerprint,
+      baselineObservedAt,
       checks: [],
       evidenceFingerprint: evidenceFingerprint(inputProject, candidate),
       error: reason,
@@ -269,7 +282,7 @@ export async function runServerHoldout(
         baselineEvaluation,
         baselineSuiteIds: suite.map((testCase) => testCase.id),
         baselineContextFingerprint: baseFingerprint,
-        baselineObservedAt: Date.now(),
+        baselineObservedAt,
         checks,
         recommendation: "hold",
         evidenceFingerprint: evidenceFingerprint(inputProject, candidate),
@@ -300,7 +313,7 @@ export async function runServerHoldout(
     baselineEvaluation,
     baselineSuiteIds: suite.map((testCase) => testCase.id),
     baselineContextFingerprint: baseFingerprint,
-    baselineObservedAt: Date.now(),
+    baselineObservedAt,
     checks,
     recommendation,
     evidenceFingerprint: evidenceFingerprint(inputProject, candidate),

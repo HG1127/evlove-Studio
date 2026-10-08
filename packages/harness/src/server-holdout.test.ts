@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { EvaluateAiResult, EvolveProject, TargetRunResult } from "@evolution/contracts";
+import {ValidationRunSchema,type EvaluateAiResult,type EvolveProject,type TargetRunResult} from "@evolution/contracts";
 import { runServerHoldout } from "./server-holdout";
 import { executeServerCurrentArtifactSuite } from "./server-current-artifact-runner";
 
@@ -132,6 +132,52 @@ describe("server hidden holdout",()=>{
     expect(outcome.reason).toContain("holdout-judge-pending");
     expect(outcome.validation.runs).toHaveLength(1);
     expect(outcome.project.candidates[0]?.artifactSnapshots[0]?.id).toBe("snap-C1");
+  });
+
+  it.each(["current","candidate"] as const)("retains the fulfilled independent assessment when %s Judge fails",async(failingArm)=>{
+    const setup=semanticPorts();
+    setup.ports[failingArm].judge=async()=>{throw new Error("temporary Judge outage");};
+    const review=vi.fn(setup.ports.releaseReview);setup.ports.releaseReview=review;
+    const outcome=await runServerHoldout(fixture(),setup.ports);
+    expect(outcome.control).toBe("stop");expect(outcome.readyForArtifactAcceptance).toBe(false);
+    expect(outcome.validation.status).toBe("failed");expect(outcome.evidenceIncomplete).toBe(true);
+    expect(outcome.validation.runs).toHaveLength(1);expect(outcome.validation.baselineRuns).toHaveLength(1);
+    const fulfilled=failingArm==="current"?outcome.validation.evaluation:outcome.validation.baselineEvaluation;
+    const missing=failingArm==="current"?outcome.validation.baselineEvaluation:outcome.validation.evaluation;
+    expect(fulfilled).toMatchObject({accuracy:failingArm==="current"?92:82});expect(missing).toBeUndefined();
+    expect(ValidationRunSchema.parse(outcome.validation)).toMatchObject({status:"failed",candidateId:"C1"});
+    expect(outcome.validation.baselineSuiteIds).toEqual(["H1"]);
+    expect(outcome.validation.baselineContextFingerprint).toBeTruthy();
+    expect(outcome.validation.baselineObservedAt).toEqual(expect.any(Number));
+    expect(review).not.toHaveBeenCalled();expect(outcome.project.versions).toHaveLength(0);
+  });
+
+  it("awaits the other independent assessment before persisting the partial result",async()=>{
+    const setup=semanticPorts();let finish!:()=>void;
+    const candidateJudge=vi.fn(()=>new Promise<EvaluateAiResult>(resolve=>{finish=()=>resolve(judged(92));}));
+    setup.ports.current.judge=async()=>{throw new Error("current Judge unavailable");};
+    setup.ports.candidate.judge=candidateJudge;
+    const finished=vi.fn();
+    const pending=runServerHoldout(fixture(),setup.ports).then(result=>{finished();return result;});
+    await vi.waitFor(()=>expect(candidateJudge).toHaveBeenCalledOnce());
+    expect(finished).not.toHaveBeenCalled();finish();
+    const result=await pending;
+    expect(result.validation.evaluation?.accuracy).toBe(92);
+    expect(result.validation.baselineEvaluation).toBeUndefined();
+    expect(result.readyForArtifactAcceptance).toBe(false);
+  });
+
+  it("does not renew the current-version observation time after slow judging and review",async()=>{
+    vi.useFakeTimers({toFake:["Date"]});
+    const observed=Date.parse("2026-10-08T00:00:00.000Z");vi.setSystemTime(observed);
+    try{
+      const setup=semanticPorts();
+      setup.ports.current.judge=async()=>{vi.setSystemTime(observed+60_000);return judged(82);};
+      setup.ports.releaseReview=async()=>{vi.setSystemTime(observed+120_000);return {recommendation:"release",summary:"release",reasons:[],risks:[],requiredChecks:[]};};
+      const outcome=await runServerHoldout(fixture(),setup.ports);
+      expect(outcome.validation.baselineObservedAt).toBe(observed);
+      expect(Date.now()).toBe(observed+120_000);
+    }finally{vi.useRealTimers();}
   });
 
   it("keeps completed Holdout evidence when Release Review is unavailable",async()=>{
