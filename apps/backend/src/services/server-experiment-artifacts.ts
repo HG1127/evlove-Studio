@@ -9,7 +9,7 @@ import {
 } from "@evolution/contracts";
 import { trustedServerBaselineChampion } from "@evolution/harness";
 import { applyExactEdits } from "@evolution/core";
-import { buildServerCandidateTargetContext, isServerTextEditBlueprint, SERVER_TEXT_FAMILY as TEXT_FAMILY } from "./server-candidate-context";
+import { buildServerCandidateTargetContext, isServerTextEditBlueprint, requireServerCandidateOutputModes, SERVER_TEXT_FAMILY as TEXT_FAMILY } from "./server-candidate-context";
 import { runServerAi } from "./ai-gateway";
 import { getServerArtifactStore } from "./artifact-runtime";
 import { renderSnapshot, verifyRendered } from "./server-artifact-renderer";
@@ -74,17 +74,17 @@ async function sha256Text(text: string) {
   return serverArtifactSha256(new TextEncoder().encode(text));
 }
 
-function currentParentSnapshot(project: EvolveProject, sourceArtifactId: string) {
-  const matches=trustedServerBaselineChampion(project)?.artifactSnapshots.filter((snapshot)=>snapshot.sourceArtifactId===sourceArtifactId)??[];
+function currentParentSnapshot(project: EvolveProject, sourceArtifactId: string, parentCandidate?: Candidate) {
+  const matches=(parentCandidate ?? trustedServerBaselineChampion(project))?.artifactSnapshots.filter((snapshot)=>snapshot.sourceArtifactId===sourceArtifactId)??[];
   return matches.length===1?matches[0]:undefined;
 }
 
-export function resolveServerExperimentParentBinding(project: EvolveProject, source: SourceArtifact) {
-  const parent = currentParentSnapshot(project, source.id);
-  if (!parent && project.searchChampion) {
+export function resolveServerExperimentParentBinding(project: EvolveProject, source: SourceArtifact, parentCandidate?: Candidate) {
+  const parent = currentParentSnapshot(project, source.id, parentCandidate);
+  if (!parent && (parentCandidate || project.searchChampion)) {
     return {
       blobId: undefined,
-      candidateId: trustedServerBaselineChampion(project)?.id,
+      candidateId: parentCandidate?.id ?? trustedServerBaselineChampion(project)?.id,
       sha256: undefined,
       size: undefined,
       reason: `当前 Search Champion 缺少 ${source.name} 的唯一可信 Artifact Snapshot，不能回退原 Source 作为 Candidate 父代。`,
@@ -94,7 +94,7 @@ export function resolveServerExperimentParentBinding(project: EvolveProject, sou
   if (!parent.frozenArtifact) {
     return {
       blobId: undefined,
-      candidateId: trustedServerBaselineChampion(project)?.id,
+      candidateId: parentCandidate?.id ?? trustedServerBaselineChampion(project)?.id,
       sha256: undefined,
       size: undefined,
       reason: `当前 Search Champion 的 ${source.name} 尚未冻结实际文件，不能回退原 Source 作为 Candidate 父代。`,
@@ -102,16 +102,20 @@ export function resolveServerExperimentParentBinding(project: EvolveProject, sou
   }
   return {
     blobId: parent.frozenArtifact.blobId,
-    candidateId: trustedServerBaselineChampion(project)?.id,
+    candidateId: parentCandidate?.id ?? trustedServerBaselineChampion(project)?.id,
     sha256: parent.frozenArtifact.sha256,
     size: parent.frozenArtifact.size,
     reason: undefined,
   };
 }
 
-async function currentBaseBlob(project: EvolveProject, source: SourceArtifact) {
-  const binding = resolveServerExperimentParentBinding(project, source);
+async function currentBaseBlob(project: EvolveProject, source: SourceArtifact, parentCandidate?: Candidate) {
+  const binding = resolveServerExperimentParentBinding(project, source, parentCandidate);
   if (!binding.blobId) throw new Error(binding.reason ?? "当前 Candidate 父代 Artifact 不可用。");
+  if (parentCandidate) {
+    const parent = currentParentSnapshot(project, source.id, parentCandidate);
+    if (!parent || !await verifyServerCandidateFrozenArtifact(parent)) throw new Error(`${source.name} 的待修复 Candidate 冻结文件不可用或身份不一致。`);
+  }
   const blob = await getServerArtifactStore().get(binding.blobId);
   if (!blob) throw new Error(`找不到 Candidate 父代 Artifact Blob ${binding.blobId}。`);
   if (binding.size !== undefined && blob.size !== binding.size) throw new Error("Search Champion Artifact 大小校验失败。");
@@ -120,15 +124,15 @@ async function currentBaseBlob(project: EvolveProject, source: SourceArtifact) {
 }
 
 /** Decode the actual current text file; parsed upload indexes cannot be a mutation base. */
-async function readCurrentText(project: EvolveProject, source: SourceArtifact) {
-  const parent = currentParentSnapshot(project, source.id);
-  if (project.searchChampion && !parent) throw new Error(`当前 Search Champion 缺少 ${source.name} 的唯一可信父代。`);
+export async function readServerCandidateParentText(project: EvolveProject, source: SourceArtifact, parentCandidate?: Candidate) {
+  const parent = currentParentSnapshot(project, source.id, parentCandidate);
+  if ((project.searchChampion || parentCandidate) && !parent) throw new Error(`当前 Search Champion 缺少 ${source.name} 的唯一可信父代。`);
   if (!parent && source.inputMode === "paste" && !source.storageRef?.trim()) {
     if (source.textContent === undefined) throw new Error(`${source.name} 缺少完整粘贴正文。`);
     return source.textContent;
   }
   if (parent && !await verifyServerCandidateFrozenArtifact(parent)) throw new Error(`${source.name} 的父代冻结文件与 Snapshot 身份不一致。`);
-  const blob = await currentBaseBlob(project, source);
+  const blob = await currentBaseBlob(project, source, parentCandidate);
   if (!parent && blob.size !== source.size) throw new Error(`${source.name} 的原文件大小与 Source 不一致。`);
   const bytes = new Uint8Array(await blob.arrayBuffer());
   const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
@@ -223,8 +227,8 @@ export async function applyServerCodebaseOverlay(baseBlob: Blob, content: string
   };
 }
 
-async function materializeCodebase(project: EvolveProject, source: SourceArtifact, content: string) {
-  const baseBlob = await currentBaseBlob(project, source);
+async function materializeCodebase(project: EvolveProject, source: SourceArtifact, content: string, parentCandidate?: Candidate) {
+  const baseBlob = await currentBaseBlob(project, source, parentCandidate);
   return applyServerCodebaseOverlay(baseBlob, content, source.mimeType || "application/zip");
 }
 
@@ -253,6 +257,7 @@ async function materializeSnapshot(
   source: SourceArtifact,
   snapshot: CandidateArtifactSnapshot,
   materializationContent = snapshot.content,
+  parentCandidate?: Candidate,
 ) {
   const code = source.artifactKind === "codebase"
     || source.extension.toLowerCase() === "zip"
@@ -264,11 +269,11 @@ async function materializeSnapshot(
     || source.artifactKind === "spreadsheet";
   let built: {blob:Blob;checks:string[];limitations:string[]};
   if(code){
-    built=await materializeCodebase(project,source,materializationContent);
+    built=await materializeCodebase(project,source,materializationContent,parentCandidate);
   }else if(office){
     const store=getServerArtifactStore();
-    const base=project.searchChampion||source.storageRef?.trim()
-      ?await currentBaseBlob(project,source)
+    const base=parentCandidate||project.searchChampion||source.storageRef?.trim()
+      ?await currentBaseBlob(project,source,parentCandidate)
       :await store.get(source.id);
     const rendered=await renderSnapshot(source,snapshot,store,base);
     const verification=await verifyRendered(source,snapshot,rendered.blob,store,base);
@@ -285,6 +290,7 @@ export async function materializeServerCandidateArtifacts(
   candidate:Candidate,
   artifacts:Array<{sourceArtifactId:string;name:string;mimeType:string;content:string;notes?:string[];buildMode?:"ai-full"|"deterministic"|"external-target"}>,
   summary:string,
+  parentCandidate?:Candidate,
 ):Promise<Candidate>{
   const targets=project.sourceArtifacts.filter((artifact)=>artifact.role==="target");
   const bySource=new Map(artifacts.map((artifact)=>[artifact.sourceArtifactId,artifact]));
@@ -298,11 +304,11 @@ export async function materializeServerCandidateArtifacts(
       ||source.extension.toLowerCase()==="zip"
       ||source.artifactDescriptor?.family==="codebase"
       ||source.artifactDescriptor?.family==="package";
-    const parent=currentParentSnapshot(project,source.id);
+    const parent=currentParentSnapshot(project,source.id,parentCandidate);
     let parentText=parent?.content??source.textContent??"";
     let snapshotContent=code?composeServerCodebaseOverlay(parent?.content,artifact.content):artifact.content;
     if (!code && TEXT_FAMILY.test(source.extension) && isServerTextEditBlueprint(artifact.content)) {
-      parentText=await readCurrentText(project,source);
+      parentText=await readServerCandidateParentText(project,source,parentCandidate);
       snapshotContent=applyExactEdits(parentText,artifact.content,{strict:true});
     }
     const snapshot:CandidateArtifactSnapshot={
@@ -316,10 +322,18 @@ export async function materializeServerCandidateArtifacts(
       notes:[...(artifact.notes??[]),"Durable Workflow Server Materializer：实际文件已物化并冻结。"],
       createdAt:new Date().toISOString(),
     };
+    if(parentCandidate&&parent&&snapshotContent.trim()===parentText.trim()){
+      if(!await verifyServerCandidateFrozenArtifact(parent)) throw new Error(`${source.name} 的待修复 Candidate 冻结文件不可用或身份不一致。`);
+      snapshots.push({...parent,id:snapshot.id});
+      continue;
+    }
     if(!code&&snapshotContent.trim()===parentText.trim()){
       throw new Error(`${source.name} Candidate 与当前父代完全相同，没有产生可验证变异。`);
     }
-    snapshots.push(await materializeSnapshot(project,source,snapshot,artifact.content));
+    snapshots.push(await materializeSnapshot(project,source,snapshot,artifact.content,parentCandidate));
+  }
+  if(parentCandidate&&snapshots.every((snapshot)=>snapshot.frozenArtifact?.sha256===currentParentSnapshot(project,snapshot.sourceArtifactId,parentCandidate)?.frozenArtifact?.sha256)){
+    throw new Error("修复 Candidate 与当前父代完全相同，没有产生可验证变异。");
   }
   return CandidateSchema.parse({
     ...candidate,
@@ -332,7 +346,7 @@ export async function materializeServerCandidateArtifacts(
 export async function buildServerExperimentCandidate(project: EvolveProject, candidate: Candidate): Promise<Candidate> {
   const targets = project.sourceArtifacts.filter((artifact) => artifact.role === "target");
   if (!targets.length) throw new Error("Mission 没有 Target Source Artifact。");
-  const contexts = await buildServerCandidateTargetContext(project, candidate, (source) => readCurrentText(project, source));
+  const contexts = await buildServerCandidateTargetContext(project, candidate, (source) => readServerCandidateParentText(project, source));
   const response = await runServerAi("build-candidate", {
     project: {
       name: project.name,
@@ -360,11 +374,6 @@ export async function buildServerExperimentCandidate(project: EvolveProject, can
     },
     outputInstruction: "Return exactly one artifact for every currentTargets item. For a text target with mutationMode text-edits, return content as JSON {kind:'text-edits',edits:[{before,after,start?,end?}]}. Copy before verbatim from the provided current source chunks, without chunk markers or ellipses; offsets are zero-based and end is exclusive. The server applies those edits to the complete current file and preserves every untouched byte. Never regenerate a whole file from truncated context. For other text/html/md/json targets return the COMPLETE evolved file. For codebase/package return content as JSON {kind:'codebase',overlay:true,files:[{path,content}],deletions:[path]} with actual changed/deleted files only; never return prose or fake test results. sourceArtifactId must exactly match currentTargets.id.",
   });
-  for (const context of contexts) {
-    const output = response.artifacts.find((artifact) => artifact.sourceArtifactId === context.id);
-    if (context.mutationMode === "text-edits" && output && !isServerTextEditBlueprint(output.content)) {
-      throw new Error(`${context.name} 的 AI 上下文只是原文件片段，必须返回 text-edits；禁止用片段重写完整成果。`);
-    }
-  }
+  requireServerCandidateOutputModes(contexts, response.artifacts);
   return materializeServerCandidateArtifacts(project,candidate,response.artifacts,response.summary);
 }

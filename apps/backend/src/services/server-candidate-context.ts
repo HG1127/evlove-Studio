@@ -32,8 +32,8 @@ function compactStructured(artifact: SourceArtifact, candidate: Candidate) {
   };
 }
 
-export async function buildServerCandidateTargetContext(project: EvolveProject, candidate: Candidate, readCurrentText: (source: SourceArtifact) => Promise<string>) {
-  const champion = trustedServerBaselineChampion(project);
+export async function buildServerCandidateTargetContext(project: EvolveProject, candidate: Candidate, readCurrentText: (source: SourceArtifact) => Promise<string>, parentCandidate?: Candidate) {
+  const champion = parentCandidate ?? trustedServerBaselineChampion(project);
   const championBySource = new Map((champion?.artifactSnapshots ?? []).map((snapshot) => [snapshot.sourceArtifactId, snapshot]));
   let remaining = 72_000;
   const result = [];
@@ -47,13 +47,13 @@ export async function buildServerCandidateTargetContext(project: EvolveProject, 
     remaining = Math.max(0, remaining - content.length);
     result.push({
       id: artifact.id,
-      name: artifact.name,
-      mimeType: artifact.mimeType,
+      name: parent?.name ?? artifact.name,
+      mimeType: parent?.mimeType ?? artifact.mimeType,
       extension: artifact.extension,
       artifactKind: artifact.artifactKind,
       descriptor: artifact.artifactDescriptor,
       structure: artifact.structure.slice(0, 120),
-      currentVersion: parent ? (project.searchChampion?.versionLabel ?? champion?.id) : project.version,
+      currentVersion: parentCandidate?.id ?? (parent ? (project.searchChampion?.versionLabel ?? champion?.id) : project.version),
       currentSnapshotHash: parent?.contentHash,
       content,
       originalChars: source.length,
@@ -65,3 +65,11 @@ export async function buildServerCandidateTargetContext(project: EvolveProject, 
   return result;
 }
 
+export function requireServerCandidateOutputModes(contexts: Array<{id: string; name: string; mutationMode: string}>, artifacts: Array<{sourceArtifactId: string; content: string}>) {
+  for (const context of contexts) {
+    const output = artifacts.find((artifact) => artifact.sourceArtifactId === context.id);
+    if (context.mutationMode === "text-edits" && output && !isServerTextEditBlueprint(output.content)) {
+      throw new Error(`${context.name} 的 AI 上下文只是原文件片段，必须返回 text-edits；禁止用片段重写完整成果。`);
+    }
+  }
+}

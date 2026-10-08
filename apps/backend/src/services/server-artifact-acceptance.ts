@@ -3,7 +3,9 @@ import {indexUniqueById} from "@evolution/core";
 import {runServerArtifactAcceptance,type ServerArtifactVerification} from "@evolution/harness";
 import {runServerAi} from "./ai-gateway";
 import {getServerArtifactStore} from "./artifact-runtime";
-import {materializeServerCandidateArtifacts,serverArtifactSha256} from "./server-experiment-artifacts";
+import {materializeServerCandidateArtifacts,readServerCandidateParentText,serverArtifactSha256} from "./server-experiment-artifacts";
+
+import {buildServerCandidateTargetContext,requireServerCandidateOutputModes} from "./server-candidate-context";
 
 async function verifyFrozenArtifacts({project,candidate}:{project:EvolveProject;candidate:Candidate}):Promise<ServerArtifactVerification>{
   const targetIds=project.sourceArtifacts.filter((artifact)=>artifact.role==="target").map((artifact)=>artifact.id);
@@ -41,13 +43,15 @@ async function verifyFrozenArtifacts({project,candidate}:{project:EvolveProject;
   return {verified,unavailable,failed};
 }
 
-async function repairCandidate(args:{
+export async function repairServerArtifactCandidate(args:{
   project:EvolveProject;
   candidate:Candidate;
   failedCriteria:AcceptanceCriterion[];
   attempt:number;
 }){
   const failedIds=new Set(args.failedCriteria.map((criterion)=>criterion.id));
+  const focused = {...args.candidate, change: args.failedCriteria.map((criterion) => `${criterion.title}: ${criterion.requirement}`).join("\n")};
+  const contexts = await buildServerCandidateTargetContext(args.project, focused, (source) => readServerCandidateParentText(args.project, source, args.candidate), args.candidate);
   const response=await runServerAi("repair-artifact",{
     project:{
       name:args.project.name,
@@ -61,13 +65,19 @@ async function repairCandidate(args:{
       id:args.candidate.id,
       title:args.candidate.title??args.candidate.name,
       patches:args.candidate.patches,
-      artifacts:args.candidate.artifactSnapshots.map((snapshot)=>({
-        sourceArtifactId:snapshot.sourceArtifactId,
-        name:snapshot.name,
-        mimeType:snapshot.mimeType,
-        content:snapshot.content,
-        contentHash:snapshot.contentHash,
-        frozenSha256:snapshot.frozenArtifact?.sha256,
+      artifacts:contexts.map((context)=>({
+        sourceArtifactId:context.id,
+        name:context.name,
+        mimeType:context.mimeType,
+        extension:context.extension,
+        artifactKind:context.artifactKind,
+        structuredContext:context.structuredContext,
+        content:context.content,
+        contentHash:context.currentSnapshotHash,
+        currentVersion:context.currentVersion,
+        originalChars:context.originalChars,
+        truncated:context.truncated,
+        mutationMode:context.mutationMode,
       })),
     },
     failedCriteria:args.failedCriteria.map((criterion)=>{
@@ -82,8 +92,9 @@ async function repairCandidate(args:{
         gaps:score?.gaps??[],
       };
     }),
-    instruction:"Change only the VERIFIED failed criteria above. Preserve every other artifact behavior and protected item. The output becomes a NEW Candidate and must be re-tested on the full Hidden Holdout.",
+    instruction:"Change only the VERIFIED failed criteria above. Preserve every other artifact behavior and protected item. Return exactly one artifact for every supplied target; for unchanged excerpted text targets return one exact text-edit with identical before/after, and for other unchanged targets return their current content. For codebase/package targets return a JSON overlay {kind:'codebase',overlay:true,files:[{path,content}],deletions:[path]} containing only actual changes/deletions. For text artifacts with mutationMode text-edits, return content JSON {kind:'text-edits',edits:[{before,after,start?,end?}]}, anchored verbatim to current Candidate chunks without chunk markers or ellipses. The server applies edits to the complete tested Candidate, preserving untouched bytes. Do not rewrite a whole artifact from excerpts. The output becomes a NEW Candidate and must be re-tested on the full Hidden Holdout.",
   });
+  requireServerCandidateOutputModes(contexts, response.artifacts);
   if(response.repairedCriteria.some((id)=>!failedIds.has(id))){
     throw new Error(`Repair AI attempted out-of-scope criteria: ${response.repairedCriteria.filter((id)=>!failedIds.has(id)).join("、")}`);
   }
@@ -109,9 +120,10 @@ async function repairCandidate(args:{
     next,
     response.artifacts.map((artifact)=>({...artifact,buildMode:"ai-full" as const})),
     `Targeted Repair ${args.attempt}: ${response.summary}`,
+    args.candidate,
   );
 }
 
 export async function runServerMissionArtifactAcceptance(project:EvolveProject){
-  return runServerArtifactAcceptance(project,{verifyFrozenArtifacts,repairCandidate});
+  return runServerArtifactAcceptance(project,{verifyFrozenArtifacts,repairCandidate:repairServerArtifactCandidate});
 }
