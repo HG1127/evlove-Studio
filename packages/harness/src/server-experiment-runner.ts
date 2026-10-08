@@ -10,7 +10,7 @@ import type {
 } from "@evolution/contracts";
 import {
   criteriaRequiringJudge,
-  deriveCriterionScores,
+  settleDeterministicEvaluation,
   fastHash,
   settleAiEvaluation,
 } from "@evolution/core";
@@ -58,34 +58,15 @@ function unavailableFrozenRoundtrip(testCase: TestCase, detail: string): TargetR
 function frozenRoundtripSignature(snapshots: CandidateArtifactSnapshot[]) {
   return JSON.stringify(snapshots.map((snapshot) => [snapshot.sourceArtifactId, snapshot.frozenArtifact?.sha256, fastHash(snapshot.content)]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))));
 }
-function average(values: number[]) {
-  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
-}
-
 function deterministicOnlyEvaluation(
   project: EvolveProject,
   testCases: TestCase[],
   runs: TargetRunResult[],
 ): EvaluationResult {
-  const rubric = deriveCriterionScores(project.acceptanceRubric, testCases, [], runs);
-  const executed = runs.filter((run) => !run.error);
-  const source = executed.length ? executed : runs;
-  return {
-    accuracy: 0,
-    evidence: 0,
-    riskCoverage: 0,
-    completeness: 0,
-    safety: "PASS",
+  return settleDeterministicEvaluation({
+    criteria: project.acceptanceRubric, testCases, runs,
     notes: ["本轮没有需要 AI Judge 的可执行语义标准；仅结算确定性证据。通用质量维度未测量，因此保持 0，不代表产品失败。"],
-    failures: [],
-    criterionScores: rubric.criterionScores,
-    rubricScore: rubric.rubricScore,
-    verifiedRubricCoverage: rubric.verifiedRubricCoverage,
-    unverifiedCriterionIds: rubric.unverifiedCriterionIds,
-    caseScores: [],
-    averageCost: Number(average(source.map((run) => run.cost)).toFixed(4)),
-    averageLatencyMs: Math.round(average(source.map((run) => run.latencyMs))),
-  };
+  });
 }
 
 export async function executeServerExperimentCandidate(

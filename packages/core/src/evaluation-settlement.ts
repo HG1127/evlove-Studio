@@ -174,6 +174,25 @@ function average(values: number[]) {
   return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
 }
 
+/** Settle actual deterministic proof without inventing semantic Judge scores. */
+export function settleDeterministicEvaluation(args: {
+  criteria: AcceptanceCriterion[];
+  testCases: TestCase[];
+  runs: TargetRunResult[];
+  notes?: string[];
+}): EvaluationResult {
+  const rubric = deriveCriterionScores(args.criteria, args.testCases, [], args.runs);
+  const executed = args.runs.filter((run) => !run.error);
+  const source = executed.length ? executed : args.runs;
+  return {
+    accuracy: 0, evidence: 0, riskCoverage: 0, completeness: 0, safety: "PASS",
+    notes: args.notes ?? ["仅结算确定性证据；通用质量维度未测量，保持 0，不代表产品失败。"],
+    failures: [], caseScores: [], ...rubric,
+    averageCost: Number(average(source.map((run) => run.cost)).toFixed(4)),
+    averageLatencyMs: Math.round(average(source.map((run) => run.latencyMs))),
+  };
+}
+
 /** Convert a structured independent Judge result into the canonical EvaluationResult. */
 export function settleAiEvaluation(args: {
   criteria: AcceptanceCriterion[];

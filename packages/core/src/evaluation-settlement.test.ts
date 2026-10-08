@@ -5,7 +5,7 @@ import {
   type TargetRunResult,
   type TestCase,
 } from "@evolution/contracts";
-import { deriveCriterionScores, settleAiEvaluation } from "./evaluation-settlement";
+import { deriveCriterionScores, settleAiEvaluation, settleDeterministicEvaluation } from "./evaluation-settlement";
 
 const criterion = (id: string, validationMethod: "semantic-judge" | "format-roundtrip" = "semantic-judge") =>
   AcceptanceCriterionSchema.parse({ id, title: id, requirement: `${id} must pass`, hardGate: true, minScore: 80, validationMethod });
@@ -88,5 +88,30 @@ describe("generated HTML protection coverage", () => {
     }
     const explicit = deriveCriterionScores([c], [{ ...t, tags: [] }], [], [execution], [judgement(c.id, t.id, 100)]);
     expect(explicit.criterionScores[0]).toMatchObject({ pass: true, verificationStatus: "verified" });
+  });
+});
+
+
+describe("deterministic evaluation settlement", () => {
+  it("retains format proof while leaving unrelated semantics unmeasured", () => {
+    const proof = { ...run("F"), cost: 0.02, latencyMs: 17, trace: [{ id: "rt", stage: "format-roundtrip", status: "pass" as const, summary: "exact roundtrip" }] };
+    const result = settleDeterministicEvaluation({
+      criteria: [criterion("FORMAT", "format-roundtrip"), criterion("CONTENT")],
+      testCases: [testCase("F", "FORMAT", "roundtrip"), testCase("S", "CONTENT")],
+      runs: [proof, { ...run("S"), verificationStatus: "unverified", error: "provider unavailable", cost: 999, latencyMs: 999 }],
+    });
+    expect(result).toMatchObject({ accuracy: 0, evidence: 0, riskCoverage: 0, completeness: 0, caseScores: [], failures: [], averageCost: 0.02, averageLatencyMs: 17 });
+    expect(result.criterionScores?.find((score) => score.criterionId === "FORMAT")).toMatchObject({ pass: true, verificationStatus: "verified" });
+    expect(result.criterionScores?.find((score) => score.criterionId === "CONTENT")).toMatchObject({ pass: false, verificationStatus: "unverified" });
+    expect(result.unverifiedCriterionIds).toEqual(["CONTENT"]);
+  });
+
+  it.each(["duplicate", "partial", "no-proof"])("does not promote incomplete format evidence (%s)", (mode) => {
+    const proof = { ...run("F"), trace: [{ id: "rt", stage: "format-roundtrip", status: "pass" as const, summary: "roundtrip" }] };
+    const runs: TargetRunResult[] = mode === "duplicate" ? [proof, proof]
+      : [mode === "partial" ? { ...proof, verificationStatus: "partial" } : { ...proof, trace: [] }];
+    const result = settleDeterministicEvaluation({ criteria: [criterion("FORMAT", "format-roundtrip")], testCases: [testCase("F", "FORMAT", "roundtrip")], runs });
+    expect(result.criterionScores?.[0]).toMatchObject({ pass: false, verificationStatus: "unverified" });
+    expect(result.verifiedRubricCoverage).toBe(0);
   });
 });

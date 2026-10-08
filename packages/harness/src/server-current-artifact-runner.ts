@@ -5,7 +5,7 @@ import type {
   TargetRunResult,
   TestCase,
 } from "@evolution/contracts";
-import { criteriaRequiringJudge, deriveCriterionScores, settleAiEvaluation } from "@evolution/core";
+import { criteriaRequiringJudge, settleDeterministicEvaluation, settleAiEvaluation } from "@evolution/core";
 import {
   baselineLocalEvidence,
   compactBaselineRunOutput,
@@ -32,25 +32,11 @@ export type ServerCurrentArtifactPorts = {
   judge(payload: unknown): Promise<EvaluateAiResult>;
 };
 
-function average(values:number[]){
-  return values.length ? values.reduce((sum,value)=>sum+value,0)/values.length : 0;
-}
-
 function deterministicOnly(project:EvolveProject,testCases:TestCase[],runs:TargetRunResult[]){
-  const rubric=deriveCriterionScores(project.acceptanceRubric,testCases,[],runs);
-  const measured=runs.filter((run)=>!run.error);
-  return {
-    accuracy:0,evidence:0,riskCoverage:0,completeness:0,safety:"PASS" as const,
+  return settleDeterministicEvaluation({
+    criteria:project.acceptanceRubric,testCases,runs,
     notes:["当前同卷 Baseline 仅获得确定性证据；未测量的通用质量维度保持 0，不代表产品失败。"],
-    failures:[],
-    criterionScores:rubric.criterionScores,
-    rubricScore:rubric.rubricScore,
-    verifiedRubricCoverage:rubric.verifiedRubricCoverage,
-    unverifiedCriterionIds:rubric.unverifiedCriterionIds,
-    caseScores:[],
-    averageCost:Number(average(measured.map((run)=>run.cost)).toFixed(4)),
-    averageLatencyMs:Math.round(average(measured.map((run)=>run.latencyMs))),
-  };
+  });
 }
 
 export async function executeServerCurrentArtifactSuite(

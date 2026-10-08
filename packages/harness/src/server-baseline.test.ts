@@ -55,6 +55,80 @@ function judge(): EvaluateAiResult {
 }
 
 describe("server baseline",()=>{
+  it("settles a proven format-only Baseline without requiring an AI provider",async()=>{
+    const project=fixture();
+    project.acceptanceRubric=[
+      {...project.acceptanceRubric[1]!,weight:34},
+      {...project.acceptanceRubric[1]!,id:"USER-FORMAT",source:"user-command",protectedConstraint:false,weight:33},
+      {...project.acceptanceRubric[1]!,id:"PROTECT-FORMAT",weight:33},
+    ];
+    const ids=project.acceptanceRubric.map((criterion)=>criterion.id);
+    project.evalSuite=[{...project.evalSuite[1]!,criterionIds:ids}];
+    project.hiddenEvalSuite=[{...project.hiddenEvalSuite[1]!,criterionIds:ids}];
+    let judgeCalls=0;
+    const outcome=await runServerBaseline(project,{
+      executeSemanticBatch:async()=>{throw new Error("no semantic execution was requested");},
+      judge:async()=>{judgeCalls+=1;throw new Error("provider unavailable");},
+    });
+    expect(judgeCalls).toBe(0);
+    expect(outcome.ready).toBe(true);
+    expect(outcome.baseline.status).toBe("completed");
+    expect(outcome.project.stage).toBe("problem");
+    expect(outcome.baseline.result).toMatchObject({accuracy:0,evidence:0,riskCoverage:0,completeness:0,failures:[],caseScores:[],rubricScore:100,verifiedRubricCoverage:100});
+    expect(outcome.baseline.result?.criterionScores).toHaveLength(3);
+    expect(outcome.baseline.result?.criterionScores?.every((criterion)=>criterion.pass&&criterion.verificationStatus==="verified"&&criterion.score===100)).toBe(true);
+    expect(canReuseServerBaseline(outcome.project)).toBe(true);
+  });
+
+  it("keeps missing semantic evidence unverified without sending an empty Judge request",async()=>{
+    const project=fixture();
+    project.evalSuite=project.evalSuite.map((testCase)=>testCase.id==="V3"?{...testCase,executionMode:"external-runner"}:testCase);
+    let judgeCalls=0;
+    const outcome=await runServerBaseline(project,{
+      executeSemanticBatch:async()=>{throw new Error("semantic runtime unavailable");},
+      judge:async()=>{judgeCalls+=1;throw new Error("empty evidence must not reach Judge");},
+    });
+    expect(judgeCalls).toBe(0);
+    expect(outcome.ready).toBe(false);
+    expect(outcome.baseline.status).toBe("completed");
+    expect(outcome.reason).toContain("baseline-evidence-pending");
+    expect(outcome.baseline.result?.criterionScores?.find((item)=>item.criterionId==="CONTENT")).toMatchObject({pass:false,verificationStatus:"unverified"});
+    expect(outcome.baseline.result?.criterionScores?.find((item)=>item.criterionId==="FORMAT")).toMatchObject({pass:true,verificationStatus:"verified"});
+    expect(outcome.baseline.result?.failures).toEqual([]);
+    expect(outcome.project.stage).toBe("baseline");
+  });
+
+  it("still requires a Judge for structural evidence instead of treating file presence as acceptance",async()=>{
+    const project=fixture();
+    project.evalSuite=project.evalSuite.map((testCase)=>testCase.id==="V1"?{...testCase,executionMode:"external-runner"}:testCase);
+    let judgeCalls=0;
+    const outcome=await runServerBaseline(project,{
+      executeSemanticBatch:async()=>({results:[]}),
+      judge:async()=>{judgeCalls+=1;throw new Error("provider unavailable");},
+    });
+    expect(judgeCalls).toBe(1);
+    expect(outcome.ready).toBe(false);
+    expect(outcome.baseline.status).toBe("failed");
+    expect(outcome.reason).toContain("baseline-judge-pending");
+  });
+
+  it("sends only observable criteria and cases to a required Judge",async()=>{
+    const project=fixture();
+    project.evalSuite=project.evalSuite.map((testCase)=>testCase.id==="V1"?{...testCase,executionMode:"external-runner"}:testCase);
+    const outcome=await runServerBaseline(project,{
+      executeSemanticBatch:async()=>({results:[]}),
+      judge:async(payload)=>{
+        const request=payload as {acceptanceRubric:Array<{id:string}>;testCases:Array<{id:string}>;runs:Array<{testCaseId:string}>};
+        expect(request.acceptanceRubric.map((criterion)=>criterion.id)).toEqual(["STRUCTURE"]);
+        expect(request.testCases.map((testCase)=>testCase.id)).toEqual(["V3"]);
+        expect(request.runs.map((run)=>run.testCaseId)).toEqual(["V3"]);
+        return judge();
+      },
+    });
+    expect(outcome.ready).toBe(false);
+    expect(outcome.baseline.result?.criterionScores?.find((criterion)=>criterion.criterionId==="CONTENT")).toMatchObject({pass:false,verificationStatus:"unverified"});
+  });
+
   it("does not score a repeated semantic Test Case result as verified evidence",async()=>{
     const outcome=await runServerBaseline(fixture(),{
       executeSemanticBatch:async()=>({results:[

@@ -17,6 +17,7 @@ import {
   rubricSuiteCoverage,
   rubricValidation,
   settleAiEvaluation,
+  settleDeterministicEvaluation,
 } from "@evolution/core";
 import {
   baselineLocalEvidence,
@@ -240,16 +241,19 @@ export async function runServerBaseline(
       .map((testCase) => testCase.id),
   );
   const judgeRuns = evaluableRuns.filter((run) => evaluableIds.has(run.testCaseId));
+  const judgeRunIds = new Set(judgeRuns.map((run) => run.testCaseId));
+  const judgeCases = project.evalSuite.filter((testCase) => judgeRunIds.has(testCase.id));
+  const effectiveCriteria = judgeCriteria.filter((criterion) => judgeCases.some((testCase) => testCase.criterionIds.includes(criterion.id)));
   const judgePayload = {
     mode: "server-baseline",
     project: {
       goal: project.goal,
       metrics: project.metrics,
-      acceptanceRubric: judgeCriteria,
+      acceptanceRubric: effectiveCriteria,
     },
-    acceptanceRubric: judgeCriteria,
+    acceptanceRubric: effectiveCriteria,
     evaluatorInstruction: "Judge only supplied current Baseline evidence. Never cite diagnosis, plans or patches. UNVERIFIED tests are omitted and must not be invented as failures. PARTIAL evidence cannot fully satisfy a hard gate.",
-    testCases: project.evalSuite.filter((testCase) => evaluableIds.has(testCase.id)).map((testCase) => ({
+    testCases: judgeCases.map((testCase) => ({
       id: testCase.id,
       title: testCase.title,
       input: testCase.input.slice(0, 1600),
@@ -273,19 +277,28 @@ export async function runServerBaseline(
 
   let evaluation;
   try {
-    const judged = await ports.judge(judgePayload);
-    evaluation = settleAiEvaluation({
-      criteria: project.acceptanceRubric,
-      testCases: project.evalSuite,
-      runs,
-      ai: judged,
-      notes: [
-        "Server Baseline：执行与独立 Judge 均在 Durable Workflow 后端完成。",
-        ...(runs.some((run) => run.verificationStatus === "unverified")
-          ? ["部分测试仍缺真实执行能力；对应 Criterion 保持 UNVERIFIED/PARTIAL，不按产品失败处理。"]
-          : []),
-      ],
-    });
+    if (!judgeRuns.length || !effectiveCriteria.length) {
+      evaluation = settleDeterministicEvaluation({
+        criteria: project.acceptanceRubric,
+        testCases: project.evalSuite,
+        runs,
+        notes: ["Server Baseline：仅结算已获得的确定性证据；缺失语义评审的标准保持 UNVERIFIED，通用质量维度未测量。"],
+      });
+    } else {
+      const judged = await ports.judge(judgePayload);
+      evaluation = settleAiEvaluation({
+        criteria: project.acceptanceRubric,
+        testCases: project.evalSuite,
+        runs,
+        ai: judged,
+        notes: [
+          "Server Baseline：执行与独立 Judge 均在 Durable Workflow 后端完成。",
+          ...(runs.some((run) => run.verificationStatus === "unverified")
+            ? ["部分测试仍缺真实执行能力；对应 Criterion 保持 UNVERIFIED/PARTIAL，不按产品失败处理。"]
+            : []),
+        ],
+      });
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const baseline: BaselineRun = {
