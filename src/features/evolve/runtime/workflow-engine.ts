@@ -16,7 +16,7 @@ export type WorkflowNextAction = {
   label: string;
   description: string;
   operation?: AiOperation;
-  kind: "machine" | "human-gate" | "release" | "completed";
+  kind: "machine" | "human-gate" | "release" | "evidence" | "completed";
   gateId?: "target-ready" | "experiment-ready" | "artifact-ready" | "release-ready";
   problemId?: string;
   releaseAction?: "shadow" | "canary-5" | "canary-20" | "canary-50" | "promote" | "rollback";
@@ -26,6 +26,14 @@ function gateApproved(project: EvolveProject, id: WorkflowNextAction["gateId"]) 
 function priority(problem: EvolveProject["problems"][number]) { const severity = problem.severity === "high" ? 1.35 : problem.severity === "medium" ? 1 : 0.72; const confidence = problem.confidence ?? 0.55; const recommended = problem.status === "recommended" ? 1.22 : 1; return problem.impact * severity * (0.55 + confidence * 0.45) * recommended; }
 export function recommendedProblem(project: EvolveProject) { return [...project.problems].sort((a, b) => priority(b) - priority(a))[0]; }
 function atOrAfterRelease(project: EvolveProject, statuses: string[]) { return statuses.includes(project.release.status); }
+function validationNeedsEvidence(project: EvolveProject) {
+  const validation = project.validationRun;
+  if (validation.status !== "completed" || validation.recommendation === "release") return false;
+  const scores = validation.evaluation?.criterionScores ?? [];
+  if (scores.some((score) => score.verificationStatus === "verified" && !score.pass)) return false;
+  return Boolean(validation.evaluation?.unverifiedCriterionIds?.length)
+    || validation.runs.some((run) => run.verificationStatus !== "verified");
+}
 /** Production traffic is an optional branch. File/artifact projects close offline after Gate F. */
 export function workflowRequiresOnlineRelease(project: EvolveProject) {
   return projectHasOnlineReleaseTarget(project);
@@ -43,6 +51,7 @@ export function deriveWorkflowSteps(project: EvolveProject): WorkflowStep[] {
   const winnerReady = Boolean(project.experimentRun.winnerId);
   const validationCompleted = winnerReady && project.validationRun.candidateId === project.experimentRun.winnerId && project.validationRun.status === "completed";
   const behaviorPassed = validationCompleted && project.validationRun.recommendation === "release";
+  const evidencePending = validationCompleted && validationNeedsEvidence(project);
   const artifactPassed = behaviorPassed && project.artifactAcceptance.candidateId === project.experimentRun.winnerId && project.artifactAcceptance.status === "passed";
   const outputsReady = project.outputArtifacts.some((artifact) => artifact.kind === "primary" && artifact.accepted && artifact.frozenArtifact);
   const onlineRelease = workflowRequiresOnlineRelease(project);
@@ -68,7 +77,7 @@ export function deriveWorkflowSteps(project: EvolveProject): WorkflowStep[] {
     step("12",5,"运行新版测试",experimentCompleted?"completed":project.experimentRun.status==="running"?"running":experimentApproved&&planReady?"ready":"blocked",experimentApproved?"执行完整 Candidate Artifact":"等待 Experiment Ready"),
     step("13",5,"独立评审与原版比较",experimentCompleted?"completed":"pending",experimentCompleted?"同卷评分已完成":"等待 Candidate Run"),
     step("14",5,"验证未知场景",validationCompleted?"completed":winnerReady?"ready":"blocked",`${project.hiddenEvalSuite.length} 个 Candidate 不可见 Case`),
-    step("15",5,"选择本轮最佳版本",validationCompleted&&winnerReady?(behaviorPassed?"completed":"blocked"):experimentCompleted?"blocked":"pending",behaviorPassed?`Winner ${project.experimentRun.winnerId}`:validationCompleted?"Behavioral Gate 未通过":"等待 Holdout"),
+    step("15",5,"选择本轮最佳版本",validationCompleted&&winnerReady?(behaviorPassed?"completed":"blocked"):experimentCompleted?"blocked":"pending",behaviorPassed?`Winner ${project.experimentRun.winnerId}`:evidencePending?"Holdout 证据未齐，等待补证":"Behavioral Gate 未通过"),
     step("16",6,"验收实际成果",artifactPassed?"completed":behaviorPassed?project.artifactAcceptance.status==="repairing"?"running":"ready":"blocked",artifactPassed?`Acceptance ${project.artifactAcceptance.overallScore}/100`:`Coverage / Integrity / Pairwise / Hard Gate`),
     step("17",6,"定向修复未通过项",artifactPassed?"completed":project.artifactAcceptance.attempts>0?"running":behaviorPassed?"ready":"pending",artifactPassed?`${project.artifactAcceptance.attempts} 次 Repair 后通过`:`最多 ${project.artifactAcceptance.maxRepairAttempts} 次，修复后重跑 Holdout`),
     step("18",6,"冻结并交付已验收文件",outputsReady?"completed":artifactPassed?"ready":"blocked",outputsReady?"交付物 = 被测试并验收过的同一 Snapshot":"禁止重新生成另一份未测试成果"),
@@ -86,6 +95,7 @@ export function deriveWorkflowGates(project: EvolveProject): WorkflowGate[] {
   const hasWinner = Boolean(project.experimentRun.winnerId);
   const currentValidation = hasWinner && project.validationRun.candidateId === project.experimentRun.winnerId;
   const validation = currentValidation ? project.validationRun : { ...project.validationRun, status: "idle" as const, recommendation: undefined, checks: [] };
+  const evidencePending = currentValidation && validationNeedsEvidence(project);
   const acceptance = currentValidation && project.artifactAcceptance.candidateId === project.experimentRun.winnerId ? project.artifactAcceptance : { ...project.artifactAcceptance, status: "idle" as const };
   const finalRelease = project.release.status === "promoted" || project.release.status === "rolled-back";
   const onlineRelease = workflowRequiresOnlineRelease(project);
@@ -99,7 +109,7 @@ export function deriveWorkflowGates(project: EvolveProject): WorkflowGate[] {
   return [
     { id:"A",title:"Problem Worthy",question:"这个问题值得开启一轮 Evolve 吗？",state:problem?"passed":project.problems.length?"ready":"pending",evidence:problem?`${problem.title} · impact ${problem.impact}% · severity ${problem.severity}`:"等待 Failure Map" },
     { id:"B",title:"Root Cause Ready",question:"根因证据足够可信么？",state:diagnosis?(diagnosis.confidence>=0.65&&diagnosis.evidence.length?"passed":"blocked"):problem?"ready":"pending",evidence:diagnosis?`${Math.round(diagnosis.confidence*100)}% confidence · ${diagnosis.evidence.length} evidence · falsifier: ${diagnosis.falsifier}`:"等待 Trace Diff" },
-    { id:"C",title:"Offline Winner",question:"完整 Candidate Artifact 在 Holdout 中真的胜出么？",state:validation.status==="completed"?(validation.recommendation==="release"?"passed":"failed"):hasWinner?"ready":"pending",evidence:validation.status==="completed"?`${validation.recommendation??"hold"} · ${validation.checks.filter((item)=>item.status==="pass").length}/${validation.checks.length} checks`:"等待 Candidate Artifact / Hidden Validation" },
+    { id:"C",title:"Offline Winner",question:"完整 Candidate Artifact 在 Holdout 中真的胜出么？",state:validation.status==="completed"?(validation.recommendation==="release"?"passed":evidencePending?"blocked":"failed"):hasWinner?"ready":"pending",evidence:evidencePending?"当前 Candidate 的 Holdout 证据未齐；需补齐真实执行断言后复验":validation.status==="completed"?`${validation.recommendation??"hold"} · ${validation.checks.filter((item)=>item.status==="pass").length}/${validation.checks.length} checks`:"等待 Candidate Artifact / Hidden Validation" },
     { id:"D",title:"Online Stable",question:"真实线上流量稳定么？",state:!onlineRelease?"skipped":project.release.status==="promoted"?"passed":project.release.status==="rolled-back"?"failed":project.release.status!=="idle"?(project.release.healthy===false?"blocked":"ready"):"pending",evidence:!onlineRelease?"离线成果模式：Online Gate 不适用；未伪造线上稳定结论":previewPromote?(project.release.status==="idle"?"等待 Preview Gate":project.release.status==="shadow"?"Preview Gate 已通过，尚未 Promote":project.release.status):project.release.status==="idle"?"等待 Shadow / Canary":`${project.release.status} · ${project.release.trafficPercent}% traffic` },
     { id:"E",title:"Experience Ready",question:"经验值得固化复用么？",state:onlineRelease?(verified?"passed":finalRelease?"ready":"pending"):(learned?"passed":artifactReady?"ready":"pending"),evidence:onlineRelease?(verified?`${verified.status} · ${verified.title}`:"线上决策完成后 Distill"):(learned?`${project.lessons[0]?.status ?? "lesson"} · ${project.lessons[0]?.title ?? "离线经验"}`:artifactReady?"离线 Artifact 已验收，可提炼 Lesson":"等待 Gate F 与成果冻结") }, 
     { id:"F",title:"Artifact Ready",question:"最终交付 Artifact 本身完整满足最初进化目标吗？",state:acceptance.status==="passed"?"passed":acceptance.status==="failed"?"failed":acceptance.status==="repairing"?"ready":validation.recommendation==="release"?"ready":"pending",evidence:acceptance.status==="idle"?"等待 Requirement Coverage / Integrity / Pairwise Judge":`${acceptance.overallScore}/100 · coverage ${acceptance.coverageScore} · integrity ${acceptance.integrityScore} · hardGate ${acceptance.hardGatePass?"PASS":"FAIL"}` },
@@ -122,6 +132,7 @@ export function deriveNextWorkflowAction(project: EvolveProject): WorkflowNextAc
   if (project.experimentRun.status!=="completed") return { id:"experiment",label:"构造并运行 Candidate Artifact",description:"先 Build 完整 Candidate Snapshot，再对同一 Artifact 做 Eval。",operation:"build-candidate",kind:"machine" };
   if (!project.experimentRun.winnerId) return { id:"experiment",label:"补齐同卷证据并重新比较",description:"保留已构造候选，补齐当前标准的实验卷和原版证据，再判断是否晋级。",operation:"build-candidate",kind:"machine" };
   if (project.validationRun.status!=="completed") return { id:"validation",label:"运行 Hidden Validation + Artifact Acceptance",description:"Behavioral Holdout 通过后立即执行 Gate F；失败自动进入 Repair Loop。",operation:"artifact-acceptance",kind:"machine" };
+  if (project.validationRun.candidateId === project.experimentRun.winnerId && validationNeedsEvidence(project)) return { id:"validation-evidence",label:"Holdout 证据未齐：补证后复验",description:"当前 Candidate 尚无完整的真实执行断言。请在验收页补齐对应证据；重复 Plan 不会使片段证据变完整。",kind:"evidence" };
   if (project.validationRun.recommendation!=="release") return { id:"replan",label:"Behavioral Gate 未通过：重新 Plan",description:"带失败证据返回 Evolution Plan。",operation:"plan",kind:"machine" };
   if (project.artifactAcceptance.status!=="passed") return { id:"artifact-replan",label:"Artifact Ready 未通过：重新进化",description:"Repair 已耗尽或 Hard Gate 仍失败；回到 Plan 生成新的 Candidate Artifact。",operation:"plan",kind:"machine" };
   if (!outputsReady) return { id:"materialize",label:"冻结并生成正式成果包",description:"直接物化被 Hidden Validation + Gate F 验收过的同一 Snapshot，不重新生成另一份内容。",kind:"machine" };

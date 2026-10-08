@@ -346,6 +346,7 @@ export const ArtifactAcceptanceSchema = z.object({
   maxRepairAttempts: z.number().int().min(0).max(5).default(3),
   summary: z.string().default(""),
   error: z.string().optional(),
+  failurePhase: z.enum(["repair", "validation", "acceptance"]).optional(),
   acceptedAt: z.string().optional(),
   lastCheckedAt: z.string().optional(),
 });
@@ -1074,6 +1075,7 @@ export type ExperimentPolicy = z.infer<typeof ExperimentPolicySchema>;
 export const AttentionRequestSchema = z.object({
   id: z.string(),
   type: z.enum(["clarification", "input", "evidence", "capability", "authorization", "limit"]),
+  diagnosticCode: z.enum(["local-evidence-incomplete", "judge-recovery", "artifact-repair-recovery"]).optional(),
   status: z.enum(["pending", "resolved", "expired"]).default("pending"),
   title: z.string(),
   reason: z.string(),

@@ -3,6 +3,15 @@ import type { ArtifactAcceptance, Candidate, EvolveProject, ValidationRun } from
 import { acceptCandidateArtifacts, ensureAcceptanceRubric, repairCandidateArtifacts } from "./artifact-quality";
 import { isSimpleLocalTextProject, runFocusedRepairValidation, runValidation } from "./run-local";
 
+import { artifactRepairNeedsRecovery } from "@evolution/harness";
+
+/** Existing failure evidence is reusable only while the current artifact/contract is unchanged. */
+export function repairValidationCheckpoint(project: EvolveProject, candidate: Candidate): ValidationRun | undefined {
+  const validation = project.validationRun;
+  return artifactRepairNeedsRecovery(project) && validation.status === "completed" && validation.candidateId === candidate.id
+    && validation.evidenceFingerprint === evidenceFingerprint(project, candidate) ? validation : undefined;
+}
+
 export type ArtifactLoopResult = {
   candidate: Candidate;
   validation: ValidationRun;
@@ -112,7 +121,7 @@ export async function runArtifactAcceptanceLoop(args: {
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       const acceptance = blockedAcceptance(`已保留本轮 Hidden Validation 证据；自动修复第 ${behaviorRepairAttempts} 次未完成：${reason}`);
-      return { candidate, validation, acceptance: { ...acceptance, error: reason }, rubric, repaired };
+      return { candidate, validation, acceptance: { ...acceptance, error: reason, failurePhase: "repair" }, rubric, repaired };
     }
     repaired = true;
     validation = validationAfterRepair(validation, candidate);
@@ -150,7 +159,7 @@ export async function runArtifactAcceptanceLoop(args: {
       const reason = error instanceof Error ? error.message : String(error);
       validation = { ...validation, status: "failed", error: reason };
       const acceptance = blockedAcceptance(`修复成果已保留，但第 ${behaviorRepairAttempts} 次复验未完成：${reason}`);
-      return { candidate, validation, acceptance: { ...acceptance, error: reason }, rubric, repaired };
+      return { candidate, validation, acceptance: { ...acceptance, error: reason, failurePhase: "validation" }, rubric, repaired };
     }
     failedBehaviorCriteria = validationRepairCriteria(project, validation);
   }
@@ -170,7 +179,14 @@ export async function runArtifactAcceptanceLoop(args: {
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     args.onProgress?.(`Artifact Repair ${attempt}/${maxAttempts}`);
-    candidate = await repairCandidateArtifacts({ ...project, acceptanceRubric: rubric, artifactAcceptance: acceptance }, candidate, { ...acceptance, attempts: attempt - 1 }, rubric);
+    try {
+      candidate = await repairCandidateArtifacts({ ...project, acceptanceRubric: rubric, artifactAcceptance: acceptance }, candidate, { ...acceptance, attempts: attempt - 1 }, rubric);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      return { candidate, validation, rubric, repaired, acceptance: { ...acceptance, status: "failed", hardGatePass: false,
+        attempts: attempt, failurePhase: "repair", error: reason,
+        summary: `已保留本轮 Hidden Validation 证据；自动修复第 ${attempt} 次未完成：${reason}` } };
+    }
     repaired = true;
     validation = validationAfterRepair(validation, candidate);
     project = {

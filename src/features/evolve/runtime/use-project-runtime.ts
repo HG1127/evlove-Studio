@@ -49,7 +49,7 @@ import { resolveEvidenceRefs } from "./evidence-provenance";
 import { acceptanceArtifacts, ensureAcceptanceRubric } from "./artifact-quality";
 import { mapTestsToRubric, normalizeAcceptanceRubric, rubricSuiteCoverage, rubricValidation } from "./acceptance-rubric";
 import { normalizeEvalSuiteForProject } from "./eval-suite-normalization";
-import { runArtifactAcceptanceLoop } from "./artifact-loop";
+import { repairValidationCheckpoint, runArtifactAcceptanceLoop } from "./artifact-loop";
 import { resolveProjectOperationConnections } from "../ai/providers/registry";
 import { resolveProjectArtifactStrategy } from "./artifact-strategy";
 import { repositoryGoalCoverage } from "../sources/repository-intelligence";
@@ -61,7 +61,7 @@ import { evidenceFingerprint } from "./evidence-binding";
 import { getVisualEvidence } from "./visual-evidence";
 import { LOCAL_REVIEW_CONTRACT_VERSION, reconcileAttentionRequest } from "./autonomous-orchestrator";
 import { evolutionHarness, type HarnessPlan } from "./evolution-harness";
-import { createHarnessActionExecutor, isLocalBaselineEvidencePause, isLocalBaselineJudgePause, isLocalDemoBaselinePause } from "@evolution/harness";
+import { artifactRepairNeedsRecovery, deriveAttentionRequest, createHarnessActionExecutor, isLocalBaselineEvidencePause, isLocalBaselineJudgePause, isLocalDemoBaselinePause } from "@evolution/harness";
 import { getProductionRuntime, productionRuntimeMode } from "./production-runtime";
 import { localProductionPorts } from "./local-production-adapters";
 import { shouldUseServerAutoPilot, startServerEvolutionWorkflow } from "./server-workflow-client";
@@ -1071,7 +1071,8 @@ export function useProjectRuntime(initialProject: EvolveProject) {
       return undefined;
     }
     try {
-      const validation = await run("运行 Hidden Validation", () => runValidation(current, currentWinner, (done, total, phase) => reportProgress(`${phase ?? "运行 Hidden Validation"}`, done, total, phase, "evaluate")));
+      const checkpoint = repairValidationCheckpoint(current, currentWinner);
+      const validation = checkpoint ?? await run("运行 Hidden Validation", () => runValidation(current, currentWinner, (done, total, phase) => reportProgress(`${phase ?? "运行 Hidden Validation"}`, done, total, phase, "evaluate")));
       const loopProject = projectRef.current;
       const loopCandidate = loopProject.candidates.find((candidate) => candidate.id === currentWinner.id) ?? currentWinner;
       const loop = await run(validation.recommendation === "release" ? "Gate F · Artifact Acceptance" : "失败项自动修复与复验", () => runArtifactAcceptanceLoop({
@@ -2366,7 +2367,18 @@ export function useProjectRuntime(initialProject: EvolveProject) {
    */
   const revalidateAndContinue = useCallback(async () => {
     const validation = await requestValidation();
-    if (!validation) return false;
+    if (!validation || validation.status !== "completed") return false;
+    if (artifactRepairNeedsRecovery(projectRef.current)) {
+      const message = projectRef.current.artifactAcceptance.summary;
+      commit((current) => ({ ...reconcileAttentionRequest(current, deriveAttentionRequest(current)),
+        campaign: { ...current.campaign, status: "paused", stopReason: message } }));
+      setStatus({ busy: false, message });
+      return false;
+    }
+    // Clear only a repaired generation pause; other campaign boundaries keep their own policy.
+    if (projectRef.current.campaign.stopReason?.includes("自动修复第") && !projectRef.current.artifactAcceptance.error) {
+      commit((current) => ({ ...reconcileAttentionRequest(current), campaign: { ...current.campaign, status: "idle", stopReason: undefined } }));
+    }
     const pendingIds = validation.evaluation?.unverifiedCriterionIds ?? [];
     if (pendingIds.length) {
       const titles = pendingIds.map((id) => projectRef.current.acceptanceRubric.find((criterion) => criterion.id === id)?.title ?? id);
@@ -2377,7 +2389,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
     }
     await runAutoPilot();
     return true;
-  }, [projectId, requestValidation, runAutoPilot, setStatus]);
+  }, [commit, projectId, requestValidation, runAutoPilot, setStatus]);
 
 
   /**

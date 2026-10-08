@@ -69,7 +69,7 @@ function stateIcon(state: WorkflowStepState) {
 }
 
 async function executeWorkflowAction(runtime: ProjectRuntime, action: WorkflowNextAction) {
-  if (action.kind === "completed") return;
+  if (action.kind === "completed" || action.kind === "evidence") return;
   if (action.kind === "human-gate") {
     if (action.id === "select-problem") {
       if (!action.problemId) throw new Error("没有可确认的目标问题");
@@ -235,6 +235,15 @@ export function EvolutionRunConsole({ runtime }: { runtime: ProjectRuntime }) {
           </div>
         </div>
 
+        {runtime.project.validationRun.evaluation?.unverifiedCriterionIds?.length ? <div className="border-b border-amber-100 bg-amber-50/40 px-5 py-4">
+          <div className="text-sm font-semibold text-amber-950">本次验收的证据缺口</div>
+          <p className="mt-1 text-xs leading-5 text-amber-900/75">逐题执行状态来自当前 Validation Run。片段证据和未完成执行都不能被 AI 评审自动升级为完整验证。</p>
+          <div className="mt-3 grid gap-2 lg:grid-cols-2">{runtime.project.validationRun.runs.filter((run) => run.verificationStatus !== "verified").map((run) => {
+            const trace = run.trace.find((item) => item.status === "warning" || item.status === "fail");
+            return <div key={run.testCaseId} className="rounded-xl border border-amber-100 bg-white p-3"><div className="text-xs font-semibold text-slate-800">{run.testCaseId} · {run.verificationStatus === "partial" ? "片段证据" : "未完成"}</div><p className="mt-1 break-all text-xs leading-5 text-slate-600">{run.error ?? trace?.detail ?? trace?.summary ?? run.output.slice(0, 180)}</p></div>;
+          })}</div>
+        </div> : null}
+
         <div className="px-5 py-4">
           <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_330px]">
             <div>
@@ -242,7 +251,7 @@ export function EvolutionRunConsole({ runtime }: { runtime: ProjectRuntime }) {
               <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-gradient-to-r from-indigo-500 via-sky-500 to-emerald-500 transition-all" style={{ width: `${progress}%` }} /></div>
             </div>
             <div className="rounded-2xl border border-indigo-100 bg-indigo-50/50 px-4 py-3">
-              <div className="flex items-center justify-between gap-3"><span className="text-[10px] font-bold uppercase tracking-wider text-indigo-500">下一步</span>{nextAction.kind === "human-gate" ? <Badge className="border-amber-200 bg-amber-50 text-amber-700">需要确认</Badge> : nextAction.kind === "release" ? <Badge className="border-rose-200 bg-rose-50 text-rose-700">真实流量动作</Badge> : <Badge className="border-emerald-200 bg-emerald-50 text-emerald-700">可执行</Badge>}</div>
+              <div className="flex items-center justify-between gap-3"><span className="text-[10px] font-bold uppercase tracking-wider text-indigo-500">下一步</span>{nextAction.kind === "human-gate" ? <Badge className="border-amber-200 bg-amber-50 text-amber-700">需要确认</Badge> : nextAction.kind === "evidence" ? <Badge className="border-amber-200 bg-amber-50 text-amber-700">等待证据</Badge> : nextAction.kind === "release" ? <Badge className="border-rose-200 bg-rose-50 text-rose-700">真实流量动作</Badge> : <Badge className="border-emerald-200 bg-emerald-50 text-emerald-700">可执行</Badge>}</div>
               <div className="mt-1 font-semibold text-slate-900">{nextAction.label}</div>
               <p className="mt-1 text-xs leading-5 text-slate-500">{nextAction.description}</p>
               {provider && <div className="mt-2 flex flex-wrap gap-1.5"><Badge className="border-slate-200 bg-white text-slate-600"><Bot className="mr-1 size-3" />{provider.provider}</Badge><Badge className="border-slate-200 bg-white text-slate-600">{provider.model}</Badge></div>}
@@ -286,7 +295,7 @@ export function EvolutionRunConsole({ runtime }: { runtime: ProjectRuntime }) {
                   ))}
                 </div>
               )}
-              <Button className="mt-3 w-full" size="sm" disabled={runtime.status.busy || nextAction.kind === "completed"} onClick={() => void runNext()}>
+              <Button className="mt-3 w-full" size="sm" disabled={runtime.status.busy || nextAction.kind === "completed" || nextAction.kind === "evidence"} onClick={() => void runNext()}>
                 {nextAction.kind === "release" ? <ShieldCheck className="size-3.5" /> : nextAction.id === "replan" ? <RotateCcw className="size-3.5" /> : <Play className="size-3.5" />}
                 {nextAction.label}
               </Button>

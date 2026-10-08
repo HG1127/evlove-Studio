@@ -48,7 +48,7 @@ export const OPERATION_PROFILES: Record<AiOperation, OperationProfile> = {
   // 而不是直接降级到演示引擎——那些节点产出的是成果物本体，演示兜底会污染整轮结果。
   "build-candidate": { timeoutMs: 110_000, schemaRetries: 1, maxRoutes: 2, cacheTtlMs: 30 * 60_000, reasoningHint: "balanced" },
   "artifact-acceptance": { timeoutMs: STANDARD, schemaRetries: 1, maxRoutes: 2, cacheTtlMs: 60 * 60_000, reasoningHint: "deep" },
-  "repair-artifact": { timeoutMs: LONG, schemaRetries: 0, maxRoutes: 2, cacheTtlMs: 0, reasoningHint: "deep" },
+  "repair-artifact": { timeoutMs: 180_000, schemaRetries: 0, maxRoutes: 2, cacheTtlMs: 0, reasoningHint: "balanced" },
   "execute-artifact": { timeoutMs: 45_000, schemaRetries: 0, maxRoutes: 2, cacheTtlMs: 15 * 60_000, reasoningHint: "fast" },
   "execute-artifact-batch": { timeoutMs: 45_000, schemaRetries: 0, maxRoutes: 2, cacheTtlMs: 20 * 60_000, reasoningHint: "fast" },
   "evaluate-population": { timeoutMs: 40_000, schemaRetries: 0, maxRoutes: 2, cacheTtlMs: 30 * 60_000, reasoningHint: "fast" },

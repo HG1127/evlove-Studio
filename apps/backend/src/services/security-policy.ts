@@ -21,7 +21,7 @@ import {
   vercelReleaseWriteConfigured,
 } from "../server-env";
 import {requireActiveOrganizationMember} from "./organization-member-directory";
-import {assertOperatorSameOrigin,operatorSessionConfigured,readOperatorSession} from "./operator-session";
+import {assertOperatorSameOrigin,localDevDirectAccess,operatorSessionConfigured,readOperatorSession} from "./operator-session";
 
 const ROLE_PERMISSIONS:Record<EvolutionRole,ReadonlySet<EvolutionPermission>>={
   viewer:new Set(["data.read","release.observe"]),
@@ -63,6 +63,10 @@ export function protectedDeploymentInternalRequestAllowed(
 
 export function resolveEvolutionActor(event:H3Event):EvolutionActor{
   const config=getServerSecurityConfig();
+  if(localDevDirectAccess(event)){
+    if(["POST","PUT","PATCH","DELETE"].includes(getMethod(event)))assertOperatorSameOrigin(event);
+    return EvolutionActorSchema.parse({id:"local-dev",role:"admin",workspaceId:config.workspaceId,source:"internal-dev"});
+  }
   if(config.mode==="blocked")throw createError({statusCode:503,statusMessage:"Evolution identity/RBAC is not configured"});
   if(config.mode==="vercel-protected-internal"){
     const allowed=protectedDeploymentInternalRequestAllowed({

@@ -34,6 +34,7 @@ export const OperatorSessionStatusSchema=z.object({
   configured:z.boolean(),
   authenticated:z.boolean(),
   expiresAt:z.number().int().positive().optional(),
+  localDirect:z.boolean().optional(),
 }).strict();
 export type OperatorSessionStatus=z.infer<typeof OperatorSessionStatusSchema>;
 

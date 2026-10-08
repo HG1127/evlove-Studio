@@ -1,8 +1,8 @@
 import type { AttentionRequest, EvolveProject, Stage } from "@evolution/contracts";
 import {
   campaignGoalSatisfied,
-  criterionCanUseLocalSnapshotEvidence,
   deliveryReadiness,
+  evidenceRouteForCriterion,
   experimentNeedsEvidenceRepair,
   goalReadiness,
   currentReleaseCandidate,
@@ -36,7 +36,7 @@ export type AutonomousAction =
   | "wait-human";
 
 /** Bump when local Judge settlement semantics change; stale persisted fuse states get one fresh retry. */
-export const LOCAL_REVIEW_CONTRACT_VERSION = "judge-contract-v2";
+export const LOCAL_REVIEW_CONTRACT_VERSION = "judge-contract-v3";
 
 export type AutonomousDecision = {
   action: AutonomousAction;
@@ -74,10 +74,21 @@ function pendingEvidenceCriterionIds(project: EvolveProject) {
   if (project.artifactAcceptance.status === "unverified") {
     for (const result of project.artifactAcceptance.results.filter((item) => !item.pass)) {
       const criterion = project.acceptanceRubric.find((item) => item.id === result.criterionId);
-      if (criterion && !criterionCanUseLocalSnapshotEvidence(project, criterion)) ids.add(result.criterionId);
+      if (criterion && evidenceRouteForCriterion(project, criterion) !== "local") ids.add(result.criterionId);
     }
   }
   return [...ids];
+}
+
+function incompleteLocalEvidenceCriterionIds(project: EvolveProject) {
+  if (project.validationRun.status !== "completed") return [];
+  const pending = new Set(pendingEvidenceCriterionIds(project));
+  const incompleteRuns = new Set(project.validationRun.runs.filter((run) => run.verificationStatus !== "verified").map((run) => run.testCaseId));
+  return project.acceptanceRubric.filter((criterion) => pending.has(criterion.id) && (
+    (project.validationRun.evaluation?.criterionScores?.find((score) => score.criterionId === criterion.id)?.testCaseIds ?? []).some((id) => incompleteRuns.has(id))
+    || project.hiddenEvalSuite.some((testCase) => incompleteRuns.has(testCase.id) && testCase.criterionIds.includes(criterion.id))
+  ))
+    .map((criterion) => criterion.id);
 }
 
 function looksLikeEvidencePause(project: EvolveProject) {
@@ -102,6 +113,17 @@ export function isLocalBaselineJudgePause(project: EvolveProject): boolean {
   return isLocalDemoBaselinePause(project)
     || (project.campaign.status === "paused" && (project.campaign.stopReason ?? "").startsWith("Baseline 评审未完成，已保留断点："));
 }
+/** Retryable generation failures take precedence over unrelated pending verification items. */
+export function artifactRepairNeedsRecovery(project: EvolveProject): boolean {
+  const acceptance = project.artifactAcceptance;
+  const currentId = project.experimentRun.winnerId ?? project.experimentRun.pendingEvidenceCandidateId;
+  if (!acceptance.error || acceptance.status === "passed" || !currentId || acceptance.candidateId !== currentId
+    || !project.candidates.some((candidate) => candidate.id === currentId)) return false;
+  // Compatibility for saved checkpoints created before failurePhase was introduced.
+  return acceptance.failurePhase === "repair" || (!acceptance.failurePhase
+    && /repair-artifact生成未完成|自动修复第\s*\d+\s*次未完成/.test(`${acceptance.summary} ${acceptance.error}`));
+}
+
 export function deriveAttentionRequest(project: EvolveProject): AttentionRequest | undefined {
   const clarificationPlan = autonomousClarificationPlan(project);
   if (clarificationPlan.human.length) {
@@ -133,12 +155,22 @@ export function deriveAttentionRequest(project: EvolveProject): AttentionRequest
     });
   }
 
+  if (artifactRepairNeedsRecovery(project)) {
+    return attention({
+      type: "capability", diagnosticCode: "artifact-repair-recovery",
+      title: "AI 自动修复未完成，当前成果与验证断点已保留",
+      reason: project.artifactAcceptance.summary || project.artifactAcceptance.error!,
+      stage: "validation", riskLevel: "medium", blocking: true, questions: [], criterionIds: [],
+      suggestedAction: "重试自动修复，或在 AI 模型与连接中切换修复模型。系统会复用同一成果的验证证据，修复成功后验证新快照，再检查其余证据要求。",
+    });
+  }
+
   const pendingEvidenceIds = pendingEvidenceCriterionIds(project);
   const pendingEvidence = pendingEvidenceIds.flatMap((id) => {
     const criterion = project.acceptanceRubric.find((item) => item.id === id);
     return criterion ? [criterion] : [];
   });
-  const externalEvidence = pendingEvidence.filter((criterion) => !criterionCanUseLocalSnapshotEvidence(project, criterion));
+  const externalEvidence = pendingEvidence.filter((criterion) => evidenceRouteForCriterion(project, criterion) !== "local");
   if (externalEvidence.length) {
     return attention({
       type: "evidence",
@@ -150,6 +182,22 @@ export function deriveAttentionRequest(project: EvolveProject): AttentionRequest
       questions: [],
       suggestedAction: "按页面提供的截图、真人验收或 Runner 入口补证；补完后自动复验并继续。",
       criterionIds: externalEvidence.map((criterion) => criterion.id),
+    });
+  }
+
+  const incompleteLocalIds = incompleteLocalEvidenceCriterionIds(project);
+  if (incompleteLocalIds.length) {
+    return attention({
+      type: "capability",
+      diagnosticCode: "local-evidence-incomplete",
+      title: "当前成果的本地证据不完整，不能完成全量验收",
+      reason: `当前 Candidate 的 ${incompleteLocalIds.length} 项验收仅取得局部证据或执行未完成：${incompleteLocalIds.join("、")}。重复调用 AI 评审不会把不完整证据变成完整证据。`,
+      stage: "validation",
+      riskLevel: "medium",
+      blocking: true,
+      questions: [],
+      suggestedAction: "检查当前 Candidate 是否是完整成果而非修改片段，并查看技术运行记录中的测试输出与证据截取范围；需补齐完整快照或相应真实验证能力后复验。当前成果和断点已保留。",
+      criterionIds: incompleteLocalIds,
     });
   }
 
@@ -223,6 +271,7 @@ export function deriveAttentionRequest(project: EvolveProject): AttentionRequest
   if (localReviewExhausted) {
     return attention({
       type: "capability",
+      diagnosticCode: "judge-recovery",
       title: "AI 评审连接未能完成结构化验收",
       reason: project.campaign.stopReason ?? "系统已取得当前成果的本地证据，但所有自动评审重试都未返回完整逐标准判断。",
       stage: "validation",
@@ -471,7 +520,7 @@ export function deriveAutonomousDecision(project: EvolveProject): AutonomousDeci
   const pendingIdsForDecision = pendingEvidenceCriterionIds(project);
   const hasLocalEvidencePending = pendingIdsForDecision.length > 0 && pendingIdsForDecision.every((id) => {
     const criterion = project.acceptanceRubric.find((item) => item.id === id);
-    return Boolean(criterion && criterionCanUseLocalSnapshotEvidence(project, criterion));
+    return Boolean(criterion && evidenceRouteForCriterion(project, criterion) === "local");
   });
   if (hasCurrentCandidate && project.validationRun.status === "completed" && !hasVerifiedValidationFailure
     && (hasLocalEvidencePending || (project.artifactAcceptance.status === "unverified" && looksLikeEvidencePause(project)))) {

@@ -10,6 +10,7 @@ type SyncState="connecting"|"connected"|"failed";
 export function OperatorSessionGate({children}:{children:ReactNode}){
   const [state,setState]=useState<GateState>(()=>productionRuntimeMode()==="local"?"ready":"checking");
   const [accessKey,setAccessKey]=useState("");
+  const [localDirect,setLocalDirect]=useState(false);
   const [error,setError]=useState("");
   const [busy,setBusy]=useState(false);
   const [syncState,setSyncState]=useState<SyncState>("connecting");
@@ -20,6 +21,7 @@ export function OperatorSessionGate({children}:{children:ReactNode}){
     let active=true;
     void getOperatorSession().then((session)=>{
       if(!active)return;
+      setLocalDirect(Boolean(session.localDirect));
       setState(!session.configured?"unavailable":session.authenticated?"ready":"login");
     }).catch(()=>{if(active)setState("unavailable");});
     return ()=>{active=false;};
@@ -87,7 +89,7 @@ export function OperatorSessionGate({children}:{children:ReactNode}){
       <span className={syncState==="connected"?"text-emerald-700":syncState==="failed"?"text-rose-700":"text-slate-600"}>
         {syncState==="connected"?"后端同步正常":syncState==="failed"?`后端同步失败${syncError?`：${syncError}`:"，正在重试"}`:"正在连接后端"}
       </span>
-      <button type="button" className="font-medium text-slate-600 underline" onClick={()=>void logout()}>退出</button>
+      {!localDirect&&<button type="button" className="font-medium text-slate-600 underline" onClick={()=>void logout()}>退出</button>}
     </div>}
     {state==="offline"&&<div className="fixed bottom-4 right-4 z-50 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 shadow-lg">
       本地模式 · 数据仅保存在此浏览器

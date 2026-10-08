@@ -8,6 +8,9 @@ Configure `SUPABASE_URL` and the full `SUPABASE_SECRET_KEY` in Vercel Production
 
 The production browser uses the same-origin `/api/evolution/*` API and does not need a Supabase secret. The browser can explicitly select local mode if the backend is unavailable; data created there stays in that browser until a later authenticated sync.
 
+## Local development direct access
+
+For a local `pnpm dev` session that should open the connected workspace without the operator login form, set `EVOLUTION_ALLOW_INSECURE_INTERNAL_AUTH=true` in the ignored `.env.local` file and restart the dev server. This shortcut is accepted only when `NODE_ENV` is not `production`, the request URL is `localhost` or a loopback address, and the connecting peer is loopback. Browser writes still require a same-origin request. LAN clients and production deployments retain the normal operator authentication. The server still needs a working `SUPABASE_SECRET_KEY` and the Supabase migrations to show and persist remote data.
 ## Single-operator browser access
 
 The initial production UI uses a single-operator access key. Set these server-only Vercel Production variables:

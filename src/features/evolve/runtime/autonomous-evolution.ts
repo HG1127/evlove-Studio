@@ -37,7 +37,7 @@ export function autonomousAttention(project: EvolveProject): AutonomousAttention
   const request = deriveAttentionRequest(project);
   if (!request) return undefined;
   return {
-    kind: isLocalBaselineJudgePause(project) ? "model" : legacyKind(request.type),
+    kind: isLocalBaselineJudgePause(project) || request.diagnosticCode === "artifact-repair-recovery" || request.diagnosticCode === "judge-recovery" ? "model" : legacyKind(request.type),
     title: request.title,
     detail: request.reason,
     stage: request.stage,

@@ -9,11 +9,13 @@ export function AutonomousEvolutionPanel({
   onOpenSource,
   onOpenOutputs,
   onOpenAdvanced,
+  onOpenRuntime,
 }: {
   runtime: ProjectRuntime;
   onOpenSource: () => void;
   onOpenOutputs: () => void;
   onOpenAdvanced: () => void;
+  onOpenRuntime: () => void;
 }) {
   const project = runtime.project;
   const state = autonomousEvolutionState(project, runtime.status.busy);
@@ -33,6 +35,10 @@ export function AutonomousEvolutionPanel({
 
   const resolveAttention = () => {
     if (!attention) return;
+    if (attention.request?.diagnosticCode === "local-evidence-incomplete") {
+      onOpenRuntime();
+      return;
+    }
     const panel = document.getElementById("evolve-attention-request");
     if (panel) {
       panel.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -60,7 +66,7 @@ export function AutonomousEvolutionPanel({
         {state === "waiting-input" && <Button onClick={onOpenSource}>输入任务</Button>}
         {(state === "ready" || state === "preparing") && !runtime.status.busy && <Button onClick={() => void runtime.runAutoPilot()}><Play className="size-4" />{project.campaign.status === "paused" ? "继续自主进化" : "开始自主进化"}</Button>}
         {state === "running" && <Button variant="secondary" onClick={runtime.pauseCampaign}><CirclePause className="size-4" />暂停</Button>}
-        {state === "attention" && <Button onClick={resolveAttention}><AlertTriangle className="size-4" />处理这个问题</Button>}
+        {state === "attention" && <Button onClick={resolveAttention}><AlertTriangle className="size-4" />{attention?.request?.diagnosticCode === "local-evidence-incomplete" ? "查看证据详情" : "处理这个问题"}</Button>}
         {state === "completed" && <Button onClick={onOpenOutputs}><PackageCheck className="size-4" />验收成果</Button>}
       </div>
     </div>
@@ -71,6 +77,6 @@ export function AutonomousEvolutionPanel({
       </div>)}
     </div>
 
-    {state === "attention" && attention && <div className="mt-4 rounded-xl border border-amber-200 bg-white/70 px-3 py-2 text-xs leading-5 text-amber-900"><b>为什么需要你：</b>{attention.kind === "clarification" ? "这个决定会显著改变结果或具有较高影响，系统不会自行猜测。" : attention.kind === "validation" ? "这项要求需要视觉、人工或真实外部运行证据，系统不能伪造。" : attention.kind === "model" ? "当前基线只有演示评审。请连接通过测试的真实评审模型，系统会重新测量，不会把演示分数当作证据。" : attention.kind === "limit" ? "自动搜索已触及安全边界，但尚未达到完整验收要求。" : "当前输入无法可靠读取或生成，需要你修正材料。"}</div>}
+    {state === "attention" && attention && <div className="mt-4 rounded-xl border border-amber-200 bg-white/70 px-3 py-2 text-xs leading-5 text-amber-900"><b>为什么需要你：</b>{attention.request?.diagnosticCode === "local-evidence-incomplete" ? "本地只取得局部或未完成的证据；请查看具体测试记录，重复 AI 评审无法补齐。" : attention.kind === "clarification" ? "这个决定会显著改变结果或具有较高影响，系统不会自行猜测。" : attention.kind === "validation" ? "这项要求需要视觉、人工或真实外部运行证据，系统不能伪造。" : attention.kind === "model" ? "AI 调用未完成。请重试或检查当前节点的模型连接；当前成果与断点已保留。" : attention.kind === "limit" ? "自动搜索已触及安全边界，但尚未达到完整验收要求。" : "当前输入无法可靠读取或生成，需要你修正材料。"}</div>}
   </section>;
 }

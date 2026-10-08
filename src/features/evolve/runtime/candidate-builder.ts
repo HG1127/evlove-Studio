@@ -175,7 +175,7 @@ function normalizedArtifactName(value: string) {
 }
 
 function applyCandidateOutput(source: SourceArtifact, current: string, output: CandidateArtifactOutput) {
-  const isText = /^(html?|md|txt|css|js|ts|tsx|jsx|json|yaml|yml|svg)$/i.test(source.extension);
+  const isText = /^(html?|xhtml|md|markdown|txt|css|js|ts|tsx|jsx|json|yaml|yml|svg)$/i.test(source.extension);
   let content = output.content;
   if (isText && /^\s*\{/.test(content)) {
     let kind: unknown;

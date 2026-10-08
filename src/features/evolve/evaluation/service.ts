@@ -162,48 +162,61 @@ export async function evaluateRuns(args: {
     }));
     const preliminaryRubric = deriveCriterionScores(rubric, args.testCases, preliminaryCaseScores, args.runs, ai.criteria);
     const unresolved = new Set(preliminaryRubric.unverifiedCriterionIds);
-    const missingJudgements = evaluatorRubric.filter((criterion) => unresolved.has(criterion.id)
-      && args.testCases.some((testCase) => testCase.criterionIds.includes(criterion.id) && evaluableRunIds.has(testCase.id)));
+    const missingJudgements = evaluatorRubric.filter((criterion) => {
+      if (!unresolved.has(criterion.id)) return false;
+      const mapped = args.testCases.filter((testCase) => testCase.criterionIds.includes(criterion.id));
+      // A Judge response cannot turn a retrieved excerpt or missing execution into full evidence.
+      // Only retry a genuinely omitted judgement over complete, verified observations.
+      return mapped.length > 0 && mapped.every((testCase) => args.runs.some((run) => run.testCaseId === testCase.id && run.verificationStatus === "verified"));
+    });
     if (missingJudgements.length) {
-      // One compact supplement is cheaper than repeating the full holdout and prevents models
-      // that omit optional detail from silently manufacturing verified zero-score failures.
-      const missingIds = new Set(missingJudgements.map((criterion) => criterion.id));
-      const recoveryCases = evaluationPayload.testCases.filter((testCase) => testCase.criterionIds.some((id) => missingIds.has(id)));
-      const recoveryCaseIds = new Set(recoveryCases.map((testCase) => testCase.id));
-      try {
-        const supplementPayload = {
-          ...compactEvaluationContext(args.context, missingJudgements),
-          acceptanceRubric: missingJudgements,
-          evaluatorInstruction: "RUBRIC SUPPLEMENT ONLY: return one criteria entry for EVERY supplied acceptance criterion using the EXACT criterionId. Judge only the supplied current-artifact runs; never cite diagnosis, patches or task assumptions. The cases array may be empty because this recovery call exists only to settle missing criterion rows. Missing evidence belongs in gaps rather than a fabricated failure.",
-          recovery: { reason: "missing-rubric-judgements", criterionIds: [...missingIds] },
-          testCases: recoveryCases,
-          runs: reviewRuns.filter((run) => recoveryCaseIds.has(run.testCaseId)),
-        };
-        const supplement = EvaluateAiResultSchema.parse(await runEvolveAi("evaluate", supplementPayload, undefined, onAttemptNotice, {
-          forceRefresh: args.forceRefresh,
-          requireLive: args.forceRefresh,
-          validateResult: (value) => {
-            const parsed = EvaluateAiResultSchema.parse(value);
-            const returned = new Set(parsed.criteria.map((item) => item.criterionId));
-            const absent = [...missingIds].filter((id) => !returned.has(id));
-            const historical = parsed.criteria.filter((item) => missingIds.has(item.criterionId) && [...item.evidence, ...item.gaps].some(citesHistoricalEvidence)).map((item) => item.criterionId);
-            if (absent.length || historical.length) throw new Error(`Evaluator omitted/invalid required criterion rows: ${[...new Set([...absent, ...historical])].join(", ")}`);
-          },
-        }));
-        const mergeBy = <T,>(prior: T[] | undefined, next: T[] | undefined, key: (item: T) => string) => {
-          const map = new Map((prior ?? []).map((item) => [key(item), item]));
-          for (const item of next ?? []) map.set(key(item), item);
-          return [...map.values()];
-        };
-        ai = {
-          ...ai,
-          cases: mergeBy(ai.cases, supplement.cases, (item) => item.testCaseId),
-          criteria: mergeBy(ai.criteria, supplement.criteria, (item) => item.criterionId),
-        };
-        warnings.push(`评审留痕：首次评审漏返 ${missingJudgements.length} 条 Rubric 判定，已完成一次轻量补评`);
-      } catch (error) {
-        warnings.push(`评审留痕：${missingJudgements.length} 条 Rubric 判定缺失，轻量补评仍未完成（${error instanceof Error ? error.message.slice(0, 100) : String(error).slice(0, 100)}）；这些项目保持未验证，不按 0 分失败处理`);
+      // Keep each recovery contract small. One large supplement repeats the same output truncation
+      // that caused the omission and makes one bad row poison every otherwise recoverable criterion.
+      const recovered: string[] = [];
+      const failed: string[] = [];
+      for (let offset = 0; offset < missingJudgements.length; offset += 2) {
+        const batch = missingJudgements.slice(offset, offset + 2);
+        const missingIds = new Set(batch.map((criterion) => criterion.id));
+        const recoveryCases = evaluationPayload.testCases.filter((testCase) => testCase.criterionIds.some((id) => missingIds.has(id)));
+        const recoveryCaseIds = new Set(recoveryCases.map((testCase) => testCase.id));
+        try {
+          const supplementPayload = {
+            ...compactEvaluationContext(args.context, batch),
+            acceptanceRubric: batch,
+            evaluatorInstruction: "RUBRIC SUPPLEMENT ONLY: return one criteria entry for EVERY supplied acceptance criterion using the EXACT criterionId. Judge only the supplied current-artifact runs; never cite diagnosis, patches or task assumptions. The cases array may be empty because this recovery call exists only to settle missing criterion rows. Missing evidence belongs in gaps rather than a fabricated failure.",
+            recovery: { reason: "missing-rubric-judgements", criterionIds: [...missingIds] },
+            testCases: recoveryCases,
+            runs: reviewRuns.filter((run) => recoveryCaseIds.has(run.testCaseId)),
+          };
+          const supplement = EvaluateAiResultSchema.parse(await runEvolveAi("evaluate", supplementPayload, undefined, onAttemptNotice, {
+            forceRefresh: args.forceRefresh,
+            requireLive: args.forceRefresh,
+            validateResult: (value) => {
+              const parsed = EvaluateAiResultSchema.parse(value);
+              const returned = new Set(parsed.criteria.map((item) => item.criterionId));
+              const absent = [...missingIds].filter((id) => !returned.has(id));
+              const historical = parsed.criteria.filter((item) => missingIds.has(item.criterionId) && [...item.evidence, ...item.gaps].some(citesHistoricalEvidence)).map((item) => item.criterionId);
+              if (absent.length || historical.length) throw new Error(`Evaluator omitted/invalid required criterion rows: ${[...new Set([...absent, ...historical])].join(", ")}`);
+            },
+          }));
+          const mergeBy = <T,>(prior: T[] | undefined, next: T[] | undefined, key: (item: T) => string) => {
+            const map = new Map((prior ?? []).map((item) => [key(item), item]));
+            for (const item of next ?? []) map.set(key(item), item);
+            return [...map.values()];
+          };
+          ai = {
+            ...ai,
+            cases: mergeBy(ai.cases, supplement.cases, (item) => item.testCaseId),
+            criteria: mergeBy(ai.criteria, supplement.criteria, (item) => item.criterionId),
+          };
+          recovered.push(...missingIds);
+        } catch (error) {
+          failed.push(...missingIds);
+          warnings.push(`评审留痕：${[...missingIds].join("、")} 轻量补评未完成（${error instanceof Error ? error.message.slice(0, 100) : String(error).slice(0, 100)}）；保持未验证，不按 0 分失败处理`);
+        }
       }
+      if (recovered.length) warnings.push(`评审留痕：已按小批次补齐 ${recovered.length} 条漏返的 Rubric 判定`);
+      if (failed.length) warnings.push(`评审留痕：仍缺少 ${failed.length} 条真实评审判定，可单独重试评审，无需重新生成 Candidate`);
     }
     if ([ai.accuracy, ai.evidence, ai.riskCoverage, ai.completeness].some((score) => score > 0 && score <= 1)) {
       warnings.push(`评审留痕：评阅模型返回了 0-1 小数比例，已自动换算为 0-100 百分制`);

@@ -40,6 +40,14 @@ describe("real AI route time budgets", () => {
     expect(routedOperationDeadlineMs("build-candidate", 2)).toBeLessThanOrEqual(300_000);
   });
 
+  it("reserves complete repair budgets for both routes without exhausting the fallback early", () => {
+    const profile = OPERATION_PROFILES["repair-artifact"];
+    expect(profile.timeoutMs).toBe(180_000);
+    expect(routedOperationDeadlineMs("repair-artifact", 2)).toBeGreaterThan(profile.timeoutMs * 2);
+    expect(routedOperationDeadlineMs("repair-artifact", 9)).toBe(routedOperationDeadlineMs("repair-artifact", 2));
+    expect(routedOperationDeadlineMs("repair-artifact", 2)).toBeLessThanOrEqual(390_000);
+  });
+
   it("does not expand the budget past the configured route count", () => {
     expect(routedOperationDeadlineMs("plan", 9)).toBe(routedOperationDeadlineMs("plan", 2));
   });

@@ -266,11 +266,11 @@ export function ProjectStudio({ project: initialProject }: { project: EvolveProj
       {view === "outputs" && <Suspense fallback={<WorkspaceLoading label="成果与版本" />}><ProjectOutputsPanel runtime={runtime} /></Suspense>}
       {view === "flow" && (
         <div className="space-y-4">
-          <AutonomousEvolutionPanel runtime={runtime} onOpenSource={()=>setView("source")} onOpenOutputs={()=>setView("outputs")} onOpenAdvanced={()=>setView("campaign")} />
+          <AutonomousEvolutionPanel runtime={runtime} onOpenSource={()=>setView("source")} onOpenOutputs={()=>setView("outputs")} onOpenAdvanced={()=>setView("campaign")} onOpenRuntime={()=>setView("runtime")} />
           <div className="flex justify-end"><Button variant="secondary" size="sm" onClick={()=>setCopilotOpen((open)=>!open)}><Bot className="size-4" />{copilotOpen?"收起 AI 助手":"打开 AI 助手"}</Button></div>
           <div className={`grid gap-6 ${copilotOpen?"xl:grid-cols-[minmax(0,1fr)_340px]":"grid-cols-1"}`}>
             <div className="min-w-0">
-              {autonomyAttention ? <Suspense fallback={<WorkspaceLoading label="需要你处理的问题" />}><AttentionRequestPanel runtime={runtime} attention={autonomyAttention} onOpenSource={()=>setView("source")} onOpenAdvanced={()=>setView("campaign")}/></Suspense> : <details className="rounded-2xl border bg-white"><summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-600">技术人员查看：内部进化过程</summary><div className="border-t p-5"><AdaptiveStageGuide project={project} stage={runtime.stage}/><Suspense fallback={<WorkspaceLoading label="内部进化过程" />}><StagePanel runtime={runtime} /></Suspense></div></details>}
+              {autonomyAttention ? <Suspense fallback={<WorkspaceLoading label="需要你处理的问题" />}><AttentionRequestPanel runtime={runtime} attention={autonomyAttention} onOpenSource={()=>setView("source")} onOpenAdvanced={()=>setView("campaign")} onOpenRuntime={()=>setView("runtime")}/></Suspense> : <details className="rounded-2xl border bg-white"><summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-600">技术人员查看：内部进化过程</summary><div className="border-t p-5"><AdaptiveStageGuide project={project} stage={runtime.stage}/><Suspense fallback={<WorkspaceLoading label="内部进化过程" />}><StagePanel runtime={runtime} /></Suspense></div></details>}
             </div>
             {copilotOpen&&<Suspense fallback={<WorkspaceLoading label="AI 助手" />}><StudioAssistant runtime={runtime} /></Suspense>}
           </div>

@@ -79,6 +79,26 @@ describe("五步流程的证据与前置关系", () => {
     expect(evidence.outputs.join(" ")).not.toContain("没有已证实的失败项");
     expect(workflowStepState(p,"verify").label).toBe("尚未达标");
   });
+  it("keeps a partial Runner holdout at the evidence gate instead of calling it a product failure", () => {
+    const p = project();
+    markTailPrerequisites(p);
+    const candidate = CandidateSchema.parse({ id: "candidate", name: "候选", change: "保留原有交互" });
+    p.candidates = [candidate];
+    p.experimentRun = { id: "e", status: "completed", winnerId: candidate.id, candidateResults: [] };
+    p.validationRun = {
+      id: "v", status: "completed", candidateId: candidate.id, recommendation: "hold",
+      evaluation: { ...p.baselineRun.result!, unverifiedCriterionIds: ["TAIL-2"] },
+      runs: [{ testCaseId: "protect", output: "浏览器渲染与布局", latencyMs: 1, cost: 0, trace: [], verificationStatus: "partial" }],
+      baselineRuns: [], checks: [],
+    };
+    expect(deriveNextWorkflowAction(p)).toMatchObject({ id: "validation-evidence", kind: "evidence" });
+    expect(deriveWorkflowGates(p).find((gate) => gate.id === "C")?.state).toBe("blocked");
+    expect(deriveWorkflowSteps(p).find((step) => step.id === "15")?.detail).toContain("证据未齐");
+
+    p.validationRun.evaluation!.criterionScores = [{ criterionId: "TAIL-1", score: 20, pass: false, verificationStatus: "verified", evidence: ["真实断言失败"], gaps: ["交互失败"], testCaseIds: ["case"] }];
+    expect(deriveNextWorkflowAction(p).id).toBe("replan");
+    expect(deriveWorkflowGates(p).find((gate) => gate.id === "C")?.state).toBe("failed");
+  });
   it("simple TXT behavior repair stops after two targeted attempts instead of repeating three full holdouts", () => {
     const p = project();
     p.objectType = "document";

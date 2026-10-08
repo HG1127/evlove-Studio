@@ -4,7 +4,6 @@ import { htmlCandidateGuard } from "./html-candidate-guard";
 import {
   ArtifactAcceptanceAiResultSchema,
   BuildCandidateAiResultSchema,
-  RepairArtifactAiResultSchema,
   RubricAiResultSchema,
 } from "../ai/schemas";
 import { runEvolveAi } from "../ai/service";
@@ -485,50 +484,8 @@ async function acceptCandidateArtifactsUnbound(project: EvolveProject, candidate
   return {id:`artifact-acceptance-${Date.now()}`,status:passed?"passed":"failed",candidateId:candidate.id,frozenArtifacts,overallScore,coverageScore,integrityScore,pairwiseScore,hardGatePass:true,results:normalizedResults,attempts:0,maxRepairAttempts,summary:`${allResponses.map((r)=>r.summary).filter(Boolean).join("；")||"成果验收完成"}`,lastCheckedAt:now(),acceptedAt:passed?now():undefined};
 }
 
-export async function repairCandidateArtifacts(project: EvolveProject, candidate: Candidate, acceptance: ArtifactAcceptance, criteria: AcceptanceCriterion[]): Promise<Candidate> {
-  const failed = criteria.flatMap((criterion) => {
-    const result = acceptance.results.find((item) => item.criterionId === criterion.id);
-    return result?.pass ? [] : [{ criterionId: criterion.id, requirement: criterion.requirement, minScore: criterion.minScore, hardGate: criterion.hardGate, evidenceExpected: criterion.evidenceExpected, score: result?.score ?? 0, gaps: result?.gaps ?? ["该验收项未通过"] }];
-  });
-  if (!failed.length) return candidate;
-  const repaired = RepairArtifactAiResultSchema.parse(await runEvolveAi("repair-artifact", {
-    project: {
-      name: project.name,
-      goal: project.goal,
-      evolutionCommand: project.evolutionCommand,
-      protectedItems: project.protectedItems,
-      editableItems: project.editableItems,
-      artifactGraph: project.artifactGraph,
-      semanticEvolution: project.semanticEvolution,
-      semanticObject: project.semanticEvolution?.semanticObject,
-    },
-    candidate: { id: candidate.id, title: candidate.title, patches: candidate.patches },
-    acceptance,
-    failedCriteria: failed,
-    artifacts: candidate.artifactSnapshots.map((artifact) => ({ sourceArtifactId: artifact.sourceArtifactId, name: artifact.name, mimeType: artifact.mimeType, content: artifact.content, contentHash: artifact.contentHash })),
-    originalArtifacts: project.sourceArtifacts.filter((artifact) => artifact.role === "target").map((artifact) => sourceForAi(artifact)),
-  }));
-  const snapshots: CandidateArtifactSnapshot[] = repaired.artifacts.map((artifact, index) => ({
-    id: `candidate-repair-${candidate.id}-${index}-${Date.now()}`,
-    sourceArtifactId: artifact.sourceArtifactId,
-    name: artifact.name,
-    mimeType: artifact.mimeType,
-    content: artifact.content,
-    contentHash: fingerprint(artifact.content),
-    buildMode: "ai-full",
-    notes: artifact.notes,
-    createdAt: now(),
-  }));
-  return {
-    ...candidate,
-    name: `${candidate.name} · Repair ${acceptance.attempts + 1}`,
-    title: `${candidate.title || candidate.name} · Acceptance Repair`,
-    artifactSnapshots: snapshots,
-    artifactBuildStatus: "ready",
-    artifactBuildSummary: repaired.summary,
-    notes: [...candidate.notes, `Artifact Repair：${repaired.summary}`],
-  };
-}
+/** Compatibility export; artifact repair belongs to the artifact adapter. */
+export { repairCandidateArtifacts } from "../artifacts/candidate-repair";
 
 export function acceptanceArtifacts(project: EvolveProject, candidate: Candidate, acceptance: ArtifactAcceptance): OutputArtifact[] {
   return coreAcceptanceArtifacts(project, candidate, acceptance);

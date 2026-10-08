@@ -268,6 +268,44 @@ describe("autonomous orchestrator", () => {
     expect(decision.attention?.type).toBe("capability");
     expect(decision.attention?.title).toContain("AI 评审连接");
     expect(decision.attention?.criterionIds).toEqual([]);
+
+    const partialCase = { ...demoProject.hiddenEvalSuite[0]!, id: "H-LOCAL-PARTIAL", criterionIds: [criterion.id] };
+    const partial = project({
+      ...exhausted,
+      hiddenEvalSuite: [partialCase],
+      validationRun: {
+        ...exhausted.validationRun,
+        runs: [{ testCaseId: partialCase.id, output: "retrieved context", latencyMs: 0, cost: 0, trace: [], verificationStatus: "partial" }],
+      },
+    });
+    const partialDecision = deriveAutonomousDecision(partial);
+    expect(partialDecision.action).toBe("wait-human");
+    expect(partialDecision.attention?.title).toContain("本地证据不完整");
+    expect(partialDecision.attention?.criterionIds).toEqual([criterion.id]);
+    const missingExecution = project({ ...partial, validationRun: {
+      ...partial.validationRun,
+      runs: partial.validationRun.runs.map((run) => ({ ...run, verificationStatus: "unverified" as const })),
+    } });
+    expect(deriveAutonomousDecision(missingExecution).attention?.title).toContain("本地证据不完整");
+  });
+
+  it("classifies a scripted HTML protection gap as Runner evidence, not local document evidence", () => {
+    const criterion = { ...demoProject.acceptanceRubric[0]!, id:"PROTECT-ALL", title:"保护交互", validationMethod:"semantic-judge" as const,
+      protectedConstraint:true, artifactIds:["html"], requirement:"原有点击交互可用" };
+    const testCase = { ...demoProject.hiddenEvalSuite[0]!, id:"H-PROTECT", criterionIds:[criterion.id],
+      executionMode:"external-runner" as const, evidenceScope:"product-behavior" as const };
+    const p = project({
+      acceptanceRubric:[criterion], hiddenEvalSuite:[testCase],
+      sourceArtifacts:[{ ...demoProject.sourceArtifacts[0]!, id:"html", name:"guide.html", extension:"html", mimeType:"text/html", artifactKind:"document", role:"target",
+        textContent:"<html><body><button>下一步</button><script>window.next = true</script></body></html>" }],
+      validationRun:{...demoProject.validationRun,status:"completed",evaluation:{...demoProject.baselineRun.result!,unverifiedCriterionIds:[criterion.id]},
+        runs:[{testCaseId:testCase.id,output:"Runner 未完成",latencyMs:0,cost:0,trace:[],verificationStatus:"unverified"}]},
+      campaign:{...demoProject.campaign,status:"paused",stopReason:"保护交互缺少真实执行证据"},
+    });
+    const request=deriveAttentionRequest(p);
+    expect(request?.type).toBe("evidence");
+    expect(request?.diagnosticCode).not.toBe("local-evidence-incomplete");
+    expect(request?.criterionIds).toEqual([criterion.id]);
   });
 
   it("does not reopen a campaign after server deterministic revalidation pauses for Release Review", () => {

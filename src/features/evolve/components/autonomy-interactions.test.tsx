@@ -68,7 +68,7 @@ describe("autonomous interaction routing", () => {
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
-    await act(async () => root.render(<AutonomousEvolutionPanel runtime={runtime} onOpenSource={vi.fn()} onOpenOutputs={vi.fn()} onOpenAdvanced={vi.fn()} />));
+    await act(async () => root.render(<AutonomousEvolutionPanel runtime={runtime} onOpenSource={vi.fn()} onOpenOutputs={vi.fn()} onOpenAdvanced={vi.fn()} onOpenRuntime={vi.fn()} />));
     const button = [...host.querySelectorAll("button")].find((item) => item.textContent?.includes("处理这个问题"));
     expect(button).toBeTruthy();
     await act(async () => button!.click());
@@ -76,6 +76,47 @@ describe("autonomous interaction routing", () => {
     expect(runtime.setStage).not.toHaveBeenCalled();
     await act(async () => root.unmount());
     host.remove(); target.remove();
+  });
+
+  it("局部证据问题打开运行详情，不误导为 AI 连接故障", async () => {
+    const criterion = { ...demoProject.acceptanceRubric[0]!, id: "LOCAL", title: "完整流程", validationMethod: "semantic-judge" as const };
+    const testCase = { ...demoProject.hiddenEvalSuite[0]!, id: "H-LOCAL", criterionIds: [criterion.id] };
+    const project = readyProject({
+      acceptanceRubric: [criterion],
+      hiddenEvalSuite: [testCase],
+      validationRun: {
+        ...demoProject.validationRun,
+        status: "completed",
+        runs: [{ testCaseId: testCase.id, output: "retrieved context", latencyMs: 0, cost: 0, verificationStatus: "partial", trace: [{ id: "excerpt", stage: "semantic-evidence", summary: "只取得相关片段", status: "warning", detail: "workflow.html:45000" }] }],
+        evaluation: { ...demoProject.baselineRun.result!, unverifiedCriterionIds: [criterion.id], criterionScores: [{ criterionId: criterion.id, score: 0, pass: false, verificationStatus: "partial", evidence: [], gaps: ["片段不足"], testCaseIds: [testCase.id] }] },
+      },
+      campaign: { ...demoProject.campaign, status: "paused", stopReason: "本地评审自动重试已耗尽[judge-contract-v3]" },
+    });
+    const attention = autonomousAttention(project);
+    expect(attention?.request?.diagnosticCode).toBe("local-evidence-incomplete");
+    const onOpenRuntime = vi.fn();
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const revalidateAndContinue = vi.fn().mockResolvedValue(false);
+    const runtime = runtimeFor(project, { revalidateAndContinue });
+    await act(async () => root.render(<><AutonomousEvolutionPanel runtime={runtime} onOpenSource={vi.fn()} onOpenOutputs={vi.fn()} onOpenAdvanced={vi.fn()} onOpenRuntime={onOpenRuntime} /><AttentionRequestPanel runtime={runtime} attention={attention!} onOpenSource={vi.fn()} onOpenAdvanced={vi.fn()} onOpenRuntime={onOpenRuntime} /></>));
+    expect(host.textContent).toContain("本地证据未覆盖完整成果");
+    expect(host.textContent).toContain("workflow.html:45000");
+    expect(host.textContent).not.toContain("AI 评审服务需要恢复");
+    const topButton = [...host.querySelectorAll("button")].find((item) => item.textContent?.includes("查看证据详情"));
+    expect(topButton).toBeTruthy();
+    await act(async () => topButton!.click());
+    expect(onOpenRuntime).toHaveBeenCalledTimes(1);
+    const detailButton = [...host.querySelectorAll("button")].find((item) => item.textContent?.includes("查看技术运行记录"));
+    await act(async () => detailButton!.click());
+    expect(onOpenRuntime).toHaveBeenCalledTimes(2);
+    const retryButton = [...host.querySelectorAll("button")].find((item) => item.textContent?.includes("证据补齐后重新验收"));
+    await act(async () => { retryButton!.click(); await Promise.resolve(); });
+    expect(revalidateAndContinue).toHaveBeenCalledTimes(1);
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("仍未取得完整证据");
+    await act(async () => root.unmount());
+    host.remove();
   });
 
   it("paused campaign uses the explicit resume action instead of starting AutoPilot against stale pause state", async () => {
@@ -109,7 +150,7 @@ describe("autonomous interaction routing", () => {
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
-    await act(async () => root.render(<AttentionRequestPanel runtime={runtimeFor(project, { resumeAutonomousEvolution: resume })} attention={attention!} onOpenSource={vi.fn()} onOpenAdvanced={vi.fn()} />));
+    await act(async () => root.render(<AttentionRequestPanel runtime={runtimeFor(project, { resumeAutonomousEvolution: resume })} attention={attention!} onOpenSource={vi.fn()} onOpenAdvanced={vi.fn()} onOpenRuntime={vi.fn()} />));
     expect(host.textContent).toContain("Baseline 评审未完成");
     expect(host.textContent).toContain("真实评审调用未完成");
     expect(host.textContent).not.toContain("调整轮数、预算");
@@ -135,7 +176,7 @@ describe("autonomous interaction routing", () => {
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
-    await act(async () => root.render(<AttentionRequestPanel runtime={runtime} attention={attention!} onOpenSource={vi.fn()} onOpenAdvanced={vi.fn()} />));
+    await act(async () => root.render(<AttentionRequestPanel runtime={runtime} attention={attention!} onOpenSource={vi.fn()} onOpenAdvanced={vi.fn()} onOpenRuntime={vi.fn()} />));
     const button = [...host.querySelectorAll("button")].find((item) => item.textContent?.includes("按当前设置重试"));
     expect(button).toBeTruthy();
     await act(async () => {

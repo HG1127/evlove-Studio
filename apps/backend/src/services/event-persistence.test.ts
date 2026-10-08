@@ -20,7 +20,7 @@ describe("direct Event persistence",()=>{
     await appendServerEvent(request,event,mirror);
     expect(request).toHaveBeenCalledTimes(2);
     expect(request.mock.calls[0][0]).toBe("events?on_conflict=id");
-    expect(request.mock.calls[1][0]).toContain('id=eq.%22event-1%22');
+    expect(request.mock.calls[1][0]).toContain('id=eq.event-1');
     expect(mirror).toHaveBeenCalledWith(expect.objectContaining({
       id:"event-1",at:"2026-09-25T00:00:00+00:00",
     }));
@@ -77,7 +77,7 @@ describe("direct Event persistence",()=>{
     expect(await probeServerEventReadback(request)).toBe(true);
     const query=new URL("https://example.supabase.co/rest/v1/"+paths[0]).searchParams;
     expect(query.get("select")).toBe("*");
-    expect(query.get("id")).toBe('eq."health-probe:no-such-event"');
+    expect(query.get("id")).toBe('eq.health-probe:no-such-event');
     expect(query.get("limit")).toBe("1");
   });
 

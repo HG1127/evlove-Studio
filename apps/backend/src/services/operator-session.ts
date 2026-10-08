@@ -1,5 +1,5 @@
 import {createHmac,timingSafeEqual} from "node:crypto";
-import {createError,deleteCookie,getCookie,getHeader,getRequestURL,setCookie,type H3Event} from "nitro/h3";
+import {createError,deleteCookie,getCookie,getHeader,getRequestIP,getRequestURL,setCookie,type H3Event} from "nitro/h3";
 import {EvolutionActorSchema,OperatorSessionStatusSchema,type EvolutionActor} from "@evolution/contracts";
 import {z} from "zod";
 import {getServerSecurityConfig} from "../server-env";
@@ -73,6 +73,14 @@ export function readOperatorSession(event:H3Event){
   return verifyOperatorSession(getCookie(event,COOKIE_NAME));
 }
 
+export function localDevDirectAccess(event:H3Event){
+  if(process.env.NODE_ENV==="production"
+    ||!(/^(1|true|yes|on)$/i.test(process.env.EVOLUTION_ALLOW_INSECURE_INTERNAL_AUTH?.trim()??"")))return false;
+  const hostname=getRequestURL(event).hostname;
+  if(hostname!=="localhost"&&hostname!=="127.0.0.1"&&hostname!=="[::1]")return false;
+  const ip=getRequestIP(event,{xForwardedFor:false});
+  return ip==="127.0.0.1"||ip==="::1"||ip==="::ffff:127.0.0.1";
+}
 export function assertOperatorSameOrigin(event:H3Event){
   const origin=getHeader(event,"origin");
   const fetchSite=getHeader(event,"sec-fetch-site");
@@ -92,6 +100,7 @@ export function clearOperatorSessionCookie(event:H3Event){
 }
 
 export function operatorSessionStatus(event:H3Event){
+  if(localDevDirectAccess(event))return OperatorSessionStatusSchema.parse({configured:true,authenticated:true,localDirect:true});
   const session=readOperatorSession(event);
   return OperatorSessionStatusSchema.parse({
     configured:operatorSessionConfigured(),authenticated:Boolean(session),

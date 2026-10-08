@@ -11,11 +11,13 @@ export function AttentionRequestPanel({
   attention,
   onOpenSource,
   onOpenAdvanced,
+  onOpenRuntime,
 }: {
   runtime: ProjectRuntime;
   attention: AutonomousAttention;
   onOpenSource: () => void;
   onOpenAdvanced: () => void;
+  onOpenRuntime: () => void;
 }) {
   const request = attention.request;
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -39,6 +41,18 @@ export function AttentionRequestPanel({
   const revalidateAndContinue = () => window.setTimeout(() => {
     void runtime.revalidateAndContinue();
   }, 0);
+  const retryLocalEvidence = async () => {
+    setRetrying(true);
+    setError(undefined);
+    try {
+      const resumed = await runtime.revalidateAndContinue();
+      if (!resumed) setError(request.diagnosticCode === "artifact-repair-recovery" ? "自动修复或后续验收仍未完成，请查看最新运行记录；当前成果与断点已保留。" : "复验仍未取得完整证据。请根据上面的逐项记录补齐后再试；原 Candidate 已保留。");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "重新验收未能启动，请查看技术运行记录。");
+    } finally {
+      setRetrying(false);
+    }
+  };
 
   if (request.type === "clarification") {
     const answered = new Set(runtime.project.inputClarifications.filter((item) => item.answer.trim()).map((item) => item.question));
@@ -80,10 +94,40 @@ export function AttentionRequestPanel({
       <div className="mt-4 flex flex-wrap gap-2"><a href="#/settings" className="inline-flex h-9 items-center rounded-xl border bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"><Settings2 className="mr-2 size-4"/>{judgeIssue ? "AI 模型与连接" : "验证能力设置"}</a><Button variant="secondary" disabled={runtime.status.busy || retrying} onClick={() => retryCampaign(judgeIssue ? "请先配置并测试真实评审模型，再重新测量基线。" : "请先检查真实评审或 Runner 验证能力，并确认运行边界允许继续。")}>{retrying ? "正在重新测量…" : "配置完成，重新测量基线"}</Button></div>
     </section>;
   }
-  if (request.type === "capability" && /评审|judge/i.test(`${request.title} ${request.reason}`)) {
+  if (request.diagnosticCode === "local-evidence-incomplete") {
+    const ids = new Set(request.criterionIds);
+    const criteria = runtime.project.acceptanceRubric.filter((criterion) => ids.has(criterion.id));
+    const scores = runtime.project.validationRun.evaluation?.criterionScores ?? [];
+    const runs = runtime.project.validationRun.runs;
+    return <section id="evolve-attention-request" tabIndex={-1} className="rounded-3xl border border-amber-200 bg-white p-5 outline-none soft-shadow sm:p-6">
+      <div className="flex items-start gap-3"><AlertTriangle className="mt-0.5 size-5 shrink-0 text-amber-600"/><div><h3 className="font-bold text-slate-950">本地证据未覆盖完整成果</h3><p className="mt-1 text-sm leading-6 text-slate-600">{request.reason}</p><p className="mt-1 text-xs leading-5 text-slate-500">这不是 AI 连接故障，也不是成果质量失败；在证据范围改变前反复点击复验不会产生新结论。</p></div></div>
+      <div className="mt-4 grid gap-2 sm:grid-cols-2">{criteria.map((criterion) => {
+        const caseIds = scores.find((score) => score.criterionId === criterion.id)?.testCaseIds
+          ?? runtime.project.hiddenEvalSuite.filter((testCase) => testCase.criterionIds.includes(criterion.id)).map((testCase) => testCase.id);
+        const run = runs.find((item) => caseIds.includes(item.testCaseId) && item.verificationStatus !== "verified");
+        const trace = run?.trace.find((item) => item.status === "warning" || item.status === "fail");
+        const detail = run?.error ?? trace?.detail ?? trace?.summary ?? run?.output.slice(0, 160) ?? "未找到本次验收的完整执行记录";
+        return <div key={criterion.id} className="rounded-xl border border-amber-100 bg-amber-50/50 p-3"><div className="text-xs font-semibold text-slate-800">{criterion.title} <span className="font-normal text-slate-400">{criterion.id}</span></div><p className="mt-1 text-xs leading-5 text-slate-600">{run?.verificationStatus === "partial" ? "仅有片段/静态证据" : "执行或证据绑定未完成"}：{detail}</p></div>;
+      })}</div>
+      <p className="mt-3 text-xs leading-5 text-slate-500">{request.suggestedAction}</p>
+      {error && <p role="alert" className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{error}</p>}
+      <div className="mt-4 flex flex-wrap gap-2"><Button onClick={onOpenRuntime}>查看技术运行记录 <ArrowRight className="size-4"/></Button><Button variant="secondary" onClick={onOpenSource}>检查输入与目标文件</Button><Button variant="secondary" disabled={runtime.status.busy || retrying} onClick={() => void retryLocalEvidence()}>{retrying ? "正在重新验收…" : "证据补齐后重新验收"}</Button></div>
+    </section>;
+  }
+  if (request.type === "capability" && (request.diagnosticCode === "judge-recovery" || request.title === "AI 评审连接未能完成结构化验收")) {
     return <section id="evolve-attention-request" tabIndex={-1} className="rounded-3xl border border-amber-200 bg-white p-5 outline-none soft-shadow sm:p-6">
       <div className="flex items-start gap-3"><AlertTriangle className="mt-0.5 size-5 shrink-0 text-amber-600"/><div><h3 className="font-bold text-slate-950">AI 评审服务需要恢复</h3><p className="mt-1 text-sm leading-6 text-slate-600">{request.reason}</p><p className="mt-1 text-xs leading-5 text-slate-400">当前成果、本地 TXT/格式证据和 Candidate 都已保留。这不是视觉、人工或 Runner 证据缺口，不需要重新生成成果。</p></div></div>
       <div className="mt-4 flex flex-wrap gap-2"><a href="#/settings" className="inline-flex h-9 items-center rounded-xl border bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"><Settings2 className="mr-2 size-4"/>AI 模型与连接</a><Button variant="secondary" onClick={revalidateAndContinue}>重新尝试评审并继续</Button></div>
+    </section>;
+  }
+
+  if (request.diagnosticCode === "artifact-repair-recovery") {
+    return <section id="evolve-attention-request" tabIndex={-1} className="rounded-3xl border border-amber-200 bg-white p-5 outline-none soft-shadow sm:p-6">
+      <h3 className="font-bold text-slate-950">AI 自动修复需要重试</h3>
+      <p className="mt-2 text-sm leading-6 text-slate-600">{request.reason}</p>
+      <p className="mt-2 text-xs leading-5 text-slate-500">当前成果和已取得的验证证据已保留。系统将从失败项修复继续，修复成功后重新验证新成果；其余待验证项会随后单独检查。</p>
+      {error && <p role="alert" className="mt-3 text-xs text-rose-700">{error}</p>}
+      <div className="mt-4 flex flex-wrap gap-2"><a href="#/settings" className="inline-flex h-9 items-center rounded-xl border bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"><Settings2 className="mr-2 size-4"/>AI 模型与连接</a><Button disabled={runtime.status.busy || retrying} onClick={() => void retryLocalEvidence()}>{retrying ? "正在重试修复…" : "重试自动修复并继续"}</Button><Button variant="secondary" onClick={onOpenRuntime}>查看运行记录</Button></div>
     </section>;
   }
 

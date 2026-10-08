@@ -53,7 +53,7 @@ function identity(event:EvolutionEvent){
 }
 
 function filterValue(value:string){
-  return "%22"+encodeURIComponent(value.replace(/\\/g,"\\\\").replace(/"/g,'\\"'))+"%22";
+  return encodeURIComponent(value);
 }
 
 export async function readServerEventById(request:(path:string)=>Promise<unknown>,id:string){
