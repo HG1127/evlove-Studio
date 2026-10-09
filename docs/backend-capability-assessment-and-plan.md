@@ -1,5 +1,11 @@
 # Backend Capability Assessment and Delivery Plan
 
+## 2026-10-09 — backend first-construction recovery (local development)
+
+The next main-flow gap after final model JSON was server construction stopping at the first recoverable anchor/text/HTML output failure. Contracts now classify content-only pre-freeze failures, Harness performs one injected targeted recovery, and the backend pins all complete text parents plus necessary original protection baselines. Foreign/duplicate identities, source/receipt drift, model failures and persistence faults never trigger regeneration; strict checks and all-Target preparation remain mandatory. Verified anchors consume the existing22k/72k text budget. Evidence and deferred Actions billing/model/operator/export work are in [backend Candidate recovery handoff](backend-candidate-recovery-handoff.md).
+
+This is local source based on e843c72 / draft PR6, whose hosted jobs ran0 steps under the current Actions billing/allowance block. Exact new-branch CI and production remain unverified. Main production read-only evidence applies only to the recorded deployed SHA; the real Mission's paired Hidden, Gate F and identical accepted download remain pending.
+
 Assessment date: 2026-09-24
 
 ## Main-flow delivery update · 2026-10-09
