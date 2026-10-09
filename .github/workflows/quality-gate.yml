@@ -87,8 +87,28 @@ jobs:
           RUNNER_BROWSER_CI_NO_SANDBOX: "1"
         run: pnpm test:e2e 2>&1 | tee artifacts/ci/e2e.log
 
-      - name: Built UI smoke
+      - name: Local UI smoke
         id: ui
+        env:
+          RUNNER_BROWSER_CI_NO_SANDBOX: "1"
+        run: |
+          set -euo pipefail
+          pnpm dev > artifacts/ci/dev.log 2>&1 &
+          dev_pid=$!
+          trap 'kill "$dev_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent --show-error http://127.0.0.1:8000/ >/dev/null 2>&1; then
+              node scripts/ui-smoke.mjs artifacts/ci/ui-smoke 2>&1 | tee artifacts/ci/ui-smoke.log
+              exit 0
+            fi
+            sleep 1
+          done
+          cat artifacts/ci/dev.log
+          echo "::error::Local UI server did not become ready on port 8000."
+          exit 1
+
+      - name: Built UI smoke
+        id: builtui
         env:
           RUNNER_BROWSER_CI_NO_SANDBOX: "1"
         run: |
@@ -98,7 +118,7 @@ jobs:
           trap 'kill "$preview_pid" 2>/dev/null || true' EXIT
           for attempt in $(seq 1 60); do
             if curl --fail --silent --show-error http://127.0.0.1:8000/ >/dev/null 2>&1; then
-              node scripts/ui-smoke.mjs artifacts/ci/ui-smoke 2>&1 | tee artifacts/ci/ui-smoke.log
+              PRODUCTION_URL=http://127.0.0.1:8000 node scripts/production-ui-smoke.mjs 2>&1 | tee artifacts/ci/built-ui-smoke.log
               exit 0
             fi
             sleep 1
@@ -143,6 +163,7 @@ jobs:
           RUNNER: ${{ steps.runner.outcome }}
           E2E: ${{ steps.e2e.outcome }}
           UI: ${{ steps.ui.outcome }}
+          BUILT_UI: ${{ steps.builtui.outcome }}
           EVIDENCE_URL: ${{ steps.evidence.outputs.artifact-url }}
           BUILD_URL: ${{ steps.artifact.outputs.artifact-url }}
         run: |
@@ -150,7 +171,7 @@ jobs:
             echo '## Exact checkout verification'
             printf '\nCheckout SHA: `%s`\n' "$(git rev-parse HEAD)"
             printf '\n| Check | Outcome |\n| --- | --- |\n'
-            printf '| Lint | %s |\n| Architecture | %s |\n| Unit | %s |\n| Build | %s |\n| Runner | %s |\n| E2E | %s |\n| Built UI smoke | %s |\n' "$LINT" "$ARCHITECTURE" "$UNIT" "$BUILD" "$RUNNER" "$E2E" "$UI"
+            printf '| Lint | %s |\n| Architecture | %s |\n| Unit | %s |\n| Build | %s |\n| Runner | %s |\n| E2E | %s |\n| Local UI smoke | %s |\n| Built UI smoke | %s |\n' "$LINT" "$ARCHITECTURE" "$UNIT" "$BUILD" "$RUNNER" "$E2E" "$UI" "$BUILT_UI"
             printf '\n[Verification logs and screenshots](%s)\n' "$EVIDENCE_URL"
             printf '\n[Tested build](%s)\n' "$BUILD_URL"
             echo 'This verifies repository regressions; real Mission acceptance and production artifact identity require separate evidence.'

@@ -2,7 +2,7 @@
 
 Quality Gate runs on PRs, main, codex branches, and manual dispatch. The stable required-check name is `Lint / Architecture / Tests / Build / Runner`. Repository administrators must configure it as required in branch protection; workflow configuration alone cannot enforce branch protection.
 
-Checks use Node 24, pnpm 11.23.0 and frozen locks: `pnpm lint`, `pnpm architecture:check`, `pnpm exec vitest run --maxWorkers 1`, `pnpm build`, `pnpm runner:setup`, Chromium installation, `pnpm runner:test`, `pnpm test:e2e`, and UI smoke against `pnpm preview`. Bash pipefail preserves failures while tee captures logs. Failed checks stop downstream validation and always upload available evidence; skipped checks are not passes.
+Checks use Node 24, pnpm 11.23.0 and frozen locks: `pnpm lint`, `pnpm architecture:check`, `pnpm exec vitest run --maxWorkers 1`, `pnpm build`, `pnpm runner:setup`, Chromium installation, `pnpm runner:test`, `pnpm test:e2e`, local development UI smoke and read-only built UI smoke against `pnpm preview` using the supported local-mode entry. Bash pipefail preserves failures while tee captures logs. Failed checks stop downstream validation and always upload available evidence; skipped checks are not passes.
 
 Each run records the actual checked-out SHA (PR checks can use a synthetic merge commit), event SHA, run ID and attempt. Evidence includes logs, screenshots and Playwright results. The built `.output` tree is hashed before browser checks, checked again afterward, and archived only after successful validation. Artifacts expire after 14 days. A rebuilt Vercel deployment still needs its own production SHA and artifact identity evidence; this archive does not authorize deployment.
 
