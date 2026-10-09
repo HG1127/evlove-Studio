@@ -1,6 +1,7 @@
 // @vitest-environment node
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
 import {getPassiveServerAiHealth,probeServerAiRuntime,resetServerAiRuntimeProbeCache} from "./server-ai-health";
+import {withExplicitServerAiConnection} from "./server-ai-connection";
 
 const KEYS=[
   "VERCEL","VERCEL_ENV","VERCEL_OIDC_TOKEN","EVOLUTION_AI_GATEWAY_ENABLED",
@@ -25,7 +26,7 @@ describe("Server AI runtime health",()=>{
   it("distinguishes configured from runtime verified",async()=>{
     process.env.EVOLUTION_AI_API_KEY="test-key";
     process.env.EVOLUTION_AI_MODEL="test-model";
-    expect(getPassiveServerAiHealth()).toMatchObject({
+    expect(await getPassiveServerAiHealth()).toMatchObject({
       configured:true,ready:false,runtimeVerified:false,status:"not-checked",mode:"openai-compatible",
     });
     const health=await probeServerAiRuntime(async()=>({ok:true}));
@@ -73,5 +74,37 @@ describe("Server AI runtime health",()=>{
     const health=await probeServerAiRuntime(async()=>{calls+=1;return {};});
     expect(health).toMatchObject({configured:false,ready:false,status:"unconfigured"});
     expect(calls).toBe(0);
+  });
+});
+
+describe("custom model probe isolation",()=>{
+  const input={
+    connectionId:"custom",label:"Custom",apiKey:"private-health-key",baseUrl:"https://first.example.test/v1",
+    model:"same-model",protocol:"chat-completions" as const,responseFormat:"json-object" as const,
+  };
+
+  it("invalidates a cached failure when API key or base URL changes",async()=>{
+    const runner=vi.fn(async()=>({ok:true}));
+    await withExplicitServerAiConnection(input,()=>probeServerAiRuntime(runner));
+    await withExplicitServerAiConnection({...input,apiKey:"rotated"},()=>probeServerAiRuntime(runner));
+    await withExplicitServerAiConnection({...input,baseUrl:"https://second.example.test/v1"},()=>probeServerAiRuntime(runner));
+    expect(runner).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not let a draft probe overwrite the stored route's health cache",async()=>{
+    const runner=vi.fn(async()=>({ok:true}));
+    await withExplicitServerAiConnection(input,()=>probeServerAiRuntime(runner));
+    await withExplicitServerAiConnection({...input,model:"draft"},()=>probeServerAiRuntime(runner,{isolated:true,force:true}));
+    await withExplicitServerAiConnection(input,()=>probeServerAiRuntime(runner));
+    expect(runner).toHaveBeenCalledTimes(2);
+  });
+
+  it("redacts a provider-echoed key in runtime error responses",async()=>{
+    const health=await withExplicitServerAiConnection(input,()=>probeServerAiRuntime(async()=>{
+      throw new Error("unexpected failure for "+input.apiKey);
+    },{isolated:true}));
+    expect(health.status).toBe("error");
+    expect(JSON.stringify(health)).not.toContain(input.apiKey);
+    expect(health.message).toContain("[REDACTED]");
   });
 });

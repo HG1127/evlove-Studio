@@ -54,15 +54,16 @@ import {
   type VisualJudgeAiResult,
 } from "@evolution/contracts";
 import { SERVER_SEMANTIC_CONTEXT_VERSION } from "@evolution/harness";
-import { getServerAiConfig } from "../server-env";
+import type { ServerAiConfig } from "../server-env";
+import {resolveServerAiConfig} from "./server-ai-connection";
 
 export type ServerAiOperation=AiOperation;
 /** Public scoring-route identity; API keys and timeout settings are deliberately excluded. */
-export function serverAiScoringRouteFingerprint(): string | undefined {
-  const config = getServerAiConfig();
+export async function serverAiScoringRouteFingerprint(): Promise<string | undefined> {
+  const config = await resolveServerAiConfig();
   if (!config) return undefined;
   const route = config.mode === "openai-compatible"
-    ? [config.mode, config.baseUrl, config.model]
+    ? [config.mode, config.baseUrl, config.model, ...(config.protocol || config.responseFormat ? [config.protocol,config.responseFormat] : [])]
     : [config.mode, config.model];
   return createHash("sha256").update(JSON.stringify({ route, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION })).digest("hex");
 }
@@ -158,7 +159,7 @@ function chatText(json:ChatJson){
 }
 
 async function callVercelGateway<T>(args:{
-  config:Extract<NonNullable<ReturnType<typeof getServerAiConfig>>,{mode:"vercel-gateway"}>;
+  config:Extract<ServerAiConfig,{mode:"vercel-gateway"}>;
   contract:Contract<T>;
   payload:unknown;
   images:ParsedImage[];
@@ -186,23 +187,37 @@ async function callVercelGateway<T>(args:{
   return args.contract.parser.parse(generated.output);
 }
 
-async function callResponses<T>(args:{config:Extract<NonNullable<ReturnType<typeof getServerAiConfig>>,{mode:"openai-compatible"}>;contract:Contract<T>;payload:unknown;images:ParsedImage[]}){
+function directSystem<T>(config:Extract<ServerAiConfig,{mode:"openai-compatible"}>,contract:Contract<T>){
+  const base=SYSTEM+"\n\nTask: "+contract.instruction;
+  return config.responseFormat&&config.responseFormat!=="json-schema"
+    ?base+"\nReturn JSON matching this exact schema:\n"+JSON.stringify(contract.schema.schema)
+    :base;
+}
+
+function directFormat<T>(config:Extract<ServerAiConfig,{mode:"openai-compatible"}>,contract:Contract<T>){
+  if(config.responseFormat==="prompt-json")return undefined;
+  if(config.responseFormat==="json-object")return {type:"json_object" as const};
+  return {type:"json_schema" as const,name:contract.schema.name,strict:true,schema:contract.schema.schema};
+}
+
+async function callResponses<T>(args:{config:Extract<ServerAiConfig,{mode:"openai-compatible"}>;contract:Contract<T>;payload:unknown;images:ParsedImage[]}){
   const response=await fetch(args.config.baseUrl+"/responses",{
     method:"POST",
+    redirect:"error",
     signal:AbortSignal.timeout(args.config.timeoutMs),
     headers:{Authorization:"Bearer "+args.config.apiKey,"Content-Type":"application/json"},
     body:JSON.stringify({
       model:args.config.model,
       store:false,
       input:[
-        {role:"system",content:[{type:"input_text",text:SYSTEM+"\n\nTask: "+args.contract.instruction}]},
+        {role:"system",content:[{type:"input_text",text:directSystem(args.config,args.contract)}]},
         {role:"user",content:[
           {type:"input_text",text:JSON.stringify(args.payload)},
           ...args.images.map((image)=>({type:"input_image",image_url:image.dataUrl})),
         ]},
       ],
       max_output_tokens:10000,
-      text:{format:{type:"json_schema",name:args.contract.schema.name,strict:true,schema:args.contract.schema.schema}},
+      ...(directFormat(args.config,args.contract)?{text:{format:directFormat(args.config,args.contract)}}:{}),
     }),
   });
   const json=await response.json().catch(()=>({})) as ResponsesJson;
@@ -214,33 +229,38 @@ async function callResponses<T>(args:{config:Extract<NonNullable<ReturnType<type
   return args.contract.parser.parse(JSON.parse(responseText(json)));
 }
 
-async function callChat<T>(args:{config:Extract<NonNullable<ReturnType<typeof getServerAiConfig>>,{mode:"openai-compatible"}>;contract:Contract<T>;payload:unknown;images:ParsedImage[]}){
+async function callChat<T>(args:{config:Extract<ServerAiConfig,{mode:"openai-compatible"}>;contract:Contract<T>;payload:unknown;images:ParsedImage[]}){
   const response=await fetch(args.config.baseUrl+"/chat/completions",{
     method:"POST",
+    redirect:"error",
     signal:AbortSignal.timeout(args.config.timeoutMs),
     headers:{Authorization:"Bearer "+args.config.apiKey,"Content-Type":"application/json"},
     body:JSON.stringify({
       model:args.config.model,
       messages:[
-        {role:"system",content:SYSTEM+"\n\nTask: "+args.contract.instruction},
+        {role:"system",content:directSystem(args.config,args.contract)},
         {role:"user",content:args.images.length?[
           {type:"text",text:JSON.stringify(args.payload)},
           ...args.images.map((image)=>({type:"image_url",image_url:{url:image.dataUrl}})),
         ]:JSON.stringify(args.payload)},
       ],
-      response_format:{type:"json_schema",json_schema:{name:args.contract.schema.name,strict:true,schema:args.contract.schema.schema}},
+      ...(args.config.responseFormat==="prompt-json"?{}:{
+        response_format:args.config.responseFormat==="json-object"
+          ?{type:"json_object"}
+          :{type:"json_schema",json_schema:{name:args.contract.schema.name,strict:true,schema:args.contract.schema.schema}},
+      }),
     }),
   });
   const json=await response.json().catch(()=>({})) as ChatJson;
-  if(!response.ok)throw new Error(json.error?.message||("Server AI Chat HTTP "+response.status));
+  if(!response.ok)throw Object.assign(new Error(json.error?.message||("Server AI Chat HTTP "+response.status)),{httpStatus:response.status});
   return args.contract.parser.parse(JSON.parse(chatText(json)));
 }
 
 async function structured<T>(payload:unknown,schema:Contract<T>,media?:ServerAiMedia):Promise<T>{
-  const config=getServerAiConfig();
+  const config=await resolveServerAiConfig();
   if(!config){
     throw Object.assign(
-      new Error("Server AI 未配置：请使用 Vercel OIDC/AI Gateway，或配置 OpenAI-compatible API Key + Model"),
+      new Error("Server AI 未配置：请在设置中保存后端模型，或配置模型服务的 API Key、Base URL 和 Model。"),
       {code:"SERVER_AI_UNAVAILABLE"},
     );
   }
@@ -249,11 +269,19 @@ async function structured<T>(payload:unknown,schema:Contract<T>,media?:ServerAiM
     return callVercelGateway({config,contract:schema,payload,images});
   }
   try{
-    return await callResponses({config,contract:schema,payload,images});
+    if(config.protocol==="chat-completions")return await callChat({config,contract:schema,payload,images});
+    if(config.protocol==="responses")return await callResponses({config,contract:schema,payload,images});
+    try{
+      return await callResponses({config,contract:schema,payload,images});
+    }catch(error){
+      const status=(error as {httpStatus?:number}).httpStatus;
+      if(status!==404&&status!==405&&status!==400)throw error;
+      return await callChat({config,contract:schema,payload,images});
+    }
   }catch(error){
-    const status=(error as {httpStatus?:number}).httpStatus;
-    if(status!==404&&status!==405&&status!==400)throw error;
-    return callChat({config,contract:schema,payload,images});
+    const original=error as {message?:string;httpStatus?:number;code?:string};
+    const message=(original.message??String(error)).replaceAll(config.apiKey,"[REDACTED]");
+    throw Object.assign(new Error(message),{httpStatus:original.httpStatus,code:original.code});
   }
 }
 

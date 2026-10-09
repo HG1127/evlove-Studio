@@ -2,7 +2,9 @@ import {
   ServerAiRuntimeHealthSchema,
   type ServerAiRuntimeHealth,
 } from "@evolution/contracts";
-import {getServerAiConfig} from "../server-env";
+import {createHash} from "node:crypto";
+import type {ServerAiConfig} from "../server-env";
+import {resolveServerAiConfig,withServerAiConnection} from "./server-ai-connection";
 import {
   runServerAi,
   serverAiUnavailableMessage,
@@ -16,8 +18,8 @@ const defaultProbeRunner:ProbeRunner=(operation,payload)=>runServerAi(operation,
 let probeCache:{key:string;at:number;value:ServerAiRuntimeHealth}|undefined;
 let probeInFlight:{key:string;promise:Promise<ServerAiRuntimeHealth>}|undefined;
 
-function probeFingerprint(passive:ServerAiRuntimeHealth){
-  return [passive.configured?"configured":"missing",passive.mode,passive.model??""].join(":");
+function probeFingerprint(config:ServerAiConfig){
+  return createHash("sha256").update(JSON.stringify(config)).digest("hex");
 }
 
 export function resetServerAiRuntimeProbeCache(){
@@ -25,8 +27,8 @@ export function resetServerAiRuntimeProbeCache(){
   probeInFlight=undefined;
 }
 
-export function getPassiveServerAiHealth():ServerAiRuntimeHealth{
-  const config=getServerAiConfig();
+export async function getPassiveServerAiHealth():Promise<ServerAiRuntimeHealth>{
+  const config=await resolveServerAiConfig();
   if(!config){
     return ServerAiRuntimeHealthSchema.parse({
       checkedAt:new Date().toISOString(),
@@ -54,16 +56,18 @@ export function getPassiveServerAiHealth():ServerAiRuntimeHealth{
 
 export async function probeServerAiRuntime(
   runner:ProbeRunner=defaultProbeRunner,
-  options:{force?:boolean;cacheMs?:number}={},
+  options:{force?:boolean;cacheMs?:number;isolated?:boolean}={},
 ):Promise<ServerAiRuntimeHealth>{
-  const passive=getPassiveServerAiHealth();
-  if(!passive.configured)return passive;
-  const key=probeFingerprint(passive);
+  return withServerAiConnection(async()=>{
+  const passive=await getPassiveServerAiHealth();
+  const config=await resolveServerAiConfig();
+  if(!config)return passive;
+  const key=probeFingerprint(config);
   const now=Date.now();
   const cacheMs=Math.max(0,options.cacheMs??DEFAULT_PROBE_CACHE_MS);
 
-  if(probeInFlight?.key===key)return probeInFlight.promise;
-  if(!options.force&&probeCache?.key===key&&now-probeCache.at<cacheMs)return probeCache.value;
+  if(!options.isolated&&probeInFlight?.key===key)return probeInFlight.promise;
+  if(!options.isolated&&!options.force&&probeCache?.key===key&&now-probeCache.at<cacheMs)return probeCache.value;
 
   const promise=(async()=>{
     let health:ServerAiRuntimeHealth;
@@ -82,6 +86,8 @@ export async function probeServerAiRuntime(
       });
     }catch(error){
       const reasonCode=serverAiUnavailableReason(error);
+      const detail=error instanceof Error?error.message:String(error);
+      const safeDetail=config.mode==="openai-compatible"?detail.replaceAll(config.apiKey,"[REDACTED]"):detail;
       health=reasonCode
         ?ServerAiRuntimeHealthSchema.parse({
           ...passive,
@@ -99,17 +105,18 @@ export async function probeServerAiRuntime(
           runtimeVerified:true,
           status:"error",
           reasonCode:"runtime-error",
-          message:`Server AI Runtime Probe 失败：${error instanceof Error?error.message:String(error)}`,
+          message:`Server AI Runtime Probe 失败：${safeDetail}`,
         });
     }
-    probeCache={key,at:Date.now(),value:health};
+    if(!options.isolated)probeCache={key,at:Date.now(),value:health};
     return health;
   })();
 
-  probeInFlight={key,promise};
+  if(!options.isolated)probeInFlight={key,promise};
   try{
     return await promise;
   }finally{
     if(probeInFlight?.promise===promise)probeInFlight=undefined;
   }
+  });
 }

@@ -263,7 +263,7 @@ export function getCapabilityEmbeddingConfig():CapabilityEmbeddingConfig|undefin
 export function capabilityEmbeddingConfigured(){return Boolean(getCapabilityEmbeddingConfig());}
 export type ServerAiConfig=
   | {mode:"vercel-gateway";model:string;timeoutMs:number}
-  | {mode:"openai-compatible";apiKey:string;model:string;baseUrl:string;timeoutMs:number};
+  | {mode:"openai-compatible";apiKey:string;model:string;baseUrl:string;timeoutMs:number;protocol?:"chat-completions"|"responses";responseFormat?:"json-schema"|"json-object"|"prompt-json"};
 
 function serverAiTimeoutMs(){
   const timeoutRaw=value(process.env.EVOLUTION_AI_TIMEOUT_MS,process.env.OPENAI_TIMEOUT_MS);
@@ -284,6 +284,13 @@ function serverAiGatewayEnabled(){
 
 export function getServerAiConfig():ServerAiConfig|undefined{
   const timeoutMs=serverAiTimeoutMs();
+  const apiKey=value(process.env.EVOLUTION_AI_API_KEY,process.env.OPENAI_API_KEY);
+  const model=value(process.env.EVOLUTION_AI_MODEL,process.env.OPENAI_MODEL);
+  if(apiKey&&model){
+    const rawBase=value(process.env.EVOLUTION_AI_BASE_URL,process.env.OPENAI_BASE_URL)??"https://api.openai.com/v1";
+    const baseUrl=rawBase.replace(/\/+$/,"").replace(/\/(?:responses|chat\/completions)$/i,"");
+    return {mode:"openai-compatible",apiKey,model,baseUrl,timeoutMs};
+  }
   const oidcAvailable=serverAiOidcAvailable();
   if(oidcAvailable&&serverAiGatewayEnabled()){
     return {
@@ -293,12 +300,7 @@ export function getServerAiConfig():ServerAiConfig|undefined{
     };
   }
 
-  const apiKey=value(process.env.EVOLUTION_AI_API_KEY,process.env.OPENAI_API_KEY);
-  const model=value(process.env.EVOLUTION_AI_MODEL,process.env.OPENAI_MODEL);
-  if(!apiKey||!model)return undefined;
-  const rawBase=value(process.env.EVOLUTION_AI_BASE_URL,process.env.OPENAI_BASE_URL)??"https://api.openai.com/v1";
-  const baseUrl=rawBase.replace(/\/+$/,"").replace(/\/(?:responses|chat\/completions)$/i,"");
-  return {mode:"openai-compatible",apiKey,model,baseUrl,timeoutMs};
+  return undefined;
 }
 
 export type ServerVercelReleaseConfig={

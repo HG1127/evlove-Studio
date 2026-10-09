@@ -28,6 +28,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ModelCombobox } from "./model-combobox";
+import {ServerAiConnectionPanel} from "./server-ai-connection-panel";
 import { Tabs, type TabItem } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { getRunnerStatus } from "../runtime/api";
@@ -592,6 +593,7 @@ export function SettingsPanel() {
       <div className="flex flex-wrap gap-2">
         <Button variant="secondary" onClick={() => applyPreset("balanced")}><WandSparkles className="size-4" />均衡路由</Button>
         <Button variant="secondary" onClick={() => applyPreset("independent")}><ShieldCheck className="size-4" />独立评测</Button>
+        <Button variant="secondary" onClick={() => addConnection("custom")}><Plus className="size-4" />添加自定义模型</Button>
         <Button onClick={() => addConnection("openai")}><Plus className="size-4" />添加 AI 连接</Button>
       </div>
     </div>
@@ -711,6 +713,8 @@ export function SettingsPanel() {
           </CardContent>
         </Card>
     </>)}
+
+    {activeTab === "connections" && <ServerAiConnectionPanel selected={selected}/>}
 
     {activeTab === "routing" && (
         <Card>

@@ -23,6 +23,7 @@ function readinessBlockers(input:{
   security:ReturnType<typeof getSecurityCapabilities>;
   browserAccessConfigured:boolean;
   serverAi:boolean;
+  serverAiConnectionStorageConfigured:boolean;
   releaseConfigured:boolean;
   gitConfigured:boolean;
   gitWebhook:boolean;
@@ -88,11 +89,17 @@ function readinessBlockers(input:{
       action:"在 Vercel Production 配置至少 16 字符的 CRON_SECRET，然后重新部署。",
     });
   }
-  if(!input.serverAi){
+  if(!input.serverAi&&input.serverAiConnectionStorageConfigured){
+    add({
+      code:"SERVER_AI_SAVED_CONNECTION_NOT_VERIFIED",severity:"warning",area:"ai",
+      message:"后端模型保存服务已配置；公开检查不读取密钥或确认已保存模型。",
+      action:"连接工作区后，在设置中确认后端默认模型并测试真实调用。",
+    });
+  }else if(!input.serverAi){
     add({
       code:"SERVER_AI_NOT_CONFIGURED",severity:"error",area:"ai",
       message:"Server AI 未配置，Durable Agent 无法执行 AI 动作。",
-      action:"启用 Vercel AI Gateway/OIDC，或配置 EVOLUTION_AI_API_KEY + EVOLUTION_AI_MODEL。",
+      action:"在设置中保存后端模型并测试；环境变量模式可配置 EVOLUTION_AI_API_KEY + EVOLUTION_AI_MODEL + EVOLUTION_AI_BASE_URL。持久连接状态请以登录后的 AI 健康检查为准。",
     });
   }
   if(!input.releaseConfigured&&!input.targetProxy.releaseConfigured&&!input.connectorFullLifecycleConfigured){
@@ -157,6 +164,7 @@ export async function getPublicReadinessSnapshot(){
     security,
     browserAccessConfigured,
     serverAi:serverAiConfigured(),
+    serverAiConnectionStorageConfigured:vaultEncryptionConfigured(),
     releaseConfigured:vercelReleaseWriteConfigured(),
     gitConfigured:githubTargetConfigured(),
     gitWebhook:githubWebhookConfigured(),
@@ -181,6 +189,7 @@ export async function getPublicReadinessSnapshot(){
     sourceParse:false,
     artifactRenderer:false,
     serverAi:serverAiConfigured(),
+    serverAiConnectionStorageConfigured:vaultEncryptionConfigured(),
     sandbox:false,
     sandboxPolicy:getVercelSandboxPolicyCapabilities().codeReady,
     browser:false,
