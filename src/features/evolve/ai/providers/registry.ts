@@ -1,3 +1,4 @@
+import {AiModelIdSchema} from "@evolution/contracts";
 import type { AiOperation } from "../schemas";
 import type { ProjectAiProfile, ProjectModelRoute } from "../../schemas";
 import {
@@ -123,16 +124,15 @@ function defaultRouting(): AiRoutingPolicy {
   };
 }
 
-// 模型名合理性：用户搜索时误敲的片段（「g」「gp」「GPT」）不该进模型列表 / 「测通」记录。
-// 真实模型 ID 至少 4 个字符，或含数字的短名（o3 / o4-mini 这类）。
+// Compatibility shim: explicitly committed provider IDs use the shared boundary contract.
+// Search text stays local to the combobox until the user commits; availability comes from actual calls.
 export function isPlausibleModelId(id: string): boolean {
-  const value = id.trim();
-  return value.length >= 4 || (value.length >= 2 && /\d/.test(value));
+  return AiModelIdSchema.safeParse(id).success;
 }
 
 function normalizeModels(providerId: string, models: string[], defaultModel: string, exact = false) {
   const base = exact ? models : [...(FALLBACK_MODELS[providerId] ?? []), ...models];
-  return [...new Set([defaultModel, ...base].filter((model) => isPlausibleModelId(model)))];
+  return [...new Set([defaultModel, ...base].filter((model) => isPlausibleModelId(model)).map(model=>model.trim()))];
 }
 
 export function getProviderFallbackModels(providerId: string) {
@@ -184,9 +184,9 @@ export function listProviderConnections(): ProviderConnection[] {
   return safeParse<ProviderConnection[]>(readStorageItem(CONNECTIONS_KEY), [])
     .map((item) => {
       const models = normalizeModels(item.providerId, item.models ?? [], item.defaultModel, item.modelsExact);
-      const testedModels = (item.testedModels ?? []).filter((model) => isPlausibleModelId(model));
-      // 历史数据里默认模型可能存着片段名：读取时回落到「测通 > 列表第一个」，避免下游拿着无效名卡住。
-      const defaultModel = isPlausibleModelId(item.defaultModel) ? item.defaultModel : (testedModels[0] ?? models[0] ?? "");
+      const testedModels = (item.testedModels ?? []).filter((model) => isPlausibleModelId(model)).map(model=>model.trim());
+      // Only empty/oversized stored IDs need fallback; short provider IDs remain valid.
+      const defaultModel = isPlausibleModelId(item.defaultModel) ? item.defaultModel.trim() : (testedModels[0] ?? models[0] ?? "");
       return { ...item, models, testedModels, defaultModel };
     });
 }
@@ -215,7 +215,7 @@ export function pruneConnectionToTested(connection: ProviderConnection, passed: 
   const items = listProviderConnections();
   const current = items.find((item) => item.id === connection.id);
   if (!current) return connection;
-  const models = [...new Set(passed.filter((model) => isPlausibleModelId(model)))];
+  const models = [...new Set(passed.filter((model) => isPlausibleModelId(model)).map(model=>model.trim()))];
   const defaultModel = models.includes(current.defaultModel) ? current.defaultModel : models[0] ?? current.defaultModel;
   const modelLatency = { ...current.modelLatency, ...(latency ?? {}) };
   const next: ProviderConnection = {
@@ -236,7 +236,9 @@ export function pruneConnectionToTested(connection: ProviderConnection, passed: 
 
 /** 记录某个模型在本连接上测试通过：置顶去重、最多保留 12 个，并并入模型列表。 */
 export function noteModelTested(connection: ProviderConnection, model: string, message?: string, latencyMs?: number) {
-  if (!isPlausibleModelId(model)) return connection; // 片段名（如「g」）不记入测通，避免无效模型名污染列表
+  const parsed=AiModelIdSchema.safeParse(model);
+  if (!parsed.success) return connection;
+  model=parsed.data;
   const testedModels = [model, ...(connection.testedModels ?? []).filter((item) => item !== model)].slice(0, 12);
   return upsertProviderConnection({
     ...connection,
@@ -252,7 +254,9 @@ export function noteModelTested(connection: ProviderConnection, model: string, m
 /** 真实调用成功后回写延迟：不只在「测试」时测延迟，日常运行的实测值让路由排序始终跟最新网络状况走。 */
 export function noteModelLatency(connectionId: string, model: string, latencyMs: number) {
   if (typeof window === "undefined") return;
-  if (!isPlausibleModelId(model) || !(latencyMs > 0)) return;
+  const parsed=AiModelIdSchema.safeParse(model);
+  if (!parsed.success || !(latencyMs > 0)) return;
+  model=parsed.data;
   const items = listProviderConnections();
   const current = items.find((item) => item.id === connectionId);
   if (!current) return;
@@ -331,8 +335,10 @@ export function deleteRoutingPreset(id: string) {
 function routeFor(operation: AiOperation, policy: AiRoutingPolicy): AiRoute | undefined {
   const route = policy.operationRoutes[operation] ?? policy.defaultRoute;
   if (!route) return undefined;
-  // 历史路由里可能记着片段模型名：解析时视为未指定，回落到连接默认模型。
-  return route.model && !isPlausibleModelId(route.model) ? { ...route, model: undefined } : route;
+  // Preserve the exact committed model ID after trimming, without inferring a provider name.
+  if (!route.model) return route;
+  const parsed=AiModelIdSchema.safeParse(route.model);
+  return {...route,model:parsed.success?parsed.data:undefined};
 }
 
 export function resolveOperationConnection(operation: AiOperation): RoutedAiConnection | null {

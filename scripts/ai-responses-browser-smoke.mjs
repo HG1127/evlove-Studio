@@ -13,7 +13,7 @@ const temporaryRoot=path.resolve(tmpdir());
 const scratch=await mkdtemp(path.join(temporaryRoot,'evolution-ai-responses-'));
 if(path.dirname(scratch)!==temporaryRoot||!path.basename(scratch).startsWith('evolution-ai-responses-'))throw new Error('Unexpected fixture directory');
 const fixtureKey='synthetic-only-fixture-key';
-const model='main-flow-fixture';
+const model=process.env.AI_RESPONSES_SMOKE_MODEL?.trim()||'main-flow-fixture';
 const requests=[];
 const appWrites=[];
 const pageErrors=[];
