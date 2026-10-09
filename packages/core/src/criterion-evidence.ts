@@ -12,7 +12,7 @@ function readableDocumentSource(artifact: EvolveProject["sourceArtifacts"][numbe
 }
 
 /** A local document evaluator can inspect the exact Candidate text or DOCX run blueprint. */
-export function projectSupportsLocalDocumentSnapshot(project: EvolveProject) {
+export function projectSupportsLocalDocumentSnapshot(project: Pick<EvolveProject, "sourceArtifacts">) {
   const targets = project.sourceArtifacts.filter((artifact) => artifact.role === "target");
   return targets.length > 0 && targets.every(readableDocumentSource);
 }
