@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - 'codex/**'
   workflow_dispatch:
 
 permissions:
@@ -18,10 +19,19 @@ jobs:
   verify:
     name: Lint / Architecture / Tests / Build / Runner
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+
+      - name: Record exact checkout identity
+        run: |
+          mkdir -p artifacts/ci/ui-smoke
+          git rev-parse HEAD > artifacts/ci/checkout-sha.txt
+          printf 'event_sha=%s\nrun_id=%s\nrun_attempt=%s\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > artifacts/ci/run.txt
 
       - name: Node 24
         uses: actions/setup-node@v5
@@ -35,52 +45,113 @@ jobs:
           corepack prepare pnpm@11.23.0 --activate
 
       - name: Install root dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile 2>&1 | tee artifacts/ci/install.log
 
       - name: Lint
-        run: pnpm lint
+        id: lint
+        run: pnpm lint 2>&1 | tee artifacts/ci/lint.log
 
       - name: Architecture boundaries
-        run: pnpm architecture:check
+        id: architecture
+        run: pnpm architecture:check 2>&1 | tee artifacts/ci/architecture.log
 
       - name: Full test suite
-        run: pnpm exec vitest run --maxWorkers 1
+        id: unit
+        run: pnpm exec vitest run --maxWorkers 1 2>&1 | tee artifacts/ci/unit.log
 
       - name: Production build
-        run: pnpm build
+        id: build
+        run: pnpm build 2>&1 | tee artifacts/ci/build.log
+
+      - name: Hash built artifact
+        run: |
+          test -d .output
+          find .output -type f -print0 | sort -z | xargs -0 sha256sum > artifacts/ci/build-sha256.txt
+          test -s artifacts/ci/build-sha256.txt
 
       - name: Install Runner Gateway dependencies
-        run: pnpm runner:setup
+        run: pnpm runner:setup 2>&1 | tee artifacts/ci/runner-install.log
 
       - name: Install Chromium and system dependencies
-        run: pnpm exec playwright install --with-deps chromium
+        run: pnpm exec playwright install --with-deps chromium 2>&1 | tee artifacts/ci/browser-install.log
 
       - name: Runner Gateway tests
+        id: runner
         env:
           RUNNER_BROWSER_CI_NO_SANDBOX: "1"
-        run: pnpm runner:test
+        run: pnpm runner:test 2>&1 | tee artifacts/ci/runner.log
 
       - name: Browser E2E
+        id: e2e
         env:
           RUNNER_BROWSER_CI_NO_SANDBOX: "1"
-        run: pnpm test:e2e
+        run: pnpm test:e2e 2>&1 | tee artifacts/ci/e2e.log
 
-      - name: Local UI smoke
+      - name: Built UI smoke
+        id: ui
         env:
           RUNNER_BROWSER_CI_NO_SANDBOX: "1"
         run: |
           set -euo pipefail
-          mkdir -p /tmp/evolution-ui-smoke
-          pnpm dev > /tmp/evolution-dev.log 2>&1 &
-          dev_pid=$!
-          trap 'kill "$dev_pid" 2>/dev/null || true' EXIT
+          pnpm preview > artifacts/ci/preview.log 2>&1 &
+          preview_pid=$!
+          trap 'kill "$preview_pid" 2>/dev/null || true' EXIT
           for attempt in $(seq 1 60); do
             if curl --fail --silent --show-error http://127.0.0.1:8000/ >/dev/null 2>&1; then
-              node scripts/ui-smoke.mjs /tmp/evolution-ui-smoke
+              node scripts/ui-smoke.mjs artifacts/ci/ui-smoke 2>&1 | tee artifacts/ci/ui-smoke.log
               exit 0
             fi
             sleep 1
           done
-          cat /tmp/evolution-dev.log
-          echo "::error::Local UI server did not become ready on port 8000."
+          cat artifacts/ci/preview.log
+          echo "::error::Built UI server did not become ready on port 8000."
           exit 1
+
+      - name: Verify tested artifact stayed unchanged
+        run: sha256sum --check artifacts/ci/build-sha256.txt > artifacts/ci/build-integrity.log
+
+      - name: Upload verification evidence
+        id: evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-evidence-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            artifacts/ci/
+            test-results/
+            playwright-report/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Preserve successfully tested build
+        id: artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tested-build-${{ github.sha }}-${{ github.run_attempt }}
+          path: .output/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Verification summary
+        if: always()
+        env:
+          LINT: ${{ steps.lint.outcome }}
+          ARCHITECTURE: ${{ steps.architecture.outcome }}
+          UNIT: ${{ steps.unit.outcome }}
+          BUILD: ${{ steps.build.outcome }}
+          RUNNER: ${{ steps.runner.outcome }}
+          E2E: ${{ steps.e2e.outcome }}
+          UI: ${{ steps.ui.outcome }}
+          EVIDENCE_URL: ${{ steps.evidence.outputs.artifact-url }}
+          BUILD_URL: ${{ steps.artifact.outputs.artifact-url }}
+        run: |
+          {
+            echo '## Exact checkout verification'
+            printf '\nCheckout SHA: `%s`\n' "$(git rev-parse HEAD)"
+            printf '\n| Check | Outcome |\n| --- | --- |\n'
+            printf '| Lint | %s |\n| Architecture | %s |\n| Unit | %s |\n| Build | %s |\n| Runner | %s |\n| E2E | %s |\n| Built UI smoke | %s |\n' "$LINT" "$ARCHITECTURE" "$UNIT" "$BUILD" "$RUNNER" "$E2E" "$UI"
+            printf '\n[Verification logs and screenshots](%s)\n' "$EVIDENCE_URL"
+            printf '\n[Tested build](%s)\n' "$BUILD_URL"
+            echo 'This verifies repository regressions; real Mission acceptance and production artifact identity require separate evidence.'
+          } >> "$GITHUB_STEP_SUMMARY"

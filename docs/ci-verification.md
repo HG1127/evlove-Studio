@@ -1,0 +1,11 @@
+# CI verification and daily handoff
+
+Quality Gate runs on PRs, main, codex branches, and manual dispatch. The stable required-check name is `Lint / Architecture / Tests / Build / Runner`. Repository administrators must configure it as required in branch protection; workflow configuration alone cannot enforce branch protection.
+
+Checks use Node 24, pnpm 11.23.0 and frozen locks: `pnpm lint`, `pnpm architecture:check`, `pnpm exec vitest run --maxWorkers 1`, `pnpm build`, `pnpm runner:setup`, Chromium installation, `pnpm runner:test`, `pnpm test:e2e`, and UI smoke against `pnpm preview`. Bash pipefail preserves failures while tee captures logs. Failed checks stop downstream validation and always upload available evidence; skipped checks are not passes.
+
+Each run records the actual checked-out SHA (PR checks can use a synthetic merge commit), event SHA, run ID and attempt. Evidence includes logs, screenshots and Playwright results. The built `.output` tree is hashed before browser checks, checked again afterward, and archived only after successful validation. Artifacts expire after 14 days. A rebuilt Vercel deployment still needs its own production SHA and artifact identity evidence; this archive does not authorize deployment.
+
+For the daily handoff before 16:30 Asia/Shanghai, record the precise candidate SHA, base SHA, PR and hosted run links, every check outcome, evidence artifact URL, and production served SHA if observed. Mark missing hosted checks, provider configuration, or real Mission evidence as pending. Do not reuse test totals from a different SHA. Run full unit/build checks sequentially with independent worktree dependencies; local TEMP/TMP and screenshots belong under `D:/Downloads/evolution-os-smoke-temp`.
+
+Existing Production Smoke checks the deployed alias and configuration after successful main Quality Gate runs. Existing Supabase Migrations validates migration invariants and has a separate production-environment deployment job. This change neither invokes deployment nor changes production settings. Real Mission acceptance requires a changed Candidate, paired Hidden evidence, Gate F and an identical accepted download; route smoke and regression totals cannot satisfy that acceptance.
