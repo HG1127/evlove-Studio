@@ -18,6 +18,8 @@ export const EvolutionWorkflowStartRequestSchema = z.object({
   missionId: z.string().min(1),
   scheduledFor: z.string().optional(),
   idempotencyKey:z.string().min(1).max(200).optional(),
+  intent: z.literal("remeasure-current-input").optional(),
+  expectedMissionUpdatedAt: z.string().min(1).optional(),
 });
 export type EvolutionWorkflowStartRequest = z.infer<typeof EvolutionWorkflowStartRequestSchema>;
 
@@ -31,6 +33,7 @@ export const EvolutionWorkflowRunInputSchema = z.object({
   missionId: z.string().min(1),
   controlJobId: z.string().min(1),
   requestedAt: z.string(),
+  freshBaseline: z.object({ sourceUpdatedAt: z.string().min(1), inputFingerprint: z.string().regex(/^[0-9a-f]{64}$/) }).optional(),
   scheduledFor: z.string().optional(),
 });
 export type EvolutionWorkflowRunInput = z.infer<typeof EvolutionWorkflowRunInputSchema>;

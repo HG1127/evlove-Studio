@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { autonomousAttention, autonomousEvolutionState, autonomousProgress } from "../runtime/autonomous-evolution";
 import type { ProjectRuntime } from "../runtime/use-project-runtime";
-import { canRetryStoredServerExperiment } from "../runtime/server-experiment-retry";
+import { canRetryStoredServerExperiment, serverMainFlowRetryUnavailableReason } from "../runtime/server-experiment-retry";
 import { ServerExperimentRetry } from "./server-experiment-retry";
 
 export function AutonomousEvolutionPanel({
@@ -62,6 +62,7 @@ export function AutonomousEvolutionPanel({
           <Badge>{completedCount}/4</Badge>
         </div>
         <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{copy.detail}</p>
+        {state === "attention" && serverMainFlowRetryUnavailableReason(project) && <p className="mt-1 text-xs text-amber-800">{serverMainFlowRetryUnavailableReason(project)}</p>}
         {state === "running" && runtime.status.detail && <p className="mt-1 text-xs text-indigo-600">{runtime.status.detail}</p>}
       </div>
       <div className="flex shrink-0 flex-wrap gap-2">

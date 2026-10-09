@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { experimentRecoveryAt as at, experimentRecoveryWaitFixture } from "@evolution/testkit";
+import { experimentRecoveryAt as at, experimentRecoveryFixture, experimentRecoveryWaitFixture } from "@evolution/testkit";
+import { InputUnderstandingSchema } from "@evolution/contracts";
 import { canRetryStoredServerExperiment, retryStoredServerExperiment } from "./server-experiment-retry";
 const m = vi.hoisted(() => ({ mode: vi.fn(), fetch: vi.fn() }));
 vi.mock("./production-runtime", () => ({ productionRuntimeMode: m.mode }));
@@ -60,4 +61,20 @@ describe("explicit stored server Experiment retry", () => {
     m.fetch.mockResolvedValue(new Response(JSON.stringify({ error: "Access required" }), { status: 401 }));
     await expect(retryStoredServerExperiment(experimentRecoveryWaitFixture())).rejects.toThrow("Access required");
   });
+
+  it("uses an explicit stable fresh-measurement intent for a safe legacy Plan with zero Candidates", async () => {
+    const p = experimentRecoveryFixture().project;
+    p.inputUnderstanding = InputUnderstandingSchema.parse({ status: "ready", confidence: .9 });
+    p.gates.push({ id: "target-ready", status: "approved", approvedAt: at });
+    p.candidates = []; p.selectedCandidateIds = []; p.stage = "plan";
+    p.campaign = { ...p.campaign, status: "paused", stopReason: "[server-campaign-plan-grounding-pending] empty proposal",
+      checkpoint: { round: 1, completedPhase: "diagnose", at } };
+    expect(canRetryStoredServerExperiment(p)).toBe(true);
+    await retryStoredServerExperiment(p); await retryStoredServerExperiment(structuredClone(p));
+    const first = JSON.parse(m.fetch.mock.calls[0]![1].body);
+    expect(first).toMatchObject({ missionId: p.id, intent: "remeasure-current-input", expectedMissionUpdatedAt: p.updatedAt });
+    expect(first.idempotencyKey).toMatch(/^server-main-flow-retry:[a-f0-9]{64}$/);
+    expect(m.fetch.mock.calls[0]![1].body).toBe(m.fetch.mock.calls[1]![1].body);
+  });
+
 });

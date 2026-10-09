@@ -1,11 +1,19 @@
 import type { EvolveProject } from "@evolution/contracts";
-import { recoverServerControlAiWait, serverControlAiWait, recoverServerExperimentRecoveryWait, serverExperimentRecoveryWait } from "@evolution/harness";
+import { recoverServerControlAiWait, serverControlAiWait, recoverServerExperimentRecoveryWait,
+  serverExperimentRecoveryWait, serverMainFlowRecoveryWait, canRemeasureLegacyServerPlan } from "@evolution/harness";
 import { requireServerControlAi, ServerControlAiUnavailableError } from "./server-control-ai";
+import { hasServerMainFlowRecoveryBinding, restoreServerMainFlowWait } from "./server-main-flow-recovery";
 
 /** Called only inside an explicitly started durable control run. */
-export async function restoreServerControlAiWait(project: EvolveProject): Promise<EvolveProject> {
+export async function restoreServerControlAiWait(project: EvolveProject, controlJobId?: string): Promise<EvolveProject> {
+  const receipt = project.campaign.serverRecoveryWait;
+  const boundWait = serverMainFlowRecoveryWait(project);
+  if (receipt && (!controlJobId || !boundWait || receipt.controlJobId === controlJobId || !hasServerMainFlowRecoveryBinding(project))) return project;
   const controlWait = serverControlAiWait(project);
-  if (!controlWait && !serverExperimentRecoveryWait(project)) return project;
+  if (!receipt && canRemeasureLegacyServerPlan(project)) return project;
+  if (!receipt && controlWait && (project.candidates.length > 0 || project.campaign.currentRound > 0 || project.searchChampion
+    || project.experimentRun.status !== "idle" || project.validationRun.status !== "idle" || project.artifactAcceptance.status !== "idle")) return project;
+  if (!boundWait && !controlWait && !serverExperimentRecoveryWait(project)) return project;
   try {
     await requireServerControlAi({ force: true });
   } catch (error) {
@@ -13,5 +21,6 @@ export async function restoreServerControlAiWait(project: EvolveProject): Promis
     throw error;
   }
   const at = new Date().toISOString();
-  return controlWait ? recoverServerControlAiWait(project, at) : recoverServerExperimentRecoveryWait(project, at);
+  return boundWait ? restoreServerMainFlowWait(project, controlJobId!, at)
+    : controlWait ? recoverServerControlAiWait(project, at) : recoverServerExperimentRecoveryWait(project, at);
 }
