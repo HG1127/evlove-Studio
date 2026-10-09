@@ -31,3 +31,4 @@ export * from "./artifact-package-contract";
 export * from "./server-ai-connection-contract";
 export * from "./ai-model-contract";
 export * from "./compatible-responses-contract";
+export * from "./compatible-chat-contract";

@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
   AiOperationSchema,
   CompatibleResponsesEnvelopeSchema,
+  CompatibleChatEnvelopeSchema,
   ArtifactAcceptanceAiResultSchema,
   BuildCandidateAiResultSchema,
   CommandAiResultSchema,
@@ -55,7 +56,7 @@ import {
   type VisualJudgeAiResult,
 } from "@evolution/contracts";
 import { SERVER_SEMANTIC_CONTEXT_VERSION } from "@evolution/harness";
-import {COMPATIBLE_RESPONSES_OUTPUT_VERSION,readCompatibleResponsesOutput} from "@evolution/adapters";
+import {COMPATIBLE_RESPONSES_OUTPUT_VERSION,COMPATIBLE_CHAT_OUTPUT_VERSION,readCompatibleResponsesOutput,readCompatibleChatOutput} from "@evolution/adapters";
 import type { ServerAiConfig } from "../server-env";
 import {resolveServerAiConfig} from "./server-ai-connection";
 
@@ -69,7 +70,8 @@ export async function serverAiScoringRouteFingerprint(): Promise<string | undefi
     : [config.mode, config.model];
   const responsesOutputVersion=config.mode==="openai-compatible"&&config.protocol!=="chat-completions"
     ?COMPATIBLE_RESPONSES_OUTPUT_VERSION:undefined;
-  return createHash("sha256").update(JSON.stringify({ route, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION, responsesOutputVersion })).digest("hex");
+  const chatOutputVersion=config.mode==="openai-compatible"&&config.protocol!=="responses"?COMPATIBLE_CHAT_OUTPUT_VERSION:undefined;
+  return createHash("sha256").update(JSON.stringify({ route, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION, responsesOutputVersion, chatOutputVersion })).digest("hex");
 }
 
 type StructuredSchema={name:string;schema:Record<string,unknown>};
@@ -131,22 +133,6 @@ function contract(operation:ServerAiOperation):Contract<unknown>{
   if(operation==="visual-judge")return{schema:jsonSchemas.visualJudge,parser:VisualJudgeAiResultSchema,instruction:"Judge only supplied rendered visual evidence for usability, aesthetics, responsiveness and interaction. Do not infer unseen states."};
   const exhaustive:never=operation;
   throw new Error("Unsupported Server AI operation: "+exhaustive);
-}
-
-type ChatJson={
-  choices?:Array<{message?:{content?:string|Array<{type?:string;text?:string}>}}>;
-  error?:{message?:string}|null;
-};
-
-
-function chatText(json:ChatJson){
-  const value=json.choices?.[0]?.message?.content;
-  if(typeof value==="string"&&value.trim())return value;
-  if(Array.isArray(value)){
-    const joined=value.map((item)=>item.text??"").join("").trim();
-    if(joined)return joined;
-  }
-  throw new Error("Server AI chat response missing content");
 }
 
 async function callVercelGateway<T>(args:{
@@ -243,9 +229,13 @@ async function callChat<T>(args:{config:Extract<ServerAiConfig,{mode:"openai-com
       }),
     }),
   });
-  const json=await response.json().catch(()=>({})) as ChatJson;
-  if(!response.ok)throw Object.assign(new Error(json.error?.message||("Server AI Chat HTTP "+response.status)),{httpStatus:response.status});
-  return args.contract.parser.parse(JSON.parse(chatText(json)));
+  const json:unknown=await response.json().catch(()=>({}));
+  if(!response.ok){
+    const parsed=CompatibleChatEnvelopeSchema.safeParse(json);
+    const detail=parsed.success?parsed.data.error?.message:undefined;
+    throw Object.assign(new Error(detail||("Server AI Chat HTTP "+response.status)),{httpStatus:response.status});
+  }
+  return args.contract.parser.parse(JSON.parse(readCompatibleChatOutput(json)));
 }
 
 async function structured<T>(payload:unknown,schema:Contract<T>,media?:ServerAiMedia):Promise<T>{
