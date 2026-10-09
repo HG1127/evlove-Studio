@@ -87,7 +87,7 @@ jobs:
             .dataPlane.secureCredential == true and
             .workflow.cronConfigured == true and
             .security.configured == true and
-            .serverAi == true
+            (.serverAi == true or .serverAiConnectionStorageConfigured == true)
           ' /tmp/readiness.json >/dev/null; then
             echo "::error::Production backend is missing a critical configuration."
             jq -c '{dataPlane: (.dataPlane | {configured, secureCredential, credentialMode, configValid, issueFields, urlPresent, secretPresent, publishablePresent}), security: (.security | {configured, enforced}), serverAi}' /tmp/readiness.json
@@ -141,7 +141,8 @@ jobs:
             echo "- Main alias commit: `$SERVED_SHA`"
             echo "- Quality Gate commit: `$EXPECTED_SHA`"
             echo "- Homepage: 200"
-            echo "- Public readiness: Supabase, server identity, server AI, and Cron configured"
+            echo "- Public readiness: Supabase, server identity, Cron, and AI environment or encrypted connection storage configured"
+            echo "- AI provider runtime remains an authenticated active probe; this smoke does not prove model calls or Mission acceptance"
             echo "- Public backend-health: 401 as required"
             echo "- Scheduled repair without Cron token: 401 as required"
             echo "- Public UI: four desktop routes and mobile layout rendered in read-only local mode"

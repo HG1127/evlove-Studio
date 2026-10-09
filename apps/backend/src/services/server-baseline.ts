@@ -1,3 +1,4 @@
+import {withServerAiConnection} from "./server-ai-connection";
 import {runServerHtmlArtifactBatch,serverHtmlArtifactTargetEnabled} from "./server-html-artifact-execution";
 import type { EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
 import { runVercelSandboxCodebaseValidation } from "@evolution/adapters/sandbox";
@@ -122,8 +123,9 @@ export async function executeServerBaselineExternal(current:EvolveProject,testCa
 
 /** Composition root: wires Harness Baseline ports to production Server AI + Artifact Store + Vercel Sandbox. */
 export async function runServerMissionBaseline(project: EvolveProject) {
+  return withServerAiConnection(async()=>{
   return runServerBaseline(project, {
-    scoringRouteFingerprint: serverAiScoringRouteFingerprint(),
+    scoringRouteFingerprint: await serverAiScoringRouteFingerprint(),
     executeSemanticBatch: async ({ project: current, testCases, artifactContext }) => runServerAi("execute-artifact-batch", {
       project: {
         name: current.name,
@@ -149,5 +151,6 @@ export async function runServerMissionBaseline(project: EvolveProject) {
     buildCurrentArtifactContext: buildServerCurrentSemanticArtifactContext,
     executeExternalBatch: ({ project: current, testCases }) => executeServerBaselineExternal(current,testCases),
     judge: (payload) => runServerAi("evaluate", payload),
+  });
   });
 }

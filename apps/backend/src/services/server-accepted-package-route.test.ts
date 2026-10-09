@@ -3,10 +3,11 @@ import { createHash } from "node:crypto";
 import { H3 } from "nitro/h3";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AcceptedArtifactRenderRequestSchema, type EvolveProject } from "@evolution/contracts";
-import { assertDeliverablePackageIdentity, evidenceFingerprint } from "@evolution/core";
+import { assertDeliverablePackageIdentity, evidenceFingerprint, mapTestsToRubric, normalizeAcceptanceRubric, settleArtifactAcceptanceFromValidation } from "@evolution/core";
 import render from "../../server/api/evolution/render-accepted.post";
 import download from "../../server/api/evolution/artifacts/[id].get";
 import { acceptedPackageFixture } from "@evolution/testkit";
+import { parseServerSource } from "./server-source-parser";
 
 const mocks = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn(), append: vi.fn(), getBlob: vi.fn(), putBlob: vi.fn(), deleteBlob: vi.fn() }));
 vi.mock("./production-runtime", () => ({ getServerProductionRuntime: () => ({ missions: { get: mocks.get, save: mocks.save }, events: { append: mocks.append } }) }));
@@ -22,6 +23,46 @@ function setup(withChampion = true) {
 }
 beforeEach(() => vi.resetAllMocks());
 describe("accepted current Candidate server package and physical download", () => {
+  it("requires fresh paired evidence after correcting an SOP contract, then downloads and reopens the frozen HTML", async () => {
+    const args = setup(false), project = args.project, snapshot = args.current.artifactSnapshots[0]!;
+    const frozen = snapshot.frozenArtifact!;
+    project.evolutionCommand = "补充完整流程与异常处理说明";
+    project.acceptanceRubric = normalizeAcceptanceRubric(project.acceptanceRubric, project);
+    project.hiddenEvalSuite = mapTestsToRubric(project.acceptanceRubric, [], []).hiddenCases;
+    const binding = evidenceFingerprint(project, args.current);
+    const originalSnapshots = structuredClone(args.current.artifactSnapshots);
+    expect((await request(args.current.id)).status).toBe(409);
+    expect(mocks.save).not.toHaveBeenCalled();
+
+    // Synthetic paired receipts exercise composition; they are not a real Mission execution.
+    const runs = project.hiddenEvalSuite.map((test) => ({ ...project.validationRun.runs[0]!, testCaseId: test.id }));
+    project.validationRun = { ...project.validationRun, evidenceFingerprint: binding, runs, baselineRuns: structuredClone(runs),
+      baselineSuiteIds: project.hiddenEvalSuite.map((test) => test.id),
+      evaluation: { ...project.validationRun.evaluation!, rubricScore: 100, criterionScores: project.acceptanceRubric.map((criterion) => ({
+        criterionId: criterion.id, score: 100, pass: true, verificationStatus: "verified", evidence: ["synthetic paired receipt"], gaps: [],
+        testCaseIds: project.hiddenEvalSuite.filter((test) => test.criterionIds.includes(criterion.id)).map((test) => test.id),
+      })) },
+    };
+    for (let retry = 0; retry < 3; retry++) {
+      project.acceptanceRubric = normalizeAcceptanceRubric(project.acceptanceRubric, project);
+      project.hiddenEvalSuite = mapTestsToRubric(project.acceptanceRubric, [], project.hiddenEvalSuite).hiddenCases;
+      expect(evidenceFingerprint(project, args.current)).toBe(binding);
+    }
+    project.artifactAcceptance = settleArtifactAcceptanceFromValidation({ project, candidate: args.current,
+      validation: project.validationRun, frozenArtifacts: [frozen] });
+    expect(project.artifactAcceptance.status).toBe("passed");
+    expect(args.current.artifactSnapshots).toEqual(originalSnapshots);
+    expect((await request(args.current.id)).status).toBe(200);
+    const response = await app.fetch(new Request("http://localhost/artifacts/" + encodeURIComponent(frozen.blobId)));
+    expect(response.status).toBe(200);
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe(frozen.sha256);
+    const reopened = await parseServerSource({ artifactId: "reopened", name: frozen.name, mimeType: frozen.mimeType,
+      size: bytes.byteLength, role: "target", storageRef: frozen.blobId, blob: new Blob([bytes], { type: frozen.mimeType }) });
+    expect(reopened.textContent).toBe(snapshot.content);
+    expect(mocks.putBlob).not.toHaveBeenCalled();
+    expect(mocks.deleteBlob).not.toHaveBeenCalled();
+  });
   it("preserves an optional explicit Candidate identity across the request boundary", () => {
     expect(AcceptedArtifactRenderRequestSchema.parse({ missionId: "mission", candidateId: "current" })).toEqual({ missionId: "mission", candidateId: "current" });
     expect(AcceptedArtifactRenderRequestSchema.parse({ missionId: "mission" })).toEqual({ missionId: "mission" });

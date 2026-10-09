@@ -1,3 +1,4 @@
+import {withServerAiConnection} from "./server-ai-connection";
 import {runServerHtmlArtifactBatch,serverHtmlArtifactTargetEnabled} from "./server-html-artifact-execution";
 import type { Candidate, EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
 import { runVercelSandboxCodebaseValidation } from "@evolution/adapters/sandbox";
@@ -85,10 +86,11 @@ async function executeServerCandidateExternal(project: EvolveProject, candidate:
 
 /** Production composition root for the server-native Candidate Experiment. */
 export async function runServerMissionExperiment(project: EvolveProject) {
+  return withServerAiConnection(async()=>{
   return runServerExperiment(project, {
     fingerprint: (wire) => serverArtifactSha256(new TextEncoder().encode(wire)),
     readExecutionArtifactFingerprint,
-    scoringRouteFingerprint: serverAiScoringRouteFingerprint(),
+    scoringRouteFingerprint: await serverAiScoringRouteFingerprint(),
     executionRuntimeFingerprint: JSON.stringify([process.env.VERCEL_GIT_COMMIT_SHA ?? "local", SERVER_SEMANTIC_CONTEXT_VERSION]),
     buildCandidate: async({ project: current, candidate }) => {
       const built=await buildServerExperimentCandidate(current,candidate);
@@ -131,5 +133,6 @@ export async function runServerMissionExperiment(project: EvolveProject) {
     executeFrozenStatic: runServerFrozenArtifactStaticEvidence,
     executeExternalBatch: ({ project: current, candidate, testCases }) => executeServerCandidateExternal(current, candidate, testCases),
     judge: (payload) => runServerAi("evaluate", payload),
+  });
   });
 }

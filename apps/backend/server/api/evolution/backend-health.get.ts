@@ -72,7 +72,7 @@ export default defineEventHandler(async(event)=>{
   const targetProxy=targetProxyCapabilities();
   const connectorRegistry=await getConnectorRegistryCapabilities().catch(()=>undefined);
   const connectorRelease=Boolean(connectorRegistry?.connectors.some((connector)=>connector.credentialConfigured&&Object.values(connector.lifecycle).every(Boolean)));
-  const serverAiHealth=getPassiveServerAiHealth();
+  const serverAiHealth=await getPassiveServerAiHealth();
   return EvolutionBackendHealthSchema.parse({
     checkedAt:new Date().toISOString(),
     dataPlane,

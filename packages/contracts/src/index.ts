@@ -28,3 +28,4 @@ export * from "./text-edit-contract";
 export * from "./html-execution-contract";
 
 export * from "./artifact-package-contract";
+export * from "./server-ai-connection-contract";

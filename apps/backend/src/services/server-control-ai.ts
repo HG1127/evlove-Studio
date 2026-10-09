@@ -1,5 +1,6 @@
 import { runServerAi, serverAiUnavailableMessage, serverAiUnavailableReason, type ServerAiMedia, type ServerAiOperation } from "./ai-gateway";
 import { probeServerAiRuntime } from "./server-ai-health";
+import {withServerAiConnection} from "./server-ai-connection";
 
 /** Only AI-origin availability failures may become a control-loop capability wait. */
 export class ServerControlAiUnavailableError extends Error {
@@ -25,6 +26,7 @@ export const runServerControlAi = (async (
   payload: unknown,
   media?: ServerAiMedia,
 ): Promise<unknown> => {
+  return withServerAiConnection(async()=>{
   await requireServerControlAi();
   try {
     return await runServerAi(operation, payload, media);
@@ -33,4 +35,5 @@ export const runServerControlAi = (async (
     if (reasonCode) throw new ServerControlAiUnavailableError(reasonCode);
     throw error;
   }
+  });
 }) as typeof runServerAi;

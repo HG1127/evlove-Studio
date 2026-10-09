@@ -49,6 +49,27 @@ describe("public readiness passive boundary",()=>{
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it("reports saved-connection storage without inventing model configuration or making network requests",async()=>{
+    process.env.SUPABASE_URL="https://example.supabase.co";
+    process.env.SUPABASE_SECRET_KEY="server-secret-key-for-passive-readiness-test";
+    process.env.EVOLUTION_WORKSPACE_ID="workspace-test";
+    process.env.EVOLUTION_VAULT_MASTER_KEY="v".repeat(64);
+    process.env.EVOLUTION_AI_GATEWAY_ENABLED="false";
+    delete process.env.EVOLUTION_AI_API_KEY;delete process.env.OPENAI_API_KEY;
+    delete process.env.DEEPSEEK_API_KEY;delete process.env.KIMI_API_KEY;delete process.env.QWEN_API_KEY;
+    vi.stubGlobal("fetch",vi.fn(async()=>{throw new Error("public readiness must remain passive");}));
+    vi.resetModules();
+    const {getPublicReadinessSnapshot}=await import("./public-readiness");
+    const snapshot=await getPublicReadinessSnapshot();
+    expect(snapshot.serverAi).toBe(false);
+    expect(snapshot.serverAiConnectionStorageConfigured).toBe(true);
+    expect(snapshot.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({code:"SERVER_AI_SAVED_CONNECTION_NOT_VERIFIED",severity:"warning"}),
+    ]));
+    expect(snapshot.blockers.map((item)=>item.code)).not.toContain("SERVER_AI_NOT_CONFIGURED");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it("returns actionable configuration blockers without probing external systems",async()=>{
     process.env.NODE_ENV="production";
     process.env.SUPABASE_URL="https://example.supabase.co";

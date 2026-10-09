@@ -179,6 +179,8 @@ export async function evaluateRuns(args: {
         const missingIds = new Set(batch.map((criterion) => criterion.id));
         const recoveryCases = evaluationPayload.testCases.filter((testCase) => testCase.criterionIds.some((id) => missingIds.has(id)));
         const recoveryCaseIds = new Set(recoveryCases.map((testCase) => testCase.id));
+        const recoveryRuns = args.runs.filter((run) => recoveryCaseIds.has(run.testCaseId));
+        const recoveryBudget = Math.max(1, Math.floor(36_000 / Math.max(1, recoveryRuns.length)));
         try {
           const supplementPayload = {
             ...compactEvaluationContext(args.context, batch),
@@ -186,11 +188,19 @@ export async function evaluateRuns(args: {
             evaluatorInstruction: "RUBRIC SUPPLEMENT ONLY: return one criteria entry for EVERY supplied acceptance criterion using the EXACT criterionId. Judge only the supplied current-artifact runs; never cite diagnosis, patches or task assumptions. The cases array may be empty because this recovery call exists only to settle missing criterion rows. Missing evidence belongs in gaps rather than a fabricated failure.",
             recovery: { reason: "missing-rubric-judgements", criterionIds: [...missingIds] },
             testCases: recoveryCases,
-            runs: reviewRuns.filter((run) => recoveryCaseIds.has(run.testCaseId)),
+            // Re-read observed output for this focused contract. A per-request budget prevents
+            // many mapped cases from multiplying the prompt while bounded observations stay whole.
+            runs: recoveryRuns.map((run) => {
+              const review = reviewOutput(run.output, batch.map((criterion) => `${criterion.title} ${criterion.requirement} ${criterion.evidenceExpected.join(" ")}`).join(" "), recoveryBudget);
+              const prior = reviewRuns.find((item) => item.testCaseId === run.testCaseId)!;
+              return { ...prior, outputChunks: review.excerpts, outputMeta: {
+                originalLength: review.originalLength, reviewedLength: review.reviewedLength, truncated: review.truncated,
+              } };
+            }),
           };
           const supplement = EvaluateAiResultSchema.parse(await runEvolveAi("evaluate", supplementPayload, undefined, onAttemptNotice, {
-            forceRefresh: args.forceRefresh,
-            requireLive: args.forceRefresh,
+            forceRefresh: true,
+            requireLive: true,
             validateResult: (value) => {
               const parsed = EvaluateAiResultSchema.parse(value);
               const returned = new Set(parsed.criteria.map((item) => item.criterionId));

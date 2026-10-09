@@ -41,7 +41,7 @@ import { publishAcceptedChampionToConfiguredGit } from "../../apps/backend/src/s
 import { renderAcceptedProjectArtifacts } from "../../apps/backend/src/services/server-artifact-renderer";
 import { lockGitTargetSnapshot,materializeLockedGitTargetSource } from "../../apps/backend/src/services/git-target-source";
 import { lockConnectorTargetSnapshot,materializeLockedConnectorTargetSource } from "../../apps/backend/src/services/connector-target-source";
-import { serverAiConfigured } from "../../apps/backend/src/server-env";
+import {serverAiConnectionConfigured as serverAiConfigured} from "../../apps/backend/src/services/server-ai-connection";
 import {appendWorkflowControlEvent} from "../../apps/backend/src/services/workflow-control-events";
 import {planWorkflowResultFinalization} from "../../apps/backend/src/services/workflow-result-finalization";
 
@@ -558,7 +558,7 @@ async function executeServerControlAction(
     return {control:"continue"};
   }
 
-  if(action==="understand"&&serverAiConfigured()){
+  if(action==="understand"&&(await serverAiConfigured())){
     const understood=await runServerAi("understand",{
       command:mission.evolutionCommand,
       goal:mission.goal,
@@ -582,7 +582,7 @@ async function executeServerControlAction(
     return {control:"continue"};
   }
 
-  if(action==="compile-contract"&&serverAiConfigured()){
+  if(action==="compile-contract"&&(await serverAiConfigured())){
     const generated=await runServerAi("rubric",{
       project:{
         name:mission.name,
@@ -631,7 +631,7 @@ async function executeServerControlAction(
     return {control:"continue"};
   }
 
-  if(action==="build-eval"&&serverAiConfigured()){
+  if(action==="build-eval"&&(await serverAiConfigured())){
     const rubricCheck=rubricValidation(mission.acceptanceRubric);
     if(!rubricCheck.ready)throw new FatalError("Acceptance Rubric 尚未 Ready："+rubricCheck.warnings.join("；"));
     const generated=await runServerAi("eval-suite",{
@@ -690,7 +690,7 @@ async function executeServerControlAction(
   }
 
   if(action==="run-campaign"){
-    if(!serverAiConfigured()){
+    if(!(await serverAiConfigured())){
       const reason="[server-campaign-ai-pending] Campaign Planning Server Step 已实现，但服务器 AI 尚未配置。";
       const updated={
         ...mission,
@@ -721,7 +721,7 @@ async function executeServerControlAction(
       })};
     }
 
-    const scoringRouteFingerprint=serverAiScoringRouteFingerprint();
+    const scoringRouteFingerprint=await serverAiScoringRouteFingerprint();
     const scoringRouteBlocker=serverCampaignScoringRouteBlocker(mission,scoringRouteFingerprint);
     const scoringBlocker=campaignScoringInputBlocker(mission)??scoringRouteBlocker;
     if(scoringBlocker){
@@ -1072,7 +1072,7 @@ async function executeServerControlAction(
     }
   }
 
-  if(action==="distill"&&serverAiConfigured()){
+  if(action==="distill"&&(await serverAiConfigured())){
     const winnerId=mission.experimentRun.winnerId??mission.searchChampion?.candidate?.id;
     const winner=mission.candidates.find((candidate)=>candidate.id===winnerId)??mission.searchChampion?.candidate;
     if(!winner)throw new FatalError("没有已验证 Winner，无法提炼经验");
@@ -1121,7 +1121,7 @@ async function executeServerControlAction(
     return {control:"continue"};
   }
 
-  if(action==="next-queue"&&serverAiConfigured()){
+  if(action==="next-queue"&&(await serverAiConfigured())){
     if(!mission.lessons.length)throw new FatalError("请先提炼本轮 Lesson / Anti-pattern");
     const generated=await runServerAi("next-queue",{
       project:{
@@ -1385,7 +1385,7 @@ async function executeServerControlAction(
     |"revalidate"
     |"distill"
     |"next-queue"=action;
-  const aiCapabilityPending=capabilityPendingAction!=="revalidate"&&!serverAiConfigured();
+  const aiCapabilityPending=capabilityPendingAction!=="revalidate"&&!(await serverAiConfigured());
   const actionJobId=`action:${input.missionId}:${plan.checkpoint.id}:${capabilityPendingAction}`;
   const existing=await runtime.jobs.get(actionJobId).catch(()=>undefined);
   await runtime.jobs.put(EvolutionJobSchema.parse({
