@@ -1,5 +1,4 @@
-// 覆盖模型名合理性过滤、中转地址纠错与连接读取清理：
-// 误敲片段（「g」「gp」）不能进模型列表 / 测通记录，粘了接口尾巴的地址要能自动纠正。
+// Covers boundary-valid opaque model IDs and pasted provider endpoint normalization.
 import { afterEach, describe, expect, it } from "vitest";
 import { normalizeBaseUrl } from "./byok";
 import { noteRouteFailure, resetModelHealth } from "./model-health";
@@ -34,13 +33,13 @@ afterEach(() => {
 });
 
 describe("isPlausibleModelId", () => {
-  it("rejects typing fragments", () => {
-    for (const fragment of ["", "  ", "g", "gp", "G", "GP", "gpt", "GPT"]) {
+  it("rejects empty or oversized model IDs", () => {
+    for (const fragment of ["", "  ", "x".repeat(201)]) {
       expect(isPlausibleModelId(fragment)).toBe(false);
     }
   });
-  it("accepts real model ids including digit short names", () => {
-    for (const id of ["o3", "gpt-4o", "glm-4.7", "openrouter/auto", "muse-spark-1.3-contributor-free"]) {
+  it("accepts committed IDs including short provider aliases", () => {
+    for (const id of ["x", "llm", "GPT", "o3", "gpt-4o", "glm-4.7", "openrouter/auto", "muse-spark-1.3-contributor-free"]) {
       expect(isPlausibleModelId(id)).toBe(true);
     }
   });
@@ -59,16 +58,16 @@ describe("normalizeBaseUrl", () => {
 });
 
 describe("connection read sanitization", () => {
-  it("drops fragment tested models and models on read", () => {
-    saveProviderConnections([makeConnection({ testedModels: ["g", "gp", "glm-4.7"], models: ["g", "glm-4.7"] })]);
+  it("drops empty or oversized tested models and models on read", () => {
+    saveProviderConnections([makeConnection({ testedModels: ["", "x".repeat(201), "glm-4.7"], models: ["", "glm-4.7"] })]);
     const conn = listProviderConnections()[0];
     expect(conn?.testedModels).toEqual(["glm-4.7"]);
     expect(conn?.models).toContain("glm-4.7");
-    expect(conn?.models).not.toContain("g");
+    expect(conn?.models).not.toContain("");
   });
 
-  it("falls back from a fragment default model to tested-pass on read", () => {
-    saveProviderConnections([makeConnection({ defaultModel: "g", testedModels: ["glm-4.7-air"], models: ["glm-4.7"] })]);
+  it("falls back from an empty default model to tested-pass on read", () => {
+    saveProviderConnections([makeConnection({ defaultModel: "", testedModels: ["glm-4.7-air"], models: ["glm-4.7"] })]);
     expect(listProviderConnections()[0]?.defaultModel).toBe("glm-4.7-air");
   });
 

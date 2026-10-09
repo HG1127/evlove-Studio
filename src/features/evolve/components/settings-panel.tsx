@@ -213,7 +213,7 @@ export function SettingsPanel() {
     if (!resolved) { setMessage("请先填写 API Key / Base URL。"); return; }
     const testedModel = resolved.config.model || connection.defaultModel;
     if (!testedModel.trim()) { setMessage("请先在「模型名称」里输入或选择一个模型再测试：不然不知道要验证哪个模型。"); return; }
-    if (!isPlausibleModelId(testedModel)) { setMessage(`模型名「${testedModel.trim()}」像是没输完的片段：请输入完整模型 ID（如 glm-4.7）再测试，否则片段会被误记成可用模型。`); return; }
+    if (!isPlausibleModelId(testedModel)) { setMessage(`模型 ID 必须非空且不超过 200 个字符。短模型名也可以测试，是否可用以模型服务的实际回复为准。`); return; }
     setBusyId(`${connection.id}:test`);
     try {
       const { text, latencyMs } = await testByokConnection(resolved);

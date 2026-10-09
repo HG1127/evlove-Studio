@@ -1,4 +1,5 @@
 import {z} from "zod";
+import {AiModelIdSchema} from "./ai-model-contract";
 
 export const ServerAiBaseUrlSchema=z.string().trim().min(1).max(2048).url().superRefine((value,ctx)=>{
   let url:URL;
@@ -12,7 +13,7 @@ export const ServerAiConnectionSettingsSchema=z.object({
   connectionId:z.string().trim().min(1).max(120),
   label:z.string().trim().min(1).max(120),
   baseUrl:ServerAiBaseUrlSchema,
-  model:z.string().trim().min(1).max(200),
+  model:AiModelIdSchema,
   protocol:z.enum(["chat-completions","responses"]).default("chat-completions"),
   responseFormat:z.enum(["json-schema","json-object","prompt-json"]).default("json-object"),
 });

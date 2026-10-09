@@ -35,7 +35,7 @@ export function ModelCombobox({ models, value, onChange, placeholder, className,
   const close = useCallback((commit: boolean) => {
     if (commit) {
       const typed = search.trim();
-      if (typed && typed !== value) onChange(typed);
+      if (isPlausibleModelId(typed) && typed !== value) onChange(typed);
     }
     setSearch("");
     setCoords(null);
@@ -64,7 +64,7 @@ export function ModelCombobox({ models, value, onChange, placeholder, className,
     };
   }, [coords, place, close]);
 
-  // 误敲的片段名（「g」「gp」）不进候选列表：只在输入框里作为当前输入存在。
+  // Saved and tested model IDs are opaque; short aliases must remain selectable.
   const unique = useMemo(() => [...new Set(models.filter((model) => isPlausibleModelId(model)))], [models]);
   const testedList = useMemo(() => [...new Set((tested ?? []).filter((model) => isPlausibleModelId(model)))], [tested]);
   const keyword = search.trim().toLowerCase();
