@@ -37,6 +37,7 @@ import { checkpointServerMainFlowWait, clearServerMainFlowWait, hasServerMainFlo
 import { runServerMissionBaseline } from "../../apps/backend/src/services/server-baseline";
 import { runServerMissionExperiment } from "../../apps/backend/src/services/server-experiment";
 import { runServerMissionHoldout } from "../../apps/backend/src/services/server-holdout";
+import { readServerHoldoutArtifactFingerprint } from "../../apps/backend/src/services/server-holdout-artifact-binding";
 import { runServerMissionArtifactAcceptance } from "../../apps/backend/src/services/server-artifact-acceptance";
 import { runServerMissionRelease } from "../../apps/backend/src/services/server-release-orchestration";
 import { runServerMissionReleaseReconciliation } from "../../apps/backend/src/services/server-release-reconciliation";
@@ -777,9 +778,39 @@ async function executeServerControlAction(
         checkpointId:plan.checkpoint.id,reason:scoringBlocker,
       })};
     }
-    const refreshRecoveredHoldout=mission.campaign.serverRecoveryWait?.status==="recovering"
-      && mission.campaign.checkpoint?.completedPhase==="validation"
-      && (!campaignLiveObservationFresh(mission,mission.validationRun.completedAt,Date.now())
+    const recoveringAcceptance=mission.campaign.serverRecoveryWait?.status==="recovering"
+      && mission.campaign.checkpoint?.completedPhase==="validation";
+    const recoveredCandidate=recoveringAcceptance
+      ? mission.candidates.find(candidate=>candidate.id===mission.validationRun.candidateId) : undefined;
+    if(recoveringAcceptance && mission.targetConnection.adapter==="artifact"){
+      let physicalBinding:string|undefined;
+      try{
+        physicalBinding=recoveredCandidate ? await readServerHoldoutArtifactFingerprint({project:mission,candidate:recoveredCandidate}) : undefined;
+      }catch{ /* An unreadable frozen identity is missing evidence, never approval. */ }
+      if(!physicalBinding || physicalBinding!==mission.validationRun.executionArtifactFingerprint){
+        const changed=Boolean(physicalBinding && mission.validationRun.executionArtifactFingerprint);
+        const reason=changed
+          ? "[server-campaign-artifact-acceptance-integrity-failed] 当前版本/Candidate 物理绑定已变化，禁止复用旧父代 Hidden 证据；请核对输入并建立新的测量边界。"
+          : "[server-campaign-artifact-acceptance-evidence-pending] 当前版本/Candidate 物理绑定暂不可回读；保留原 Hidden 证据，未通过 Gate F。";
+        const updated=checkpointServerMainFlowWait({...mission,
+          artifactAcceptance:{...mission.artifactAcceptance,status:changed?"failed":"unverified",hardGatePass:false,summary:reason},
+          campaign:{...mission.campaign,serverRecoveryWait:changed?undefined:mission.campaign.serverRecoveryWait,status:"paused",stopReason:reason,
+            schedule:{...mission.campaign.schedule,enabled:false,nextRunAt:undefined}},updatedAt:now},input.controlJobId);
+        await runtime.missions.save(updated);
+        await runtime.events.append(createEvolutionEvent({
+          id:`evt-${input.controlJobId}-campaign-hidden-binding-${iteration}`,missionId:input.missionId,jobId:input.controlJobId,
+          checkpointId:plan.checkpoint.id,type:"JobProgress",source:"vercel-workflow-control",
+          payload:{action,phase:"holdout-binding",reason,changed,expectedFingerprint:mission.validationRun.executionArtifactFingerprint,observedFingerprint:physicalBinding,serverNative:true},
+        }));
+        await runtime.jobs.put(await controlJob(input,{status:"waiting",startedAt:input.requestedAt,
+          progress:{percent:76,detail:reason.slice(0,240)}}));
+        return {control:"stop",result:result(input,{status:"waiting-action",iterations:iteration+1,
+          nextAction:action,checkpointId:plan.checkpoint.id,reason})};
+      }
+    }
+    const refreshRecoveredHoldout=recoveringAcceptance
+      && (!campaignLiveObservationFresh(mission,Number.isFinite(new Date(mission.validationRun.baselineObservedAt ?? NaN).getTime())
+        ? new Date(mission.validationRun.baselineObservedAt!).toISOString() : undefined,Date.now())
         || mission.baselineRun.measurementFingerprint!==serverBaselineFingerprint(mission,scoringRouteFingerprint));
     let campaignMission=mission;
     if(!canReuseServerBaseline(campaignMission,scoringRouteFingerprint)){

@@ -173,9 +173,13 @@ describe("main flow recovery through actual durable entry", () => {
     await executeServerControlStep(input, buildServerHarnessPlan(stored), 0);
     m.get.mockResolvedValueOnce(undefined);
     await executeServerControlStep(input, buildServerHarnessPlan(stored), 1);
-    const oldHidden = structuredClone(stored.validationRun), snapshots = structuredClone(stored.candidates[0]!.artifactSnapshots);
+    const snapshots = structuredClone(stored.candidates[0]!.artifactSnapshots);
     const executions = m.browser.mock.calls.length, writes = m.put.mock.calls.length;
     vi.setSystemTime(new Date(Date.parse(at) + 11 * 60_000));
+    // A recent Judge/Review receipt must not make old physical executions fresh.
+    stored.validationRun.completedAt = new Date().toISOString();
+    const oldHidden = structuredClone(stored.validationRun);
+    stored = checkpointServerMainFlowWait(stored, input.controlJobId);
     const retry = { ...input, controlJobId: "new-control" }; m.job.mockResolvedValue({ ...job, id: retry.controlJobId });
     const plan = await planMissionStep(retry, 0);
     if (safetyFailure) {
@@ -197,6 +201,28 @@ describe("main flow recovery through actual durable entry", () => {
     } else {
       expect(result).toEqual({ control: "continue" }); expect(stored.artifactAcceptance.status).toBe("passed");
     }
+  });
+  it("stops Gate F when current physical bytes change under unchanged Source metadata", async () => {
+    stored = project(); healthyModel();
+    const exp = await runServerMissionExperiment(stored); stored = EvolveProjectSchema.parse(JSON.parse(JSON.stringify(exp.project)));
+    await executeServerControlStep(input, buildServerHarnessPlan(stored), 0);
+    m.get.mockResolvedValueOnce(undefined);
+    await executeServerControlStep(input, buildServerHarnessPlan(stored), 1);
+    const oldHidden = structuredClone(stored.validationRun), source = structuredClone(stored.sourceArtifacts);
+    const snapshots = structuredClone(stored.candidates[0]!.artifactSnapshots);
+    const executions = m.browser.mock.calls.length, writes = m.put.mock.calls.length;
+    const original = await m.blobs.get("source")!.text();
+    m.blobs.set("source", new Blob([original.replace("original input", "Original input")], { type: "text/html" }));
+    expect(m.blobs.get("source")!.size).toBe(source[0]!.size);
+    const retry = { ...input, controlJobId: "physical-retry" }; m.job.mockResolvedValue({ ...job, id: retry.controlJobId });
+    const plan = await planMissionStep(retry, 0);
+    expect(await executeServerControlStep(retry, plan, 0)).toMatchObject({ control: "stop", result: { status: "waiting-action" } });
+    expect(m.browser).toHaveBeenCalledTimes(executions); expect(m.put).toHaveBeenCalledTimes(writes);
+    expect(stored.sourceArtifacts).toEqual(source); expect(stored.candidates[0]!.artifactSnapshots).toEqual(snapshots);
+    expect(stored.validationRun).toEqual(oldHidden);
+    expect(stored.campaign.stopReason).toContain("artifact-acceptance-integrity-failed");
+    expect(stored.artifactAcceptance.status).toBe("failed");
+    expect(m.append.mock.calls.filter(c => c[0].payload.action === "refresh-hidden-on-resume")).toHaveLength(0);
   });
   it("hands a recovered initial Builder to the existing frozen Experiment Judge journal", async () => {
     stored = project(); stored.candidates[0]!.patches = [];

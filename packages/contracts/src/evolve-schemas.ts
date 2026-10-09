@@ -674,6 +674,8 @@ export const EvolvedVersionSchema = z.object({
 export type EvolvedVersion = z.infer<typeof EvolvedVersionSchema>;
 
 export const ValidationRunSchema = z.object({
+  /** Assessment completion is distinct from baselineObservedAt physical execution time. */
+  completedAt: z.iso.datetime().optional(),
   evidenceFingerprint: z.string().optional(),
   id: z.string(),
   status: z.enum(["idle", "running", "completed", "failed"]),
