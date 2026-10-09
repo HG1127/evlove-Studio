@@ -2,6 +2,7 @@
 // 浏览器直连各家官方接口；密钥仅保存在本浏览器 localStorage，只发给所选供应商。
 // 全部 13 个 AI 环节沿用 service.ts 的 system + JSON Schema + zod 校验管线。
 // JSON 输出可靠性策略：schema 同时写进提示词与 response_format；校验失败自动带错误重试一次。
+import {callCompatibleResponses,type CompatibleResponsesFormat} from "@evolution/adapters";
 import type { ZodType } from "zod";
 import { ZodError } from "zod";
 
@@ -310,47 +311,26 @@ type StructuredCall = {
 
 // ===== OpenAI 官方（Responses API）=====
 // GPT-5.6 系列官方通过 Responses API 使用。BYOK 浏览器模式仍可能受到 OpenAI CORS 限制；
-// 生产环境应通过服务端 AI Gateway/Vault 代理该请求。
+// 生产环境可通过自定义后端默认连接直接调用；无需依赖 AI Gateway。
+// Compatibility shim: Responses HTTP mechanics live in @evolution/adapters.
 async function callOfficialOpenAIResponsesText(args: StructuredCall): Promise<string> {
-  const { resolved, imageDataUrls } = args;
-  const note = args.correction
-    ? `\n\nYour previous reply failed validation with: ${args.correction}. Reply again with ONLY a corrected JSON object.`
-    : "";
-  const userContent: Array<Record<string, unknown>> = [
-    { type: "input_text", text: `${args.user}${note}` },
-    ...imageDataUrls.map((url) => ({ type: "input_image", image_url: url, detail: "auto" })),
-  ];
-  const response = await providerFetch(`${resolved.baseUrl}/responses`, {
-    method: "POST", signal: callSignal(args),
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${resolved.config.apiKey}` },
-    body: JSON.stringify({
-      model: resolved.config.model,
-      store: false,
-      ...(args.promptCacheKey ? { prompt_cache_key: args.promptCacheKey } : {}),
-      input: [
-        { role: "developer", content: [{ type: "input_text", text: `${args.system}\n\n${JSON_INSTRUCTION}` }] },
-        { role: "user", content: userContent },
-      ],
-      text: {
-        verbosity: "medium",
-        format: { type: "json_schema", name: args.schema.name, strict: true, schema: args.schema.schema },
-      },
-      max_output_tokens: args.maxOutputTokens ?? 24000,
-    }),
-  }, true);
-  const json = await response.json().catch(() => ({})) as {
-    error?: { message?: string };
-    output_text?: string;
-    output?: Array<{ content?: Array<{ type?: string; text?: string }> }>;
-  };
-  if (!response.ok) throw Object.assign(new Error(errorMessage(response.status, json)), { httpStatus: response.status });
-  if (json.output_text) return json.output_text;
-  for (const item of json.output ?? []) {
-    for (const content of item.content ?? []) {
-      if (content.type === "output_text" && content.text) return content.text;
-    }
-  }
-  throw new Error("OpenAI Responses API 响应中没有 output_text");
+  const {resolved}=args;
+  const note=args.correction
+    ?"\n\nYour previous reply failed validation with: "+args.correction+". Reply again with ONLY a corrected JSON object."
+    :"";
+  const formats:CompatibleResponsesFormat[]=["json-schema","json-object","prompt-json"];
+  const cacheKey=JSON.stringify(["responses",resolved.preset.id,resolved.baseUrl,resolved.config.model]);
+  const cached=readFormatCache()[cacheKey];
+  const result=await callCompatibleResponses({
+    baseUrl:resolved.baseUrl,apiKey:resolved.config.apiKey,model:resolved.config.model,
+    system:args.system,user:args.user+note,schema:args.schema,imageDataUrls:args.imageDataUrls,
+    maxOutputTokens:args.maxOutputTokens??24000,promptCacheKey:args.promptCacheKey,
+    verbosity:resolved.preset.id==="openai"?"medium":undefined,
+    signal:callSignal(args),preferredFormat:typeof cached==="number"?formats[cached]:undefined,
+    request:(url,init)=>providerFetch(url,init,resolved.preset.cors==="no"),errorMessage,
+  });
+  writeFormatCache(cacheKey,formats.indexOf(result.format));
+  return result.text;
 }
 
 // ===== OpenAI 兼容（/chat/completions）=====
@@ -414,8 +394,8 @@ async function callOpenaiKindText(args: StructuredCall): Promise<string> {
       return await callOfficialOpenAIResponsesText(args);
     } catch (error) {
       const status = (error as { httpStatus?: number }).httpStatus ?? 0;
-      // Responses 路径不存在、或不支持 strict 结构化输出：回落到 chat 协议的三级降级，而不是一把抛错
-      if (status !== 400 && status !== 404 && status !== 405) throw error;
+      // Only a missing protocol endpoint may switch to Chat; format negotiation stays within Responses.
+      if (status !== 404 && status !== 405) throw error;
     }
   }
   const formats: unknown[] = [
