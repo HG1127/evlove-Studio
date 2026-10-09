@@ -1002,7 +1002,7 @@ export async function retryFailedExperimentCases(project: EvolveProject, inputCa
 
 // ===== POST /api/v1/runner/validation =====
 
-export type ValidationOptions = { retryFailedOnly?: boolean; skipFastGate?: boolean };
+export type ValidationOptions = { retryFailedOnly?: boolean; skipFastGate?: boolean; forceJudgeRefresh?: boolean };
 
 export async function runValidation(project: EvolveProject, inputCandidate: Candidate, onProgress?: (done: number, total: number, phase?: string) => void, options?: ValidationOptions): Promise<ValidationRun> {
   // Runtime migration for persisted projects: compact duplicate/fallback rubric rows before binding
@@ -1012,7 +1012,7 @@ export async function runValidation(project: EvolveProject, inputCandidate: Cand
   // retryFailedOnly may reuse the previous answer sheet only for the exact same artifact binding.
   // skipFastGate is a control-flow hint and must survive a repaired Candidate fingerprint change.
   const effectiveOptions: ValidationOptions | undefined = options
-    ? { skipFastGate: options.skipFastGate, retryFailedOnly: normalizedProject.validationRun.evidenceFingerprint === binding ? options.retryFailedOnly : undefined }
+    ? { skipFastGate: options.skipFastGate, forceJudgeRefresh: options.forceJudgeRefresh, retryFailedOnly: normalizedProject.validationRun.evidenceFingerprint === binding ? options.retryFailedOnly : undefined }
     : undefined;
   const result = await runValidationUnbound(normalizedProject, inputCandidate, onProgress, effectiveOptions);
   return { ...result, evidenceFingerprint: binding };
@@ -1071,7 +1071,7 @@ async function runValidationUnbound(project: EvolveProject, inputCandidate: Cand
       const candidateFast = await executeValidationCases({ adapter, project: parsed, testCases: critical, variant: candidate, batchSize, concurrency: 2, onProgress: (done) => onProgress?.(done, critical.length, "Fast Gate · 候选关键标准") });
       try {
         onProgress?.(critical.length, critical.length, "Fast Gate · 候选 Hard Rubric Judge");
-        const candidateEval = applySupplementalEvidenceToEvaluation(parsed, candidate, await evaluateRuns({testCases:critical,runs:candidateFast,context:{mode:"holdout-fast",candidate,project:evaluationProjectContext(parsed)}}));
+        const candidateEval = applySupplementalEvidenceToEvaluation(parsed, candidate, await evaluateRuns({ forceRefresh: options?.forceJudgeRefresh, testCases:critical,runs:candidateFast,context:{mode:"holdout-fast",candidate,project:evaluationProjectContext(parsed)}}));
         const fastHard=hardRubricFailures(parsed,candidateEval);
         const fastUnverified=unverifiedHardRubricCriteria(parsed,candidateEval);
         const externalUnverified=fastUnverified.filter((criterion)=>!criterionCanUseLocalSnapshotEvidence(parsed,criterion));
@@ -1083,7 +1083,7 @@ async function runValidationUnbound(project: EvolveProject, inputCandidate: Cand
         // Candidate survived its hard probes. Only now pay for the baseline comparison needed to detect regression.
         onProgress?.(0, critical.length, "Fast Gate · 回归基线关键标准");
         const baselineFast = await executeValidationCases({ adapter, project: parsed, testCases: critical, variant: baselineVariant, batchSize, concurrency: 2, onProgress: (done) => onProgress?.(done, critical.length, "Fast Gate · 回归基线关键标准") });
-        const baseEval = await evaluateRuns({testCases:critical,runs:baselineFast,context:{mode:"holdout-fast",project:evaluationProjectContext(parsed)}});
+        const baseEval = await evaluateRuns({ forceRefresh: options?.forceJudgeRefresh, testCases:critical,runs:baselineFast,context:{mode:"holdout-fast",project:evaluationProjectContext(parsed)}});
         const fastRegression=validationRegression(parsed, candidateEval, baseEval);
         if(fastRegression){
           const checks=[{label:"Safety",status:"pass" as const,detail:candidateEval.safety},{label:"关键能力回归",status:"fail" as const,detail:`候选关键标准通过，但相对同卷基线出现已验证回归；候选 ${candidateEval.accuracy}/${candidateEval.completeness} vs 基线 ${baseEval.accuracy}/${baseEval.completeness}`}];
@@ -1112,10 +1112,15 @@ async function runValidationUnbound(project: EvolveProject, inputCandidate: Cand
     && reusableHoldoutBaseline(suite, cachedHoldout!.runs, cachedHoldout!.evaluation);
   let baselineRuns: TargetRunResult[];
   let baselineHoldout: EvaluationResult;
+  let baselineObservedAt: number;
   let runs: TargetRunResult[];
   let evaluation: EvaluationResult;
   // 补考模式：沿用上次成功作答，只重跑两张卷里执行失败的题，再重走评审与发布审查。
-  const canRetryFailed = options?.retryFailedOnly && canRetryHoldoutFailures(suite, prior, candidate.id, roundFingerprint);
+  const priorObservationFresh = Number.isFinite(prior.baselineObservedAt)
+    && Date.now() - (prior.baselineObservedAt ?? 0) >= 0
+    && Date.now() - (prior.baselineObservedAt ?? 0) < LIVE_TARGET_OBSERVATION_MAX_AGE_MS;
+  const canRetryFailed = options?.retryFailedOnly && canRetryHoldoutFailures(suite, prior, candidate.id, roundFingerprint)
+    && (!liveTarget || priorObservationFresh);
   if (canRetryFailed) {
     const failedIndexesOf = (source: TargetRunResult[]) => source.map((run, index) => (run.error ? index : -1)).filter((index) => index >= 0);
     const mergeByIndexes = (source: TargetRunResult[], indexes: number[], rerun: TargetRunResult[]) => source.map((run, index) => {
@@ -1135,39 +1140,49 @@ async function runValidationUnbound(project: EvolveProject, inputCandidate: Cand
       baselineCases.length ? executeValidationCases({ adapter, project: parsed, testCases: baselineCases, variant: baselineVariant, batchSize, concurrency: 2, onProgress: (done) => { baseDone = done; onProgress?.(baseDone + candDone, retryTotal, "补考盲测失败题"); } }) : Promise.resolve([]),
       candidateCases.length ? executeValidationCases({ adapter, project: parsed, testCases: candidateCases, variant: candidate, batchSize, concurrency: 2, onProgress: (done) => { candDone = done; onProgress?.(baseDone + candDone, retryTotal, "补考盲测失败题"); } }) : Promise.resolve([]),
     ]);
+    // A merged sheet is only as recent as its oldest retained execution evidence.
+    baselineObservedAt = baselineCases.length === suite.length ? Date.now() : prior.baselineObservedAt ?? 0;
     baselineRuns = mergeByIndexes(prior.baselineRuns, failedBaselineIndexes, rerunBase);
     runs = mergeByIndexes(prior.runs, failedRunIndexes, rerunCandidate);
     onProgress?.(retryTotal, retryTotal, "评审两张答卷");
-    const retryBaseHoldout = await evaluateRuns({ testCases: suite, runs: baselineRuns, context: { mode: "holdout", project: evaluationProjectContext(parsed) } });
-    setHoldoutBaseline(parsed.id, { fingerprint: roundFingerprint, suiteIds, runs: baselineRuns, evaluation: retryBaseHoldout });
-    const retryEval = applySupplementalEvidenceToEvaluation(parsed, candidate, await evaluateRuns({ testCases: suite, runs, context: { mode: "holdout", candidate, project: evaluationProjectContext(parsed) } }));
+    const retryBaseHoldout = await evaluateRuns({ forceRefresh: options?.forceJudgeRefresh, testCases: suite, runs: baselineRuns, context: { mode: "holdout", project: evaluationProjectContext(parsed) } });
+    setHoldoutBaseline(parsed.id, { fingerprint: roundFingerprint, suiteIds, observedAt: baselineObservedAt, runs: baselineRuns, evaluation: retryBaseHoldout });
+    const retryEval = applySupplementalEvidenceToEvaluation(parsed, candidate, await evaluateRuns({ forceRefresh: options?.forceJudgeRefresh, testCases: suite, runs, context: { mode: "holdout", candidate, project: evaluationProjectContext(parsed) } }));
     baselineHoldout = retryBaseHoldout;
     evaluation = retryEval;
-    setHoldoutBaseline(parsed.id, { fingerprint: roundFingerprint, suiteIds, runs: baselineRuns, evaluation: baselineHoldout });
+    setHoldoutBaseline(parsed.id, { fingerprint: roundFingerprint, suiteIds, observedAt: baselineObservedAt, runs: baselineRuns, evaluation: baselineHoldout });
   } else {
     // 断点复用：同一次失败重跑时，当前版本在同一套盲测题上的作答与评审直接沿用上次结果，
     // 不用把半程的时间和费用再付一遍；题集或当前版本变化时自动失效（重跑会重置存档）。
-    const reusableBaseline = prior.baselineContextFingerprint===roundFingerprint && Date.now()-(prior.baselineObservedAt??0)>=0 && Date.now()-(prior.baselineObservedAt??0)<LIVE_TARGET_OBSERVATION_MAX_AGE_MS && Boolean(prior.baselineEvaluation)
+    const reusableBaseline = prior.baselineContextFingerprint===roundFingerprint && priorObservationFresh && Boolean(prior.baselineEvaluation)
       && prior.baselineSuiteIds?.length === suiteIds.length
       && (prior.baselineSuiteIds ?? []).every((id, index) => id === suiteIds[index])
       && reusableHoldoutBaseline(suite, prior.baselineRuns, prior.baselineEvaluation);
     if (reusableBaseline && prior.baselineEvaluation) {
       onProgress?.(suite.length, totalRuns, "复用当前版本同卷作答");
       baselineRuns = prior.baselineRuns;
-      baselineHoldout = prior.baselineEvaluation;
+      baselineObservedAt = prior.baselineObservedAt ?? 0;
+      // Execution reuse does not imply Judge-result reuse on an explicit recheck.
+      baselineHoldout = options?.forceJudgeRefresh
+        ? await evaluateRuns({ testCases: suite, runs: baselineRuns, forceRefresh: true, context: { mode: "holdout", project: evaluationProjectContext(parsed) } })
+        : prior.baselineEvaluation;
       const batchSize = policy.batchArtifactRuntime ? policy.batchSize : 1;
       runs = await executeValidationCases({ adapter, project: parsed, testCases: suite, variant: candidate, batchSize, concurrency: 3, onProgress: (done) => onProgress?.(suite.length + done, totalRuns, adapter.runBatch && batchSize > 1 ? "批量候选同卷作答" : "候选同卷作答") });
       onProgress?.(totalRuns, totalRuns, "评审候选答卷");
-      evaluation = applySupplementalEvidenceToEvaluation(parsed, candidate, await evaluateRuns({ testCases: suite, runs, context: { mode: "holdout", candidate, project: evaluationProjectContext(parsed) } }));
-      setHoldoutBaseline(parsed.id, { fingerprint: roundFingerprint, suiteIds, runs: baselineRuns, evaluation: baselineHoldout });
+      evaluation = applySupplementalEvidenceToEvaluation(parsed, candidate, await evaluateRuns({ forceRefresh: options?.forceJudgeRefresh, testCases: suite, runs, context: { mode: "holdout", candidate, project: evaluationProjectContext(parsed) } }));
+      setHoldoutBaseline(parsed.id, { fingerprint: roundFingerprint, suiteIds, observedAt: baselineObservedAt, runs: baselineRuns, evaluation: baselineHoldout });
     } else if (cacheReusable && cachedHoldout) {
       onProgress?.(suite.length, totalRuns, "复用上一轮当前版本盲测对照");
       baselineRuns = cachedHoldout.runs;
-      baselineHoldout = cachedHoldout.evaluation;
+      baselineObservedAt = cachedHoldout.observedAt ?? 0;
+      baselineHoldout = options?.forceJudgeRefresh
+        ? await evaluateRuns({ testCases: suite, runs: baselineRuns, forceRefresh: true, context: { mode: "holdout", project: evaluationProjectContext(parsed) } })
+        : cachedHoldout.evaluation;
       const batchSize = policy.batchArtifactRuntime ? policy.batchSize : 1;
       runs = await executeValidationCases({ adapter, project: parsed, testCases: suite, variant: candidate, batchSize, concurrency: 3, onProgress: (done) => onProgress?.(suite.length + done, totalRuns, adapter.runBatch && batchSize > 1 ? "批量候选同卷作答" : "候选同卷作答") });
       onProgress?.(totalRuns, totalRuns, "评审候选答卷");
-      evaluation = applySupplementalEvidenceToEvaluation(parsed, candidate, await evaluateRuns({ testCases: suite, runs, context: { mode: "holdout", candidate, project: evaluationProjectContext(parsed) } }));
+      evaluation = applySupplementalEvidenceToEvaluation(parsed, candidate, await evaluateRuns({ forceRefresh: options?.forceJudgeRefresh, testCases: suite, runs, context: { mode: "holdout", candidate, project: evaluationProjectContext(parsed) } }));
+      setHoldoutBaseline(parsed.id, { fingerprint: roundFingerprint, suiteIds, observedAt: baselineObservedAt, runs: baselineRuns, evaluation: baselineHoldout });
     } else {
       // 两张考卷互不依赖；对于支持 runBatch 的 Artifact Runtime，按候选上下文分别批量执行，
       // 避免同一 Source/Candidate 被每一道题重复传输。
@@ -1178,13 +1193,14 @@ async function runValidationUnbound(project: EvolveProject, inputCandidate: Cand
         executeValidationCases({ adapter, project: parsed, testCases: suite, variant: baselineVariant, batchSize, concurrency: 3, onProgress: (done) => { baseDone = done; onProgress?.(baseDone + candDone, totalRuns, "盲测同卷批量作答"); } }),
         executeValidationCases({ adapter, project: parsed, testCases: suite, variant: candidate, batchSize, concurrency: 3, onProgress: (done) => { candDone = done; onProgress?.(baseDone + candDone, totalRuns, "盲测同卷批量作答"); } }),
       ]);
+      baselineObservedAt = Date.now();
       onProgress?.(totalRuns, totalRuns, "评审两张答卷");
-      const holdoutBase = await evaluateRuns({ testCases: suite, runs: baselineRuns, context: { mode: "holdout", project: evaluationProjectContext(parsed) } });
-      setHoldoutBaseline(parsed.id, { fingerprint: roundFingerprint, suiteIds, runs: baselineRuns, evaluation: holdoutBase });
-      const holdoutEval = applySupplementalEvidenceToEvaluation(parsed, candidate, await evaluateRuns({ testCases: suite, runs, context: { mode: "holdout", candidate, project: evaluationProjectContext(parsed) } }));
+      const holdoutBase = await evaluateRuns({ forceRefresh: options?.forceJudgeRefresh, testCases: suite, runs: baselineRuns, context: { mode: "holdout", project: evaluationProjectContext(parsed) } });
+      setHoldoutBaseline(parsed.id, { fingerprint: roundFingerprint, suiteIds, observedAt: baselineObservedAt, runs: baselineRuns, evaluation: holdoutBase });
+      const holdoutEval = applySupplementalEvidenceToEvaluation(parsed, candidate, await evaluateRuns({ forceRefresh: options?.forceJudgeRefresh, testCases: suite, runs, context: { mode: "holdout", candidate, project: evaluationProjectContext(parsed) } }));
       baselineHoldout = holdoutBase;
       evaluation = holdoutEval;
-      setHoldoutBaseline(parsed.id, { fingerprint: roundFingerprint, suiteIds, runs: baselineRuns, evaluation: baselineHoldout });
+      setHoldoutBaseline(parsed.id, { fingerprint: roundFingerprint, suiteIds, observedAt: baselineObservedAt, runs: baselineRuns, evaluation: baselineHoldout });
     }
   }
 
@@ -1310,7 +1326,7 @@ async function runValidationUnbound(project: EvolveProject, inputCandidate: Cand
     baselineRuns,
     // 当前版本同卷快照：万一后续要重跑验证，可复用省掉半程开销
     baselineEvaluation: baselineHoldout,
-    baselineSuiteIds: suiteIds,baselineContextFingerprint:roundFingerprint,baselineObservedAt:Date.now(),
+    baselineSuiteIds: suiteIds,baselineContextFingerprint:roundFingerprint,baselineObservedAt,
     // 补考轮保留上一轮分数，供验证页展示「旧 → 新」对比
     previousEvaluation: options?.retryFailedOnly ? prior.evaluation : undefined,
     checks,

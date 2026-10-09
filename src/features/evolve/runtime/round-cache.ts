@@ -61,6 +61,8 @@ export function holdoutBaselineFingerprint(project: EvolveProject): string {
 }
 
 export type HoldoutBaselineCache = {
+  /** Execution time, independent of when the same answer sheet was judged or cached again. */
+  observedAt?: number;
   fingerprint: string;
   suiteIds: string[];
   runs: TargetRunResult[];
@@ -120,12 +122,12 @@ export function setVisibleBaseline(projectId: string, fingerprint: string, basel
 
 export function getHoldoutBaseline(projectId: string, fingerprint: string, maxAgeMs = MAX_CACHE_AGE_MS): HoldoutBaselineCache | undefined {
   const hit = HOLDOUT_BASELINE.get(projectId);
-  const ageMs = hit ? Date.now() - hit.cachedAt : -1;
+  const ageMs = hit ? Date.now() - (hit.observedAt ?? hit.cachedAt) : -1;
   return hit && ageMs >= 0 && ageMs < maxAgeMs && hit.fingerprint === fingerprint ? structuredClone(hit) : undefined;
 }
 
 export function setHoldoutBaseline(projectId: string, cache: HoldoutBaselineCache) {
-  remember(HOLDOUT_BASELINE, projectId, { ...structuredClone(cache), cachedAt: Date.now() });
+  remember(HOLDOUT_BASELINE, projectId, { ...structuredClone(cache), observedAt: cache.observedAt ?? Date.now(), cachedAt: Date.now() });
 }
 
 /** 测试辅助：清空两个缓存（单测隔离用）。 */

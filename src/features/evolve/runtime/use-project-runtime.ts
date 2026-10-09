@@ -1072,7 +1072,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
     }
     try {
       const checkpoint = repairValidationCheckpoint(current, currentWinner);
-      const validation = checkpoint ?? await run("运行 Hidden Validation", () => runValidation(current, currentWinner, (done, total, phase) => reportProgress(`${phase ?? "运行 Hidden Validation"}`, done, total, phase, "evaluate")));
+      const validation = checkpoint ?? await run("运行 Hidden Validation", () => runValidation(current, currentWinner, (done, total, phase) => reportProgress(`${phase ?? "运行 Hidden Validation"}`, done, total, phase, "evaluate"), { forceJudgeRefresh: true }));
       const loopProject = projectRef.current;
       const loopCandidate = loopProject.candidates.find((candidate) => candidate.id === currentWinner.id) ?? currentWinner;
       const loop = await run(validation.recommendation === "release" ? "Gate F · Artifact Acceptance" : "失败项自动修复与复验", () => runArtifactAcceptanceLoop({
@@ -1092,7 +1092,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
   const retryFailedValidation = useCallback(async () => {
     if (!winner) throw new Error("没有可验证的 Winner");
     try {
-      const validation = await run("补考失败题", () => runValidation(project, winner, (done, total, phase) => reportProgress(`${phase ?? "补考失败题"}`, done, total, phase, "evaluate"), { retryFailedOnly: true }));
+      const validation = await run("补考失败题", () => runValidation(project, winner, (done, total, phase) => reportProgress(`${phase ?? "补考失败题"}`, done, total, phase, "evaluate"), { retryFailedOnly: true, forceJudgeRefresh: true }));
       const loop = await run("补考后 Artifact Acceptance", () => runArtifactAcceptanceLoop({ project, candidate: winner, validation, onProgress: (label) => setStatus((() => { const elapsedSeconds=Math.round((Date.now()-runStartedMsRef.current)/1000); return { busy:true,label,phase:label,elapsedSeconds,startedAt:new Date(runStartedMsRef.current).toISOString(), provider:resolveProjectOperationConnections("artifact-acceptance",projectRef.current.aiProfile)[0]?.connection.label, model:resolveProjectOperationConnections("artifact-acceptance",projectRef.current.aiProfile)[0]?.model }; })()) }));
       applyArtifactValidated(loop);
       return loop.validation;
