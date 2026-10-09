@@ -42,6 +42,13 @@ function completedAtLeast(project: EvolveProject, round: number, phase: typeof P
   return PHASE_ORDER.indexOf(checkpoint.completedPhase) >= PHASE_ORDER.indexOf(phase);
 }
 
+/** A saved diagnose checkpoint records the attempt; its evidence still must pass before Plan. */
+function diagnosisEvidenceReady(project: EvolveProject) {
+  const diagnosis = project.diagnosis;
+  return Boolean(diagnosis && diagnosis.confidence >= 0.55 && diagnosis.evidence.length
+    && resolveEvidenceRefs(project, diagnosis.evidence).some(ref => ref.verified));
+}
+
 function stamp(project: EvolveProject, now: string): EvolveProject {
   return { ...project, updatedAt: now };
 }
@@ -260,7 +267,8 @@ export async function advanceServerCampaignPreparation(
     return { control: "continue", phase: "problem", project, reason: `Round ${round} Server Problem Analysis 已完成` };
   }
 
-  if (!completedAtLeast(project, round, "diagnose")) {
+  if (!completedAtLeast(project, round, "diagnose")
+    || (!completedAtLeast(project, round, "plan") && !diagnosisEvidenceReady(project))) {
     const selected = project.problems.find((problem) => problem.id === project.selectedProblemId) ?? prioritizeProblems(project.problems)[0]?.problem;
     if (!selected) {
       const reason = "[server-campaign-problem-pending] 找不到本轮选中问题，无法进入根因诊断。";
@@ -282,7 +290,7 @@ export async function advanceServerCampaignPreparation(
     });
     const diagnosis = { ...generated, evidenceRefs: resolveEvidenceRefs(project, generated.evidence) };
     project = stamp(checkpoint({ ...project, diagnosis, stage: "diagnosis" }, round, "diagnose", now), now);
-    if (diagnosis.confidence < 0.55 || !diagnosis.evidence.length || !diagnosis.evidenceRefs.some((ref) => ref.verified)) {
+    if (!diagnosisEvidenceReady(project)) {
       const reason = "[server-campaign-diagnosis-pending] 根因证据不足或无法定位到当前 Source / Baseline Trace；保留本轮断点，禁止继续生成 Candidate。";
       return { control: "stop", phase: "diagnose", project: capabilityPause(project, reason, "diagnosis", now), reason };
     }

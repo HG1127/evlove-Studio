@@ -209,5 +209,11 @@ describe("server campaign preparation",()=>{
     expect(second.control).toBe("stop");
     expect(second.reason).toContain("server-campaign-diagnosis-pending");
     expect(second.project.candidates).toHaveLength(0);
+    const retried = await advanceServerCampaignPreparation(second.project, ai);
+    expect(retried.control).toBe("stop");
+    expect(retried.reason).toContain("server-campaign-diagnosis-pending");
+    expect(retried.project.diagnosis?.evidenceRefs.every(ref => !ref.verified)).toBe(true);
+    expect(retried.project.baselineRun).toEqual(second.project.baselineRun);
+    expect(retried.project.candidates).toHaveLength(0);
   });
 });

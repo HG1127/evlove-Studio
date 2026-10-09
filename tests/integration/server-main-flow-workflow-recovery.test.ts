@@ -96,6 +96,68 @@ function healthyModel() {
       criteria: stored.acceptanceRubric.map(c => ({ criterionId: c.id, score, pass: score >= 80, evidence: [evidence], gaps: [], testCaseIds: ids })) };
   });
 }
+function diagnosisProject() {
+  const p = legacy(); p.stage = "problem";
+  p.campaign = { ...p.campaign, status: "running", stopReason: undefined, checkpoint: { round: 1, completedPhase: "problem", at } };
+  p.problems = [{ id: "P", title: "Missing detail", impact: 90, severity: "high", status: "selected", summary: "Missing detail",
+    rootCause: "Missing mechanism", evidence: ["original input"], evidenceRefs: [], confidence: .9, affectedComponent: "source" }];
+  p.selectedProblemId = "P";
+  p.gates = p.gates.map(g => g.id === "target-ready" ? g : { ...g, status: "pending" as const, approvedAt: undefined });
+  return p;
+}
+
+describe("diagnosis capability recovery through actual durable entry", () => {
+  it.each(["healthy", "weak"])("remeasures a weak saved Diagnosis before Plan on %s retry with a recent Baseline", async kind => {
+    stored = diagnosisProject(); healthyModel();
+    const healthy = m.ai.getMockImplementation()!;
+    const weak = async (role: string, payload: unknown) => {
+      const result = await healthy(role, payload);
+      return role === "diagnose" ? { ...result, confidence: .3 } : result;
+    };
+    m.ai.mockImplementation(weak);
+    expect(await executeServerControlStep(input, buildServerHarnessPlan(stored), 0)).toMatchObject({ result: { status: "waiting-action" } });
+    expect(stored.campaign.serverRecoveryWait?.marker).toBe("diagnosis-pending");
+    expect(stored.campaign.checkpoint?.completedPhase).toBe("diagnose");
+    const paused = structuredClone(stored);
+    vi.setSystemTime(new Date(Date.parse(at) + 60_000));
+    const retry = { ...input, controlJobId: "diagnosis-retry" }; m.job.mockResolvedValue({ ...job, id: retry.controlJobId });
+    m.ai.mockImplementation(kind === "healthy" ? healthy : weak).mockClear(); m.browser.mockClear();
+    const plan = await planMissionStep(retry, 0);
+    expect(plan.decision.action).toBe("run-campaign");
+    const result = await executeServerControlStep(retry, plan, 0);
+    expect(m.ai.mock.calls.map(call => call[0])).toEqual(["diagnose"]);
+    expect(stored.baselineRun).toEqual(paused.baselineRun); expect(m.browser).not.toHaveBeenCalled();
+    expect(stored.candidates).toHaveLength(0);
+    expect(stored.gates.find(g => g.id === "experiment-ready")?.status).toBe("pending");
+    if (kind === "weak") {
+      expect(result).toMatchObject({ result: { status: "waiting-action" } });
+      expect(stored.campaign.status).toBe("paused"); expect(stored.diagnosis?.confidence).toBe(.3);
+      expect(stored.campaign.serverRecoveryWait?.marker).toBe("diagnosis-pending");
+      return;
+    }
+    expect(result).toEqual({ control: "continue" });
+    expect(stored.diagnosis?.confidence).toBe(.9);
+    expect(stored.diagnosis?.evidenceRefs.some(ref => ref.verified)).toBe(true);
+    const trusted = structuredClone(stored.diagnosis);
+    const next = await planMissionStep(retry, 1);
+    expect(await executeServerControlStep(retry, next, 1)).toEqual({ control: "continue" });
+    expect(m.ai.mock.calls.map(call => call[0])).toEqual(["diagnose", "plan"]);
+    expect(stored.diagnosis).toEqual(trusted);
+    expect(stored.candidates.map(c => c.id)).toEqual(["fresh-candidate"]);
+  });
+
+  it("keeps an already completed trusted Diagnosis without another diagnose call", async () => {
+    stored = diagnosisProject(); healthyModel();
+    expect(await executeServerControlStep(input, buildServerHarnessPlan(stored), 0)).toEqual({ control: "continue" });
+    const trusted = structuredClone(stored.diagnosis);
+    expect(trusted?.evidenceRefs.some(ref => ref.verified)).toBe(true);
+    m.ai.mockClear(); m.browser.mockClear();
+    const plan = await planMissionStep(input, 1);
+    expect(await executeServerControlStep(input, plan, 1)).toEqual({ control: "continue" });
+    expect(m.ai.mock.calls.map(call => call[0])).toEqual(["plan"]);
+    expect(stored.diagnosis).toEqual(trusted); expect(m.browser).not.toHaveBeenCalled();
+  });
+});
 describe("main flow recovery through actual durable entry", () => {
   it("writes a receipt for initial Builder failure and resumes only a different active control generation", async () => {
     stored = project();
