@@ -52,6 +52,8 @@ export function serverMainFlowWaitMarker(project: EvolveProject) {
 export function serverMainFlowRecoveryContext(project: EvolveProject) {
   return {
     schemaVersion: "server-main-flow-context-v1", missionId: project.id, objectType: project.objectType, stage: project.stage,
+    controlAiAttentionRequestId: serverControlAiWait(project)?.id ?? (project.campaign.serverRecoveryWait?.marker === "control-ai"
+      ? project.campaign.serverRecoveryWait.controlAiAttentionRequestId : undefined),
     contract: campaignScoringInputFingerprint(project),
     sources: project.sourceArtifacts, target: project.targetConnection, goal: project.goal, command: project.evolutionCommand,
     protectedItems: project.protectedItems, editableItems: project.editableItems,
@@ -107,6 +109,9 @@ export function serverMainFlowRecoveryWait(project: EvolveProject) {
     || receipt.round !== project.campaign.currentRound + 1 || receipt.stage !== project.stage
     || receipt.reason !== project.campaign.stopReason || receipt.marker !== serverMainFlowWaitMarker(project)
     || receipt.contextFingerprint !== serverMainFlowContextFingerprint(project) || !serverMainFlowRecoveryReadiness(project)) return undefined;
+  if (receipt.marker === "control-ai" && (!receipt.controlAiAttentionRequestId
+    || serverControlAiWait(project)?.id !== receipt.controlAiAttentionRequestId
+    || project.attentionRequests?.filter(r => r.id === receipt.controlAiAttentionRequestId).length !== 1)) return undefined;
   return receipt;
 }
 
@@ -119,8 +124,18 @@ export function serverMainFlowRecoveryActive(project: EvolveProject) {
     || project.campaign.status !== "idle" || receipt.missionId !== project.id
     || receipt.stage !== project.stage || receipt.round !== project.campaign.currentRound + 1
     || receipt.contextFingerprint !== serverMainFlowContextFingerprint(project) || !serverMainFlowRecoveryReadiness(project)) return false;
-  return receipt.marker === serverMainFlowWaitMarker({ ...project,
-    campaign: { ...project.campaign, status: "paused", stopReason: receipt.reason } });
+  const recognitionView = { ...project, campaign: { ...project.campaign, status: "paused" as const, stopReason: receipt.reason } };
+  if (receipt.marker === "control-ai") {
+    const owned = project.attentionRequests?.filter(r => r.id === receipt.controlAiAttentionRequestId);
+    if (!receipt.controlAiAttentionRequestId || owned?.length !== 1 || owned[0]!.status !== "resolved"
+      || !owned[0]!.resolvedAt) return false;
+    // Only the receipt's resolved machine request is pending in this recognition view.
+    // Persisted attention history and every other approval remain untouched.
+    recognitionView.attentionRequests = project.attentionRequests?.map(r => r.id === receipt.controlAiAttentionRequestId
+      ? { ...r, status: "pending" as const } : r);
+    if (serverControlAiWait(recognitionView)?.id !== receipt.controlAiAttentionRequestId) return false;
+  }
+  return receipt.marker === serverMainFlowWaitMarker(recognitionView);
 }
 /** Only checkpoint preservation, after the explicit entry admitted and SHA-checked this generation. */
 export function serverMainFlowRecoveryCheckpoint(project: EvolveProject) {

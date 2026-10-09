@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { goalReadiness } from "@evolution/core";
 import { createEvolutionEvent, type EvolveProject, type EvolutionEvent, type EvolutionWorkflowRunInput } from "@evolution/contracts";
 import { canRemeasureLegacyServerPlan, remeasureLegacyServerPlan, recoverServerMainFlowWait,
-  serverMainFlowContextFingerprint, serverMainFlowRecoveryWait, serverMainFlowRecoveryWire, serverMainFlowWaitMarker, serverExperimentRecoveryWait } from "@evolution/harness";
+  serverMainFlowContextFingerprint, serverMainFlowRecoveryWait, serverMainFlowRecoveryWire, serverMainFlowWaitMarker, serverExperimentRecoveryWait, serverControlAiWait } from "@evolution/harness";
 
 export function serverMainFlowRecoveryDigest(project: EvolveProject) {
   return createHash("sha256").update(serverMainFlowRecoveryWire(project)).digest("hex");
@@ -21,6 +21,7 @@ export function checkpointServerMainFlowWait(project: EvolveProject, controlJobI
     round: project.campaign.currentRound + 1, stage: project.stage, marker,
     reason: project.campaign.stopReason!, inputFingerprint: serverMainFlowRecoveryDigest(project),
     contextFingerprint: serverMainFlowContextFingerprint(project), status: "waiting",
+    controlAiAttentionRequestId: marker === "control-ai" ? serverControlAiWait(project)?.id : undefined,
   } } };
 }
 

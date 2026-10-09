@@ -957,6 +957,8 @@ export const ServerCampaignRecoveryWaitSchema = z.object({
   contextFingerprint: z.string().min(1),
   status: z.enum(["waiting", "recovering"]),
   resumedByControlJobId: z.string().min(1).optional(),
+  /** Exact machine capability request retained when a control-AI wait is resolved. */
+  controlAiAttentionRequestId: z.string().min(1).optional(),
 });
 export type ServerCampaignRecoveryWait = z.infer<typeof ServerCampaignRecoveryWaitSchema>;
 export const EvolutionCampaignSchema = z.object({
