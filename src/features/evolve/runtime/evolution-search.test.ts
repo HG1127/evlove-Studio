@@ -45,7 +45,7 @@ function project(archive: EvolutionArchiveEntry[], exploreRatio = 0): EvolveProj
 }
 
 function acceptedProject(): EvolveProject {
-    const frozen = { sourceArtifactId: demoProject.sourceArtifacts[0]!.id, snapshotHash: "accepted-hash", blobId: "accepted-blob", sha256: "accepted-sha", size: 8, name: "result.txt", mimeType: "text/plain", verifiedAt: "2026-09-28T00:00:00.000Z", checks: ["hash"], limitations: [] };
+    const frozen = { sourceArtifactId: demoProject.sourceArtifacts[0]!.id, snapshotHash: "accepted-hash", blobId: "accepted-blob", sha256: "accepted-sha", size: 8, name: "result.md", mimeType: "text/markdown", verifiedAt: "2026-09-28T00:00:00.000Z", checks: ["hash"], limitations: [] };
     const accepted = CandidateSchema.parse({ id:"C-auto", name:"达标版本", change:"满足要求", artifactSnapshots:[{ id:"s-auto", sourceArtifactId:frozen.sourceArtifactId, name:frozen.name, mimeType:frozen.mimeType, content:"accepted", contentHash:frozen.snapshotHash, frozenArtifact:frozen, createdAt:new Date().toISOString() }] });
     const p = {
       ...demoProject,
@@ -69,6 +69,21 @@ describe("autonomous campaign completion", () => {
     expect(campaignStopReason(p)).toContain("进化要求已全部通过");
   });
 
+  it("does not declare completion for a consistently renamed receipt in the wrong source format", () => {
+    const p = acceptedProject();
+    expect(campaignGoalSatisfied(p)).toBe(true);
+    const champion = p.searchChampion!;
+    const snapshot = champion.candidate!.artifactSnapshots[0]!;
+    snapshot.name = "result.txt";
+    snapshot.mimeType = "text/plain";
+    snapshot.frozenArtifact = { ...snapshot.frozenArtifact!, name: snapshot.name, mimeType: snapshot.mimeType };
+    champion.artifactAcceptance!.frozenArtifacts = [snapshot.frozenArtifact];
+    const binding = evidenceFingerprint(p, champion.candidate!);
+    champion.validation!.evidenceFingerprint = binding;
+    champion.artifactAcceptance!.evidenceFingerprint = binding;
+    expect(campaignGoalSatisfied(p)).toBe(false);
+    expect(campaignStopReason(p)).toBeUndefined();
+  });
   it("does not stop on an old acceptance after the source or rubric changes", () => {
     const p = acceptedProject();
     expect(campaignGoalSatisfied({ ...p, goal: p.goal + " changed" })).toBe(false);

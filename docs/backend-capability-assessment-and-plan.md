@@ -1,5 +1,12 @@
 # Backend Capability Assessment and Delivery Plan
 
+## 2026-10-09 — Independent full-suite format fixture correction (local only)
+
+Independent CI candidate `40c3ab4` covered 317 files (2410 passed / 17 failed / one live Sandbox skip), so its complete local gate remains FAILED. All 17 failures were older accepted fixtures that paired the original Markdown Source with TXT/HTML Snapshot and receipt names, or changed only a Git duplicate-path Snapshot. Six test files now establish consistent original-format identities before exercising the existing completion/release/delivery/human-review assertions. Git ordinary/case-insensitive duplicate paths still fail before any executor call; five additional wrong-format cases fail even after matching receipts and evidence rebinding. Production guards and Gate F are unchanged.
+
+All six affected suites passed 101 cases; the final broader run passed 34 files / 427 cases. Architecture, full lint, TypeScript/production build, Runner11 and compiled readonly UI (five routes/mobile390/denied storage/no errors or writes) passed. Evidence is recorded in [regression handoff](acceptance-format-regressions-handoff.md) and `D:\Downloads\evolution-os-smoke-temp\format-fixtures-development-handoff.json`. A new exact-SHA independent full gate is required before integration. Production remains `e3482e75`; hosted billing/allowance, custom model/operator/export setup and actual Mission acceptance remain deferred or unverified. The main-flow machine-pause recovery branch is a separate implementation, not proven by this fixture correction.
+
+
 ## 2026-10-09 — Original text format through Candidate, same-Hidden, Gate F and download (local only)
 
 Parallel audit and regression reproduced HTML bytes being frozen and delivered under a jointly matching `candidate.zip` name. A shared Core original-text-format check now rejects that boundary before freeze, in frozen-set identity/settlement and delivery; Server passes Source to Experiment, current-version evidence, Hidden fingerprint and Gate F verification. The existing one-attempt construction recovery handles an invalid output suffix. Same-format rename, case and HTML/HTM aliases remain valid, with no post-acceptance rename/regeneration or binary scope expansion.

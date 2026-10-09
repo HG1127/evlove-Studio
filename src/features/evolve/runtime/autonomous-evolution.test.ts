@@ -79,7 +79,7 @@ describe("autonomous evolution policy", () => {
     const p = project({
       validationRun: { ...demoProject.validationRun, status: "completed", recommendation: "release", candidateId: "C", evidenceFingerprint: "fp" },
       experimentRun: { ...demoProject.experimentRun, status: "completed", winnerId: "C" },
-      candidates: [{ id: "C", name: "C", change: "x", artifactSnapshots: [{ id: "s", sourceArtifactId: demoProject.sourceArtifacts[0]!.id, name: "a.txt", mimeType: "text/plain", content: "ok", contentHash: "h", createdAt: new Date().toISOString() }] }],
+      candidates: [{ id: "C", name: "C", change: "x", artifactSnapshots: [{ id: "s", sourceArtifactId: demoProject.sourceArtifacts[0]!.id, name: "a.md", mimeType: "text/markdown", content: "ok", contentHash: "h", createdAt: new Date().toISOString() }] }],
       artifactAcceptance: { ...demoProject.artifactAcceptance, status: "passed", hardGatePass: true, candidateId: "C", evidenceFingerprint: "fp" },
       outputArtifacts: [],
     } as unknown as EvolveProject);
@@ -89,7 +89,7 @@ describe("autonomous evolution policy", () => {
   it("does not report an online mission complete until live Release, Lesson and Next Queue all exist", () => {
     const candidate = {
       id:"online-candidate",name:"online",change:"x",patches:[],artifactBuildStatus:"ready" as const,
-      artifactSnapshots:[{id:"s-online",sourceArtifactId:demoProject.sourceArtifacts[0]!.id,name:"a.txt",mimeType:"text/plain",content:"ok",contentHash:"h-online",createdAt:new Date().toISOString()}],
+      artifactSnapshots:[{id:"s-online",sourceArtifactId:demoProject.sourceArtifacts[0]!.id,name:"a.md",mimeType:"text/markdown",content:"ok",contentHash:"h-online",createdAt:new Date().toISOString()}],
     } as unknown as EvolveProject["candidates"][number];
     const base = project({
       targetConnection:{adapter:"http",connectionId:"production",status:"connected",label:"Production"},
@@ -97,7 +97,7 @@ describe("autonomous evolution policy", () => {
       candidates:[candidate],
       validationRun:{...demoProject.validationRun,status:"completed",validationMode:"full",candidateId:candidate.id,recommendation:"release",evaluation:{...demoProject.baselineRun.result!,demoJudged:false},runs:demoProject.hiddenEvalSuite.map((testCase)=>({testCaseId:testCase.id,output:"ok",latencyMs:1,cost:0,trace:[],verificationStatus:"verified" as const})),baselineRuns:demoProject.hiddenEvalSuite.map((testCase)=>({testCaseId:testCase.id,output:"ok",latencyMs:1,cost:0,trace:[],verificationStatus:"verified" as const})),baselineEvaluation:demoProject.baselineRun.result,baselineSuiteIds:demoProject.hiddenEvalSuite.map((testCase)=>testCase.id),baselineContextFingerprint:"same-paper",baselineObservedAt:123456},
       artifactAcceptance:{...demoProject.artifactAcceptance,status:"passed",hardGatePass:true,candidateId:candidate.id,frozenArtifacts:frozenFor(candidate)},
-      outputArtifacts:[{id:"online-output",projectId:demoProject.id,round:1,versionLabel:"S1",candidateId:candidate.id,name:"a.txt",mimeType:"text/plain",kind:"primary",content:"ok",description:"accepted",sourceArtifactIds:[demoProject.sourceArtifacts[0]!.id],isChampion:true,accepted:true,createdAt:new Date().toISOString()} as EvolveProject["outputArtifacts"][number]],
+      outputArtifacts:[{id:"online-output",projectId:demoProject.id,round:1,versionLabel:"S1",candidateId:candidate.id,name:"a.md",mimeType:"text/markdown",kind:"primary",content:"ok",description:"accepted",sourceArtifactIds:[demoProject.sourceArtifacts[0]!.id],isChampion:true,accepted:true,createdAt:new Date().toISOString()} as EvolveProject["outputArtifacts"][number]],
       release:{...demoProject.release,status:"idle",evidenceMode:"none"},
       lessons:[],
       nextQueue:[],

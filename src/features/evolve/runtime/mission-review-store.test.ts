@@ -1,17 +1,17 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { demoProject } from "../data/mock-project";
 import { CandidateSchema, type EvolveProject } from "../schemas";
-import { evidenceFingerprint, materializeAcceptedCandidatePackage } from "@evolution/core";
+import { assertDeliverablePackageIdentity, evidenceFingerprint, materializeAcceptedCandidatePackage } from "@evolution/core";
 import { acceptMissionOutputs, isMissionUserAccepted, missionArtifactFingerprint } from "./mission-review-store";
 import { getLocalProject } from "./local-store";
 
 function projectWithOutput(content="v1"): EvolveProject {
   const project={...structuredClone(demoProject),id:"mission-review-test"} as EvolveProject;
   const frozen={sourceArtifactId:"demo-prompt",snapshotHash:`hash-${content}`,blobId:`blob-${content}`,
-    name:"result.txt",mimeType:"text/plain",sha256:"a".repeat(64),size:content.length,
+    name:"result.md",mimeType:"text/markdown",sha256:"a".repeat(64),size:content.length,
     verifiedAt:"2026-09-17T00:00:00.000Z",checks:["roundtrip"],limitations:[]};
   const candidate=CandidateSchema.parse({id:"C1",name:"accepted",change:"edit",artifactSnapshots:[{
-    id:"snapshot-C1",sourceArtifactId:"demo-prompt",name:"result.txt",mimeType:"text/plain",
+    id:"snapshot-C1",sourceArtifactId:"demo-prompt",name:"result.md",mimeType:"text/markdown",
     content,contentHash:frozen.snapshotHash,frozenArtifact:frozen,createdAt:"2026-09-17T00:00:00.000Z",
   }]});
   project.candidates=[candidate];
@@ -26,6 +26,11 @@ function projectWithOutput(content="v1"): EvolveProject {
   project.artifactAcceptance={...project.artifactAcceptance,status:"passed",hardGatePass:true,
     candidateId:candidate.id,frozenArtifacts:[frozen],evidenceFingerprint:binding};
   project.outputArtifacts=materializeAcceptedCandidatePackage(project,candidate,project.artifactAcceptance);
+  expect(project.sourceArtifacts.find((item)=>item.id==="demo-prompt")).toMatchObject({
+    name:"research-agent-system-prompt.md",extension:"md",mimeType:"text/markdown",
+  });
+  // Establish valid exact package identity before tests mutate metadata, receipts, or content.
+  expect(assertDeliverablePackageIdentity(project)).toBe(candidate.id);
   return project;
 }
 
@@ -38,6 +43,27 @@ describe("mission user review",()=>{
     const persisted = getLocalProject(project.id)!;
     expect(persisted.userAcceptance?.fingerprint).toBe(missionArtifactFingerprint(project));
     expect(isMissionUserAccepted(persisted)).toBe(true);
+  });
+  it("rejects a jointly wrong text format before human acceptance even with rebound evidence",()=>{
+    const project=projectWithOutput();
+    const persistedBefore=structuredClone(getLocalProject(project.id));
+    const candidate=project.candidates[0]!,snapshot=candidate.artifactSnapshots[0]!;
+    const receipt=project.artifactAcceptance.frozenArtifacts![0]!;
+    snapshot.name=receipt.name="result.txt";
+    snapshot.mimeType=receipt.mimeType="text/plain";
+    Object.assign(snapshot.frozenArtifact!,{name:snapshot.name,mimeType:snapshot.mimeType});
+    const primary=project.outputArtifacts.find((item)=>item.kind==="primary")!;
+    primary.name=snapshot.name;primary.mimeType=snapshot.mimeType;
+    Object.assign(primary.frozenArtifact!,{name:snapshot.name,mimeType:snapshot.mimeType});
+    const binding=evidenceFingerprint(project,candidate);
+    project.validationRun.evidenceFingerprint=binding;
+    project.artifactAcceptance.evidenceFingerprint=binding;
+    expect(snapshot.content).toBe("v1");
+    expect(primary.content).toBe(snapshot.content);
+    expect(()=>materializeAcceptedCandidatePackage(project,candidate,project.artifactAcceptance)).toThrow(/冻结身份尚未一致/);
+    expect(()=>acceptMissionOutputs(project)).toThrow(/Gate F 冻结证据/);
+    expect(isMissionUserAccepted(project)).toBe(false);
+    expect(getLocalProject(project.id)).toEqual(persistedBefore);
   });
   it("rejects a mixed Candidate package before human acceptance",()=>{
     const project=projectWithOutput();

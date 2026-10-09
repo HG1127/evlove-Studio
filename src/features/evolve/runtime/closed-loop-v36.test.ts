@@ -16,7 +16,7 @@ function ready() {
     validationRun: { ...demoProject.validationRun, status: "completed", validationMode: "full", candidateId: "C", recommendation: "release", evaluation: demoProject.baselineRun.result },
     artifactAcceptance: { ...demoProject.artifactAcceptance, candidateId: "C", status: "passed", hardGatePass: true },
   });
-  project.candidates = [CandidateSchema.parse({ id: "C", name: "candidate", change: "edit", artifactSnapshots: [CandidateArtifactSnapshotSchema.parse({ id: "s", sourceArtifactId: "demo-prompt", name: "page.html", mimeType: "text/html", content: "tested content", contentHash: "caller-hash", buildMode: "deterministic", createdAt: "now" })] })];
+  project.candidates = [CandidateSchema.parse({ id: "C", name: "candidate", change: "edit", artifactSnapshots: [CandidateArtifactSnapshotSchema.parse({ id: "s", sourceArtifactId: "demo-prompt", name: "page.md", mimeType: "text/markdown", content: "tested content", contentHash: "caller-hash", buildMode: "deterministic", createdAt: "now" })] })];
   project.validationRun.runs = project.hiddenEvalSuite.map((testCase) => ({testCaseId:testCase.id,output:"ok",latencyMs:1,cost:0,trace:[],verificationStatus:"verified"}));
   project.validationRun.baselineRuns = project.validationRun.runs.map((run) => ({...run}));
   project.validationRun.baselineEvaluation = project.baselineRun.result;
@@ -25,11 +25,16 @@ function ready() {
   project.validationRun.baselineObservedAt = 123456;
   project.artifactAcceptance.frozenArtifacts = [{
     sourceArtifactId: "demo-prompt", snapshotHash: "snapshot-proof", blobId: "blob-proof",
-    name: "page.html", mimeType: "text/html", sha256: "bytes-proof", size: 14,
+    name: "page.md", mimeType: "text/markdown", sha256: "bytes-proof", size: 14,
     verifiedAt: "2026-09-20T00:00:00Z", checks: ["roundtrip"], limitations: [],
   }];  const binding = evidenceFingerprint(project, project.candidates[0]);
   project.validationRun.evidenceFingerprint = binding;
   project.artifactAcceptance.evidenceFingerprint = binding;
+  expect(project.sourceArtifacts.find((item) => item.id === "demo-prompt")).toMatchObject({
+    name: "research-agent-system-prompt.md", extension: "md", mimeType: "text/markdown",
+  });
+  // Synthetic receipts start valid so each rejection below exercises its intended boundary.
+  expect(deliveryReadiness(project).ready).toBe(true);
   return project;
 }
 function source(extension: string, textContent: string) {
@@ -72,6 +77,23 @@ describe("真实交付闭环", () => {
     project.outputArtifacts = artifacts.map((item) => item.kind === "manifest" ? { ...item, candidateId: "old" } : item);
     expect(() => assertDeliverablePackageIdentity(project)).toThrow(/候选身份不一致/);
     await expect(buildDeliverableZip(project)).rejects.toThrow(/候选身份不一致/);
+  });
+  it.each([["page.txt", "text/plain"], ["page.html", "text/html"]])("Markdown Target 共同改成 %s 后仍禁止交付，即使重新绑定证据", (name, mimeType) => {
+    const project = ready();
+    const candidate = project.candidates[0]!;
+    const snapshot = candidate.artifactSnapshots[0]!;
+    const receipt = project.artifactAcceptance.frozenArtifacts![0]!;
+    snapshot.name = receipt.name = name;
+    snapshot.mimeType = receipt.mimeType = mimeType;
+    const binding = evidenceFingerprint(project, candidate);
+    project.validationRun.evidenceFingerprint = binding;
+    project.artifactAcceptance.evidenceFingerprint = binding;
+    expect(snapshot.content).toBe("tested content");
+    expect(project.artifactAcceptance.status).toBe("passed");
+    expect(deliveryReadiness(project).ready).toBe(false);
+    expect(stepUnlocked(project, "deliver")).toBe(false);
+    expect(acceptanceArtifacts(project, candidate, project.artifactAcceptance).every((item) => !item.accepted)).toBe(true);
+    expect(() => materializeAcceptedCandidatePackage(project, candidate, project.artifactAcceptance)).toThrow(/冻结身份尚未一致/);
   });
   it("候选验收绑定失效时不生成已接受交付包", () => {
     const project = ready();

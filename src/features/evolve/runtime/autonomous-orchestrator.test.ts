@@ -469,7 +469,7 @@ describe("autonomous orchestrator", () => {
   it("continues old offline completed artifacts through Lesson and Next Queue before declaring complete", () => {
     const candidate = CandidateSchema.parse({
       id:"offline-complete",name:"离线成果",change:"完成",status:"passed",artifactBuildStatus:"ready",
-      artifactSnapshots:[CandidateArtifactSnapshotSchema.parse({id:"snap-offline-complete",sourceArtifactId:demoProject.sourceArtifacts[0]!.id,name:"result.txt",mimeType:"text/plain",content:"final",contentHash:"hash-offline-complete",createdAt:"now"})],
+      artifactSnapshots:[CandidateArtifactSnapshotSchema.parse({id:"snap-offline-complete",sourceArtifactId:demoProject.sourceArtifacts[0]!.id,name:"result.md",mimeType:"text/markdown",content:"final",contentHash:"hash-offline-complete",createdAt:"now"})],
     });
     const base = project({
       targetConnection:{adapter:"artifact",connectionId:"artifact",status:"connected",label:"AI Artifact Runtime"},
@@ -477,7 +477,7 @@ describe("autonomous orchestrator", () => {
       experimentRun:{...demoProject.experimentRun,status:"completed",winnerId:candidate.id},
       validationRun:{...demoProject.validationRun,status:"completed",validationMode:"full",candidateId:candidate.id,recommendation:"release",evaluation:{...demoProject.baselineRun.result!,demoJudged:false},checks:[],runs:demoProject.hiddenEvalSuite.map((testCase)=>({testCaseId:testCase.id,output:"ok",latencyMs:1,cost:0,trace:[],verificationStatus:"verified" as const})),baselineRuns:demoProject.hiddenEvalSuite.map((testCase)=>({testCaseId:testCase.id,output:"ok",latencyMs:1,cost:0,trace:[],verificationStatus:"verified" as const})),baselineEvaluation:demoProject.baselineRun.result,baselineSuiteIds:demoProject.hiddenEvalSuite.map((testCase)=>testCase.id),baselineContextFingerprint:"same-paper",baselineObservedAt:123456},
       artifactAcceptance:{...demoProject.artifactAcceptance,status:"passed",candidateId:candidate.id,hardGatePass:true,overallScore:96,coverageScore:96,integrityScore:96,pairwiseScore:96,frozenArtifacts:frozenFor(candidate)},
-      outputArtifacts:[{id:"out-offline-complete",projectId:demoProject.id,round:1,versionLabel:"S1",candidateId:candidate.id,name:"result.txt",mimeType:"text/plain",kind:"primary",content:"final",description:"accepted",sourceArtifactIds:[demoProject.sourceArtifacts[0]!.id],isChampion:true,accepted:true,createdAt:"now"} as EvolveProject["outputArtifacts"][number]],
+      outputArtifacts:[{id:"out-offline-complete",projectId:demoProject.id,round:1,versionLabel:"S1",candidateId:candidate.id,name:"result.md",mimeType:"text/markdown",kind:"primary",content:"final",description:"accepted",sourceArtifactIds:[demoProject.sourceArtifacts[0]!.id],isChampion:true,accepted:true,createdAt:"now"} as EvolveProject["outputArtifacts"][number]],
       lessons:[],nextQueue:[],
     });
     const binding = evidenceFingerprint(base, candidate);
@@ -494,7 +494,7 @@ describe("autonomous orchestrator", () => {
   it("blocks online completion until a real live Release decision exists, then closes learning", () => {
     const candidate = CandidateSchema.parse({
       id:"online-complete",name:"线上成果",change:"完成",status:"passed",artifactBuildStatus:"ready",
-      artifactSnapshots:[CandidateArtifactSnapshotSchema.parse({id:"snap-online-complete",sourceArtifactId:demoProject.sourceArtifacts[0]!.id,name:"result.txt",mimeType:"text/plain",content:"final",contentHash:"hash-online-complete",createdAt:"now"})],
+      artifactSnapshots:[CandidateArtifactSnapshotSchema.parse({id:"snap-online-complete",sourceArtifactId:demoProject.sourceArtifacts[0]!.id,name:"result.md",mimeType:"text/markdown",content:"final",contentHash:"hash-online-complete",createdAt:"now"})],
     });
     const base = project({
       targetConnection:{adapter:"artifact",connectionId:"artifact",status:"connected",label:"Artifact"},
@@ -503,7 +503,7 @@ describe("autonomous orchestrator", () => {
       experimentRun:{...demoProject.experimentRun,status:"completed",winnerId:candidate.id},
       validationRun:{...demoProject.validationRun,status:"completed",validationMode:"full",candidateId:candidate.id,recommendation:"release",evaluation:{...demoProject.baselineRun.result!,demoJudged:false},checks:[],runs:demoProject.hiddenEvalSuite.map((testCase)=>({testCaseId:testCase.id,output:"ok",latencyMs:1,cost:0,trace:[],verificationStatus:"verified" as const})),baselineRuns:demoProject.hiddenEvalSuite.map((testCase)=>({testCaseId:testCase.id,output:"ok",latencyMs:1,cost:0,trace:[],verificationStatus:"verified" as const})),baselineEvaluation:demoProject.baselineRun.result,baselineSuiteIds:demoProject.hiddenEvalSuite.map((testCase)=>testCase.id),baselineContextFingerprint:"same-paper",baselineObservedAt:123456},
       artifactAcceptance:{...demoProject.artifactAcceptance,status:"passed",candidateId:candidate.id,hardGatePass:true,overallScore:96,coverageScore:96,integrityScore:96,pairwiseScore:96,frozenArtifacts:frozenFor(candidate)},
-      outputArtifacts:[{id:"out-online-complete",projectId:demoProject.id,round:1,versionLabel:"S1",candidateId:candidate.id,name:"result.txt",mimeType:"text/plain",kind:"primary",content:"final",description:"accepted",sourceArtifactIds:[demoProject.sourceArtifacts[0]!.id],isChampion:true,accepted:true,createdAt:"now"} as EvolveProject["outputArtifacts"][number]],
+      outputArtifacts:[{id:"out-online-complete",projectId:demoProject.id,round:1,versionLabel:"S1",candidateId:candidate.id,name:"result.md",mimeType:"text/markdown",kind:"primary",content:"final",description:"accepted",sourceArtifactIds:[demoProject.sourceArtifacts[0]!.id],isChampion:true,accepted:true,createdAt:"now"} as EvolveProject["outputArtifacts"][number]],
       release:{...demoProject.release,status:"idle",evidenceMode:"none"},
       lessons:[],nextQueue:[],
       attentionRequests:[],
@@ -580,7 +580,7 @@ describe("autonomous orchestrator", () => {
   it("uses read-only HTTP observe instead of replaying an uncertain HTTP production write", () => {
     const candidate = CandidateSchema.parse({
       id:"http-release",name:"HTTP Release Candidate",change:"完成",status:"passed",artifactBuildStatus:"ready",
-      artifactSnapshots:[CandidateArtifactSnapshotSchema.parse({id:"snap-http-release",sourceArtifactId:demoProject.sourceArtifacts[0]!.id,name:"result.txt",mimeType:"text/plain",content:"final",contentHash:"hash-http-release",createdAt:"now"})],
+      artifactSnapshots:[CandidateArtifactSnapshotSchema.parse({id:"snap-http-release",sourceArtifactId:demoProject.sourceArtifacts[0]!.id,name:"result.md",mimeType:"text/markdown",content:"final",contentHash:"hash-http-release",createdAt:"now"})],
     });
     const base=project({
       targetConnection:{adapter:"http",connectionId:"http-prod",status:"connected",label:"HTTP Target"},
@@ -589,7 +589,7 @@ describe("autonomous orchestrator", () => {
       experimentRun:{...demoProject.experimentRun,status:"completed",winnerId:candidate.id},
       validationRun:{...demoProject.validationRun,status:"completed",validationMode:"full",candidateId:candidate.id,recommendation:"release",evaluation:{...demoProject.baselineRun.result!,demoJudged:false},checks:[],runs:demoProject.hiddenEvalSuite.map((testCase)=>({testCaseId:testCase.id,output:"ok",latencyMs:1,cost:0,trace:[],verificationStatus:"verified" as const})),baselineRuns:demoProject.hiddenEvalSuite.map((testCase)=>({testCaseId:testCase.id,output:"ok",latencyMs:1,cost:0,trace:[],verificationStatus:"verified" as const})),baselineEvaluation:demoProject.baselineRun.result,baselineSuiteIds:demoProject.hiddenEvalSuite.map((testCase)=>testCase.id),baselineContextFingerprint:"same-paper",baselineObservedAt:123456},
       artifactAcceptance:{...demoProject.artifactAcceptance,status:"passed",candidateId:candidate.id,hardGatePass:true,overallScore:96,coverageScore:96,integrityScore:96,pairwiseScore:96,frozenArtifacts:frozenFor(candidate)},
-      outputArtifacts:[{id:"out-http-release",projectId:demoProject.id,round:1,versionLabel:"S1",candidateId:candidate.id,name:"result.txt",mimeType:"text/plain",kind:"primary",content:"final",description:"accepted",sourceArtifactIds:[demoProject.sourceArtifacts[0]!.id],isChampion:true,accepted:true,createdAt:"now"} as EvolveProject["outputArtifacts"][number]],
+      outputArtifacts:[{id:"out-http-release",projectId:demoProject.id,round:1,versionLabel:"S1",candidateId:candidate.id,name:"result.md",mimeType:"text/markdown",kind:"primary",content:"final",description:"accepted",sourceArtifactIds:[demoProject.sourceArtifacts[0]!.id],isChampion:true,accepted:true,createdAt:"now"} as EvolveProject["outputArtifacts"][number]],
       gates:demoProject.gates.map((gate)=>gate.id==="release-ready"?{...gate,status:"approved" as const}:gate),
       release:{...demoProject.release,status:"idle",candidateId:candidate.id,evidenceMode:"none",recovery:{status:"pending",action:"shadow",reason:"network lost after HTTP release request",at:"2026-09-22T01:00:00Z"}},
       campaign:{...demoProject.campaign,status:"paused",stopReason:"[server-release-provider-pending] HTTP shadow result unknown"},
