@@ -10,6 +10,10 @@ The latest previously authenticated Mission read available is revision 11, Plan/
 
 Priorities remain those real Mission receipts. Local [text boundary fixes](main-flow-text-boundaries-handoff.md) address construction/readback and original-format download failures. Manual custom model/key, operator/Vault and authorized cloud export setup are deferred; no current readiness is inferred from stale configuration probes. Regression totals and readonly routes do not satisfy business acceptance.
 
+### 2026-10-09 local recovery boundary
+
+[Main-flow recovery](server-main-flow-recovery-handoff.md) adds saved capability receipts, an explicit fresh-measurement entry for old zero-Candidate Plan pauses, renewed diagnosis gating, exact control-AI request identity, and Gate F physical/observation checks. Related regression passed 53 files / 729 synthetic tests; final local gates and independent integration evidence are recorded in that handoff. These checks do not satisfy this document's real Mission acceptance checklist. The 11:36 UTC public read still identified e3482e75, and the exact current real Mission marker was not freshly observed. Manual provider/operator/export configuration and hosted billing remain deferred while local main-flow defects are fixed.
+
 ### Earlier 314e564 checkpoint
 
 Production commit 314e564679b10cbcb7e8a974ba12ec7e1708c244 passed full [Quality Gate](https://github.com/HG1127/evlove-Studio/actions/runs/37836669914) and exact-SHA [Production Smoke](https://github.com/HG1127/evlove-Studio/actions/runs/37837645722). Official authenticated CLI build-info independently returned that full SHA, main/production on its exact deployment; hosted Smoke explicitly verified the public main alias. Explicit current accepted-Candidate server delivery now reuses frozen bytes and binds the manifest, Gate F report, coverage matrix, scores and patch record to the same authoritative accepted record. Complete-file HTML protection, Candidate construction/repair and paired Hidden assessment recovery remain deployed. This is code/runtime verification; the complete real Mission remains unproven.

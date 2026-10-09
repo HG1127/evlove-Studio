@@ -1,5 +1,11 @@
 # Backend Capability Assessment and Delivery Plan
 
+## 2026-10-09 — Saved main-flow pause recovery (local validation)
+
+The main-flow recovery branch binds actual machine capability pauses to exact input/evidence and a new active control Job; old zero-Candidate Plan pauses require explicit fresh measurement and an authoritative archive. Parallel implementation and review closed weak-Diagnosis replay and resolved control-AI request identity gaps. Gate F now distinguishes assessment completion from physical observation age, retains recent paired evidence and frozen bytes, and blocks a changed physical parent/Candidate binding rather than silently adopting it. Safety, approvals, cancelled/replaced Jobs, altered inputs and elapsed budgets are not reopened.
+
+The related regression passed 53 files / 729 tests. Final architecture/lint/build/Runner/compiled UI and the integration handoff are recorded in [main-flow recovery handoff](server-main-flow-recovery-handoff.md). These are synthetic fixture-port checks; no live provider or real Mission acceptance is claimed. Independent local candidate `37695a6` passed the earlier complete format-fix gate (2433 pass, zero fail, one live Sandbox skip); it does not cover the new recovery code. New exact candidate CI/production is still required. Public readonly build-info at 11:36 UTC remains e3482e75; hosted billing and manual custom model/operator/export configuration remain deferred. Original dirty primary work has been preserved.
+
 ## 2026-10-09 — Independent full-suite format fixture correction (local only)
 
 Independent CI candidate `40c3ab4` covered 317 files (2410 passed / 17 failed / one live Sandbox skip), so its complete local gate remains FAILED. All 17 failures were older accepted fixtures that paired the original Markdown Source with TXT/HTML Snapshot and receipt names, or changed only a Git duplicate-path Snapshot. Six test files now establish consistent original-format identities before exercising the existing completion/release/delivery/human-review assertions. Git ordinary/case-insensitive duplicate paths still fail before any executor call; five additional wrong-format cases fail even after matching receipts and evidence rebinding. Production guards and Gate F are unchanged.
