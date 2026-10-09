@@ -1,5 +1,12 @@
 # Backend Capability Assessment and Delivery Plan
 
+## 2026-10-09 — Exact UTF-8 BOM files in the main Artifact path (local only)
+
+Valid UTF-8 BOM input was reproducibly rejected when default text readers discarded the three leading bytes. `@evolution/adapters` now provides an exact UTF-8 decoder used by Server full-parent construction/frozen verification/materialization/current-version roundtrip and browser rendered-text checks. BOM, CRLF and Unicode remain in the frozen content and actual bytes; only JSON syntax validation ignores a leading BOM. Invalid encoding and hash/size/Snapshot drift still fail.
+
+Local regression: 18 relevant suites / 219 tests passed; architecture and full lint passed. Remaining build/Runner/UI results and exact source hashes are recorded in `D:\Downloads\evolution-os-smoke-temp\artifact-bom-development-handoff.json`; [handoff](artifact-utf8-handoff.md) describes scope and limitations. The verified fixture is synthetic and cannot satisfy the real Mission acceptance checklist. Production still identifies e3482e75; new hosted CI/production remains UNVERIFIED pending account-owner GitHub Actions billing/allowance recovery and independent Git/CI integration. Custom model/key, operator/Vault and export boundaries remain deferred human tasks. No root push, deployment, config, business Workflow or mutating Cron occurred.
+
+
 ## 2026-10-09 — backend first-construction recovery (local development)
 
 The next main-flow gap after final model JSON was server construction stopping at the first recoverable anchor/text/HTML output failure. Contracts now classify content-only pre-freeze failures, Harness performs one injected targeted recovery, and the backend pins all complete text parents plus necessary original protection baselines. Foreign/duplicate identities, source/receipt drift, model failures and persistence faults never trigger regeneration; strict checks and all-Target preparation remain mandatory. Verified anchors consume the existing22k/72k text budget. Evidence and deferred Actions billing/model/operator/export work are in [backend Candidate recovery handoff](backend-candidate-recovery-handoff.md).

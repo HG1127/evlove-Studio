@@ -1,3 +1,4 @@
+import { decodeArtifactUtf8 } from "@evolution/adapters";
 import type { EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
 import { trustedServerBaselineChampion } from "@evolution/harness";
 import { getServerArtifactStore } from "./artifact-runtime";
@@ -49,7 +50,7 @@ export async function runServerCurrentStoredEvidence({ project, testCase }: { pr
     if (receipt && sha256 !== receipt.sha256) return unavailable(testCase, "当前 Search Champion 冻结字节 SHA-256 不一致。");
     if (testCase.executionMode === "roundtrip") {
       if (!serverStaticTextExtension(extension)) return unavailable(testCase, "此格式尚无 Server 当前版本解析→物化→逐字节往返验证器。");
-      const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+      const text = decodeArtifactUtf8(bytes);
       const encoded = new TextEncoder().encode(text);
       if (encoded.length !== bytes.length || encoded.some((value, index) => value !== bytes[index])) return unavailable(testCase, "当前文件 UTF-8 编解码未保持原始字节。");
       if (snapshot && text !== snapshot.content) return unavailable(testCase, "当前 Search Champion 文本 Blob 与 Snapshot 内容不一致。");

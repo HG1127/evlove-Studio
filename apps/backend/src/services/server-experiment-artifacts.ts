@@ -1,3 +1,4 @@
+import { decodeArtifactUtf8 } from "@evolution/adapters";
 import JSZip from "jszip";
 import {
   CandidateSchema,
@@ -137,7 +138,7 @@ export async function readServerCandidateParentText(project: EvolveProject, sour
   const blob = await currentBaseBlob(project, source, parentCandidate);
   if (!parent && blob.size !== source.size) throw new Error(`${source.name} 的原文件大小与 Source 不一致。`);
   const bytes = new Uint8Array(await blob.arrayBuffer());
-  const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  const text = decodeArtifactUtf8(bytes);
   if (await sha256Text(text) !== await serverArtifactSha256(bytes)) throw new Error(`${source.name} 不能逐字节还原为 UTF-8 文本。`);
   return text;
 }
@@ -186,7 +187,7 @@ export async function verifyServerCandidateFrozenArtifact(snapshot: CandidateArt
   const extension = receipt.name.split(".").pop()?.toLowerCase() ?? "";
   if (TEXT_FAMILY.test(extension)) {
     try {
-      if (new TextDecoder("utf-8", { fatal: true }).decode(bytes) !== snapshot.content) return false;
+      if (decodeArtifactUtf8(bytes) !== snapshot.content) return false;
     } catch {
       return false;
     }
@@ -241,14 +242,14 @@ async function materializeText(source: SourceArtifact, snapshot: CandidateArtifa
   }
   if (!snapshot.content.trim()) throw new CandidateConstructionOutputError("text-format", `${source.name} Candidate 内容为空。`);
   if (extension === "json") {
-    try { JSON.parse(snapshot.content); } catch { throw new CandidateConstructionOutputError("text-format", `${source.name} Candidate JSON 不完整或无效。`); }
+    try { JSON.parse(snapshot.content.replace(/^\uFEFF/, "")); } catch { throw new CandidateConstructionOutputError("text-format", `${source.name} Candidate JSON 不完整或无效。`); }
   }
   if (/^html?$/.test(extension)
     && (!/<html\b/i.test(snapshot.content) || !/<body\b/i.test(snapshot.content) || !/<\/html\s*>/i.test(snapshot.content))) {
     throw new CandidateConstructionOutputError("text-format", `${source.name} Candidate HTML 缺少完整 html/body 容器。`);
   }
   const blob = new Blob([snapshot.content], { type: source.mimeType || "text/plain;charset=utf-8" });
-  if (await blob.text() !== snapshot.content) throw new Error(`${source.name} Candidate 文本物化不一致。`);
+  if (decodeArtifactUtf8(await blob.arrayBuffer()) !== snapshot.content) throw new Error(`${source.name} Candidate 文本物化不一致。`);
   return {
     blob,
     checks: ["Candidate Snapshot 已物化为实际文件", "持久化前全文逐字一致"],
