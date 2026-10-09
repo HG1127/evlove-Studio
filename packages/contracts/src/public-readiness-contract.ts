@@ -32,6 +32,7 @@ export const PublicReadinessSnapshotSchema=z.object({
   sourceParse:z.boolean(),
   artifactRenderer:z.boolean(),
   serverAi:z.boolean(),
+  serverAiConnectionStorageConfigured:z.boolean().default(false),
   sandbox:z.boolean(),
   sandboxPolicy:z.boolean(),
   browser:z.boolean(),

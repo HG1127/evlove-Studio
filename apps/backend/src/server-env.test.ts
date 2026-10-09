@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach,beforeEach,describe,expect,it } from "vitest";
-import { getCapabilityEmbeddingConfig, getServerSupabaseConfig, getServerTargetProxyConfig, getVaultEncryptionConfig, serverSupabaseCredentialMode, serverSupabaseSecureConfigured, targetProxyCapabilities, vaultEncryptionConfigured } from "./server-env";
+import { getCapabilityEmbeddingConfig, getServerAiConfig, getServerSupabaseConfig, getServerTargetProxyConfig, getVaultEncryptionConfig, serverSupabaseCredentialMode, serverSupabaseSecureConfigured, targetProxyCapabilities, vaultEncryptionConfigured } from "./server-env";
 
 const KEYS=[
   "NODE_ENV",
@@ -17,6 +17,7 @@ const KEYS=[
   "VERCEL_ENV",
   "VERCEL_OIDC_TOKEN",
   "EVOLUTION_AI_GATEWAY_ENABLED",
+  "EVOLUTION_AI_API_KEY","OPENAI_API_KEY","EVOLUTION_AI_MODEL","OPENAI_MODEL","EVOLUTION_AI_BASE_URL","OPENAI_BASE_URL",
   "EVOLUTION_CAPABILITY_EMBEDDING_API_KEY",
   "EVOLUTION_CAPABILITY_EMBEDDING_MODEL",
   "EVOLUTION_CAPABILITY_EMBEDDING_BASE_URL",
@@ -93,6 +94,23 @@ describe("server Supabase env",()=>{
     expect(config.anonKey).toBe("sb_publishable_test_fixture_1111111111111111");
     expect(serverSupabaseCredentialMode()).toBe("publishable");
     expect(serverSupabaseSecureConfigured()).toBe(false);
+  });
+
+  it("uses complete direct AI credentials before a legacy Gateway flag",()=>{
+    process.env.VERCEL="1";
+    process.env.EVOLUTION_AI_GATEWAY_ENABLED="true";
+    process.env.EVOLUTION_AI_API_KEY="provider-key";
+    process.env.EVOLUTION_AI_MODEL="custom-model";
+    process.env.EVOLUTION_AI_BASE_URL="https://provider.test/v1/chat/completions/";
+    expect(getServerAiConfig()).toMatchObject({
+      mode:"openai-compatible",model:"custom-model",baseUrl:"https://provider.test/v1",
+    });
+  });
+
+  it("does not require any Gateway credentials for direct AI",()=>{
+    process.env.EVOLUTION_AI_API_KEY="provider-key";
+    process.env.EVOLUTION_AI_MODEL="custom-model";
+    expect(getServerAiConfig()?.mode).toBe("openai-compatible");
   });
 
   it("uses Vercel AI Gateway OIDC for capability embeddings without a static API key",()=>{

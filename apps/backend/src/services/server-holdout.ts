@@ -1,3 +1,4 @@
+import {withServerAiConnection} from "./server-ai-connection";
 import {runServerHtmlArtifactBatch,serverHtmlArtifactTargetEnabled} from "./server-html-artifact-execution";
 import type { Candidate, EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
 import { runVercelSandboxCodebaseValidation } from "@evolution/adapters/sandbox";
@@ -94,8 +95,9 @@ async function executeCandidateExternal(project:EvolveProject,candidate:Candidat
 }
 
 export async function runServerMissionHoldout(project:EvolveProject){
+  return withServerAiConnection(async()=>{
   return runServerHoldout(project,{
-    scoringRouteFingerprint:serverAiScoringRouteFingerprint(),
+    scoringRouteFingerprint:await serverAiScoringRouteFingerprint(),
     readArtifactFingerprint:readServerHoldoutArtifactFingerprint,
     current:{
       executeSemanticBatch:({project:current,testCases,artifactContext})=>runServerAi("execute-artifact-batch",{
@@ -122,5 +124,6 @@ export async function runServerMissionHoldout(project:EvolveProject){
       judge:(payload)=>runServerAi("evaluate",payload),
     },
     releaseReview:(payload)=>runServerAi("release-review",payload),
+  });
   });
 }

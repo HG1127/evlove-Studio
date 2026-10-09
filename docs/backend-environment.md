@@ -53,3 +53,17 @@ VERCEL_RELEASE_TOKEN=<dedicated Vercel API token>
 `VERCEL_OIDC_TOKEN` is **not** a substitute for this release credential: OIDC is used by Sandbox / Workflow, while Vercel Project and Deployment management APIs currently reject it. Never expose `VERCEL_RELEASE_TOKEN` through a `VITE_*` variable.
 
 The current Vercel Hobby project uses **Preview Gate → Production Promote**. Rolling Release / 5% → 20% → 50% Canary is not supported by the plan and is explicitly skipped rather than simulated.
+
+## 自定义后端模型（无需 Vercel AI Gateway）
+
+在项目“设置 → 模型连接”中点击“添加自定义模型”，填写连接名称、兼容接口的 Base URL、API Key 和完整模型 ID。模型名没有预设白名单；填写服务商实际支持的 ID。Base URL 可填 API 根路径（例如 `https://provider.example/v1`），也接受以 `/chat/completions` 或 `/responses` 结尾的地址。生产环境必须使用 HTTPS，地址不能包含账号、密码或查询参数。
+
+选择“接口协议”和“JSON 输出方式”，点击“测试后端调用”。这会从后端执行一次无任务文件的真实结构化模型调用，不会保存草稿或启动 Mission。普通健康检查不会调用模型。服务商不支持 JSON 模式时可选择“仅提示词 JSON”；返回值仍必须通过任务的 Zod 契约，不能用无法解析的文本冒充执行结果。
+
+测试通过后点击“保存为后端默认模型”。浏览器可添加多个连接；后台任务使用工作区中保存的一个默认连接。仅保存浏览器连接不会配置后台任务。保存成功也不等于 Mission 已验收，真实 Baseline、Candidate、实验、Hidden Validation 和 Gate F 仍需各自的执行证据。
+
+后端通过现有 `evolution_vault_secrets` 表加密保存连接，查询只返回名称、URL、模型和协议，不返回 API Key。部署前须配置独立随机的服务端 `EVOLUTION_VAULT_MASTER_KEY`（至少 32 字符），以及上文的工作区凭据。保留既有 Vault 主密钥；不要在已有加密数据时随意替换。加密密钥必须有受保护的备份，不得放入 `VITE_*` 或 Git。该功能不需要新数据库迁移。
+
+路由优先级为：保存的后端连接 → 完整的直连环境配置 → 显式开启的历史 Gateway。若不使用 Gateway，将 `EVOLUTION_AI_GATEWAY_ENABLED=false`。直连环境配置为 `EVOLUTION_AI_API_KEY`、`EVOLUTION_AI_MODEL`、`EVOLUTION_AI_BASE_URL`，也保留已有服务商环境变量的兼容读取。模型切换会改变后续评分的路由身份；一次成对评测会固定同一配置，避免当前版本和 Candidate 使用不同模型。
+
+公开的 `public-readiness` 被动检查只检查环境变量，不访问 Vault，也不证明已保存模型的运行状态。`serverAi` 表示环境中的模型配置，`serverAiConnectionStorageConfigured` 只表示加密保存机制可用；不能把后一项当作模型已保存或真实调用成功。保存后通过已登录的 `ai-connection` 查询及“测试后端调用”确认实际配置和运行结果。若提示连接工作区，请先完成现有后台工作区登录。

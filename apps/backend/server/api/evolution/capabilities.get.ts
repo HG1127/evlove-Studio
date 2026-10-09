@@ -1,6 +1,6 @@
 import { defineEventHandler,getQuery } from "nitro/h3";
 import { EvolutionWorkflowCapabilitiesSchema } from "@evolution/contracts";
-import { githubTargetConfigured, githubWebhookConfigured, serverAiConfigured, serverSupabaseConfigured, serverSupabaseSecureConfigured, targetProxyCapabilities, vercelReleaseWriteConfigured } from "../../../src/server-env";
+import { githubTargetConfigured, githubWebhookConfigured, serverSupabaseConfigured, serverSupabaseSecureConfigured, targetProxyCapabilities, vercelReleaseWriteConfigured } from "../../../src/server-env";
 import {getSecurityCapabilities,requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 import {getConnectorRegistryCapabilities} from "../../../src/services/connector-registry";
 import {getPassiveServerAiHealth,probeServerAiRuntime} from "../../../src/services/server-ai-health";
@@ -12,10 +12,10 @@ const MIGRATION_PENDING_ACTIONS:string[]=[];
 
 export default defineEventHandler(async(event)=>{
   await requireGovernedEvolutionPermission(event,"data.read");
-  const ai=serverAiConfigured();
   const probeAi=String(getQuery(event).probeAi??"")==="1";
   if(probeAi)await requireGovernedEvolutionPermission(event,"ai.execute");
-  const aiHealth=probeAi?await probeServerAiRuntime():getPassiveServerAiHealth();
+  const aiHealth=probeAi?await probeServerAiRuntime():await getPassiveServerAiHealth();
+  const ai=aiHealth.configured;
   const aiVerified=aiHealth.ready;
   const dataPlane=serverSupabaseConfigured();
   const secureDataPlane=serverSupabaseSecureConfigured();
