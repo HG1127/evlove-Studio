@@ -105,6 +105,17 @@ describe("user-selected backend AI connection",()=>{
     await expect(resolveServerAiConfig()).rejects.toThrow();
   });
 
+  it.each(["private-key-never-return",JSON.stringify({...input,version:"invalid"})])("does not expose decrypted content in malformed connection errors",async(raw)=>{
+    vault.metadata.mockResolvedValue({version:1});
+    vault.resolve.mockResolvedValue(raw);
+    for(const read of [getServerAiConnectionStatus,resolveServerAiConfig]){
+      const error=await read().catch((value:unknown)=>value);
+      expect(error).toMatchObject({code:"SERVER_AI_CONNECTION_INVALID"});
+      expect((error as Error).message).toContain("配置无效");
+      expect((error as Error).message).not.toContain("private-key");
+    }
+  });
+
   it("reports unavailable storage without attempting Vault I/O",async()=>{
     vault.configured.mockReturnValue(false);
     expect(await getServerAiConnectionStatus()).toMatchObject({storageConfigured:false,configured:false});

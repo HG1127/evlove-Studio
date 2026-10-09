@@ -10,6 +10,13 @@ const VAULT_ID="server-ai-default-connection-v1";
 const VAULT_SCOPE="ai:default-connection";
 const activeConfig=new AsyncLocalStorage<{config:ServerAiConfig|undefined}>();
 
+function parseStoredConnection(raw:string){
+  try{return ServerAiStoredConnectionSchema.parse(JSON.parse(raw));}
+  catch{
+    throw Object.assign(new Error("已保存的后端模型配置无效，请重新保存连接。"),{code:"SERVER_AI_CONNECTION_INVALID"});
+  }
+}
+
 function normalizeBaseUrl(raw:string){
   return raw.replace(/\/+$/,"").replace(/\/(?:responses|chat\/completions)$/i,"");
 }
@@ -37,7 +44,7 @@ export async function getServerAiConnectionStatus(){
   if(!metadata)return ServerAiConnectionStatusSchema.parse({
     storageConfigured:true,configured:false,message:"尚未选择后端默认模型。",
   });
-  const stored=ServerAiStoredConnectionSchema.parse(JSON.parse(await resolveVaultSecret(VAULT_ID,VAULT_SCOPE)));
+  const stored=parseStoredConnection(await resolveVaultSecret(VAULT_ID,VAULT_SCOPE));
   return ServerAiConnectionStatusSchema.parse({
     storageConfigured:true,configured:true,connection:ServerAiConnectionSettingsSchema.parse(stored),
     revision:metadata.version,message:"后端任务直接使用此模型连接。",
@@ -68,7 +75,7 @@ export async function resolveServerAiConfig():Promise<ServerAiConfig|undefined>{
   if(vaultEncryptionConfigured()){
     try{
       const stored=await resolveVaultSecret(VAULT_ID,VAULT_SCOPE);
-      return directConfig(ServerAiStoredConnectionSchema.parse(JSON.parse(stored)));
+      return directConfig(parseStoredConnection(stored));
     }catch(error){
       if((error as {code?:string}).code!=="VAULT_SECRET_NOT_FOUND")throw error;
     }
