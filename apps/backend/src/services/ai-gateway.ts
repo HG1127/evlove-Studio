@@ -2,6 +2,7 @@ import type { ZodType } from "zod";
 import { createHash } from "node:crypto";
 import {
   AiOperationSchema,
+  CompatibleResponsesEnvelopeSchema,
   ArtifactAcceptanceAiResultSchema,
   BuildCandidateAiResultSchema,
   CommandAiResultSchema,
@@ -54,6 +55,7 @@ import {
   type VisualJudgeAiResult,
 } from "@evolution/contracts";
 import { SERVER_SEMANTIC_CONTEXT_VERSION } from "@evolution/harness";
+import {COMPATIBLE_RESPONSES_OUTPUT_VERSION,readCompatibleResponsesOutput} from "@evolution/adapters";
 import type { ServerAiConfig } from "../server-env";
 import {resolveServerAiConfig} from "./server-ai-connection";
 
@@ -65,7 +67,9 @@ export async function serverAiScoringRouteFingerprint(): Promise<string | undefi
   const route = config.mode === "openai-compatible"
     ? [config.mode, config.baseUrl, config.model, ...(config.protocol || config.responseFormat ? [config.protocol,config.responseFormat] : [])]
     : [config.mode, config.model];
-  return createHash("sha256").update(JSON.stringify({ route, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION })).digest("hex");
+  const responsesOutputVersion=config.mode==="openai-compatible"&&config.protocol!=="chat-completions"
+    ?COMPATIBLE_RESPONSES_OUTPUT_VERSION:undefined;
+  return createHash("sha256").update(JSON.stringify({ route, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION, responsesOutputVersion })).digest("hex");
 }
 
 type StructuredSchema={name:string;schema:Record<string,unknown>};
@@ -129,24 +133,11 @@ function contract(operation:ServerAiOperation):Contract<unknown>{
   throw new Error("Unsupported Server AI operation: "+exhaustive);
 }
 
-type ResponsesJson={
-  status?:string;
-  output_text?:string;
-  output?:Array<{content?:Array<{type?:string;text?:string}>}>;
-  error?:{message?:string}|null;
-};
 type ChatJson={
   choices?:Array<{message?:{content?:string|Array<{type?:string;text?:string}>}}>;
   error?:{message?:string}|null;
 };
 
-function responseText(json:ResponsesJson){
-  if(typeof json.output_text==="string"&&json.output_text.trim())return json.output_text;
-  for(const item of json.output??[])for(const part of item.content??[]){
-    if(part.type==="output_text"&&typeof part.text==="string"&&part.text.trim())return part.text;
-  }
-  throw new Error("Server AI response missing output_text");
-}
 
 function chatText(json:ChatJson){
   const value=json.choices?.[0]?.message?.content;
@@ -220,13 +211,14 @@ async function callResponses<T>(args:{config:Extract<ServerAiConfig,{mode:"opena
       ...(directFormat(args.config,args.contract)?{text:{format:directFormat(args.config,args.contract)}}:{}),
     }),
   });
-  const json=await response.json().catch(()=>({})) as ResponsesJson;
+  const json:unknown=await response.json().catch(()=>({}));
   if(!response.ok){
-    const error=Object.assign(new Error(json.error?.message||("Server AI Responses HTTP "+response.status)),{httpStatus:response.status});
+    const parsed=CompatibleResponsesEnvelopeSchema.safeParse(json);
+    const detail=parsed.success?parsed.data.error?.message:undefined;
+    const error=Object.assign(new Error(detail||("Server AI Responses HTTP "+response.status)),{httpStatus:response.status});
     throw error;
   }
-  if(json.status&&json.status!=="completed")throw new Error("Server AI response status: "+json.status);
-  return args.contract.parser.parse(JSON.parse(responseText(json)));
+  return args.contract.parser.parse(JSON.parse(readCompatibleResponsesOutput(json,{requireCompletedStatus:true})));
 }
 
 async function callChat<T>(args:{config:Extract<ServerAiConfig,{mode:"openai-compatible"}>;contract:Contract<T>;payload:unknown;images:ParsedImage[]}){

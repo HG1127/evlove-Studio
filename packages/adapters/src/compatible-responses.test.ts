@@ -1,5 +1,5 @@
 import {describe,expect,it,vi} from "vitest";
-import {callCompatibleResponses,type CompatibleResponsesOptions} from "./compatible-responses";
+import {callCompatibleResponses,readCompatibleResponsesOutput,type CompatibleResponsesOptions} from "./compatible-responses";
 
 const key="synthetic-provider-secret";
 const reply=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status});
@@ -63,5 +63,16 @@ describe("compatible Responses adapter",()=>{
     });
     await expect(callCompatibleResponses(makeArgs(request,{signal:controller.signal}))).rejects.toMatchObject({name:"AbortError"});
     expect(request).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("shared Responses envelope decoding",()=>{
+  it("preserves browser compatibility while the backend keeps completed-only status",()=>{
+    const response={status:"provider-success",output_text:' {"answer":"ok"} '};
+    expect(readCompatibleResponsesOutput(response)).toBe(response.output_text);
+    expect(()=>readCompatibleResponsesOutput(response,{requireCompletedStatus:true})).toThrow(/未完成/);
+  });
+  it("checks the envelope before trusting an aggregate text field",()=>{
+    expect(()=>readCompatibleResponsesOutput({output_text:'{"answer":"ok"}',output:"invalid"})).toThrow(/格式无效/);
   });
 });

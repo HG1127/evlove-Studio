@@ -1,5 +1,7 @@
 import {CompatibleResponsesEnvelopeSchema,type CompatibleResponsesEnvelope} from "@evolution/contracts";
 
+export const COMPATIBLE_RESPONSES_OUTPUT_VERSION="responses-output-v1";
+
 export type CompatibleResponsesFormat="json-schema"|"json-object"|"prompt-json";
 export type CompatibleResponsesOptions={
   baseUrl:string;
@@ -36,6 +38,20 @@ function outputText(body:CompatibleResponsesEnvelope){
     .filter(part=>part.type==="output_text").map(part=>part.text??"").join("");
 }
 
+/** Decode the external envelope only; task schemas remain the caller's responsibility. */
+export function readCompatibleResponsesOutput(value:unknown,options:{requireCompletedStatus?:boolean}={}):string{
+  const parsed=CompatibleResponsesEnvelopeSchema.safeParse(value);
+  if(!parsed.success)throw new Error("Responses 服务返回格式无效。");
+  const body=parsed.data;
+  const nonterminal=["failed","cancelled","incomplete","queued","in_progress"].includes(body.status??"");
+  if(body.error||nonterminal||(options.requireCompletedStatus&&body.status&&body.status!=="completed")){
+    throw new Error(body.error?.message??"Responses 模型未完成最终输出。");
+  }
+  const text=outputText(body);
+  if(!text.trim())throw new Error("Responses API 响应中没有 output_text");
+  return text;
+}
+
 /** HTTP mechanics only: the caller still validates the returned JSON against its task contract. */
 export async function callCompatibleResponses(args:CompatibleResponsesOptions):Promise<{text:string;format:CompatibleResponsesFormat}>{
   const formats:CompatibleResponsesFormat[]=["json-schema","json-object","prompt-json"];
@@ -69,12 +85,8 @@ export async function callCompatibleResponses(args:CompatibleResponsesOptions):P
       if(response.status===400&&index<formats.length-1&&formatUnsupported(body))continue;
       throw failure(args.errorMessage(response.status,body),response.status,args.apiKey);
     }
-    if(body.error||["failed","cancelled","incomplete","queued","in_progress"].includes(body.status??"")){
-      throw failure(body.error?.message??"Responses 模型未完成最终输出。",response.status,args.apiKey);
-    }
-    const text=outputText(body);
-    if(!text.trim())throw failure("Responses API 响应中没有 output_text",response.status,args.apiKey);
-    return {text,format};
+    try{return {text:readCompatibleResponsesOutput(body),format};}
+    catch(error){throw failure(error instanceof Error?error.message:String(error),response.status,args.apiKey);}
   }
   throw new Error("Responses 模型没有支持可用的 JSON 输出方式。");
 }
