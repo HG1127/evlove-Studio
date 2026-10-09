@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import type { AutonomousAttention } from "../runtime/autonomous-evolution";
 import type { ProjectRuntime } from "../runtime/use-project-runtime";
 import { PendingEvidencePanel } from "./stage-panels";
+import { evidenceRouteForCriterion } from "@evolution/core";
 import { isLocalBaselineEvidencePause, isLocalBaselineJudgePause, isLocalDemoBaselinePause } from "@evolution/harness";
 
 export function AttentionRequestPanel({
@@ -134,7 +135,8 @@ export function AttentionRequestPanel({
   if (request.type === "evidence" || request.type === "capability") {
     const ids = new Set(request.criterionIds);
     const criteria = runtime.project.acceptanceRubric.filter((criterion)=>ids.has(criterion.id));
-    return <section id="evolve-attention-request" tabIndex={-1} className="space-y-3 outline-none"><div className="rounded-2xl border border-amber-200 bg-amber-50/60 px-4 py-3"><div className="font-semibold text-amber-950">系统只缺真实验证，不会继续盲目改成果</div><p className="mt-1 text-sm leading-6 text-amber-900/75">{request.reason}</p></div>{criteria.length?<PendingEvidencePanel runtime={runtime} criteria={criteria}/>:<div className="rounded-2xl border bg-white p-4"><p className="text-sm leading-6 text-slate-600">当前需要连接真实 Runner 或对应外部验证能力。配置完成后点击继续，系统会复用当前候选而不是重新生成。</p><div className="mt-3 flex flex-wrap gap-2"><a href="#/settings" className="inline-flex h-9 items-center rounded-xl border bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"><Settings2 className="mr-2 size-4"/>验证能力设置</a><Button variant="secondary" onClick={revalidateAndContinue}>配置完成，重新验证并继续</Button></div></div>}</section>;
+    const localOnly = criteria.length > 0 && criteria.every((criterion) => evidenceRouteForCriterion(runtime.project, criterion) === "local");
+    return <section id="evolve-attention-request" tabIndex={-1} className="space-y-3 outline-none"><div className="rounded-2xl border border-amber-200 bg-amber-50/60 px-4 py-3"><div className="font-semibold text-amber-950">{localOnly ? "当前成果还有系统检查未完成" : "当前成果还需补充对应验证证据"}</div><p className="mt-1 text-sm leading-6 text-amber-900/75">{request.reason}</p></div>{criteria.length?<PendingEvidencePanel runtime={runtime} criteria={criteria}/>:<div className="rounded-2xl border bg-white p-4"><p className="text-sm leading-6 text-slate-600">当前需要连接真实 Runner 或对应外部验证能力。配置完成后点击继续，系统会复用当前候选而不是重新生成。</p><div className="mt-3 flex flex-wrap gap-2"><a href="#/settings" className="inline-flex h-9 items-center rounded-xl border bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"><Settings2 className="mr-2 size-4"/>验证能力设置</a><Button variant="secondary" onClick={revalidateAndContinue}>配置完成，重新验证并继续</Button></div></div>}</section>;
   }
 
   return <section id="evolve-attention-request" tabIndex={-1} className="rounded-3xl border border-amber-200 bg-white p-5 outline-none soft-shadow sm:p-6"><h3 className="font-bold text-slate-950">自动进化到达安全边界</h3><p className="mt-2 text-sm leading-6 text-slate-600">{request.reason}</p><p className="mt-1 text-xs text-slate-400">这不是成果完成。调整轮数、预算或时间边界后再继续；系统不会把“跑到上限”冒充成功。</p>{error&&<p role="alert" className="mt-3 text-xs text-rose-700">{error}</p>}<div className="mt-4 flex flex-wrap gap-2"><Button onClick={onOpenAdvanced}><Settings2 className="size-4"/>调整高级边界</Button><Button variant="secondary" disabled={runtime.status.busy || retrying} onClick={() => retryCampaign("当前设置仍无法启动新一轮，请调整高级边界后重试。")}>{retrying ? "正在重试…" : "按当前设置重试"}</Button></div></section>;
