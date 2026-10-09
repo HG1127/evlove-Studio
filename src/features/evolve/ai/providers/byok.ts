@@ -2,7 +2,7 @@
 // 浏览器直连各家官方接口；密钥仅保存在本浏览器 localStorage，只发给所选供应商。
 // 全部 13 个 AI 环节沿用 service.ts 的 system + JSON Schema + zod 校验管线。
 // JSON 输出可靠性策略：schema 同时写进提示词与 response_format；校验失败自动带错误重试一次。
-import {callCompatibleResponses,type CompatibleResponsesFormat} from "@evolution/adapters";
+import {callCompatibleResponses,readCompatibleChatOutput,type CompatibleResponsesFormat} from "@evolution/adapters";
 import type { ZodType } from "zod";
 import { ZodError } from "zod";
 
@@ -241,51 +241,7 @@ async function providerFetch(url: string, init: RequestInit, preferRelay = false
 
 const JSON_INSTRUCTION = "Return ONLY one valid JSON object. No markdown fences, no commentary, no explanation.";
 
-// 网关有两类返回结构：/chat/completions 的 choices[].message.content，
-// 与 /responses 的 output_text / output[].content[].text。
-// 有的服务（如 opencode zen）在 chat 路径上也回 Responses 结构——兼容提取，避免误判「回复为空」。
-type ChatLikeJson = {
-  error?: { message?: string };
-  message?: string;
-  output_text?: string;
-  output?: Array<{ content?: Array<{ type?: string; text?: string }> }>;
-  choices?: Array<{
-    message?: { content?: string | Array<{ type?: string; text?: string }>; reasoning_content?: string };
-    text?: string;
-    finish_reason?: string | null;
-  }>;
-  usage?: { completion_tokens?: number; output_tokens?: number };
-};
-
-function extractChatText(json: ChatLikeJson | null | undefined): string {
-  if (!json) return "";
-  const content = json.choices?.[0]?.message?.content;
-  const fromChoices = typeof content === "string"
-    ? content.trim()
-    : Array.isArray(content)
-      ? content.filter((part) => part.type === "text" || part.type === "output_text" || !part.type).map((part) => part.text ?? "").join("").trim()
-      : "";
-  if (fromChoices) return fromChoices;
-  if (json.choices?.[0]?.text?.trim()) return json.choices[0]!.text!.trim();
-  if (json.output_text?.trim()) return json.output_text.trim();
-  for (const item of json.output ?? []) {
-    for (const content of item.content ?? []) {
-      if (content.type === "output_text" && content.text?.trim()) return content.text.trim();
-    }
-  }
-  return "";
-}
-
-function emptyChatReplyReason(json: ChatLikeJson): string {
-  if (json.error?.message) return `模型返回错误：${json.error.message}`;
-  const choice = json.choices?.[0];
-  const finish = choice?.finish_reason;
-  const outputTokens = json.usage?.completion_tokens ?? json.usage?.output_tokens;
-  if (finish === "length") return `响应中没有最终 content（finish_reason=length${outputTokens === undefined ? "" : `，已用输出 tokens=${outputTokens}`}；可能耗尽输出预算）。请缩小构造范围或切换模型。`;
-  if (choice?.message?.reasoning_content?.trim()) return "响应只有推理内容，没有最终 content；模型未完成结构化结果。请缩小构造范围或切换模型。";
-  return `响应中没有 content 文本${finish ? `（finish_reason=${finish}）` : ""}；请检查模型与中转的返回格式。`;
-}
-
+// Compatibility shim: compatible Chat/Responses envelope decoding lives in @evolution/adapters.
 // 部分网关（opencode zen 等）只讲 Responses 协议：供应商标记或用户粘的地址以 /responses 结尾时，以此为协议偏好信号。
 function prefersResponsesProtocol(preset: ByokProviderPreset, baseUrl: string | undefined): boolean {
   return preset.responsesFirst === true || /\/responses$/i.test(baseUrl?.trim() ?? "");
@@ -360,11 +316,9 @@ async function openaiKindText(args: StructuredCall & { responseFormat?: unknown 
       ...(args.responseFormat ? { response_format: args.responseFormat } : {}),
     }),
   });
-  const json = await response.json().catch(() => ({})) as ChatLikeJson;
-  if (!response.ok) throw Object.assign(new Error(errorMessage(response.status, json)), { httpStatus: response.status });
-  const text = extractChatText(json);
-  if (!text) throw new Error(emptyChatReplyReason(json));
-  return text;
+  const json: unknown = await response.json().catch(() => ({}));
+  if (!response.ok) throw Object.assign(new Error(errorMessage(response.status, json).split(resolved.config.apiKey).join("[redacted]")), { httpStatus: response.status });
+  return readCompatibleChatOutput(json,{allowResponsesShape:true,apiKey:resolved.config.apiKey});
 }
 
 // 记住每个「供应商+模型」第一次成功的 JSON 输出模式（localStorage），
@@ -700,13 +654,13 @@ async function probeConnectionReply(resolved: ResolvedByok): Promise<string> {
     // 兼容「只开了其中一种协议」的网关（opencode zen 只开 /responses）。
     const useResponsesFirst = prefersResponsesProtocol(preset, config.baseUrl);
     let response = await probe(useResponsesFirst ? "responses" : "chat/completions");
-    let json = await response.json().catch(() => null) as ChatLikeJson | null;
+    let json: unknown = await response.json().catch(() => null);
     if (!response.ok && (response.status === 404 || response.status === 405)) {
       response = await probe(useResponsesFirst ? "chat/completions" : "responses");
-      json = await response.json().catch(() => null) as ChatLikeJson | null;
+      json = await response.json().catch(() => null);
     }
     if (!response.ok) throw new Error(errorMessage(response.status, json));
-    return assertChatReply(json, extractChatText(json));
+    return readCompatibleChatOutput(json,{allowResponsesShape:true,apiKey:config.apiKey});
   } catch (error) {
     if (error instanceof TypeError) throw new Error(`无法连接 ${preset.name}（网络受限或该供应商不允许网页直连）。${preset.note}`, { cause: error });
     throw error;
