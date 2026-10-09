@@ -31,6 +31,17 @@ describe("bounded server Candidate construction recovery",()=>{
   const built=await buildServerExperimentCandidate(args.project,args.candidate);const snapshot=built.artifactSnapshots[0]!;
   expect(ai).toHaveBeenCalledTimes(2);expect(put).toHaveBeenCalledOnce();expect(snapshot.content).toBe(original.replace(before,after));expect(await blobs.get(snapshot.frozenArtifact!.blobId)!.text()).toBe(snapshot.content);expect(await verifyServerCandidateFrozenArtifact(snapshot)).toBe(true);expect(snapshot.notes?.join(" ")).toContain("构造修复");
  });
+ it("repairs a wrong HTML output suffix once on the same construction boundary",async()=>{
+  const args=fixture();const first=output();first.artifacts[0]!.name="candidate.zip";
+  ai.mockResolvedValueOnce(first).mockImplementationOnce(async(_operation,payload)=>{
+   expect(payload.recovery.attempt).toBe(1);expect(payload.recovery.failure.code).toBe("text-format");
+   expect(payload.recovery.candidateId).toBe(args.candidate.id);expect(put).not.toHaveBeenCalled();return output();
+  });
+  const built=await buildServerExperimentCandidate(args.project,args.candidate);const snapshot=built.artifactSnapshots[0]!;
+  expect(ai).toHaveBeenCalledTimes(2);expect(put).toHaveBeenCalledOnce();expect(snapshot.name).toBe("evolved.html");
+  expect(snapshot.frozenArtifact!.name).toBe(snapshot.name);expect(snapshot.content).toBe(original.replace(before,after));
+  expect(await verifyServerCandidateFrozenArtifact(snapshot,args.source)).toBe(true);
+ });
  it("repairs a missing legitimate Target atomically while preserving the other complete file",async()=>{
   const args=fixture();const text="Preserve this second complete file.";const other=SourceArtifactSchema.parse({...args.source,id:"other",name:"other.md",extension:"md",mimeType:"text/markdown",size:Buffer.byteLength(text),textContent:"STALE"});args.project.sourceArtifacts.push(other);blobs.set(other.id,new Blob([text],{type:other.mimeType}));
   ai.mockResolvedValueOnce(output()).mockImplementationOnce(async(_operation,payload)=>{expect(put).not.toHaveBeenCalled();expect(payload.recovery.failure.code).toBe("missing-target");return {summary:"all Targets",artifacts:[...output().artifacts,{sourceArtifactId:other.id,name:other.name,mimeType:other.mimeType,content:text,notes:[]}]};});

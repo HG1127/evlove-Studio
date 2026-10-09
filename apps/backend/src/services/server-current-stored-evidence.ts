@@ -41,7 +41,7 @@ export async function runServerCurrentStoredEvidence({ project, testCase }: { pr
   const blobId = receipt?.blobId ?? (source.storageRef?.trim() || (source.inputMode === "upload" ? source.id : undefined));
   if (!blobId) return unavailable(testCase, "当前 Source 没有实际上传文件引用。");
   try {
-    if (snapshot && !await verifyServerCandidateFrozenArtifact(snapshot)) return unavailable(testCase, "当前 Search Champion 冻结文件校验失败。");
+    if (snapshot && !await verifyServerCandidateFrozenArtifact(snapshot,source)) return unavailable(testCase, "当前 Search Champion 冻结文件校验失败。");
     const blob = await getServerArtifactStore().get(blobId);
     if (!blob || blob.size > (extension === "zip" ? 25_000_000 : MAX_FILE_BYTES) || blob.size !== (receipt?.size ?? source.size)) return unavailable(testCase, "当前文件缺失、大小不一致或超出索引范围。");
     const bytes = new Uint8Array(await blob.arrayBuffer());

@@ -1,6 +1,6 @@
 import {describe,expect,it} from "vitest";
 import type {Candidate,EvolveProject,ValidationRun} from "@evolution/contracts";
-import {evidenceFingerprint,settleArtifactAcceptanceFromValidation,verifiedValidationFailures} from "./index";
+import {evidenceFingerprint,hasExactFrozenArtifactSet,settleArtifactAcceptanceFromValidation,verifiedValidationFailures} from "./index";
 
 function fixture(){
   const project={
@@ -29,6 +29,17 @@ describe("artifact acceptance settlement",()=>{
     expect(result.status).toBe("passed");
     expect(result.hardGatePass).toBe(true);
     expect(result.frozenArtifacts?.[0]?.blobId).toBe("blob");
+  });
+  it("refuses jointly renamed text snapshots and receipts of a different original format",()=>{
+    const x=fixture();
+    Object.assign(x.project.sourceArtifacts[0]!,{name:"original.md",extension:"md"});
+    x.candidate.artifactSnapshots[0]!.name="candidate.zip";
+    x.frozen.name="candidate.zip";
+    x.validation.evidenceFingerprint=evidenceFingerprint(x.project,x.candidate);
+    const result=settleArtifactAcceptanceFromValidation({project:x.project,candidate:x.candidate,validation:x.validation,frozenArtifacts:[x.frozen]});
+    expect(result.status).toBe("unverified");
+    expect(result.acceptedAt).toBeUndefined();
+    expect(hasExactFrozenArtifactSet(x.project,x.candidate,{...result,status:"passed",frozenArtifacts:[x.frozen]})).toBe(false);
   });
   it("keeps a missing same-paper baseline unverified rather than calling the product failed",()=>{
     const x=fixture();

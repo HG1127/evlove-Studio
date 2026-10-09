@@ -10,7 +10,7 @@ import {
   type SourceArtifact,
 } from "@evolution/contracts";
 import { CandidateConstructionOutputError, checkCandidateConstructionOutput, runCandidateConstruction, trustedServerBaselineChampion } from "@evolution/harness";
-import { applyExactEdits, requiresHtmlProtectionBaseline } from "@evolution/core";
+import { applyExactEdits, hasSourceTextArtifactFileFormat, requiresHtmlProtectionBaseline } from "@evolution/core";
 import { buildServerCandidateTargetContext, buildServerExactCandidateArtifacts, isServerTextEditBlueprint, requireServerCandidateOutputModes, SERVER_TEXT_FAMILY as TEXT_FAMILY } from "./server-candidate-context";
 import { runServerAi } from "./ai-gateway";
 import { checkServerHtmlCandidateProtection } from "./server-html-candidate-protection";
@@ -117,7 +117,7 @@ async function currentBaseBlob(project: EvolveProject, source: SourceArtifact, p
   if (!binding.blobId) throw new Error(binding.reason ?? "当前 Candidate 父代 Artifact 不可用。");
   if (parentCandidate) {
     const parent = currentParentSnapshot(project, source.id, parentCandidate);
-    if (!parent || !await verifyServerCandidateFrozenArtifact(parent)) throw new Error(`${source.name} 的待修复 Candidate 冻结文件不可用或身份不一致。`);
+    if (!parent || !await verifyServerCandidateFrozenArtifact(parent,source)) throw new Error(`${source.name} 的待修复 Candidate 冻结文件不可用或身份不一致。`);
   }
   const blob = await getServerArtifactStore().get(binding.blobId);
   if (!blob) throw new Error(`找不到 Candidate 父代 Artifact Blob ${binding.blobId}。`);
@@ -134,7 +134,7 @@ export async function readServerCandidateParentText(project: EvolveProject, sour
     if (source.textContent === undefined) throw new Error(`${source.name} 缺少完整粘贴正文。`);
     return source.textContent;
   }
-  if (parent && !await verifyServerCandidateFrozenArtifact(parent)) throw new Error(`${source.name} 的父代冻结文件与 Snapshot 身份不一致。`);
+  if (parent && !await verifyServerCandidateFrozenArtifact(parent,source)) throw new Error(`${source.name} 的父代冻结文件与 Snapshot 身份不一致。`);
   const blob = await currentBaseBlob(project, source, parentCandidate);
   if (!parent && blob.size !== source.size) throw new Error(`${source.name} 的原文件大小与 Source 不一致。`);
   const bytes = new Uint8Array(await blob.arrayBuffer());
@@ -174,8 +174,9 @@ async function persistFrozenArtifact(
 }
 
 /** Recheck the persisted bytes at execution time, not just at materialization time. */
-export async function verifyServerCandidateFrozenArtifact(snapshot: CandidateArtifactSnapshot): Promise<boolean> {
+export async function verifyServerCandidateFrozenArtifact(snapshot: CandidateArtifactSnapshot, source?: SourceArtifact): Promise<boolean> {
   const receipt = snapshot.frozenArtifact;
+  if (source && (snapshot.sourceArtifactId !== source.id || !hasSourceTextArtifactFileFormat(source,snapshot.name))) return false;
   if (!receipt || receipt.sourceArtifactId !== snapshot.sourceArtifactId || receipt.size <= 0
     || receipt.name !== snapshot.name || receipt.mimeType !== snapshot.mimeType) return false;
   const contentHash = await sha256Text(snapshot.content);
@@ -340,6 +341,9 @@ export async function materializeServerCandidateArtifacts(
       notes:[...(artifact.notes??[]),"Durable Workflow Server Materializer：实际文件已物化并冻结。"],
       createdAt:new Date().toISOString(),
     };
+    if (!hasSourceTextArtifactFileFormat(source,snapshot.name)) {
+      throw new CandidateConstructionOutputError("text-format", `${source.name} Candidate 文件名 ${snapshot.name} 不符合原文本格式 .${source.extension}。`);
+    }
     const protection=text?await checkServerHtmlCandidateProtection({
       project,source,candidateContent:snapshotContent,parentText,hasParent:Boolean(parent),
       readOriginal:async()=>{
@@ -349,7 +353,7 @@ export async function materializeServerCandidateArtifacts(
       },
     }):{checks:[],limitations:[]};
     if(unchanged&&parent){
-      if(!await verifyServerCandidateFrozenArtifact(parent)) throw new Error(`${source.name} 的父代 Candidate 冻结文件不可用或身份不一致。`);
+      if(!await verifyServerCandidateFrozenArtifact(parent,source)) throw new Error(`${source.name} 的父代 Candidate 冻结文件不可用或身份不一致。`);
       prepared.push({source,snapshot:{...parent,id:snapshot.id},unchanged:true});
       continue;
     }

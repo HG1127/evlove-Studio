@@ -118,7 +118,10 @@ export async function runServerMissionHoldout(project:EvolveProject){
         evidenceInstruction:`Inspect only exact frozen Candidate ${candidate.id} on this hidden paper. Missing runtime evidence must be UNVERIFIED. Never use plan/designRationale as observed proof.`,
         variant:{id:candidate.id,artifactSnapshots:candidate.artifactSnapshots.map((snapshot)=>({id:snapshot.id,sourceArtifactId:snapshot.sourceArtifactId,name:snapshot.name,mimeType:snapshot.mimeType,contentHash:snapshot.contentHash,buildMode:snapshot.buildMode}))},
       }),
-      verifyFrozenArtifact:verifyServerCandidateFrozenArtifact,
+      verifyFrozenArtifact:(snapshot)=>{
+        const source=project.sourceArtifacts.find((item)=>item.id===snapshot.sourceArtifactId);
+        return source?verifyServerCandidateFrozenArtifact(snapshot,source):Promise.resolve(false);
+      },
       executeFrozenStatic:runServerFrozenArtifactStaticEvidence,
       executeExternalBatch:({project:current,candidate,testCases})=>executeCandidateExternal(current,candidate,testCases),
       judge:(payload)=>runServerAi("evaluate",payload),

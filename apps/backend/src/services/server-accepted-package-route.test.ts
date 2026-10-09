@@ -122,6 +122,52 @@ describe("accepted current Candidate server package and physical download", () =
     expect(mocks.append).not.toHaveBeenCalled();
     expect(mocks.putBlob).not.toHaveBeenCalled();
   });
+  it.each(["candidate.zip", "candidate.md", "candidate"])("blocks an accepted HTML with jointly wrong download name %s", async (name) => {
+    const args = setup(false), snapshot = args.current.artifactSnapshots[0]!;
+    snapshot.name = name;
+    snapshot.frozenArtifact!.name = name;
+    args.project.artifactAcceptance.frozenArtifacts![0]!.name = name;
+    // Keep otherwise valid synthetic acceptance bindings; rejection must be about file format.
+    const binding = evidenceFingerprint(args.project,args.current);
+    args.project.validationRun.evidenceFingerprint = binding;
+    args.project.artifactAcceptance.evidenceFingerprint = binding;
+    const response = await request(args.current.id);
+    expect(response.status).toBe(409);
+    expect(mocks.save).not.toHaveBeenCalled();
+    expect(mocks.append).not.toHaveBeenCalled();
+    expect(mocks.putBlob).not.toHaveBeenCalled();
+  });
+  it("blocks a historical accepted HTML with a jointly wrong name and MIME", async () => {
+    const args = setup(false), snapshot = args.current.artifactSnapshots[0]!;
+    snapshot.name = snapshot.frozenArtifact!.name = "candidate.zip";
+    snapshot.mimeType = snapshot.frozenArtifact!.mimeType = "application/zip";
+    Object.assign(args.project.artifactAcceptance.frozenArtifacts![0]!,{name:snapshot.name,mimeType:snapshot.mimeType});
+    const binding = evidenceFingerprint(args.project,args.current);
+    args.project.validationRun.evidenceFingerprint = binding;
+    args.project.artifactAcceptance.evidenceFingerprint = binding;
+    expect((await request(args.current.id)).status).toBe(409);
+    expect(mocks.save).not.toHaveBeenCalled();
+    expect(mocks.append).not.toHaveBeenCalled();
+    expect(mocks.putBlob).not.toHaveBeenCalled();
+  });
+  it.each(["renamed.HTML", "renamed.htm"])("delivers and reopens same-format renamed %s without changing bytes", async (name) => {
+    const args = setup(false), snapshot = args.current.artifactSnapshots[0]!, frozen = snapshot.frozenArtifact!;
+    snapshot.name = frozen.name = name;
+    args.project.artifactAcceptance.frozenArtifacts![0]!.name = name;
+    const binding = evidenceFingerprint(args.project,args.current);
+    args.project.validationRun.evidenceFingerprint = binding;
+    args.project.artifactAcceptance.evidenceFingerprint = binding;
+    expect((await request(args.current.id)).status).toBe(200);
+    const response = await app.fetch(new Request("http://localhost/artifacts/" + encodeURIComponent(frozen.blobId)));
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe(frozen.sha256);
+    const saved = mocks.save.mock.calls[0]![0] as EvolveProject;
+    expect(saved.outputArtifacts.find(item=>item.kind==="primary")!.frozenArtifact!.name).toBe(name);
+    const reopened = await parseServerSource({artifactId:"reopened",name,mimeType:frozen.mimeType,
+      size:bytes.byteLength,role:"target",storageRef:frozen.blobId,blob:new Blob([bytes],{type:frozen.mimeType})});
+    expect(reopened.textContent).toBe(snapshot.content);
+    expect(mocks.putBlob).not.toHaveBeenCalled();
+  });
   it.each(["missing", "changed-bytes", "changed-snapshot", "changed-snapshot-rebound"])("blocks %s after acceptance instead of recreating a download", async (kind) => {
     const args = setup(false), snapshot = args.current.artifactSnapshots[0]!, frozen = snapshot.frozenArtifact!;
     if (kind === "missing") args.blobs.delete(frozen.blobId);

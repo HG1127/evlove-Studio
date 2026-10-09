@@ -9,6 +9,7 @@ import { evidenceFingerprint } from "./evidence-binding";
 import { hasAuthoritativeHiddenRelease, hasFullHiddenMeasurement, hasVerifiedHiddenBaseline } from "./hidden-validation-evidence";
 import { indexScopedAcceptanceResults } from "./acceptance-result-identity";
 import { indexUniqueById } from "./identity-index";
+import { hasSourceTextArtifactFileFormat } from "./artifact-file-format";
 
 function validationScoreIndex(project:EvolveProject,validation:ValidationRun){
   return indexScopedAcceptanceResults([{requestedCriterionIds:project.acceptanceRubric.map((item)=>item.id),results:validation.evaluation?.criterionScores??[]}]);
@@ -51,7 +52,10 @@ export function settleArtifactAcceptanceFromValidation(args:{
       const snapshot=snapshotIndex.byId.get(id);
       const frozen=frozenIndex.byId.get(id);
       const receipt=snapshot?.frozenArtifact;
+      const source=args.project.sourceArtifacts.find((item)=>item.id===id)!;
       return Boolean(snapshot&&frozen&&receipt
+        && hasSourceTextArtifactFileFormat(source,snapshot.name)
+        && hasSourceTextArtifactFileFormat(source,frozen.name)
         && receipt.sourceArtifactId===id
         && receipt.sha256===frozen.sha256
         && receipt.blobId===frozen.blobId

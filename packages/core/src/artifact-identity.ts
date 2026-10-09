@@ -1,5 +1,6 @@
 import type {ArtifactAcceptance,Candidate,EvolveProject,FrozenArtifact} from "@evolution/contracts";
 import {indexUniqueById} from "./identity-index";
+import {hasSourceTextArtifactFileFormat} from "./artifact-file-format";
 
 function sameFrozenIdentity(left:FrozenArtifact,right:FrozenArtifact){
   return left.sourceArtifactId===right.sourceArtifactId
@@ -28,7 +29,10 @@ export function hasExactFrozenArtifactSet(project:EvolveProject,candidate:Candid
     &&targetIds.every((id)=>{
       const snapshot=snapshotsById.byId.get(id);
       const receipt=frozenById.byId.get(id);
+      const source=project.sourceArtifacts.find((item)=>item.id===id)!;
       return Boolean(snapshot&&receipt
+        &&hasSourceTextArtifactFileFormat(source,snapshot.name)
+        &&hasSourceTextArtifactFileFormat(source,receipt.name)
         &&(!snapshot.frozenArtifact||sameFrozenIdentity(snapshot.frozenArtifact,receipt)));
     });
 }

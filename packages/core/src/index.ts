@@ -2,6 +2,7 @@
 export * from "./evaluation/gap";
 export * from "./identity-index";
 export * from "./artifact-identity";
+export * from "./artifact-file-format";
 export * from "./test-case-result-identity";
 export * from "./stable-hash";
 export * from "./artifact-strategy";
