@@ -46,3 +46,46 @@ it("片段证据不能靠补评升级为完整验证", async () => {
  expect(result.unverifiedCriterionIds).toEqual(["LONG"]);
  expect(mocks.call).toHaveBeenCalledTimes(1);
 });
+
+it("补评读取预算内完整观察并强制新鲜真实评审", async () => {
+ mocks.call.mockClear(); mocks.status.mockReturnValue({live:true});
+ const criterion=AcceptanceCriterionSchema.parse({id:"A",title:"工作流",requirement:"完整步骤",validationMethod:"semantic-judge"});
+ const testCase={id:"H-A",title:"工作流",input:"检查",expected:["完整步骤"],tags:[],hidden:true,criterionIds:["A"],executionMode:"artifact-runtime" as const,evidenceScope:"product-behavior" as const} satisfies TestCase;
+ const output="完整步骤 "+"观察 ".repeat(9000)+"闭环最终证据";
+ const run={testCaseId:"H-A",output,latencyMs:1,cost:0,trace:[],verificationStatus:"verified" as const} satisfies TargetRunResult;
+ const generic={accuracy:90,evidence:90,riskCoverage:90,completeness:90,safety:"PASS",notes:[],failures:[],cases:[],criteria:[]};
+ mocks.call.mockImplementation(async (_operation: string,payload: {recovery?: unknown; runs:{outputChunks:string[]}[]})=>payload.recovery && payload.runs[0].outputChunks.join("") === output
+   ? {...generic,criteria:[{criterionId:"A",score:92,pass:true,evidence:["闭环最终证据"],gaps:[],testCaseIds:["H-A"]}]}
+   : generic);
+ const result=await evaluateRuns({testCases:[testCase],runs:[run],context:{mode:"holdout",project:{acceptanceRubric:[criterion]}}});
+ expect(result.unverifiedCriterionIds).toEqual([]);
+ const supplement=mocks.call.mock.calls[1];
+ expect(supplement[1].runs[0].outputChunks).toEqual([output]);
+ expect(supplement[1].runs[0].outputMeta).toEqual({originalLength:output.length,reviewedLength:output.length,truncated:false});
+ expect(supplement[4]).toMatchObject({forceRefresh:true,requireLive:true});
+});
+
+it("多题补评仍受一个总预算约束且保留截断标记", async () => {
+ mocks.call.mockClear(); mocks.status.mockReturnValue({live:true});
+ const criterion=AcceptanceCriterionSchema.parse({id:"A",title:"全套",requirement:"全文",validationMethod:"semantic-judge"});
+ const testCases=Array.from({length:12},(_,index)=>({id:`H-${index}`,title:"全套",input:"检查",expected:["全文"],tags:[],hidden:true,criterionIds:["A"],executionMode:"artifact-runtime" as const,evidenceScope:"product-behavior" as const})) satisfies TestCase[];
+ const runs=testCases.map((testCase)=>({testCaseId:testCase.id,output:"全文 ".repeat(4000),latencyMs:1,cost:0,trace:[],verificationStatus:"verified" as const})) satisfies TargetRunResult[];
+ mocks.call.mockResolvedValue({accuracy:90,evidence:90,riskCoverage:90,completeness:90,safety:"PASS",notes:[],failures:[],cases:[],criteria:[]});
+ await evaluateRuns({testCases,runs,context:{mode:"holdout",project:{acceptanceRubric:[criterion]}}});
+ const supplied=mocks.call.mock.calls[1][1].runs as {outputChunks:string[];outputMeta:{truncated:boolean}}[];
+ expect(supplied.reduce((sum,run)=>sum+run.outputChunks.join("\n\n---\n\n").length,0)).toBeLessThanOrEqual(36000);
+ expect(supplied.every((run)=>run.outputMeta.truncated)).toBe(true);
+});
+
+it("补评模型不可用时保留未验证且不伪造产品失败", async () => {
+ mocks.call.mockClear(); mocks.status.mockReturnValue({live:true});
+ const criterion=AcceptanceCriterionSchema.parse({id:"A",title:"工作流",requirement:"完整步骤",validationMethod:"semantic-judge"});
+ const testCase={id:"H-A",title:"工作流",input:"检查",expected:["完整步骤"],tags:[],hidden:true,criterionIds:["A"],executionMode:"artifact-runtime" as const,evidenceScope:"product-behavior" as const} satisfies TestCase;
+ const run={testCaseId:"H-A",output:"真实观察",latencyMs:1,cost:0,trace:[],verificationStatus:"verified" as const} satisfies TargetRunResult;
+ mocks.call.mockResolvedValueOnce({accuracy:90,evidence:90,riskCoverage:90,completeness:90,safety:"PASS",notes:[],failures:[],cases:[],criteria:[]}).mockRejectedValueOnce(new Error("provider unavailable"));
+ const result=await evaluateRuns({testCases:[testCase],runs:[run],context:{mode:"holdout",project:{acceptanceRubric:[criterion]}}});
+ expect(result.unverifiedCriterionIds).toEqual(["A"]);
+ expect(result.failures).toEqual([]);
+ expect(result.notes.join(" ")).toContain("保持未验证");
+ expect(mocks.call.mock.calls[1][4]).toMatchObject({forceRefresh:true,requireLive:true});
+});
