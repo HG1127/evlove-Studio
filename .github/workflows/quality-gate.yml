@@ -96,6 +96,13 @@ jobs:
           AI_RESPONSES_SMOKE_RECEIPT: artifacts/ci/ai-responses-short-model.json
         run: node scripts/ai-responses-browser-smoke.mjs 2>&1 | tee artifacts/ci/ai-responses-short-model.log
 
+      - name: Custom Chat browser composition
+        id: chatbrowser
+        env:
+          RUNNER_BROWSER_CI_NO_SANDBOX: "1"
+          AI_CHAT_SMOKE_MODEL: x
+          AI_CHAT_SMOKE_RECEIPT: artifacts/ci/ai-chat-browser.json
+        run: node scripts/ai-chat-browser-smoke.mjs 2>&1 | tee artifacts/ci/ai-chat-browser.log
       - name: Browser E2E
         id: e2e
         env:
@@ -178,6 +185,7 @@ jobs:
           RUNNER: ${{ steps.runner.outcome }}
           MODEL_BROWSER: ${{ steps.modelbrowser.outcome }}
           SHORT_MODEL_BROWSER: ${{ steps.modelbrowser_short.outcome }}
+          CHAT_BROWSER: ${{ steps.chatbrowser.outcome }}
           E2E: ${{ steps.e2e.outcome }}
           UI: ${{ steps.ui.outcome }}
           BUILT_UI: ${{ steps.builtui.outcome }}
@@ -188,7 +196,7 @@ jobs:
             echo '## Exact checkout verification'
             printf '\nCheckout SHA: `%s`\n' "$(git rev-parse HEAD)"
             printf '\n| Check | Outcome |\n| --- | --- |\n'
-            printf '| Lint | %s |\n| Architecture | %s |\n| Unit | %s |\n| Build | %s |\n| Runner | %s |\n| Responses browser | %s |\n| Short model browser | %s |\n| E2E | %s |\n| Local UI smoke | %s |\n| Built UI smoke | %s |\n' "$LINT" "$ARCHITECTURE" "$UNIT" "$BUILD" "$RUNNER" "$MODEL_BROWSER" "$SHORT_MODEL_BROWSER" "$E2E" "$UI" "$BUILT_UI"
+            printf '| Lint | %s |\n| Architecture | %s |\n| Unit | %s |\n| Build | %s |\n| Runner | %s |\n| Responses browser | %s |\n| Short model browser | %s |\n| Chat browser | %s |\n| E2E | %s |\n| Local UI smoke | %s |\n| Built UI smoke | %s |\n' "$LINT" "$ARCHITECTURE" "$UNIT" "$BUILD" "$RUNNER" "$MODEL_BROWSER" "$SHORT_MODEL_BROWSER" "$CHAT_BROWSER" "$E2E" "$UI" "$BUILT_UI"
             printf '\n[Verification logs and screenshots](%s)\n' "$EVIDENCE_URL"
             printf '\n[Tested build](%s)\n' "$BUILD_URL"
             echo 'This verifies repository regressions; real Mission acceptance and production artifact identity require separate evidence.'
