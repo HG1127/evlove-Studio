@@ -1,5 +1,12 @@
 # Backend Capability Assessment and Delivery Plan
 
+## 2026-10-09 — Original text format through Candidate, same-Hidden, Gate F and download (local only)
+
+Parallel audit and regression reproduced HTML bytes being frozen and delivered under a jointly matching `candidate.zip` name. A shared Core original-text-format check now rejects that boundary before freeze, in frozen-set identity/settlement and delivery; Server passes Source to Experiment, current-version evidence, Hidden fingerprint and Gate F verification. The existing one-attempt construction recovery handles an invalid output suffix. Same-format rename, case and HTML/HTM aliases remain valid, with no post-acceptance rename/regeneration or binary scope expansion.
+
+The reproducer failed 11 of 72 tests against the unchanged BOM parent; the combined focused suite passed 93 tests. The complete related regression passed 28 suites / 326 tests, plus architecture, full lint and TypeScript/production build. Final exact-SHA local checks and handoff are recorded in `D:\Downloads\evolution-os-smoke-temp\text-boundaries-development-handoff.json` and [main-flow text boundaries](main-flow-text-boundaries-handoff.md). New hosted CI/production and complete real Mission remain UNVERIFIED. The manually configured custom model/operator/export paths are still required; account-owner GitHub Actions billing/allowance recovery is recorded rather than repeatedly retried. Root continued local main-flow work and made no production mutation.
+
+
 ## 2026-10-09 — Exact UTF-8 BOM files in the main Artifact path (local only)
 
 Valid UTF-8 BOM input was reproducibly rejected when default text readers discarded the three leading bytes. `@evolution/adapters` now provides an exact UTF-8 decoder used by Server full-parent construction/frozen verification/materialization/current-version roundtrip and browser rendered-text checks. BOM, CRLF and Unicode remain in the frozen content and actual bytes; only JSON syntax validation ignores a leading BOM. Invalid encoding and hash/size/Snapshot drift still fail.
