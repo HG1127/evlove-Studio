@@ -56,7 +56,7 @@ import {
   type VisualJudgeAiResult,
 } from "@evolution/contracts";
 import { SERVER_SEMANTIC_CONTEXT_VERSION } from "@evolution/harness";
-import {COMPATIBLE_RESPONSES_OUTPUT_VERSION,COMPATIBLE_CHAT_OUTPUT_VERSION,readCompatibleResponsesOutput,readCompatibleChatOutput} from "@evolution/adapters";
+import {COMPATIBLE_RESPONSES_OUTPUT_VERSION,COMPATIBLE_CHAT_OUTPUT_VERSION,readCompatibleResponsesOutput,readCompatibleChatOutput,parseStructuredAiOutput} from "@evolution/adapters";
 import type { ServerAiConfig } from "../server-env";
 import {resolveServerAiConfig} from "./server-ai-connection";
 
@@ -135,6 +135,13 @@ function contract(operation:ServerAiOperation):Contract<unknown>{
   throw new Error("Unsupported Server AI operation: "+exhaustive);
 }
 
+function parseStructuredResult<T>(text:string,contract:Contract<T>):T{
+  const result=contract.parser.safeParse(parseStructuredAiOutput(text));
+  if(result.success)return result.data;
+  const fields=[...new Set(result.error.issues.map(issue=>issue.path.join(".")||"结果"))].slice(0,4).join("、");
+  throw Object.assign(new Error("模型返回的 JSON 不符合任务结构（"+fields+"）。请检查模型的结构化输出能力或切换模型。"),{code:"AI_OUTPUT_SCHEMA_MISMATCH"});
+}
+
 async function callVercelGateway<T>(args:{
   config:Extract<ServerAiConfig,{mode:"vercel-gateway"}>;
   contract:Contract<T>;
@@ -204,7 +211,7 @@ async function callResponses<T>(args:{config:Extract<ServerAiConfig,{mode:"opena
     const error=Object.assign(new Error(detail||("Server AI Responses HTTP "+response.status)),{httpStatus:response.status});
     throw error;
   }
-  return args.contract.parser.parse(JSON.parse(readCompatibleResponsesOutput(json,{requireCompletedStatus:true})));
+  return parseStructuredResult(readCompatibleResponsesOutput(json,{requireCompletedStatus:true}),args.contract);
 }
 
 async function callChat<T>(args:{config:Extract<ServerAiConfig,{mode:"openai-compatible"}>;contract:Contract<T>;payload:unknown;images:ParsedImage[]}){
@@ -235,7 +242,7 @@ async function callChat<T>(args:{config:Extract<ServerAiConfig,{mode:"openai-com
     const detail=parsed.success?parsed.data.error?.message:undefined;
     throw Object.assign(new Error(detail||("Server AI Chat HTTP "+response.status)),{httpStatus:response.status});
   }
-  return args.contract.parser.parse(JSON.parse(readCompatibleChatOutput(json)));
+  return parseStructuredResult(readCompatibleChatOutput(json),args.contract);
 }
 
 async function structured<T>(payload:unknown,schema:Contract<T>,media?:ServerAiMedia):Promise<T>{

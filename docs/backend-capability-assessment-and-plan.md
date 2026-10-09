@@ -2,6 +2,14 @@
 
 Assessment date: 2026-09-24
 
+## Main-flow delivery update · 2026-10-09
+
+The priority remains one real Mission reaching frozen Candidate, paired Hidden evidence, Gate F and reopening the exact accepted download. Current synthetic/CI checks are implementation evidence and do not prove this Mission acceptance.
+
+- Production read-only build-info identifies main e3482e75f1ae6b88d7756e5ee35cecb0cbfa80f9. Its preceding candidate a6327b7 passed full CI; main Quality Gate 37898782652 failed before any step because GitHub Actions reported a payment/spending-limit problem. Automated Production Smoke was skipped. Main CI is incomplete, even when independent read-only production checks pass.
+- Manual todo: account holder restores GitHub Actions billing/allowance. Keep pending exact-SHA CI/production evidence separate; do not repeatedly retry or change account billing. Operator/Vault configuration, actual user-selected model/key and original/Candidate export remain deferred setup.
+- Local branch codex/model-final-json removes outer model reasoning/fences without changing Artifact strings and rejects locally invented completion of truncated JSON. Exact final source passed 326 main-flow tests, architecture, full lint, build, Runner11 and native browser/parser Candidate hash checks. [Development handoff](model-final-json-handoff.md) records local/production scope and remaining acceptance requirements. External branch CI and new production evidence are pending.
+
 ## Current capability
 
 The repository already has a substantial production backend. The target composition is Nitro routes on Vercel Functions, durable Vercel Workflows, and Supabase for production state. The main implemented areas are:
