@@ -59,4 +59,3 @@ The latest available authenticated record is historical: project-1790480873333, 
 Original recorded Artifact: artifact-2ac80e2f-b1f2-4cb9-a3bf-8587577f767f, 264173 bytes, SHA-256 6605429efe92470229601adfb3196bc74ae38855f55d71c8754f8336c52b580a.
 
 The missing acceptance receipts are fresh real Baseline/diagnosis, an actually changed frozen Candidate ID and SHA-256, current/Candidate same-Hidden paired execution, Gate F and downloaded/reopened identical accepted SHA-256. Manual usable custom model/key, operator/Vault, authorized original/Candidate export and hosted account billing are deferred. Direct user-defined models remain the connection design; Vercel AI Gateway is not a required condition.
-
