@@ -4,7 +4,7 @@ import {withExplicitServerAiConnection} from "./server-ai-connection";
 import {createHash} from "node:crypto";
 import {SERVER_SEMANTIC_CONTEXT_VERSION} from "@evolution/harness";
 import {COMPATIBLE_RESPONSES_OUTPUT_VERSION,COMPATIBLE_CHAT_OUTPUT_VERSION} from "@evolution/adapters";
-import {runServerAi,serverAiScoringRouteFingerprint} from "./ai-gateway";
+import {DIRECT_AI_SCHEMA_RECOVERY_VERSION,runServerAi,serverAiScoringRouteFingerprint} from "./ai-gateway";
 import {probeServerAiRuntime,resetServerAiRuntimeProbeCache} from "./server-ai-health";
 const settings={connectionId:"fixture",label:"Synthetic Responses",apiKey:"fictional-provider-key",baseUrl:"https://provider.example.test/v1",model:"x",protocol:"responses" as const,responseFormat:"json-object" as const};
 const task={answer:"Synthetic reply",suggestedAction:"none",evidence:[]};
@@ -47,15 +47,18 @@ describe("backend Responses external output boundary",()=>{
  it("invalidates old Responses scoring identities without including credentials",async()=>{
   const route=["openai-compatible",settings.baseUrl,settings.model,settings.protocol,settings.responseFormat];
   const old=createHash("sha256").update(JSON.stringify({route,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION})).digest("hex");
-  const expected=createHash("sha256").update(JSON.stringify({route,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,responsesOutputVersion:COMPATIBLE_RESPONSES_OUTPUT_VERSION})).digest("hex");
+  const expected=createHash("sha256").update(JSON.stringify({route,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,responsesOutputVersion:COMPATIBLE_RESPONSES_OUTPUT_VERSION,directSchemaRecoveryVersion:DIRECT_AI_SCHEMA_RECOVERY_VERSION})).digest("hex");
   const fingerprint=await withExplicitServerAiConnection(settings,()=>serverAiScoringRouteFingerprint());
-  expect(fingerprint).toBe(expected);expect(fingerprint).not.toBe(old);
+  const previous=createHash("sha256").update(JSON.stringify({route,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,responsesOutputVersion:COMPATIBLE_RESPONSES_OUTPUT_VERSION})).digest("hex");
+  expect(fingerprint).toBe(expected);expect(fingerprint).not.toBe(old);expect(fingerprint).not.toBe(previous);
   expect(await withExplicitServerAiConnection({...settings,apiKey:"rotated-fixture-key"},()=>serverAiScoringRouteFingerprint())).toBe(fingerprint);
  });
  it("invalidates the prior explicit Chat scoring identity",async()=>{
   const chat={...settings,protocol:"chat-completions" as const};
   const route=["openai-compatible",chat.baseUrl,chat.model,chat.protocol,chat.responseFormat];
-  const expected=createHash("sha256").update(JSON.stringify({route,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,chatOutputVersion:COMPATIBLE_CHAT_OUTPUT_VERSION})).digest("hex");
+  const expected=createHash("sha256").update(JSON.stringify({route,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,chatOutputVersion:COMPATIBLE_CHAT_OUTPUT_VERSION,directSchemaRecoveryVersion:DIRECT_AI_SCHEMA_RECOVERY_VERSION})).digest("hex");
+  const previous=createHash("sha256").update(JSON.stringify({route,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,chatOutputVersion:COMPATIBLE_CHAT_OUTPUT_VERSION})).digest("hex");
   expect(await withExplicitServerAiConnection(chat,()=>serverAiScoringRouteFingerprint())).toBe(expected);
+  expect(await withExplicitServerAiConnection(chat,()=>serverAiScoringRouteFingerprint())).not.toBe(previous);
  });
 });
