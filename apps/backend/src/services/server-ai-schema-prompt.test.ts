@@ -4,7 +4,7 @@ import {SERVER_SEMANTIC_CONTEXT_VERSION} from "@evolution/harness";
 import {COMPATIBLE_CHAT_OUTPUT_VERSION} from "@evolution/adapters";
 import {afterEach,describe,expect,it,vi} from "vitest";
 import {jsonSchemas,ServerAiConnectionPutSchema} from "@evolution/contracts";
-import {DIRECT_AI_SCHEMA_INSTRUCTION_VERSION,runServerAi,serverAiScoringRouteFingerprint} from "./ai-gateway";
+import {DIRECT_AI_SCHEMA_RECOVERY_VERSION,DIRECT_AI_SCHEMA_INSTRUCTION_VERSION,runServerAi,serverAiScoringRouteFingerprint} from "./ai-gateway";
 import {withExplicitServerAiConnection} from "./server-ai-connection";
 import * as vault from "./server-vault";
 
@@ -50,13 +50,13 @@ describe("environment direct model schema instructions",()=>{
 });
 
 describe("schema instruction scoring identity and validation",()=>{
-  it.each(["json-schema","json-object","prompt-json"] as const)("binds the changed prompt policy only for %s",async(responseFormat)=>{
+  it.each(["json-schema","json-object","prompt-json"] as const)("binds schema prompt and correction policy for %s",async(responseFormat)=>{
     const config={connectionId:"fixture-connection",label:"Synthetic direct model",baseUrl:"https://model.example.test/v1",apiKey:"fixture-key",model:"fixture-model",protocol:"chat-completions" as const,responseFormat};
     const base={route:["openai-compatible",config.baseUrl,config.model,config.protocol,responseFormat],semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,chatOutputVersion:COMPATIBLE_CHAT_OUTPUT_VERSION};
     const hash=(value:unknown)=>createHash("sha256").update(JSON.stringify(value)).digest("hex");
     const current=await withExplicitServerAiConnection(config,()=>serverAiScoringRouteFingerprint());
-    expect(current).toBe(hash({...base,...(responseFormat==="json-schema"?{directSchemaInstructionVersion:DIRECT_AI_SCHEMA_INSTRUCTION_VERSION}:{})}));
-    if(responseFormat==="json-schema")expect(current).not.toBe(hash(base));else expect(current).toBe(hash(base));
+    expect(current).toBe(hash({...base,...(responseFormat==="json-schema"?{directSchemaInstructionVersion:DIRECT_AI_SCHEMA_INSTRUCTION_VERSION}:{}),directSchemaRecoveryVersion:DIRECT_AI_SCHEMA_RECOVERY_VERSION}));
+    expect(current).not.toBe(hash({...base,...(responseFormat==="json-schema"?{directSchemaInstructionVersion:DIRECT_AI_SCHEMA_INSTRUCTION_VERSION}:{})}));
   });
   it.each(["chat-completions","responses"] as const)("still rejects missing evaluation fields on %s",async(protocol)=>{
     vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(protocol==="chat-completions"?{choices:[{message:{role:"assistant",content:JSON.stringify({summary:"incomplete task JSON"})},finish_reason:"stop"}]}:{status:"completed",output_text:JSON.stringify({summary:"incomplete task JSON"})}),{status:200,headers:{"Content-Type":"application/json"}})));

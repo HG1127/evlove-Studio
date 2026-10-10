@@ -62,6 +62,7 @@ import {resolveServerAiConfig} from "./server-ai-connection";
 
 export type ServerAiOperation=AiOperation;
 export const DIRECT_AI_SCHEMA_INSTRUCTION_VERSION="exact-schema-instructions-v1";
+export const DIRECT_AI_SCHEMA_RECOVERY_VERSION="schema-feedback-once-v1";
 /** Public scoring-route identity; API keys and timeout settings are deliberately excluded. */
 export async function serverAiScoringRouteFingerprint(): Promise<string | undefined> {
   const config = await resolveServerAiConfig();
@@ -74,7 +75,8 @@ export async function serverAiScoringRouteFingerprint(): Promise<string | undefi
   const chatOutputVersion=config.mode==="openai-compatible"&&config.protocol!=="responses"?COMPATIBLE_CHAT_OUTPUT_VERSION:undefined;
   const directSchemaInstructionVersion=config.mode==="openai-compatible"&&(!config.responseFormat||config.responseFormat==="json-schema")
     ?DIRECT_AI_SCHEMA_INSTRUCTION_VERSION:undefined;
-  return createHash("sha256").update(JSON.stringify({ route, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION, responsesOutputVersion, chatOutputVersion, directSchemaInstructionVersion })).digest("hex");
+  const directSchemaRecoveryVersion=config.mode==="openai-compatible"?DIRECT_AI_SCHEMA_RECOVERY_VERSION:undefined;
+  return createHash("sha256").update(JSON.stringify({ route, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION, responsesOutputVersion, chatOutputVersion, directSchemaInstructionVersion, directSchemaRecoveryVersion })).digest("hex");
 }
 
 type StructuredSchema={name:string;schema:Record<string,unknown>};
@@ -138,11 +140,16 @@ function contract(operation:ServerAiOperation):Contract<unknown>{
   throw new Error("Unsupported Server AI operation: "+exhaustive);
 }
 
+class DirectAiSchemaMismatchError extends Error{
+  readonly code="AI_OUTPUT_SCHEMA_MISMATCH";
+  constructor(message:string,readonly correctableShape:boolean){super(message);}
+}
+
 function parseStructuredResult<T>(text:string,contract:Contract<T>):T{
   const result=contract.parser.safeParse(parseStructuredAiOutput(text));
   if(result.success)return result.data;
   const fields=[...new Set(result.error.issues.map(issue=>issue.path.join(".")||"结果"))].slice(0,4).join("、");
-  throw Object.assign(new Error("模型返回的 JSON 不符合任务结构（"+fields+"）。请检查模型的结构化输出能力或切换模型。"),{code:"AI_OUTPUT_SCHEMA_MISMATCH"});
+  throw new DirectAiSchemaMismatchError("模型返回的 JSON 不符合任务结构（"+fields+"）。请检查模型的结构化输出能力或切换模型。",result.error.issues.every(issue=>issue.code!=="custom"));
 }
 
 async function callVercelGateway<T>(args:{
@@ -174,8 +181,9 @@ async function callVercelGateway<T>(args:{
   return args.contract.parser.parse(generated.output);
 }
 
-function directSystem<T>(contract:Contract<T>){
-  const base=SYSTEM+"\n\nTask: "+contract.instruction;
+function directSystem<T>(contract:Contract<T>,correcting=false){
+  const feedback=correcting?"\nThe preceding response was rejected by the task schema. Return the complete root object with required fields "+JSON.stringify(contract.schema.schema.required??[])+". Preserve supplied evidence and identities; never invent facts or verification. This is one structural correction, not permission to change the task.":"";
+  const base=SYSTEM+"\n\nTask: "+contract.instruction+feedback;
   // Compatible providers may accept response_format without enforcing its schema.
   return base+"\nReturn JSON matching this exact schema:\n"+JSON.stringify(contract.schema.schema);
 }
@@ -186,19 +194,19 @@ function directFormat<T>(config:Extract<ServerAiConfig,{mode:"openai-compatible"
   return {type:"json_schema" as const,name:contract.schema.name,strict:true,schema:contract.schema.schema};
 }
 
-async function callResponses<T>(args:{config:Extract<ServerAiConfig,{mode:"openai-compatible"}>;contract:Contract<T>;payload:unknown;images:ParsedImage[]}){
+async function callResponses<T>(args:{config:Extract<ServerAiConfig,{mode:"openai-compatible"}>;contract:Contract<T>;payloadText:string;images:ParsedImage[];signal:AbortSignal;correcting:boolean}){
   const {response,json}=await requestCompatibleAiJson(args.config.baseUrl+"/responses",{
     method:"POST",
     redirect:"error",
-    signal:AbortSignal.timeout(args.config.timeoutMs),
+    signal:args.signal,
     headers:{Authorization:"Bearer "+args.config.apiKey,"Content-Type":"application/json"},
     body:JSON.stringify({
       model:args.config.model,
       store:false,
       input:[
-        {role:"system",content:[{type:"input_text",text:directSystem(args.contract)}]},
+        {role:"system",content:[{type:"input_text",text:directSystem(args.contract,args.correcting)}]},
         {role:"user",content:[
-          {type:"input_text",text:JSON.stringify(args.payload)},
+          {type:"input_text",text:args.payloadText},
           ...args.images.map((image)=>({type:"input_image",image_url:image.dataUrl})),
         ]},
       ],
@@ -216,20 +224,20 @@ async function callResponses<T>(args:{config:Extract<ServerAiConfig,{mode:"opena
   return parseStructuredResult(readCompatibleResponsesOutput(json,{requireCompletedStatus:true}),args.contract);
 }
 
-async function callChat<T>(args:{config:Extract<ServerAiConfig,{mode:"openai-compatible"}>;contract:Contract<T>;payload:unknown;images:ParsedImage[]}){
+async function callChat<T>(args:{config:Extract<ServerAiConfig,{mode:"openai-compatible"}>;contract:Contract<T>;payloadText:string;images:ParsedImage[];signal:AbortSignal;correcting:boolean}){
   const {response,json}=await requestCompatibleAiJson(args.config.baseUrl+"/chat/completions",{
     method:"POST",
     redirect:"error",
-    signal:AbortSignal.timeout(args.config.timeoutMs),
+    signal:args.signal,
     headers:{Authorization:"Bearer "+args.config.apiKey,"Content-Type":"application/json"},
     body:JSON.stringify({
       model:args.config.model,
       messages:[
-        {role:"system",content:directSystem(args.contract)},
+        {role:"system",content:directSystem(args.contract,args.correcting)},
         {role:"user",content:args.images.length?[
-          {type:"text",text:JSON.stringify(args.payload)},
+          {type:"text",text:args.payloadText},
           ...args.images.map((image)=>({type:"image_url",image_url:{url:image.dataUrl}})),
-        ]:JSON.stringify(args.payload)},
+        ]:args.payloadText},
       ],
       ...(args.config.responseFormat==="prompt-json"?{}:{
         response_format:args.config.responseFormat==="json-object"
@@ -259,15 +267,26 @@ async function structured<T>(payload:unknown,schema:Contract<T>,media?:ServerAiM
   if(config.mode==="vercel-gateway"){
     return callVercelGateway({config,contract:schema,payload,images});
   }
+  const signal=AbortSignal.timeout(config.timeoutMs);
+  let protocol=config.protocol??"responses";
   try{
-    if(config.protocol==="chat-completions")return await callChat({config,contract:schema,payload,images});
-    if(config.protocol==="responses")return await callResponses({config,contract:schema,payload,images});
-    try{
-      return await callResponses({config,contract:schema,payload,images});
-    }catch(error){
-      const status=(error as {httpStatus?:number}).httpStatus;
-      if(status!==404&&status!==405&&status!==400)throw error;
-      return await callChat({config,contract:schema,payload,images});
+    const payloadText=JSON.stringify(payload);
+    const invoke=async(correcting:boolean)=>{
+      const args={config,contract:schema,payloadText,images,signal,correcting};
+      if(protocol==="chat-completions")return callChat(args);
+      try{return await callResponses(args);}catch(error){
+        const status=(error as {httpStatus?:number}).httpStatus;
+        if(config.protocol||correcting||status!==404&&status!==405&&status!==400)throw error;
+        protocol="chat-completions";
+        return callChat(args);
+      }
+    };
+    try{return await invoke(false);}catch(error){
+      // Only a completed, structurally invalid task object may receive one correction.
+      // Custom semantic checks, transport failures and nonfinal output are never regenerated.
+      if(!(error instanceof DirectAiSchemaMismatchError)||!error.correctableShape)throw error;
+      if(signal.aborted)throw Object.assign(new Error("模型结构纠正前请求已超时。"),{code:"AI_REQUEST_TIMEOUT"});
+      return await invoke(true);
     }
   }catch(error){
     const original=error as {message?:string;httpStatus?:number;code?:string};

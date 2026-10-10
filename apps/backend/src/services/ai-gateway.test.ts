@@ -4,7 +4,7 @@ import {SERVER_SEMANTIC_CONTEXT_VERSION} from "@evolution/harness";
 import {COMPATIBLE_RESPONSES_OUTPUT_VERSION,COMPATIBLE_CHAT_OUTPUT_VERSION} from "@evolution/adapters";
 import {withExplicitServerAiConnection} from "./server-ai-connection";
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
-import {DIRECT_AI_SCHEMA_INSTRUCTION_VERSION,isServerAiUnavailable,runServerAi,serverAiScoringRouteFingerprint,serverAiUnavailableReason} from "./ai-gateway";
+import {DIRECT_AI_SCHEMA_RECOVERY_VERSION,DIRECT_AI_SCHEMA_INSTRUCTION_VERSION,isServerAiUnavailable,runServerAi,serverAiScoringRouteFingerprint,serverAiUnavailableReason} from "./ai-gateway";
 
 const KEYS=[
   "VERCEL","VERCEL_ENV","VERCEL_OIDC_TOKEN","EVOLUTION_AI_GATEWAY_ENABLED",
@@ -50,7 +50,7 @@ describe("server AI scoring route identity",()=> {
     process.env.EVOLUTION_AI_BASE_URL="https://ai.example.test/v1";
     const route=["openai-compatible","https://ai.example.test/v1","model-a"];
     const legacy=createHash("sha256").update(JSON.stringify(route)).digest("hex");
-    const expected=createHash("sha256").update(JSON.stringify({route,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,responsesOutputVersion:COMPATIBLE_RESPONSES_OUTPUT_VERSION,chatOutputVersion:COMPATIBLE_CHAT_OUTPUT_VERSION,directSchemaInstructionVersion:DIRECT_AI_SCHEMA_INSTRUCTION_VERSION})).digest("hex");
+    const expected=createHash("sha256").update(JSON.stringify({route,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,responsesOutputVersion:COMPATIBLE_RESPONSES_OUTPUT_VERSION,chatOutputVersion:COMPATIBLE_CHAT_OUTPUT_VERSION,directSchemaInstructionVersion:DIRECT_AI_SCHEMA_INSTRUCTION_VERSION,directSchemaRecoveryVersion:DIRECT_AI_SCHEMA_RECOVERY_VERSION})).digest("hex");
     expect(await serverAiScoringRouteFingerprint()).toBe(expected);
     expect(await serverAiScoringRouteFingerprint()).not.toBe(legacy);
   });
