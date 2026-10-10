@@ -19,13 +19,22 @@ import {
 } from "../../../src/services/production-runtime";
 import { evolutionMissionWorkflow } from "../../../../../workflows/evolution-mission";
 import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
-import {cancelWorkflowRunById,workflowRunIdForJob} from "../../../src/services/workflow-run-control";
+import {cancelWorkflowRunById,workflowRunExists,workflowRunIdForJob} from "../../../src/services/workflow-run-control";
 import { canRemeasureLegacyServerPlan } from "@evolution/harness";
 import { serverMainFlowRecoveryDigest } from "../../../src/services/server-main-flow-recovery";
 
 async function cleanupStartedRun(runId:string){
   try{return {ok:true as const,result:await cancelWorkflowRunById(runId)};}
   catch{return {ok:false as const,reason:"workflow-run-cancel-failed" as const};}
+}
+
+async function workflowReuseFailure(runId:string,controlJobId:string){
+  try{
+    if(await workflowRunExists(runId))return undefined;
+    return {statusCode:409,body:{error:"关联 Workflow Run 在当前运行环境中不存在，请核对运行环境和已有请求后重试",controlJobId}};
+  }catch{
+    return {statusCode:503,body:{error:"当前无法核验已保存的 Workflow Run，请稍后使用相同请求键重试",controlJobId}};
+  }
 }
 
 export default defineEventHandler(async(event)=>{
@@ -52,6 +61,8 @@ export default defineEventHandler(async(event)=>{
     }
     if(schedule.durableScheduledFor===scheduledFor&&schedule.durableJobId){
       if(schedule.durableRunId){
+        const failure=await workflowReuseFailure(schedule.durableRunId,schedule.durableJobId);
+        if(failure){setResponseStatus(event,failure.statusCode);return failure.body;}
         const response:EvolutionWorkflowStartResponse={
           missionId:mission.id,
           controlJobId:schedule.durableJobId,
@@ -77,6 +88,8 @@ export default defineEventHandler(async(event)=>{
       if(runId && prior.metadata?.workflowIntent==="remeasure-current-input"
         && prior.metadata?.sourceUpdatedAt===parsed.data.expectedMissionUpdatedAt
         && !["failed","cancelled","partial"].includes(prior.status)){
+        const failure=await workflowReuseFailure(runId,prior.id);
+        if(failure){setResponseStatus(event,failure.statusCode);return failure.body;}
         return {missionId:mission.id,controlJobId:prior.id,runId,status:"queued",reused:true} satisfies EvolutionWorkflowStartResponse;
       }
       setResponseStatus(event,409);return {error:"相同重新测量请求已终止或尚未绑定，请核对状态后刷新重试"};
@@ -124,6 +137,8 @@ export default defineEventHandler(async(event)=>{
       setResponseStatus(event,409);
       return {error:"相同 Workflow 请求已存在但没有可复用的活动 run，请刷新状态后重试",controlJobId:prior.id};
     }
+    const failure=await workflowReuseFailure(priorRunId,prior.id);
+    if(failure){setResponseStatus(event,failure.statusCode);return failure.body;}
     const response:EvolutionWorkflowStartResponse={
       missionId:mission.id,controlJobId:prior.id,runId:priorRunId,
       status:"queued",...(scheduledFor?{scheduledFor}:{}),reused:true,

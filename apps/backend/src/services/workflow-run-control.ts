@@ -1,4 +1,5 @@
 import {getRun} from "workflow/api";
+import {z} from "zod";
 import type {EvolveProject,EvolutionJob} from "@evolution/contracts";
 
 type WorkflowRunStatus="pending"|"running"|"completed"|"failed"|"cancelled";
@@ -37,6 +38,14 @@ export function workflowRunIdForJob(job:EvolutionJob,mission?:EvolveProject){
     return mission.campaign.schedule.durableRunId.trim();
   }
   return undefined;
+}
+
+/** SDK exists reads current-World metadata with resolveData: none; no Run payload read. */
+export async function workflowRunExists(
+  runId:string,
+  resolveRun:(id:string)=>Pick<WorkflowRunHandle,"exists">=(id)=>getRun(id),
+):Promise<boolean>{
+  return z.boolean().parse(await resolveRun(runId).exists);
 }
 
 export async function cancelWorkflowRunById(

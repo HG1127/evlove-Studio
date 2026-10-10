@@ -52,6 +52,7 @@ beforeEach(() => {
   m.mission.mockImplementation(async () => structuredClone(stored));
   m.save.mockImplementation(async (p: EvolveProject) => { stored = EvolveProjectSchema.parse(JSON.parse(JSON.stringify(p))); });
   m.job.mockResolvedValue(job);
+  m.getRun.mockReturnValue({exists:Promise.resolve(true)});
   m.probe.mockResolvedValue({ ready: true, status: "ready" });
   m.ai.mockRejectedValueOnce(new Error("independent model timeout")).mockImplementation(async (_role: string, payload: { mode?: string }) => {
     const score = payload.mode === "server-baseline" ? 60 : 92;
