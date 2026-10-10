@@ -11,7 +11,7 @@ vi.mock("./server-vault",()=>({
   getVaultSecretMetadata:vault.metadata,putVaultSecret:vault.put,resolveVaultSecret:vault.resolve,
 }));
 import {
-  getServerAiConnectionStatus,resolveServerAiConfig,saveServerAiConnection,
+  getServerAiConnectionStatus,resolveServerAiConfig,saveServerAiConnection,serverAiConnectionConfigured,
   withExplicitServerAiConnection,withServerAiConnection,
 } from "./server-ai-connection";
 
@@ -129,5 +129,29 @@ describe("user-selected backend AI connection",()=>{
     await expect(saveServerAiConnection(insecure,{id:"admin",role:"admin"})).rejects.toThrow("HTTPS");
     expect(()=>withExplicitServerAiConnection(insecure,async()=>{})).toThrow("HTTPS");
     expect(vault.put).not.toHaveBeenCalled();
+  });
+});
+
+describe("pinned provider capability",()=>{
+  it("recognizes the pinned explicit route without requiring persistence configuration",async()=>{
+    vault.configured.mockReturnValue(false);
+    expect(await serverAiConnectionConfigured()).toBe(false);
+    await withExplicitServerAiConnection(input,async()=>{
+      expect(await serverAiConnectionConfigured()).toBe(true);
+      expect((await resolveServerAiConfig())?.model).toBe(input.model);
+    });
+    expect(await serverAiConnectionConfigured()).toBe(false);
+    expect(vault.resolve).not.toHaveBeenCalled();
+  });
+
+  it("keeps a pinned missing route missing when environment defaults change mid-operation",async()=>{
+    vault.configured.mockReturnValue(false);
+    await withServerAiConnection(async()=>{
+      process.env.EVOLUTION_AI_API_KEY="synthetic-later-key";
+      process.env.EVOLUTION_AI_MODEL="synthetic-later-model";
+      expect(await resolveServerAiConfig()).toBeUndefined();
+      expect(await serverAiConnectionConfigured()).toBe(false);
+    });
+    expect(await serverAiConnectionConfigured()).toBe(true);
   });
 });

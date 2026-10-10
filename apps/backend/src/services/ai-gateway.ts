@@ -56,7 +56,7 @@ import {
   type VisualJudgeAiResult,
 } from "@evolution/contracts";
 import { SERVER_SEMANTIC_CONTEXT_VERSION } from "@evolution/harness";
-import {COMPATIBLE_RESPONSES_OUTPUT_VERSION,COMPATIBLE_CHAT_OUTPUT_VERSION,readCompatibleResponsesOutput,readCompatibleChatOutput,parseStructuredAiOutput} from "@evolution/adapters";
+import {COMPATIBLE_RESPONSES_OUTPUT_VERSION,COMPATIBLE_CHAT_OUTPUT_VERSION,readCompatibleResponsesOutput,readCompatibleChatOutput,parseStructuredAiOutput,requestCompatibleAiJson} from "@evolution/adapters";
 import type { ServerAiConfig } from "../server-env";
 import {resolveServerAiConfig} from "./server-ai-connection";
 
@@ -185,7 +185,7 @@ function directFormat<T>(config:Extract<ServerAiConfig,{mode:"openai-compatible"
 }
 
 async function callResponses<T>(args:{config:Extract<ServerAiConfig,{mode:"openai-compatible"}>;contract:Contract<T>;payload:unknown;images:ParsedImage[]}){
-  const response=await fetch(args.config.baseUrl+"/responses",{
+  const {response,json}=await requestCompatibleAiJson(args.config.baseUrl+"/responses",{
     method:"POST",
     redirect:"error",
     signal:AbortSignal.timeout(args.config.timeoutMs),
@@ -204,7 +204,7 @@ async function callResponses<T>(args:{config:Extract<ServerAiConfig,{mode:"opena
       ...(directFormat(args.config,args.contract)?{text:{format:directFormat(args.config,args.contract)}}:{}),
     }),
   });
-  const json:unknown=await response.json().catch(()=>({}));
+
   if(!response.ok){
     const parsed=CompatibleResponsesEnvelopeSchema.safeParse(json);
     const detail=parsed.success?parsed.data.error?.message:undefined;
@@ -215,7 +215,7 @@ async function callResponses<T>(args:{config:Extract<ServerAiConfig,{mode:"opena
 }
 
 async function callChat<T>(args:{config:Extract<ServerAiConfig,{mode:"openai-compatible"}>;contract:Contract<T>;payload:unknown;images:ParsedImage[]}){
-  const response=await fetch(args.config.baseUrl+"/chat/completions",{
+  const {response,json}=await requestCompatibleAiJson(args.config.baseUrl+"/chat/completions",{
     method:"POST",
     redirect:"error",
     signal:AbortSignal.timeout(args.config.timeoutMs),
@@ -236,7 +236,7 @@ async function callChat<T>(args:{config:Extract<ServerAiConfig,{mode:"openai-com
       }),
     }),
   });
-  const json:unknown=await response.json().catch(()=>({}));
+
   if(!response.ok){
     const parsed=CompatibleChatEnvelopeSchema.safeParse(json);
     const detail=parsed.success?parsed.data.error?.message:undefined;
@@ -317,7 +317,10 @@ function serverAiErrorChain(error:unknown){
 export function serverAiUnavailableReason(error:unknown):string|undefined{
   const chain=serverAiErrorChain(error);
   for(const item of chain){
-    if((item as {code?:string}).code==="SERVER_AI_UNAVAILABLE")return "not-configured";
+    const code=(item as {code?:string}).code;
+    if(code==="SERVER_AI_UNAVAILABLE")return "not-configured";
+    if(code==="AI_REQUEST_TIMEOUT")return "provider-timeout";
+    if(code==="AI_REQUEST_NETWORK_ERROR")return "provider-network-error";
   }
   const text=chain.map((item)=>item instanceof Error?item.message:String(item)).join(" | ").toLowerCase();
   if(/customer_verification_required|valid credit card|add-credit-card|credit card on file/.test(text))return "customer-verification-required";
@@ -332,6 +335,8 @@ export function serverAiUnavailableReason(error:unknown):string|undefined{
 }
 
 export function serverAiUnavailableMessage(reasonCode:string){
+  if(reasonCode==="provider-timeout")return "模型请求超时；未取得完整结果，请稍后重试或选择响应更快的模型。";
+  if(reasonCode==="provider-network-error")return "后端无法完成模型接口连接；请检查 Base URL 和模型服务可达性，然后重试。";
   if(reasonCode==="customer-verification-required")return "Vercel AI Gateway 已配置，但团队尚未完成信用卡/账户验证；请改用真实 BYOK，或之后完成 Vercel AI Gateway 计费验证。";
   if(reasonCode==="provider-auth-or-billing")return "Server AI Provider 鉴权或计费不可用；请检查服务端 Provider 配置，或改用真实 BYOK。";
   if(reasonCode==="provider-rate-limit")return "Server AI Provider 当前额度/频率受限；请稍后重试或改用真实 BYOK。";

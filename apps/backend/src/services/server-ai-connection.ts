@@ -84,6 +84,8 @@ export async function resolveServerAiConfig():Promise<ServerAiConfig|undefined>{
 }
 
 export async function serverAiConnectionConfigured(){
+  const active=activeConfig.getStore();
+  if(active)return Boolean(active.config);
   return vaultEncryptionConfigured()?Boolean(await resolveServerAiConfig()):serverAiConfigured();
 }
 
