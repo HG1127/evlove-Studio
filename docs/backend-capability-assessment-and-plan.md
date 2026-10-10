@@ -1,5 +1,14 @@
 # Backend Capability Assessment and Delivery Plan
 
+## 2026-10-10 — Main-flow frozen readback recovery (local validation)
+
+An exactly bound Artifact acceptance wait with already complete fresh paired Hidden evidence can now perform its remaining physical file/hash readback while the model is offline. A pure Harness classifier and backend/Workflow guard preserve exact receipt SHA, active Job ownership, unchanged inputs/routes, authoritative paired execution and actual Gate F verification. Independent review also prevented storage I/O crossing the observation deadline from starting a fresh browser measurement under an offline bypass. Other capability waits, expired/incomplete evidence, Repair, Safety and approval/budget boundaries retain their existing checks.
+
+Runtime f76c41c on codex/offline-artifact-readback passed 55 relevant files / 824 tests, architecture, full lint and build. Runner first failed one good fixture; unchanged diagnostics and the unchanged full rerun passed all 11. The unclassified intermittent failure remains recorded for independent integration verification. Built readonly UI passed five routes/mobile390/denied storage with 419 generated hashes unchanged, zero errors/writes. [Incremental handoff](offline-artifact-readback-handoff.md) separates synthetic local proof from real acceptance.
+
+Current public production readonly before/after build-info at 2026-10-10 01:11 UTC is still main e3482e75. Frozen PR #6 c24608a has independent prior full local proof (2527 pass, one explicit live-Sandbox skip), but that proof excludes these commits. Hosted CI ran zero steps under the billing/allowance block. New exact integration CI and production evidence are pending; the existing human exception request is not repeated. Real Mission acceptance and manual custom model/operator/export configuration remain pending.
+
+
 ## 2026-10-09 — Saved main-flow pause recovery (local validation)
 
 The main-flow recovery branch binds actual machine capability pauses to exact input/evidence and a new active control Job; old zero-Candidate Plan pauses require explicit fresh measurement and an authoritative archive. Parallel implementation and review closed weak-Diagnosis replay and resolved control-AI request identity gaps. Gate F now distinguishes assessment completion from physical observation age, retains recent paired evidence and frozen bytes, and blocks a changed physical parent/Candidate binding rather than silently adopting it. Safety, approvals, cancelled/replaced Jobs, altered inputs and elapsed budgets are not reopened.

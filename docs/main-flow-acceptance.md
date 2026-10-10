@@ -2,6 +2,15 @@
 
 Priority is one real imported HTML Mission completing: upload → baseline → changed Candidate → executable Hidden Validation → Gate F → download and reopen the exact accepted bytes. Release and Outcome follow after the local artifact path is proven with configured providers and live metrics. Shallow route checks and unit-test totals do not prove this flow.
 
+## 2026-10-10 — Frozen-file readback without a live model (local only)
+
+[Offline Artifact recovery](offline-artifact-readback-handoff.md) removes the forced model-health prerequisite only for an exactly bound frozen-file readback whose same-paper paired Hidden evidence, scoring context, Baseline and metadata settlement are already complete and fresh. Actual original/current/Candidate byte reads and Gate F hashing remain mandatory. A review regression also closes observation expiry during storage I/O: no new browser execution starts on that offline retry.
+
+Runtime f76c41c passed 55 relevant files / 824 tests, architecture, full lint and production build. Runner first returned 10 pass/1 fail; unchanged diagnostics and a full unchanged rerun passed 11/11. The initial intermittent failure is preserved and its cause is unclassified. Compiled readonly UI passed five routes/mobile390/denied storage, with all 419 generated files unchanged and zero page errors/writes. New integrated full CI is required; the previous c24608a full local gate does not cover this increment.
+
+Public readonly UI and before/after build-info at 01:11 UTC both identify main/production e3482e75f1ae6b88d7756e5ee35cecb0cbfa80f9. PR #6 remains frozen at c24608a, draft/open, hosted jobs blocked before any step by account billing/allowance; the existing human local-CI exception answer remains pending. No new source is production verified. The real Mission's fresh Baseline, changed frozen Candidate, paired execution, Gate F and exact accepted download/reopen remain unproven.
+
+
 ## Current verified status (2026-10-09)
 
 Latest public readonly check at 2026-10-09 10:05 UTC identifies production `e3482e75f1ae6b88d7756e5ee35cecb0cbfa80f9`, main/production. Readonly UI passed five routes, mobile 390px and denied-storage recovery with zero page errors or attempted writes. Main hosted Quality Gate remains blocked before execution by GitHub Actions account billing/allowance; dependent Smoke was skipped. Local final-JSON/first-construction/BOM/original-text-format branches and draft PR #6 have not been exact-SHA production verified.
