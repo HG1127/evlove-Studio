@@ -14,7 +14,8 @@ function slideIds(html: string) {
 
 /** Build only assertions grounded in a single complete, self-contained source HTML file. */
 export function sourceGroundedHtmlProtectionSteps(project: EvolveProject, criteria: AcceptanceCriterion[], test: TestCase) {
-  if (test.executionMode !== "external-runner" || (test.browserSteps?.length ?? 0) > 0) return undefined;
+  if (test.executionMode !== "external-runner" || ((test.browserSteps?.length ?? 0) > 0
+    && !test.tags?.includes("source-grounded-html-assertions"))) return undefined;
   if (!criteria.some((criterion) => criterion.id === "PROTECT-ALL" || criterion.id === "SYS-INTEGRITY")) return undefined;
   const scopedIds = new Set(criteria.flatMap((criterion) => criterion.artifactIds));
   const targets = project.sourceArtifacts.filter((artifact) => artifact.role === "target" && (!scopedIds.size || scopedIds.has(artifact.id)));
@@ -35,18 +36,48 @@ export function sourceGroundedHtmlProtectionSteps(project: EvolveProject, criter
   // A positive indexed word prevents an implementation that hides every result from passing.
   const query = searchText?.replace(/&[^;\s]+;/g, " ").match(/[\p{L}]{2,32}/u)?.[0]?.toLowerCase();
   if (!query || !/\.dataset\.search\.includes\s*\(/.test(html)) return undefined;
-  return [
+  const initial = [
     { action: "visible" as const, selector: first },
     { action: "visible" as const, selector: last },
     { action: "visible" as const, selector: "#search" },
-    { action: "fill" as const, selector: "#search", value: query },
-    { action: "visible" as const, selector: first },
+  ];
+  const negative = [
     { action: "fill" as const, selector: "#search", value: unmatched },
     { action: "count" as const, selector: ".slide-card:not(.search-hidden)", count: 0 },
     { action: "text" as const, selector: "#searchCount", value: "0 页命中" },
+  ];
+  const positive = [
+    { action: "fill" as const, selector: "#search", value: query },
+    { action: "visible" as const, selector: first },
+  ];
+  const clear = [
     { action: "fill" as const, selector: "#search", value: "" },
     { action: "count" as const, selector: ".slide-card.search-hidden", count: 0 },
     { action: "visible" as const, selector: first },
     { action: "visible" as const, selector: last },
   ];
+  // First establish an empty result. The positive check must observe a transition
+  // out of that state, rather than accept pre-input visibility before a debounce.
+  const steps = [...initial, ...negative, ...positive, ...negative, ...clear];
+  if ((test.browserSteps?.length ?? 0) > 0) {
+    const legacy = [...initial, ...positive, ...negative, ...clear];
+    const canonical = (value: unknown[]) => JSON.stringify(value.map((step) =>
+      Object.fromEntries(Object.entries(step as Record<string, unknown>)
+        .filter(([, entry]) => entry !== undefined).sort(([a], [b]) => a.localeCompare(b)))));
+    // Refresh only our tagged exact prior recipe against this same Source.
+    // Edited/user-authored contracts stay intact; new steps change paper identity.
+    if (canonical(test.browserSteps!) !== canonical(legacy)) return undefined;
+  }
+  return steps;
+}
+
+/** Persisted generated papers must be confirmed before a frozen server comparison. */
+export function htmlProtectionContractBlocker(project: EvolveProject): string | undefined {
+  const criteriaById = new Map((project.acceptanceRubric ?? []).map((criterion) => [criterion.id, criterion]));
+  const outdated = [...(project.evalSuite ?? []), ...(project.hiddenEvalSuite ?? [])].filter((test) =>
+    (test.browserSteps?.length ?? 0) > 0 && sourceGroundedHtmlProtectionSteps(project,
+      test.criterionIds.flatMap((id) => { const criterion = criteriaById.get(id); return criterion ? [criterion] : []; }), test));
+  if (!outdated.length) return undefined;
+  return "[html-protection-contract-pending] 自动生成的搜索验收步骤需更新并重新确认考卷：" + outdated.map((test) => test.id).join("、")
+    + "。旧执行记录不能证明新断言；服务端不会在冻结比较中改写 Hidden 考卷。";
 }

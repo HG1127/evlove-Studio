@@ -8,6 +8,7 @@ import type {
 } from "@evolution/contracts";
 import {
   baselineReadiness,
+  htmlProtectionContractBlocker,
   campaignLiveObservationFresh,
   campaignObservesLiveTarget,
   campaignRootBaselineForMeasurement,
@@ -43,6 +44,7 @@ export function serverCampaignScoringRouteBlocker(project: EvolveProject, routeF
 }
 /** A ready score is reusable only for the exact current Target, tests, Champion and Server AI route. */
 export function canReuseServerBaseline(project: EvolveProject, routeFingerprint?: string, nowMs = Date.now()): boolean {
+  if (htmlProtectionContractBlocker(project)) return false;
   if (campaignObservesLiveTarget(project) && (project.campaign.checkpoint?.round !== project.campaign.currentRound + 1
     || !campaignLiveObservationFresh(project, project.baselineRun.completedAt, nowMs))) return false;
 
@@ -84,7 +86,7 @@ export async function runServerBaseline(
 ): Promise<ServerBaselineOutcome> {
   const now = options?.now ?? (() => new Date().toISOString());
   const startedAt = now();
-  const scoringBlocker = campaignScoringInputBlocker(inputProject) ?? serverCampaignScoringRouteBlocker(inputProject, ports.scoringRouteFingerprint);
+  const scoringBlocker = htmlProtectionContractBlocker(inputProject) ?? campaignScoringInputBlocker(inputProject) ?? serverCampaignScoringRouteBlocker(inputProject, ports.scoringRouteFingerprint);
   if (scoringBlocker) {
     const paused: EvolveProject = {
       ...inputProject,

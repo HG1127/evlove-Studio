@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { EvolveProject } from "@evolution/contracts";
 import render from "../../apps/backend/server/api/evolution/render-accepted.post";
 import download from "../../apps/backend/server/api/evolution/artifacts/[id].get";
-import { acceptedPackageFixture } from "@evolution/testkit";
+import { acceptedPackageFixture, acceptedLegacyHtmlPaperFixture } from "@evolution/testkit";
 import { buildDeliverableZip } from "../../src/features/evolve/runtime/artifact-output-builders";
 
 const mocks = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn(), append: vi.fn(), getBlob: vi.fn(), putBlob: vi.fn(), deleteBlob: vi.fn() }));
@@ -61,6 +61,15 @@ describe("frontend ZIP delivery of explicitly accepted server Candidate", () => 
     expect(mocks.getBlob).not.toHaveBeenCalled();
     expect(mocks.putBlob).not.toHaveBeenCalled();
     expect(mocks.deleteBlob).not.toHaveBeenCalled();
+  });
+
+  it.each([false,true])("refuses prior generated paper at render and ZIP boundaries before I/O (%s)",async withChampion=>{
+    const args=acceptedLegacyHtmlPaperFixture(withChampion);mocks.get.mockResolvedValue(args.project);
+    const candidateId=withChampion?args.prior.id:args.current.id;
+    const response=await app.fetch(new Request("http://localhost/render-accepted",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({missionId:args.project.id,candidateId})}));
+    expect(response.status).toBe(409);
+    await expect(buildDeliverableZip(args.project)).rejects.toThrow("html-protection-contract-pending");
+    for(const operation of [mocks.getBlob,mocks.putBlob,mocks.deleteBlob,mocks.save,mocks.append])expect(operation).not.toHaveBeenCalled();
   });
 
 });

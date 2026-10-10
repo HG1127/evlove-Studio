@@ -1,8 +1,10 @@
 import type { Candidate, EvolveProject, TestCase, ValidationRun } from "@evolution/contracts";
-import { evidenceFingerprint, rubricSuiteCoverage } from "@evolution/core";
+import { evidenceFingerprint, htmlProtectionContractBlocker, rubricSuiteCoverage } from "@evolution/core";
 
 /** Freeze the persisted Hidden paper after Winner selection; never synthesize or remap cases here. */
 export function exactServerHoldoutSuite(project:EvolveProject){
+  const contractBlocker = htmlProtectionContractBlocker(project);
+  if (contractBlocker) throw new Error('[server-campaign-holdout-contract-pending] ' + contractBlocker);
   if(!project.hiddenEvalSuite.length)throw new Error("[server-campaign-holdout-contract-pending] Project hiddenEvalSuite is empty");
   const visibleIds=new Set(project.evalSuite.map((testCase)=>testCase.id));
   const overlaps=project.hiddenEvalSuite.filter((testCase)=>visibleIds.has(testCase.id));

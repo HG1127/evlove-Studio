@@ -1,6 +1,6 @@
 import { createError, defineEventHandler, readBody } from "nitro/h3";
 import { createEvolutionEvent, VercelReleaseActionRequestSchema,type ReleaseOutcomeTelemetryStatus } from "@evolution/contracts";
-import { applyProductionLearningGovernance, applyReleaseResultToProject, projectHasOnlineReleaseTarget, projectUsesConnectorRelease, projectUsesHttpRelease, projectUsesVercelRelease } from "@evolution/core";
+import { applyProductionLearningGovernance, applyReleaseResultToProject, htmlProtectionContractBlocker, projectHasOnlineReleaseTarget, projectUsesConnectorRelease, projectUsesHttpRelease, projectUsesVercelRelease } from "@evolution/core";
 import { getServerVercelReleaseConfig } from "../../../src/server-env";
 import { getServerProductionRuntime } from "../../../src/services/production-runtime";
 import { requireActiveReleaseApprovalGrant } from "../../../src/services/release-approval-store";
@@ -37,6 +37,8 @@ export default defineEventHandler(async(event)=>{
 
   let approvalGrantId:string|undefined;
   if(input.action!=="rollback"){
+    const contractBlocker=htmlProtectionContractBlocker(mission);
+    if(contractBlocker)fail(409,contractBlocker);
     if(mission.validationRun.recommendation!=="release")fail(409,"Validation did not recommend release");
     if(mission.artifactAcceptance.status!=="passed"||mission.artifactAcceptance.candidateId!==candidate.id){
       fail(409,"Artifact Acceptance is not bound to the Release Candidate");

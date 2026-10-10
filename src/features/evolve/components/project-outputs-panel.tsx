@@ -1,5 +1,6 @@
 import { ArchiveRestore, Boxes, Download, ExternalLink, Eye, FileArchive, FileText, GitBranch, GitCompareArrows, History, PackageCheck, Rocket, RotateCcw, Trophy, X } from "lucide-react";
 import { useMemo, useState } from "react";
+import { htmlProtectionContractBlocker } from "@evolution/core";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -151,9 +152,11 @@ export function ProjectOutputsPanel({ runtime }: { runtime: ProjectRuntime }) {
   const artifacts = project.outputArtifacts;
   const packagePrimary = artifacts.find((item) => item.kind === "primary" && item.accepted);
   const packageIsChampion = Boolean(packagePrimary?.isChampion && packagePrimary.candidateId === champion?.candidate?.id);
-  const downloadOne = async (artifact: DownloadableArtifact) => {
+  const downloadOne = async (artifact: DownloadableArtifact, archival = false) => {
     try {
       if (artifact.kind === "primary" || artifact.frozenArtifact) {
+        const contractBlocker = !archival && htmlProtectionContractBlocker(project);
+        if (contractBlocker) throw new Error(contractBlocker);
         if (artifact.kind === "primary" && !artifact.accepted) throw new Error("此成果尚未通过验收，请先完成验证。");
         const blob = await readFrozenArtifact(artifact.frozenArtifact, artifact.content);
         downloadBlob(artifact.frozenArtifact!.name, blob);
@@ -217,10 +220,10 @@ export function ProjectOutputsPanel({ runtime }: { runtime: ProjectRuntime }) {
       </div>
     </CardHeader>
     <CardContent className="pt-5">
-      {!!project.archivedOutputs?.length && <details className="mb-5 rounded-xl border bg-slate-50 p-4"><summary className="cursor-pointer text-sm font-semibold">历史目标成果 · {project.archivedOutputs.length} 份</summary><p className="mt-2 text-xs text-slate-600">目标或材料调整前的成果保留在这里，不参与当前目标验收。下载仍校验原始冻结文件。</p><div className="mt-3 space-y-2">{project.archivedOutputs.map((artifact, index) => <div key={`${artifact.id}-${index}`} className="flex items-center justify-between gap-3 rounded-lg bg-white p-3"><div className="min-w-0"><div className="truncate text-sm">{artifact.name}</div><div className="text-xs text-slate-500">{artifact.versionLabel} · {artifact.createdAt}</div></div><Button variant="secondary" size="sm" onClick={() => void downloadOne(artifact)}>下载</Button></div>)}</div></details>}
+      {!!project.archivedOutputs?.length && <details className="mb-5 rounded-xl border bg-slate-50 p-4"><summary className="cursor-pointer text-sm font-semibold">历史目标成果 · {project.archivedOutputs.length} 份</summary><p className="mt-2 text-xs text-slate-600">目标或材料调整前的成果保留在这里，不参与当前目标验收。下载仍校验原始冻结文件。</p><div className="mt-3 space-y-2">{project.archivedOutputs.map((artifact, index) => <div key={`${artifact.id}-${index}`} className="flex items-center justify-between gap-3 rounded-lg bg-white p-3"><div className="min-w-0"><div className="truncate text-sm">{artifact.name}</div><div className="text-xs text-slate-500">{artifact.versionLabel} · {artifact.createdAt}</div></div><Button variant="secondary" size="sm" onClick={() => void downloadOne(artifact, true)}>下载</Button></div>)}</div></details>}
 
-      {champion ? <>
-        <div className="flex flex-wrap gap-2"><Button onClick={() => void runtime.materializeOutputs()} disabled={artifactGate?.status !== "passed"}><PackageCheck className="size-4" />{artifacts.length && !packageIsChampion ? "切换为历史 Champion 成果包" : artifacts.length ? "重新冻结 Champion 成果" : "冻结 Gate F 已验收成果"}</Button><Button variant="secondary" disabled={!artifacts.length} onClick={() => void downloadZip()}><Download className="size-4" />下载完整 ZIP</Button></div>
+      {champion || packagePrimary ? <>
+        <div className="flex flex-wrap gap-2">{champion && <Button onClick={() => void runtime.materializeOutputs()} disabled={artifactGate?.status !== "passed"}><PackageCheck className="size-4" />{artifacts.length && !packageIsChampion ? "切换为历史 Champion 成果包" : artifacts.length ? "重新冻结 Champion 成果" : "冻结 Gate F 已验收成果"}</Button>}<Button variant="secondary" disabled={!artifacts.length} onClick={() => void downloadZip()}><Download className="size-4" />下载完整 ZIP</Button></div>
         {project.targetConnection.adapter==="git"&&artifactGate?.status==="passed"&&<div className="mt-4 rounded-2xl border border-sky-200 bg-sky-50/70 p-4 text-xs leading-5 text-sky-900">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div className="min-w-0">
