@@ -86,7 +86,7 @@ describe("explicit durable run restores the stored Experiment Judge checkpoint",
     expect(m.put).toHaveBeenCalledTimes(1); expect(m.browser).toHaveBeenCalledTimes(1);
     expect(m.ai.mock.calls.map(c => c[0])).toEqual(["evaluate", "evaluate"]);
   });
-  it("dispatches a new explicit attempt after an unavailable run finishes, while lost acknowledgements reuse the first run", async () => {
+  it.each(["present", "temporarily-unavailable", "wrong-world"] as const)("dispatches a new explicit attempt after an unavailable run finishes and reuses a lost acknowledgement (%s)", async (lookup) => {
     await paused(); const firstVersion = structuredClone(stored);
     const jobs = new Map<string, typeof job>();
     m.create.mockImplementation(async (j: typeof job) => {
@@ -94,7 +94,9 @@ describe("explicit durable run restores the stored Experiment Judge checkpoint",
       if (prior) return { job: prior, reused: true };
       jobs.set(j.id, j); return { job: j, reused: false };
     });
-    m.start.mockImplementation(async () => ({ runId: "run-" + m.start.mock.calls.length }));
+    const sdkRuns = new Set<string>();
+    m.start.mockImplementation(async () => { const runId = "run-" + m.start.mock.calls.length; sdkRuns.add(runId); return { runId }; });
+    m.getRun.mockImplementation((runId: string) => ({ exists: Promise.resolve(sdkRuns.has(runId)) }));
     m.bind.mockImplementation(async (id: string, _generation: number, runId: string) => {
       const bound = { ...jobs.get(id)!, outputRef: runId }; jobs.set(id, bound); return bound;
     });
@@ -103,14 +105,24 @@ describe("explicit durable run restores the stored Experiment Judge checkpoint",
     let loseResponse = true;
     const fetch = vi.fn(async (path: string, init: RequestInit) => {
       expect(path).toBe("/api/evolution/start");
-      const receipt = await startRoute(mockEvent(new Request("http://localhost" + path, init)));
+      const event = mockEvent(new Request("http://localhost" + path, init));
+      const receipt = await startRoute(event);
       if (loseResponse) { loseResponse = false; throw new Error("lost start acknowledgement"); }
-      return new Response(JSON.stringify(receipt), { status: 200 });
+      return new Response(JSON.stringify(receipt), { status: event.res.status ?? 200 });
     });
     vi.stubGlobal("fetch", fetch);
     vi.setSystemTime(new Date(Date.parse(at) + 60_000));
     await expect(retryStoredServerExperiment(firstVersion)).rejects.toThrow("lost start acknowledgement");
+    if (lookup !== "present") {
+      m.getRun.mockReturnValueOnce(lookup === "wrong-world"
+        ? { exists: Promise.resolve(false) }
+        : { get exists() { return Promise.reject(new Error("PRIVATE_SDK_LOOKUP_ERROR")); } });
+      await expect(retryStoredServerExperiment(firstVersion)).rejects.toThrow(lookup === "wrong-world" ? "当前运行环境中不存在" : "当前无法核验");
+      expect(m.start).toHaveBeenCalledOnce();
+    }
     const firstReceipt = await retryStoredServerExperiment(firstVersion);
+    expect(m.getRun).toHaveBeenCalledWith("run-1");
+    expect(fetch.mock.calls.every(call => call[1].body === fetch.mock.calls[0]![1].body)).toBe(true);
     expect(m.start).toHaveBeenCalledOnce();
     expect(fetch.mock.calls[0]![1].body).toBe(fetch.mock.calls[1]![1].body);
     m.probe.mockResolvedValue({ ready: false, status: "unavailable", reasonCode: "customer-verification-required" });
