@@ -23,3 +23,5 @@ export * from "./server-experiment-wait";
 export * from "./candidate-construction";
 export * from "./server-main-flow-wait";
 export * from "./server-artifact-readback-recovery";
+
+export { serverHoldoutExecutionEvidenceFingerprint } from "./server-holdout-recovery";

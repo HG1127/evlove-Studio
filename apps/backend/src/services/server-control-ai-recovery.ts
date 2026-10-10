@@ -1,8 +1,16 @@
 import type { EvolveProject } from "@evolution/contracts";
 import { recoverServerControlAiWait, serverControlAiWait, recoverServerExperimentRecoveryWait,
-  serverExperimentRecoveryWait, serverMainFlowRecoveryWait, canRemeasureLegacyServerPlan } from "@evolution/harness";
+  serverExperimentRecoveryWait, serverMainFlowRecoveryWait, canRemeasureLegacyServerPlan, canRecoverServerArtifactReadbackWithoutAi } from "@evolution/harness";
+import { serverAiScoringRouteFingerprint } from "./ai-gateway";
 import { requireServerControlAi, ServerControlAiUnavailableError } from "./server-control-ai";
 import { hasServerMainFlowRecoveryBinding, restoreServerMainFlowWait } from "./server-main-flow-recovery";
+
+/** Metadata only admits a readback attempt; Gate F must still read and verify the physical bytes. */
+export async function requireServerMainFlowRecoveryAi(project: EvolveProject, routeFingerprint?: string, nowMs = Date.now()): Promise<void> {
+  if (!canRecoverServerArtifactReadbackWithoutAi(project, routeFingerprint, nowMs)) {
+    await requireServerControlAi({ force: true });
+  }
+}
 
 /** Called only inside an explicitly started durable control run. */
 export async function restoreServerControlAiWait(project: EvolveProject, controlJobId?: string): Promise<EvolveProject> {
@@ -15,7 +23,9 @@ export async function restoreServerControlAiWait(project: EvolveProject, control
     || project.experimentRun.status !== "idle" || project.validationRun.status !== "idle" || project.artifactAcceptance.status !== "idle")) return project;
   if (!boundWait && !controlWait && !serverExperimentRecoveryWait(project)) return project;
   try {
-    await requireServerControlAi({ force: true });
+    const route = boundWait?.marker === "artifact-acceptance-evidence-pending"
+      ? await serverAiScoringRouteFingerprint() : undefined;
+    await requireServerMainFlowRecoveryAi(project, route);
   } catch (error) {
     if (error instanceof ServerControlAiUnavailableError) return project;
     throw error;

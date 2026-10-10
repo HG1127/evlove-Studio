@@ -32,7 +32,7 @@ import {
 import { getServerProductionRuntime } from "../../apps/backend/src/services/production-runtime";
 import { serverAiScoringRouteFingerprint } from "../../apps/backend/src/services/ai-gateway";
 import { runServerControlAi as runServerAi, ServerControlAiUnavailableError } from "../../apps/backend/src/services/server-control-ai";
-import { restoreServerControlAiWait } from "../../apps/backend/src/services/server-control-ai-recovery";
+import { restoreServerControlAiWait, requireServerMainFlowRecoveryAi } from "../../apps/backend/src/services/server-control-ai-recovery";
 import { checkpointServerMainFlowWait, clearServerMainFlowWait, hasServerMainFlowRecoveryBinding, prepareServerFreshBaseline } from "../../apps/backend/src/services/server-main-flow-recovery";
 import { runServerMissionBaseline } from "../../apps/backend/src/services/server-baseline";
 import { runServerMissionExperiment } from "../../apps/backend/src/services/server-experiment";
@@ -808,12 +808,17 @@ async function executeServerControlAction(
           nextAction:action,checkpointId:plan.checkpoint.id,reason})};
       }
     }
+    // Physical I/O can cross the observation deadline. Use one decision time before refreshing.
+    const measurementNowMs=Date.now();
+    if(mission.campaign.serverRecoveryWait?.status==="recovering"
+      && mission.campaign.serverRecoveryWait.marker==="artifact-acceptance-evidence-pending")
+      await requireServerMainFlowRecoveryAi(mission,scoringRouteFingerprint,measurementNowMs);
     const refreshRecoveredHoldout=recoveringAcceptance
       && (!campaignLiveObservationFresh(mission,Number.isFinite(new Date(mission.validationRun.baselineObservedAt ?? NaN).getTime())
-        ? new Date(mission.validationRun.baselineObservedAt!).toISOString() : undefined,Date.now())
+        ? new Date(mission.validationRun.baselineObservedAt!).toISOString() : undefined,measurementNowMs)
         || mission.baselineRun.measurementFingerprint!==serverBaselineFingerprint(mission,scoringRouteFingerprint));
     let campaignMission=mission;
-    if(!canReuseServerBaseline(campaignMission,scoringRouteFingerprint)){
+    if(!canReuseServerBaseline(campaignMission,scoringRouteFingerprint,measurementNowMs)){
       const baselineOutcome=await runServerMissionBaseline(campaignMission);
       campaignMission=!baselineOutcome.ready ? checkpointServerMainFlowWait(baselineOutcome.project,input.controlJobId) : baselineOutcome.project;
       await runtime.missions.save(campaignMission);
