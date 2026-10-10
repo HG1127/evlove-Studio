@@ -1,5 +1,16 @@
 # Backend Capability Assessment and Delivery Plan
 
+## 2026-10-10 — Main-flow asynchronous execution and accepted delivery (local validation)
+
+Actual local/SDK browser regressions reproduced valid delayed state being judged too early and broken search being accepted from initial visibility. Retrying observations preserve literal text semantics and single input/click actions. Source-generated assertions now require hidden-to-visible transitions for matching search and clear; exact tagged old papers require renewed confirmation/evidence rather than reuse of old passed records.
+
+Pure Core guards cover Baseline/Holdout/Gate F, materialization, ZIP/readiness and current-file download. API/provider/durable release checks also reject an old paper under an existing grant; rollback and explicit historical readback remain available. Current accepted Candidate files render without requiring a historical Champion. SDK cache v2 avoids reusing the old script, and its bounded step budget admits the actual passing 34.2-second fixture.
+
+Runtime 5e2cbb766d3262d8425a9916f4d1a65f4b429f97 passed 36 relevant files / 438 unique tests, architecture, full lint, production build and Runner23. Compiled readonly UI passed five routes/mobile390/denied storage with all 419 built files and 26 source hashes unchanged. [Handoff](runner-assertion-readiness-handoff.md) records retained initial launcher/type failures, actual rerun reports and synthetic-vs-Mission scope.
+
+Public production readonly before/after at 03:33 UTC remains e3482e75/main; this new branch has no exact-SHA production proof or independent complete CI yet. Git/CI chats own integration and deployment; frozen PR6 remains held, and interrupted 955408c checks are incomplete and older than this increment. Usable custom model/operator/export and account billing follow-ups remain recorded. Real Mission acceptance remains pending; Root made no production write, Cron, migration, secret change or main push.
+
+
 ## 2026-10-10 — Main-flow frozen readback recovery (local validation)
 
 An exactly bound Artifact acceptance wait with already complete fresh paired Hidden evidence can now perform its remaining physical file/hash readback while the model is offline. A pure Harness classifier and backend/Workflow guard preserve exact receipt SHA, active Job ownership, unchanged inputs/routes, authoritative paired execution and actual Gate F verification. Independent review also prevented storage I/O crossing the observation deadline from starting a fresh browser measurement under an offline bypass. Other capability waits, expired/incomplete evidence, Repair, Safety and approval/budget boundaries retain their existing checks.

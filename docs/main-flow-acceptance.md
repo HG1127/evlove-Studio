@@ -1,5 +1,16 @@
 # Main flow acceptance
 
+## 2026-10-10 — Asynchronous HTML assertions and current-file delivery (local only)
+
+[Incremental handoff](runner-assertion-readiness-handoff.md) fixes valid asynchronous observations reporting failure and generated search checks accepting pre-input visibility. The 15-step paper establishes hidden states before both matching-query and clear transitions. Only exact tagged old recipes update; fingerprints change, custom papers remain intact, narrow protected-content evidence stays partial.
+
+Old generated papers cannot reuse persisted passed state at Baseline, Holdout, Gate F, package/ZIP/current-file download or existing-grant release entries; rollback and explicit historical frozen-file readback remain available. Accepted Candidate files now render without a historical Champion. Actual SDK Chromium execution includes a passing 34.2-second search within the bounded revised command budget.
+
+Runtime 5e2cbb766d3262d8425a9916f4d1a65f4b429f97 passed 36 relevant files / 438 tests, architecture, full lint, production build and Runner23. Compiled readonly UI passed five routes/mobile390/denied storage with 26 source hashes and all 419 build hashes unchanged. Missing initial batch reports and initial fixture type failures were retained and replaced by actual passing reruns; the final count is unique.
+
+Production readonly before/after at 03:33 UTC still identifies main e3482e75. New full integrated CI and exact-SHA production proof are pending; prior 955408c unit receipts and frozen PR6 c24608a checks do not cover this increment. The real Mission's fresh Baseline, changed/frozen Candidate, paired Hidden, Gate F and exact download/reopen remain unproven. Model/operator/export and hosted billing boundaries remain deferred; no production mutation was triggered.
+
+
 Priority is one real imported HTML Mission completing: upload → baseline → changed Candidate → executable Hidden Validation → Gate F → download and reopen the exact accepted bytes. Release and Outcome follow after the local artifact path is proven with configured providers and live metrics. Shallow route checks and unit-test totals do not prove this flow.
 
 ## 2026-10-10 — Frozen-file readback without a live model (local only)
