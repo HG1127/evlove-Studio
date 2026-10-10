@@ -61,6 +61,7 @@ import type { ServerAiConfig } from "../server-env";
 import {resolveServerAiConfig} from "./server-ai-connection";
 
 export type ServerAiOperation=AiOperation;
+export const DIRECT_AI_SCHEMA_INSTRUCTION_VERSION="exact-schema-instructions-v1";
 /** Public scoring-route identity; API keys and timeout settings are deliberately excluded. */
 export async function serverAiScoringRouteFingerprint(): Promise<string | undefined> {
   const config = await resolveServerAiConfig();
@@ -71,7 +72,9 @@ export async function serverAiScoringRouteFingerprint(): Promise<string | undefi
   const responsesOutputVersion=config.mode==="openai-compatible"&&config.protocol!=="chat-completions"
     ?COMPATIBLE_RESPONSES_OUTPUT_VERSION:undefined;
   const chatOutputVersion=config.mode==="openai-compatible"&&config.protocol!=="responses"?COMPATIBLE_CHAT_OUTPUT_VERSION:undefined;
-  return createHash("sha256").update(JSON.stringify({ route, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION, responsesOutputVersion, chatOutputVersion })).digest("hex");
+  const directSchemaInstructionVersion=config.mode==="openai-compatible"&&(!config.responseFormat||config.responseFormat==="json-schema")
+    ?DIRECT_AI_SCHEMA_INSTRUCTION_VERSION:undefined;
+  return createHash("sha256").update(JSON.stringify({ route, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION, responsesOutputVersion, chatOutputVersion, directSchemaInstructionVersion })).digest("hex");
 }
 
 type StructuredSchema={name:string;schema:Record<string,unknown>};
@@ -171,11 +174,10 @@ async function callVercelGateway<T>(args:{
   return args.contract.parser.parse(generated.output);
 }
 
-function directSystem<T>(config:Extract<ServerAiConfig,{mode:"openai-compatible"}>,contract:Contract<T>){
+function directSystem<T>(contract:Contract<T>){
   const base=SYSTEM+"\n\nTask: "+contract.instruction;
-  return config.responseFormat&&config.responseFormat!=="json-schema"
-    ?base+"\nReturn JSON matching this exact schema:\n"+JSON.stringify(contract.schema.schema)
-    :base;
+  // Compatible providers may accept response_format without enforcing its schema.
+  return base+"\nReturn JSON matching this exact schema:\n"+JSON.stringify(contract.schema.schema);
 }
 
 function directFormat<T>(config:Extract<ServerAiConfig,{mode:"openai-compatible"}>,contract:Contract<T>){
@@ -194,7 +196,7 @@ async function callResponses<T>(args:{config:Extract<ServerAiConfig,{mode:"opena
       model:args.config.model,
       store:false,
       input:[
-        {role:"system",content:[{type:"input_text",text:directSystem(args.config,args.contract)}]},
+        {role:"system",content:[{type:"input_text",text:directSystem(args.contract)}]},
         {role:"user",content:[
           {type:"input_text",text:JSON.stringify(args.payload)},
           ...args.images.map((image)=>({type:"input_image",image_url:image.dataUrl})),
@@ -223,7 +225,7 @@ async function callChat<T>(args:{config:Extract<ServerAiConfig,{mode:"openai-com
     body:JSON.stringify({
       model:args.config.model,
       messages:[
-        {role:"system",content:directSystem(args.config,args.contract)},
+        {role:"system",content:directSystem(args.contract)},
         {role:"user",content:args.images.length?[
           {type:"text",text:JSON.stringify(args.payload)},
           ...args.images.map((image)=>({type:"image_url",image_url:{url:image.dataUrl}})),
