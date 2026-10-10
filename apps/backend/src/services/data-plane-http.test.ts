@@ -53,7 +53,7 @@ describe("bounded read-only Data Plane recovery",()=>{
   beforeEach(()=>vi.useFakeTimers());
   afterEach(()=>vi.useRealTimers());
   const settle=async(promise:Promise<Response>)=>{
-    const captured=promise.then(value=>value,error=>error);
+    const captured=promise.then(async value=>{await value.text();return value;},error=>error);
     await vi.runAllTimersAsync();
     return captured;
   };
@@ -62,14 +62,15 @@ describe("bounded read-only Data Plane recovery",()=>{
     const fetch=vi.fn().mockRejectedValueOnce(new Error("private TLS detail")).mockResolvedValueOnce(ok);
     vi.stubGlobal("fetch",fetch);
     const init={headers:{apikey:"private-test-key"}};
-    expect(await settle(dataPlaneFetch("production-runtime","https://db.test/rest/v1/missions?id=eq.M1",init))).toBe(ok);
-    expect(fetch.mock.calls).toEqual([["https://db.test/rest/v1/missions?id=eq.M1",init],["https://db.test/rest/v1/missions?id=eq.M1",init]]);
+    expect(await settle(dataPlaneFetch("production-runtime","https://db.test/rest/v1/missions?id=eq.M1",init))).toMatchObject({status:200});
+    expect(fetch.mock.calls).toEqual([["https://db.test/rest/v1/missions?id=eq.M1",{...init,signal:expect.any(AbortSignal)}],["https://db.test/rest/v1/missions?id=eq.M1",{...init,signal:expect.any(AbortSignal)}]]);
+    expect(fetch.mock.calls[0][1].signal).toBe(fetch.mock.calls[1][1].signal);
   });
   it.each([408,425,429,500,502,503,504])("recovers transient HTTP %s for a read",async(status)=>{
     const ok=new Response("readback",{status:200});
     const fetch=vi.fn().mockResolvedValueOnce(new Response("private upstream error",{status})).mockResolvedValueOnce(ok);
     vi.stubGlobal("fetch",fetch);
-    expect(await settle(dataPlaneFetch("production-runtime","https://db.test/rest/v1/missions"))).toBe(ok);
+    expect(await settle(dataPlaneFetch("production-runtime","https://db.test/rest/v1/missions"))).toMatchObject({status:200});
     expect(fetch).toHaveBeenCalledTimes(2);
   });
   it("stops after three network attempts with a sanitized unavailable result",async()=>{
@@ -102,7 +103,7 @@ describe("bounded read-only Data Plane recovery",()=>{
   it("honors a short Retry-After and stops if the server asks for a longer wait",async()=>{
     const ok=new Response("readback",{status:200});
     const fetch=vi.fn().mockResolvedValueOnce(new Response("wait",{status:429,headers:{"retry-after":"1"}})).mockResolvedValueOnce(ok);vi.stubGlobal("fetch",fetch);
-    const started=Date.now();expect(await settle(dataPlaneFetch("production-runtime","https://db.test/rest/v1/missions"))).toBe(ok);
+    const started=Date.now();expect(await settle(dataPlaneFetch("production-runtime","https://db.test/rest/v1/missions"))).toMatchObject({status:200});
     expect(Date.now()-started).toBe(1000);
     fetch.mockReset().mockResolvedValue(new Response("wait",{status:429,headers:{"retry-after":"60"}}));
     expect(await settle(dataPlaneFetch("production-runtime","https://db.test/rest/v1/missions"))).toMatchObject({data:{reason:"rate-limited-or-timeout"}});
@@ -120,5 +121,46 @@ describe("bounded read-only Data Plane recovery",()=>{
     expect(await settle(dataPlaneFetch("production-runtime","https://db.test/rest/v1/missions",{signal:controller.signal}))).toMatchObject({statusCode:503});
     expect(fetch).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+// Deadline configuration and cleanup are exercised without wall-clock waits.
+describe("Data Plane deadline budget ownership",()=>{
+  beforeEach(()=>vi.useFakeTimers());
+  afterEach(()=>{vi.useRealTimers();vi.unstubAllEnvs();});
+  it.each([undefined,"","0","-1","NaN","Infinity","1.5","60001"])("defaults invalid timeout %s to thirty seconds",async(raw)=>{
+    vi.stubEnv("EVOLUTION_DATA_PLANE_TIMEOUT_MS",raw);
+    const fetch=vi.fn<typeof globalThis.fetch>(()=>new Promise<Response>(()=>undefined));vi.stubGlobal("fetch",fetch);
+    const started=Date.now(),pending=dataPlaneFetch("production-runtime","https://db.test/rest/v1/missions").catch(error=>error);
+    await vi.runAllTimersAsync();
+    expect(await pending).toMatchObject({statusCode:503,data:{reason:"rate-limited-or-timeout"}});
+    expect(Date.now()-started).toBe(30_000);expect(fetch).toHaveBeenCalledOnce();expect(vi.getTimerCount()).toBe(0);
+  });
+  it("applies one bounded signal to an explicit Request's method, body and caller abort",async()=>{
+    const caller=new AbortController(),input=new Request("https://db.test/rest/v1/write",{method:"POST",body:"{}",signal:caller.signal});
+    const fetch=vi.fn<typeof globalThis.fetch>(()=>new Promise<Response>(()=>undefined));vi.stubGlobal("fetch",fetch);
+    const pending=dataPlaneFetch("production-runtime",input).catch(error=>error);caller.abort(Error("private-reason"));
+    expect(await pending).toMatchObject({statusCode:503,data:{reason:"network-error"}});
+    expect(fetch).toHaveBeenCalledOnce();expect(fetch.mock.calls[0][0]).toBe(input);
+    expect(fetch.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);expect(vi.getTimerCount()).toBe(0);
+  });
+  it("cancels the stream and clears the deadline when its consumer stops reading",async()=>{
+    const cancel=vi.fn(),source=new Response(new ReadableStream<Uint8Array>({cancel}));
+    vi.stubGlobal("fetch",vi.fn(async()=>source));
+    const response=await dataPlaneFetch("production-runtime","https://db.test/rest/v1/missions");
+    await response.body!.cancel();await Promise.resolve();
+    expect(cancel).toHaveBeenCalledOnce();expect(vi.getTimerCount()).toBe(0);
+  });
+  it("clears the deadline and external abort listener after complete body consumption",async()=>{
+    const caller=new AbortController(),remove=vi.spyOn(caller.signal,"removeEventListener");
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response("complete")));
+    const response=await dataPlaneFetch("production-runtime","https://db.test/rest/v1/missions",{signal:caller.signal});
+    expect(await response.text()).toBe("complete");
+    expect(remove).toHaveBeenCalledWith("abort",expect.any(Function));expect(vi.getTimerCount()).toBe(0);
+  });
+  it("keeps bodyless successful responses valid without a pending deadline",async()=>{
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(null,{status:204})));
+    const response=await dataPlaneFetch("production-runtime","https://db.test/rest/v1/missions");
+    expect(response.status).toBe(204);expect(await response.text()).toBe("");expect(vi.getTimerCount()).toBe(0);
   });
 });
