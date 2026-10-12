@@ -208,8 +208,29 @@ describe("main flow recovery through actual durable entry", () => {
     expect(stored.candidates[0]!.artifactSnapshots).toEqual(snapshots);
   });
 
+  it("does not promote HTML whole protection from synthetic paired scores through the durable entry", async () => {
+    stored = project();
+    expect(stored.sourceArtifacts[0]!.extension).toBe("html");
+    stored.protectedItems = ["preserve original document structure"];
+    stored.acceptanceRubric[2] = { ...stored.acceptanceRubric[2]!, source: "protected-item", protectedConstraint: true, category: "protected" };
+    stored.baselineRun.measurementFingerprint = serverBaselineFingerprint(stored, "b".repeat(64));
+    healthyModel();
+    const exp = await runServerMissionExperiment(stored);
+    stored = EvolveProjectSchema.parse(JSON.parse(JSON.stringify(exp.project)));
+    await executeServerControlStep(input, buildServerHarnessPlan(stored), 0);
+    expect(stored.artifactAcceptance.status).not.toBe("passed");
+    expect(stored.artifactAcceptance.acceptedAt).toBeUndefined();
+    expect(stored.gates.find(g => g.id === "artifact-ready")?.status).not.toBe("approved");
+  });
   it("retries Gate F frozen readback while retaining the same Candidate and paired Hidden evidence", async () => {
     stored = project();
+    // This positive physical-readback scenario preserves a known Markdown
+    // structure. HTML whole protection remains held without a full collector.
+    const source = stored.sourceArtifacts[0]!;
+    source.name = "original.md"; source.extension = "md"; source.mimeType = "text/markdown";
+    source.textContent = "# Original document\n\noriginal input\n";
+    source.size = new TextEncoder().encode(source.textContent).byteLength;
+    m.blobs.set(source.storageRef?.trim() || source.id, new Blob([source.textContent], { type: source.mimeType }));
     stored.protectedItems = ["preserve original document structure"];
     stored.acceptanceRubric[2] = { ...stored.acceptanceRubric[2]!, source: "protected-item", protectedConstraint: true, category: "protected" };
     stored.baselineRun.measurementFingerprint = serverBaselineFingerprint(stored, "b".repeat(64));

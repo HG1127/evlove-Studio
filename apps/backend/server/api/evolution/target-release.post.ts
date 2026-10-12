@@ -16,9 +16,10 @@ export default defineEventHandler(async(event)=>{
   if(!rollback){const blocker=htmlProtectionAcceptanceBlocker(mission);if(blocker)fail(blocker);}
   if(!projectUsesHttpRelease(mission)||!mission.releaseTarget?.connectionId)fail("Stored Mission is not connected to an HTTP Release Target");
   if(input.connectionId!==mission.releaseTarget.connectionId)fail("Release connection does not match the stored target");
+  const championCandidate=mission.searchChampion?.candidate;
   const candidate=rollback
     ?mission.candidates.find(item=>item.id===mission.release.candidateId)
-      ??(mission.searchChampion?.candidate?.id===mission.release.candidateId?mission.searchChampion.candidate:undefined)
+      ??(championCandidate&&championCandidate.id===mission.release.candidateId?championCandidate:undefined)
     :currentReleaseCandidate(mission);
   if(!candidate||candidate.id!==input.candidate.id)fail("Release Candidate does not match the stored release subject");
   if(rollback){

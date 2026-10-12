@@ -89,10 +89,11 @@ describe("target release recovery keeps object identity without new acceptance",
   expect(mocks.provider).toHaveBeenCalledWith(expect.objectContaining({connectionId:"stored-http-release",candidate:f.candidate,action:"rollback",frozenArtifacts:undefined}));
   expect(mocks.grant).not.toHaveBeenCalled();expect(mocks.blob).not.toHaveBeenCalled();
  });
- it.each(["idle","missing-stable","candidate-mismatch","connection-mismatch"] as const)("refuses rollback %s before provider",async mode=>{
+ it.each(["idle","missing-stable","candidate-mismatch","connection-mismatch","missing-subject-no-champion"] as const)("refuses rollback %s before provider",async mode=>{
   const f=fixture();f.project.release.status="promoted";let candidate=f.candidate,connectionId="stored-http-release";
   if(mode==="idle")f.project.release.status="idle";if(mode==="missing-stable")f.project.release.stableDeploymentId=undefined;
   if(mode==="candidate-mismatch")candidate=f.current;if(mode==="connection-mismatch")connectionId="other-target";
+  if(mode==="missing-subject-no-champion"){f.project.release.candidateId=undefined;f.project.candidates=[];f.project.searchChampion=undefined;}
   expect((await request(f.project.id,candidate,{action:"rollback",connectionId})).status).toBe(409);expect(mocks.provider).not.toHaveBeenCalled();expect(mocks.grant).not.toHaveBeenCalled();
  });
 });

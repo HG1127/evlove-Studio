@@ -16,9 +16,24 @@ function seal(project: EvolveProject) {
   project.campaign.serverRecoveryWait!.inputFingerprint = createHash("sha256").update(serverMainFlowRecoveryWire(project)).digest("hex");
   return project;
 }
-function fixture(live = false) {
+function fixture(live = false, format: "markdown" | "html" = "markdown") {
   const p = acceptedPackageFixture(false).project;
   p.candidates = [p.candidates[0]!]; p.selectedCandidateIds = [p.candidates[0]!.id];
+  // The positive readback fixture is a known Markdown file. Its protected
+  // structure obligation retains the non-HTML policy; HTML whole protection
+  // requires independent complete observations and is covered negatively below.
+  if (format === "markdown") {
+    const source = p.sourceArtifacts[0]!, snapshot = p.candidates[0]!.artifactSnapshots[0]!;
+    source.name = "original.md"; source.extension = "md"; source.mimeType = "text/markdown";
+    source.textContent = "# Original input\n"; source.size = new TextEncoder().encode(source.textContent).byteLength;
+    snapshot.name = "current-evolved.md"; snapshot.mimeType = "text/markdown";
+    snapshot.content = "# Newly accepted actual content\n";
+    const digest = createHash("sha256").update(snapshot.content).digest("hex");
+    snapshot.contentHash = digest;
+    snapshot.frozenArtifact = { ...snapshot.frozenArtifact!, name: snapshot.name, mimeType: snapshot.mimeType,
+      snapshotHash: digest, sha256: digest, size: new TextEncoder().encode(snapshot.content).byteLength,
+      blobId: "server-candidate:" + digest };
+  }
   p.inputUnderstanding = InputUnderstandingSchema.parse({ status: "ready", confidence: .9 });
   p.protectedItems = ["preserve document structure"];
   p.acceptanceRubric = ["CONTENT", "SAFETY"].map((id, i) => ({
@@ -58,6 +73,13 @@ beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new 
 afterEach(() => vi.useRealTimers());
 
 describe("local artifact readback recovery eligibility", () => {
+  it.each([false, true])("does not use HTML whole protection scores to authorize an offline readback (live=%s)", live => {
+    const p = fixture(live, "html"), before = structuredClone(p);
+    expect(p.sourceArtifacts[0]!.extension).toBe("html");
+    expect(p.validationRun.evaluation!.criterionScores!.every(score => score.pass)).toBe(true);
+    expect(canRecoverServerArtifactReadbackWithoutAi(p, route, now)).toBe(false);
+    expect(p).toEqual(before);
+  });
   it.each([false, true])("accepts a complete same-route Gate F boundary while recovering=%s without persisting proof", recovering => {
     const p = recovering ? recoverServerMainFlowWait(fixture(), at, "new-control") : fixture();
     const before = structuredClone(p), acceptance = p.artifactAcceptance;
@@ -167,7 +189,7 @@ describe("local artifact readback recovery eligibility", () => {
     const p = fixture(), snapshot = p.candidates[0]!.artifactSnapshots[0]!;
     if (kind === "missing-frozen") snapshot.frozenArtifact = undefined;
     if (kind === "duplicate-snapshot") p.candidates[0]!.artifactSnapshots.push(structuredClone(snapshot));
-    if (kind === "wrong-format") { snapshot.name = "result.md"; snapshot.frozenArtifact!.name = "result.md"; }
+    if (kind === "wrong-format") { snapshot.name = "result.html"; snapshot.frozenArtifact!.name = "result.html"; }
     if (kind === "threshold") p.validationRun.evaluation!.criterionScores![0]!.score = 85;
     if (kind === "criterion-failure") p.validationRun.evaluation!.criterionScores![0]!.pass = false;
     if (kind === "missing-criterion") p.validationRun.evaluation!.criterionScores!.pop();
