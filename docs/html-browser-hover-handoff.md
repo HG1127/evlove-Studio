@@ -16,6 +16,12 @@ Final architecture check, full lint and TypeScript/production build exited0. Ind
 
 Audit: D:/Downloads/evolution-os-smoke-temp/html-browser-hover-20261013-regression-audit.json. Complete new-candidate CI, accurate production SHA and real Mission acceptance remain separate requirements.
 
+## Runner integration
+
+Source6447aecc0cce21d059e397a2e3a33f6d3b68bb74 and6753d4510dffb95cb898330debf6175ecde6c4ec were cherry-picked as41bcd71 and13dce18. Both controls now check actual dispatch and completion against the original5-second action/45-second case deadline. Expired dispatch performs zero calls; late completion performs one call then remains UNVERIFIED, closes the page and stops later observations. Controls contribute zero assertions; native Clipboard guards and isolated observers remain unchanged.
+
+The final focused Runner regression passed18/18 selected tests with0 failure/skip/cancellation,28.61 seconds. This covers9 hover tests,7 existing viewport tests and2 new deadline tests with action/case subscenarios. The entire70-test file and the other Runner suites are not inferred from this selected run; the new complete CI must execute all of them. The prior0/2 defect reproducer and intermediate15-pass log are retained in dist/browser-viewport-deadline-checks of the source worktree. The hover initial9/10 negative-fixture transition failure and intermediate11-pass log also remain preserved.
+
 ## Main flow remaining
 
 At the latest actual production read18:49 UTC, fb3a9b540fc9bb9b860fd8e1778ec19c86abbb1c still served. Actual Mission project-1790480873333 remains revision43, Baseline failed/paused after malformed independent Judge JSON; its SDK Run is completed and Job waiting. The f1 model fix passed complete local CI (3380 tests,Runner65,E2E5) but has not been served. Delivery chat tools returned inactive-window; no Root push or deployment occurred.
