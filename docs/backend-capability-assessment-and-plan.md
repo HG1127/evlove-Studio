@@ -1,5 +1,11 @@
 # Backend Capability Assessment and Delivery Plan
 
+## 2026-10-13 — Original scope and native DOM observation foundations (local integration)
+
+[Collector foundations](html-protection-collector-foundations-handoff.md) add an Original-only complete expected scope, retained runtime residuals and native isolated DOM projections with mutation latching and shallow bounded reads. The integrated9-file/292 regression, architecture, full lint and TypeScript/production build passed; the initial type-build failure is retained. Clipboard/template/unknown runtime, semantic/visual closure, physical Page startup custody and collector/settlement/Gate F wiring remain incomplete. The new exact integrated complete gate is required separately.
+
+Prior acb8190 passed the complete local gate (3504 tests,Runner76,E2E5); this does not cover the new foundation branch. Authenticated production22:26 UTC still servesfb3a9b5 with Mission43 Baselinefailed/paused, SDKcompleted/Jobwaiting; actual Experiment, same-Hidden, Gate F and identical accepted download/reopen remain unproven. The operator session was refreshed with existing authorized credentials and independently verified Production workspace; production secrets were unchanged.
+
 ## 2026-10-13 — Independent whole protection settlement scope
 
 [Protection scope handoff](html-protection-scope-handoff.md) closes tag/static/format score upgrades, preserves actual native assertion failures and narrow format-only proof, and versions all affected score/evidence caches. Root28-file /340 tests plus architecture/full lint/production build passed. Acceptance/delivery closure, stored HTTP release/rollback authority and supplemental-note protection are integrated; B15-file/225 and Root5-file/59 regressions passed. A new exact integrated complete gate remains pending. Actual Mission43 and fb3a9b5 production are not upgraded; complete collector, same-Hidden, Gate F and identical accepted download/reopen remain required.

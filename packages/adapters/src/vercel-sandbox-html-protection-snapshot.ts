@@ -168,7 +168,7 @@ type Gap = HtmlProtectionSnapshotResult["gaps"][number];
  * isolated browser/process limits remain required; this is not a hard memory guarantee.
  * DOM.setChildNodes is protocol population, not a mutation, and is not counted.
  */
-async function nativeMirror(session: HtmlProtectionSnapshotCdpPort, root: unknown, active: () => void) {
+async function nativeMirror(session: HtmlProtectionSnapshotCdpPort, root: unknown, active: () => void): Promise<{ gaps: Gap[]; sha256: string }> {
   const pending = [{ value: root, depth: 0, parent: null as number | null, edge: "root" }];
   const codes = new Set<Gap["code"]>(), ids = new Set<number>(), records: unknown[] = [];
   let bytes = 0, shadows = 0;
@@ -238,7 +238,8 @@ function validateRegisteredBody(request: HtmlProtectionSnapshotRequest, body: Ht
   const ids = request.registry.projection === "search-membership-v1" ? [request.registry.targetId] : request.registry.targets.map(target => target.targetId);
   if (body.gaps.some(gap => gap.targetId !== undefined && !ids.includes(gap.targetId))) throw new Error("Foreign snapshot gap scope");
   if (body.projection === "boot-subtree-v1" && request.registry.projection === "boot-subtree-v1") {
-    if (body.targets.length !== request.registry.targets.length || body.targets.some((target, index) => target.targetId !== request.registry.targets[index]!.targetId)) throw new Error("Registered target coverage mismatch");
+    const registeredTargets = request.registry.targets;
+    if (body.targets.length !== registeredTargets.length || body.targets.some((target, index) => target.targetId !== registeredTargets[index]!.targetId)) throw new Error("Registered target coverage mismatch");
     if (body.targets.some(target => target.matchCount === 1 && !target.nodes.length)) throw new Error("Selected subtree is missing");
     if (body.counters.collectedNodes !== body.targets.reduce((sum, target) => sum + target.nodes.length, 0)) throw new Error("Incomplete subtree count");
   } else if (body.projection === "search-membership-v1" && request.registry.projection === "search-membership-v1" && body.targetId !== request.registry.targetId) throw new Error("Registered membership scope mismatch");
