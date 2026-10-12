@@ -81,6 +81,7 @@ describe("server hidden holdout",()=>{
     expect(setup.currentCases).toEqual(["H1"]);
     expect(setup.candidateCases).toEqual(["H1"]);
     expect(outcome.validation.validationMode).toBe("full");
+    expect(outcome.validation.completedAt).toBe("2026-09-20T14:30:00.000Z");
     expect(outcome.validation.recommendation).toBe("release");
     expect(outcome.validation.evidenceFingerprint).toBeTruthy();
     expect(outcome.project.campaign.checkpoint).toMatchObject({round:1,completedPhase:"validation"});

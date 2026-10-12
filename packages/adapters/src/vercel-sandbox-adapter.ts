@@ -1,4 +1,5 @@
 import JSZip from "jszip";
+import {VERCEL_SANDBOX_BROWSER_RUNNER_SCRIPT,sandboxBrowserCommandTimeoutMs} from "./vercel-sandbox-browser-runner";
 import { APIError, Sandbox, Snapshot, type NetworkPolicy, type SandboxRegion } from "@vercel/sandbox";
 import {
   SandboxBrowserHealthSchema,
@@ -30,8 +31,8 @@ const SANDBOX_MAX_COMMAND_TIMEOUT_MS=15*60_000;
 const SANDBOX_MAX_ARCHIVE_FILES=2500;
 const SANDBOX_MAX_FILE_BYTES=20*1024*1024;
 const SANDBOX_MAX_EXTRACTED_BYTES=100*1024*1024;
-const BROWSER_RUNTIME_NAME="evolution-browser-pw163-v1";
-const BROWSER_RUNTIME_VERSION="pw-1.63.0-v1";
+const BROWSER_RUNTIME_NAME="evolution-browser-pw163-v2";
+const BROWSER_RUNTIME_VERSION="pw-1.63.0-v2";
 const BROWSER_SNAPSHOT_TTL_MS=7*24*60*60*1000;
 const BROWSER_PORT=4173;
 
@@ -102,78 +103,6 @@ const server=http.createServer((req,res)=>{
   }catch(error){res.writeHead(500);res.end(String(error));}
 });
 server.listen(port,"0.0.0.0",()=>console.log("EVOLUTION_PREVIEW_READY "+port));
-`;
-
-const BROWSER_RUNNER_SCRIPT=String.raw`
-import fs from "node:fs";
-import { createHash } from "node:crypto";
-import { chromium } from "../browser/node_modules/playwright/index.mjs";
-const cases=JSON.parse(fs.readFileSync(process.argv[2],"utf8"));
-const baseUrl=process.argv[3];
-const baseOrigin=new URL(baseUrl).origin;
-const browser=await chromium.launch({headless:true});
-const results=[];
-for(const testCase of cases){
-  const started=Date.now();
-  const trace=[];const errors=[];const blocked=[];const screenshots=[];
-  const context=await browser.newContext({serviceWorkers:"block",acceptDownloads:false,viewport:{width:1440,height:960}});
-  try{
-    await context.route("**/*",route=>{
-      const url=route.request().url();
-      try{
-        const parsed=new URL(url);
-        if(parsed.origin===baseOrigin||parsed.protocol==="data:"||parsed.protocol==="blob:")return route.continue();
-      }catch{}
-      blocked.push(url);return route.abort();
-    });
-    const page=await context.newPage();
-    page.setDefaultTimeout(7000);
-    page.on("pageerror",error=>errors.push(error.message));
-    await page.goto(baseUrl,{waitUntil:"domcontentloaded",timeout:15000});
-    trace.push({id:"open",stage:"browser-preview",status:"pass",summary:"真实 Preview 已在 Chromium 打开"});
-    let failed;
-    for(const [index,step] of (testCase.browserSteps||[]).entries()){
-      try{
-        const locator=page.locator(step.selector);
-        if(step.action==="click")await locator.click();
-        if(step.action==="fill")await locator.fill(step.value||"");
-        if(step.action==="visible"&&!await locator.isVisible())throw new Error("元素不可见："+step.selector);
-        if(step.action==="text"&&!(await locator.innerText()).includes(step.value||""))throw new Error("文本断言未通过："+step.selector);
-        if(step.action==="count"&&await locator.count()!==step.count)throw new Error("数量断言未通过："+step.selector);
-        trace.push({id:"step-"+index,stage:"browser-step",status:"pass",summary:step.action+" "+step.selector});
-      }catch(error){
-        failed=String(error);
-        trace.push({id:"step-"+index,stage:"browser-step",status:"fail",summary:step.action+" "+step.selector,detail:failed});
-        break;
-      }
-    }
-    for(const viewport of [{name:"desktop",width:1440,height:900},{name:"mobile",width:390,height:844}]){
-      await page.setViewportSize({width:viewport.width,height:viewport.height});
-      const layout=await page.evaluate(()=>({overflow:document.documentElement.scrollWidth>innerWidth+2,title:document.title}));
-      trace.push({id:"viewport-"+viewport.width,stage:"layout",status:layout.overflow?"fail":"pass",summary:viewport.width+"px "+(layout.overflow?"存在横向溢出":"无横向溢出"),detail:layout.title});
-      if(layout.overflow&&!failed)failed=viewport.width+"px 存在横向溢出";
-      if(testCase.captureScreenshots){
-        const bytes=await page.screenshot({type:"jpeg",quality:60,fullPage:false});
-        if(bytes.length<=1500000){
-          const artifactHash=createHash("sha256").update(bytes).digest("hex");
-          screenshots.push({name:testCase.id+"-"+viewport.name+".jpg",width:viewport.width,height:viewport.height,dataUrl:"data:image/jpeg;base64,"+bytes.toString("base64"),artifactHash});
-          trace.push({id:"screenshot-"+viewport.name,stage:"visual-evidence",status:"pass",summary:"已采集 "+viewport.name+" 真实截图",detail:artifactHash});
-        }else{
-          trace.push({id:"screenshot-"+viewport.name,stage:"visual-evidence",status:"warning",summary:"截图超过 1.5MB，未嵌入证据传输"});
-        }
-      }
-    }
-    const assertions=(testCase.browserSteps||[]).filter(step=>["visible","text","count"].includes(step.action)).length;
-    const status=failed||errors.length?"failed":blocked.length||!assertions?"partial":"verified";
-    results.push({testCaseId:testCase.id,verificationStatus:status,error:failed||errors[0],assertions,blockedResources:blocked.slice(0,20),screenshots,trace,latencyMs:Date.now()-started});
-  }catch(error){
-    results.push({testCaseId:testCase.id,verificationStatus:"failed",error:String(error),assertions:0,blockedResources:blocked.slice(0,20),trace,latencyMs:Date.now()-started});
-  }finally{
-    await context.close().catch(()=>{});
-  }
-}
-await browser.close();
-console.log(JSON.stringify({results}));
 `;
 
 function clipped(value:string){
@@ -291,7 +220,7 @@ async function ensureBrowserRuntimeSnapshot(){
     if(browser.exitCode!==0)throw new Error("Chromium Runtime 安装失败："+clipped(await browser.stderr()));
     await base.writeFiles([
       {path:".evolution/runtime/static-server.mjs",content:STATIC_SERVER_SCRIPT},
-      {path:".evolution/runtime/browser-runner.mjs",content:BROWSER_RUNNER_SCRIPT},
+      {path:".evolution/runtime/browser-runner.mjs",content:VERCEL_SANDBOX_BROWSER_RUNNER_SCRIPT},
     ]);
     await base.updateNetworkPolicy("deny-all");
     const smoke=await base.runCommand("node",["-e",
@@ -413,7 +342,7 @@ async function executeSandboxBrowserCases(sandbox:Sandbox,testCases:TestCase[],i
     ".evolution/runtime/browser-runner.mjs",
     sandbox.cwd+"/"+file,
     internalUrl,
-  ],{timeoutMs:Math.min(180_000,Math.max(30_000,testCases.length*25_000))});
+  ],{timeoutMs:sandboxBrowserCommandTimeoutMs(testCases)});
   if(result.exitCode!==0)throw new Error("Browser Steps Runtime 失败："+clipped(await result.stderr()));
   const lines=(await result.stdout()).trim().split(/\r?\n/).filter(Boolean);
   const parsed=JSON.parse(lines.at(-1)??"{}") as {results?:BrowserCaseEvidence[]};

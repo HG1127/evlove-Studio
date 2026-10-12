@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
-import type { Candidate, CandidateArtifactSnapshot, EvolveProject } from "@evolution/contracts";
+import type { Candidate, CandidateArtifactSnapshot, EvolveProject, SourceArtifact } from "@evolution/contracts";
 import { trustedServerBaselineChampion } from "@evolution/harness";
 import { getServerArtifactStore } from "./artifact-runtime";
 import { serverArtifactSha256, verifyServerCandidateFrozenArtifact } from "./server-experiment-artifacts";
 
-async function frozenBinding(snapshot: CandidateArtifactSnapshot) {
-  if (!await verifyServerCandidateFrozenArtifact(snapshot)) throw new Error("Hidden 文件冻结身份不可用。");
+async function frozenBinding(snapshot: CandidateArtifactSnapshot, source: SourceArtifact) {
+  if (!await verifyServerCandidateFrozenArtifact(snapshot,source)) throw new Error("Hidden 文件冻结身份不可用。");
   const receipt = snapshot.frozenArtifact!;
   return { sourceArtifactId: snapshot.sourceArtifactId, snapshotHash: receipt.snapshotHash,
     blobId: receipt.blobId, sha256: receipt.sha256, size: receipt.size, name: receipt.name, mimeType: receipt.mimeType };
@@ -28,7 +28,7 @@ export async function readServerHoldoutArtifactFingerprint({ project, candidate 
     const snapshots = source.role === "target" ? champion?.artifactSnapshots.filter(snapshot => snapshot.sourceArtifactId === source.id) ?? [] : [];
     if (champion && source.role === "target" && snapshots.length !== 1) return undefined;
     if (snapshots[0]) {
-      current.push({ id: source.id, role: source.role, frozen: await frozenBinding(snapshots[0]) });
+      current.push({ id: source.id, role: source.role, frozen: await frozenBinding(snapshots[0],source) });
       continue;
     }
     const blobId = source.storageRef?.trim() || (source.inputMode === "upload" ? source.id : undefined);
@@ -45,7 +45,10 @@ export async function readServerHoldoutArtifactFingerprint({ project, candidate 
     }
   }
   const frozen = [];
-  for (const snapshot of candidate.artifactSnapshots) frozen.push(await frozenBinding(snapshot));
+  for (const snapshot of candidate.artifactSnapshots) {
+    const source=targets.find((item)=>item.id===snapshot.sourceArtifactId)!;
+    frozen.push(await frozenBinding(snapshot,source));
+  }
   return createHash("sha256").update(JSON.stringify({
     version: "server-holdout-artifact-binding-v1", deploymentSha: process.env.VERCEL_GIT_COMMIT_SHA,
     current, candidate: { id: candidate.id, frozen },

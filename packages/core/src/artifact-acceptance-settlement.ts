@@ -6,9 +6,11 @@ import type {
   ValidationRun,
 } from "@evolution/contracts";
 import { evidenceFingerprint } from "./evidence-binding";
+import { htmlProtectionContractBlocker } from "./html-protection-browser-steps";
 import { hasAuthoritativeHiddenRelease, hasFullHiddenMeasurement, hasVerifiedHiddenBaseline } from "./hidden-validation-evidence";
 import { indexScopedAcceptanceResults } from "./acceptance-result-identity";
 import { indexUniqueById } from "./identity-index";
+import { hasSourceTextArtifactFileFormat } from "./artifact-file-format";
 
 function validationScoreIndex(project:EvolveProject,validation:ValidationRun){
   return indexScopedAcceptanceResults([{requestedCriterionIds:project.acceptanceRubric.map((item)=>item.id),results:validation.evaluation?.criterionScores??[]}]);
@@ -51,7 +53,10 @@ export function settleArtifactAcceptanceFromValidation(args:{
       const snapshot=snapshotIndex.byId.get(id);
       const frozen=frozenIndex.byId.get(id);
       const receipt=snapshot?.frozenArtifact;
+      const source=args.project.sourceArtifacts.find((item)=>item.id===id)!;
       return Boolean(snapshot&&frozen&&receipt
+        && hasSourceTextArtifactFileFormat(source,snapshot.name)
+        && hasSourceTextArtifactFileFormat(source,frozen.name)
         && receipt.sourceArtifactId===id
         && receipt.sha256===frozen.sha256
         && receipt.blobId===frozen.blobId
@@ -61,7 +66,8 @@ export function settleArtifactAcceptanceFromValidation(args:{
         && receipt.mimeType===frozen.mimeType
         && (!snapshot.contentHash||snapshot.contentHash===receipt.snapshotHash));
     });
-  const validationReusable=hasFullHiddenMeasurement(args.validation,args.candidate.id,args.project.hiddenEvalSuite)
+  const contractBlocker=htmlProtectionContractBlocker(args.project);
+  const validationReusable=!contractBlocker && hasFullHiddenMeasurement(args.validation,args.candidate.id,args.project.hiddenEvalSuite)
     && args.validation.evidenceFingerprint===binding;
   const {byId:scoreById,duplicateIds}=indexScopedAcceptanceResults([{
     requestedCriterionIds:args.project.acceptanceRubric.map((item)=>item.id),
@@ -126,7 +132,7 @@ export function settleArtifactAcceptanceFromValidation(args:{
     summary:passed
       ?"Gate F 已复用同一 Candidate 的 Hidden Validation 证据，并校验 exact frozen Artifact bytes/hash；Artifact Ready。"
       : status==="unverified"
-        ?"Gate F 尚缺 exact-fingerprint 验证证据或 frozen Artifact 字节证明；保持 UNVERIFIED，不把能力缺口当产品失败。"
+        ?contractBlocker ?? "Gate F 尚缺 exact-fingerprint 验证证据或 frozen Artifact 字节证明；保持 UNVERIFIED，不把能力缺口当产品失败。"
         : `Gate F 未通过：${verifiedFailures.length} 个已验证 Criterion 失败或交付阈值未达标。`,
     acceptedAt:passed?now:undefined,
     lastCheckedAt:now,

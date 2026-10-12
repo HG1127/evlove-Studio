@@ -12,17 +12,29 @@ import {
   bindServerJobWorkflowRun,
   createServerJobIdempotentReceipt,
   getServerProductionRuntime,
+  getServerJobByIdempotencyKey,
   isBenignJobBookkeepingConflict,
   JobStateConflictError,
   MissionRevisionConflictError,
 } from "../../../src/services/production-runtime";
 import { evolutionMissionWorkflow } from "../../../../../workflows/evolution-mission";
 import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
-import {cancelWorkflowRunById,workflowRunIdForJob} from "../../../src/services/workflow-run-control";
+import {cancelWorkflowRunById,workflowRunExists,workflowRunIdForJob} from "../../../src/services/workflow-run-control";
+import { canRemeasureLegacyServerPlan } from "@evolution/harness";
+import { serverMainFlowRecoveryDigest } from "../../../src/services/server-main-flow-recovery";
 
 async function cleanupStartedRun(runId:string){
   try{return {ok:true as const,result:await cancelWorkflowRunById(runId)};}
   catch{return {ok:false as const,reason:"workflow-run-cancel-failed" as const};}
+}
+
+async function workflowReuseFailure(runId:string,controlJobId:string){
+  try{
+    if(await workflowRunExists(runId))return undefined;
+    return {statusCode:409,body:{error:"关联 Workflow Run 在当前运行环境中不存在，请核对运行环境和已有请求后重试",controlJobId}};
+  }catch{
+    return {statusCode:503,body:{error:"当前无法核验已保存的 Workflow Run，请稍后使用相同请求键重试",controlJobId}};
+  }
 }
 
 export default defineEventHandler(async(event)=>{
@@ -49,6 +61,8 @@ export default defineEventHandler(async(event)=>{
     }
     if(schedule.durableScheduledFor===scheduledFor&&schedule.durableJobId){
       if(schedule.durableRunId){
+        const failure=await workflowReuseFailure(schedule.durableRunId,schedule.durableJobId);
+        if(failure){setResponseStatus(event,failure.statusCode);return failure.body;}
         const response:EvolutionWorkflowStartResponse={
           missionId:mission.id,
           controlJobId:schedule.durableJobId,
@@ -63,12 +77,35 @@ export default defineEventHandler(async(event)=>{
       return {error:"Durable Scheduler 正在绑定当前计划，请勿重复启动"};
     }
   }
+  let freshBaseline: {sourceUpdatedAt:string;inputFingerprint:string}|undefined;
+  if(parsed.data.intent){
+    if(scheduledFor || !parsed.data.idempotencyKey || !parsed.data.expectedMissionUpdatedAt){
+      setResponseStatus(event,400);return {error:"重新测量需要明确请求键与当前 Mission 版本，不能与计划执行混用"};
+    }
+    const prior=await getServerJobByIdempotencyKey(`workflow-control:${mission.id}:${parsed.data.idempotencyKey}`);
+    if(prior){
+      const runId=workflowRunIdForJob(prior,mission);
+      if(runId && prior.metadata?.workflowIntent==="remeasure-current-input"
+        && prior.metadata?.sourceUpdatedAt===parsed.data.expectedMissionUpdatedAt
+        && !["failed","cancelled","partial"].includes(prior.status)){
+        const failure=await workflowReuseFailure(runId,prior.id);
+        if(failure){setResponseStatus(event,failure.statusCode);return failure.body;}
+        return {missionId:mission.id,controlJobId:prior.id,runId,status:"queued",reused:true} satisfies EvolutionWorkflowStartResponse;
+      }
+      setResponseStatus(event,409);return {error:"相同重新测量请求已终止或尚未绑定，请核对状态后刷新重试"};
+    }
+    if(mission.updatedAt!==parsed.data.expectedMissionUpdatedAt || !canRemeasureLegacyServerPlan(mission)){
+      setResponseStatus(event,409);return {error:"当前不是可从当前输入重新测量的旧 Plan 零 Candidate 断点；有 Candidate、审批或安全边界时必须先核对保存的生成身份"};
+    }
+    freshBaseline={sourceUpdatedAt:mission.updatedAt,inputFingerprint:serverMainFlowRecoveryDigest(mission)};
+  }
   const controlJobId=`workflow-control-${randomUUID()}`;
   const operationKey=parsed.data.idempotencyKey??(scheduledFor?`scheduled:${scheduledFor}`:randomUUID());
   const input=EvolutionWorkflowRunInputSchema.parse({
     missionId:mission.id,
     controlJobId,
     requestedAt,
+    ...(freshBaseline?{freshBaseline}:{}),
     ...(scheduledFor?{scheduledFor}:{}),
   });
   let created;
@@ -82,6 +119,7 @@ export default defineEventHandler(async(event)=>{
       label:scheduledFor?"Evolution Durable Scheduler":"Evolution Workflow Control",
       idempotencyKey:`workflow-control:${mission.id}:${operationKey}`,
       generation:1,attempts:0,priority:70,
+      ...(freshBaseline?{metadata:{workflowIntent:"remeasure-current-input",sourceUpdatedAt:freshBaseline.sourceUpdatedAt,inputFingerprint:freshBaseline.inputFingerprint}}:{}),
       progress:{percent:0,detail:scheduledFor?`等待 Durable Scheduler 武装至 ${scheduledFor}`:"等待 Durable Workflow 启动"},
       createdAt:requestedAt,updatedAt:requestedAt,
     }));
@@ -99,6 +137,8 @@ export default defineEventHandler(async(event)=>{
       setResponseStatus(event,409);
       return {error:"相同 Workflow 请求已存在但没有可复用的活动 run，请刷新状态后重试",controlJobId:prior.id};
     }
+    const failure=await workflowReuseFailure(priorRunId,prior.id);
+    if(failure){setResponseStatus(event,failure.statusCode);return failure.body;}
     const response:EvolutionWorkflowStartResponse={
       missionId:mission.id,controlJobId:prior.id,runId:priorRunId,
       status:"queued",...(scheduledFor?{scheduledFor}:{}),reused:true,

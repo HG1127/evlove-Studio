@@ -1,5 +1,5 @@
 import { FatalError } from "workflow";
-import { campaignScoringInputBlocker } from "@evolution/core";
+import { campaignLiveObservationFresh, campaignPreflightStopReason, campaignScoringInputBlocker } from "@evolution/core";
 import {
   EvolutionJobSchema,
   PRODUCTION_SCHEMA_VERSIONS,
@@ -21,6 +21,10 @@ import {
   serverControlCapabilityWaitPlan,
   serverControlAiWait,
   serverExperimentRecoveryWait,
+  serverMainFlowRecoveryWait,
+  serverMainFlowRecoveryActive,
+  serverMainFlowRecoveryReadiness,
+  serverBaselineFingerprint,
   normalizeLocallyVerifiableCandidateRuns,
   reconcileAttentionRequest,
   type ServerHarnessPlan,
@@ -28,10 +32,12 @@ import {
 import { getServerProductionRuntime } from "../../apps/backend/src/services/production-runtime";
 import { serverAiScoringRouteFingerprint } from "../../apps/backend/src/services/ai-gateway";
 import { runServerControlAi as runServerAi, ServerControlAiUnavailableError } from "../../apps/backend/src/services/server-control-ai";
-import { restoreServerControlAiWait } from "../../apps/backend/src/services/server-control-ai-recovery";
+import { restoreServerControlAiWait, requireServerMainFlowRecoveryAi } from "../../apps/backend/src/services/server-control-ai-recovery";
+import { checkpointServerMainFlowWait, clearServerMainFlowWait, hasServerMainFlowRecoveryBinding, prepareServerFreshBaseline } from "../../apps/backend/src/services/server-main-flow-recovery";
 import { runServerMissionBaseline } from "../../apps/backend/src/services/server-baseline";
 import { runServerMissionExperiment } from "../../apps/backend/src/services/server-experiment";
 import { runServerMissionHoldout } from "../../apps/backend/src/services/server-holdout";
+import { readServerHoldoutArtifactFingerprint } from "../../apps/backend/src/services/server-holdout-artifact-binding";
 import { runServerMissionArtifactAcceptance } from "../../apps/backend/src/services/server-artifact-acceptance";
 import { runServerMissionRelease } from "../../apps/backend/src/services/server-release-orchestration";
 import { runServerMissionReleaseReconciliation } from "../../apps/backend/src/services/server-release-reconciliation";
@@ -326,6 +332,13 @@ export async function planMissionStep(input:EvolutionWorkflowRunInput,iteration:
   const runtime=getServerProductionRuntime();
   let mission=await runtime.missions.get(input.missionId);
   if(!mission)throw new FatalError(`Mission 不存在：${input.missionId}`);
+  if(input.freshBaseline && iteration===0){
+    const currentJob=await runtime.jobs.get(input.controlJobId);
+    if(!currentJob || currentJob.missionId!==input.missionId || currentJob.generation!==1
+      || !["queued","running","waiting"].includes(currentJob.status))throw new FatalError("控制 Job 不再活动；未重新测量。");
+    const restarted=await prepareServerFreshBaseline(mission,input,event=>appendWorkflowControlEvent(runtime.events,event));
+    if(restarted!==mission){await runtime.missions.save(restarted);mission=restarted;}
+  }
   if(mission.targetConnection.adapter==="connector"
     &&mission.targetConnection.status==="connected"
     &&!mission.sourceArtifacts.some((artifact)=>artifact.role==="target")){
@@ -409,18 +422,21 @@ export async function planMissionStep(input:EvolutionWorkflowRunInput,iteration:
       mission=materialized;
     }
   }
-  if(serverControlAiWait(mission)||serverExperimentRecoveryWait(mission)){
+  if(serverControlAiWait(mission)||serverExperimentRecoveryWait(mission)||serverMainFlowRecoveryWait(mission)){
     const currentJob=await runtime.jobs.get(input.controlJobId);
     if(!currentJob || currentJob.missionId!==input.missionId || currentJob.generation!==1
       || !["queued","running","waiting"].includes(currentJob.status)){
       throw new FatalError("控制 Job 不再活动；未恢复模型等待状态。");
     }
-    const recovered=await restoreServerControlAiWait(mission);
+    const recovered=await restoreServerControlAiWait(mission,input.controlJobId);
     if(recovered!==mission){
       await runtime.missions.save(recovered);
       mission=recovered;
     }
   }
+  if(mission.campaign.serverRecoveryWait?.status==="recovering"
+    && mission.campaign.serverRecoveryWait.resumedByControlJobId!==input.controlJobId)
+    throw new FatalError("恢复断点已属于另一控制 Job；禁止并行接管。");
   const plan=buildServerHarnessPlan(mission);
   await appendWorkflowControlEvent(runtime.events,createEvolutionEvent({
     id:`evt-${input.controlJobId}-plan-${iteration}`,
@@ -690,6 +706,16 @@ async function executeServerControlAction(
   }
 
   if(action==="run-campaign"){
+    if(input.freshBaseline || mission.campaign.serverRecoveryWait?.status==="recovering"){
+      const currentJob=await runtime.jobs.get(input.controlJobId);
+      if(!currentJob || currentJob.missionId!==input.missionId || currentJob.generation!==1
+        || !["queued","running","waiting"].includes(currentJob.status))throw new FatalError("控制 Job 不再活动；未执行恢复断点。");
+      if(mission.campaign.serverRecoveryWait?.status==="recovering"
+        && (mission.campaign.serverRecoveryWait.resumedByControlJobId!==input.controlJobId
+          || !serverMainFlowRecoveryActive(mission) || !hasServerMainFlowRecoveryBinding(mission)))
+        throw new FatalError("恢复断点的输入、父代或运行条件已变化；禁止复用旧 Candidate / 验收。");
+      if(input.freshBaseline && campaignPreflightStopReason(mission))throw new FatalError("重新测量的预算或停止条件已达到；未继续执行。");
+    }
     if(!(await serverAiConfigured())){
       const reason="[server-campaign-ai-pending] Campaign Planning Server Step 已实现，但服务器 AI 尚未配置。";
       const updated={
@@ -703,7 +729,7 @@ async function executeServerControlAction(
         stage:mission.stage,
         updatedAt:now,
       };
-      await runtime.missions.save(updated);
+      await runtime.missions.save(checkpointServerMainFlowWait(updated,input.controlJobId));
       await runtime.jobs.put(await controlJob(input,{
         status:"waiting",
         startedAt:input.requestedAt,
@@ -752,10 +778,49 @@ async function executeServerControlAction(
         checkpointId:plan.checkpoint.id,reason:scoringBlocker,
       })};
     }
+    const recoveringAcceptance=mission.campaign.serverRecoveryWait?.status==="recovering"
+      && mission.campaign.checkpoint?.completedPhase==="validation";
+    const recoveredCandidate=recoveringAcceptance
+      ? mission.candidates.find(candidate=>candidate.id===mission.validationRun.candidateId) : undefined;
+    if(recoveringAcceptance && mission.targetConnection.adapter==="artifact"){
+      let physicalBinding:string|undefined;
+      try{
+        physicalBinding=recoveredCandidate ? await readServerHoldoutArtifactFingerprint({project:mission,candidate:recoveredCandidate}) : undefined;
+      }catch{ /* An unreadable frozen identity is missing evidence, never approval. */ }
+      if(!physicalBinding || physicalBinding!==mission.validationRun.executionArtifactFingerprint){
+        const changed=Boolean(physicalBinding && mission.validationRun.executionArtifactFingerprint);
+        const reason=changed
+          ? "[server-campaign-artifact-acceptance-integrity-failed] 当前版本/Candidate 物理绑定已变化，禁止复用旧父代 Hidden 证据；请核对输入并建立新的测量边界。"
+          : "[server-campaign-artifact-acceptance-evidence-pending] 当前版本/Candidate 物理绑定暂不可回读；保留原 Hidden 证据，未通过 Gate F。";
+        const updated=checkpointServerMainFlowWait({...mission,
+          artifactAcceptance:{...mission.artifactAcceptance,status:changed?"failed":"unverified",hardGatePass:false,summary:reason},
+          campaign:{...mission.campaign,serverRecoveryWait:changed?undefined:mission.campaign.serverRecoveryWait,status:"paused",stopReason:reason,
+            schedule:{...mission.campaign.schedule,enabled:false,nextRunAt:undefined}},updatedAt:now},input.controlJobId);
+        await runtime.missions.save(updated);
+        await runtime.events.append(createEvolutionEvent({
+          id:`evt-${input.controlJobId}-campaign-hidden-binding-${iteration}`,missionId:input.missionId,jobId:input.controlJobId,
+          checkpointId:plan.checkpoint.id,type:"JobProgress",source:"vercel-workflow-control",
+          payload:{action,phase:"holdout-binding",reason,changed,expectedFingerprint:mission.validationRun.executionArtifactFingerprint,observedFingerprint:physicalBinding,serverNative:true},
+        }));
+        await runtime.jobs.put(await controlJob(input,{status:"waiting",startedAt:input.requestedAt,
+          progress:{percent:76,detail:reason.slice(0,240)}}));
+        return {control:"stop",result:result(input,{status:"waiting-action",iterations:iteration+1,
+          nextAction:action,checkpointId:plan.checkpoint.id,reason})};
+      }
+    }
+    // Physical I/O can cross the observation deadline. Use one decision time before refreshing.
+    const measurementNowMs=Date.now();
+    if(mission.campaign.serverRecoveryWait?.status==="recovering"
+      && mission.campaign.serverRecoveryWait.marker==="artifact-acceptance-evidence-pending")
+      await requireServerMainFlowRecoveryAi(mission,scoringRouteFingerprint,measurementNowMs);
+    const refreshRecoveredHoldout=recoveringAcceptance
+      && (!campaignLiveObservationFresh(mission,Number.isFinite(new Date(mission.validationRun.baselineObservedAt ?? NaN).getTime())
+        ? new Date(mission.validationRun.baselineObservedAt!).toISOString() : undefined,measurementNowMs)
+        || mission.baselineRun.measurementFingerprint!==serverBaselineFingerprint(mission,scoringRouteFingerprint));
     let campaignMission=mission;
-    if(!canReuseServerBaseline(campaignMission,scoringRouteFingerprint)){
+    if(!canReuseServerBaseline(campaignMission,scoringRouteFingerprint,measurementNowMs)){
       const baselineOutcome=await runServerMissionBaseline(campaignMission);
-      campaignMission=baselineOutcome.project;
+      campaignMission=!baselineOutcome.ready ? checkpointServerMainFlowWait(baselineOutcome.project,input.controlJobId) : baselineOutcome.project;
       await runtime.missions.save(campaignMission);
       await runtime.events.append(createEvolutionEvent({
         id:`evt-${input.controlJobId}-campaign-baseline-${iteration}`,
@@ -801,7 +866,7 @@ async function executeServerControlAction(
       && (campaignMission.experimentRun.winnerId||campaignMission.experimentRun.pendingEvidenceCandidateId)){
       const candidateId=campaignMission.experimentRun.winnerId??campaignMission.experimentRun.pendingEvidenceCandidateId;
       const holdoutOutcome=await runServerMissionHoldout(campaignMission);
-      campaignMission=holdoutOutcome.project;
+      campaignMission=holdoutOutcome.control==="stop" ? checkpointServerMainFlowWait(holdoutOutcome.project,input.controlJobId) : clearServerMainFlowWait(holdoutOutcome.project);
       await runtime.missions.save(campaignMission);
       await runtime.events.append(createEvolutionEvent({
         id:`evt-${input.controlJobId}-campaign-holdout-${iteration}`,
@@ -837,8 +902,32 @@ async function executeServerControlAction(
     if(campaignCheckpoint?.round===round
       && campaignCheckpoint.completedPhase==="validation"
       && campaignMission.validationRun.status==="completed"){
+      if(refreshRecoveredHoldout){
+        await appendWorkflowControlEvent(runtime.events,createEvolutionEvent({
+          id:`evt-${input.controlJobId}-campaign-hidden-source-${iteration}`,missionId:input.missionId,
+          jobId:input.controlJobId,type:"MissionUpdated",source:"vercel-workflow-control",at:input.requestedAt,
+          payload:{action:"refresh-hidden-on-resume",priorValidation:mission.validationRun},
+        }));
+        const refreshed=await runServerMissionHoldout({...campaignMission,campaign:{...campaignMission.campaign,
+          checkpoint:{...campaignMission.campaign.checkpoint!,completedPhase:"experiment"}}});
+        campaignMission=refreshed.control==="stop" ? checkpointServerMainFlowWait(refreshed.project,input.controlJobId) : clearServerMainFlowWait(refreshed.project);
+        await runtime.missions.save(campaignMission);
+        await runtime.events.append(createEvolutionEvent({
+          id:`evt-${input.controlJobId}-campaign-hidden-refresh-${iteration}`,missionId:input.missionId,
+          jobId:input.controlJobId,checkpointId:plan.checkpoint.id,type:refreshed.control==="stop"?"JobProgress":"ActionCompleted",
+          source:"vercel-workflow-control",payload:{action,phase:"holdout-refresh",candidateId:campaignMission.validationRun.candidateId,
+            reason:refreshed.reason,serverNative:true},
+        }));
+        if(refreshed.control==="stop" || !serverMainFlowRecoveryReadiness(campaignMission)){
+          const reason=refreshed.control==="stop" ? refreshed.reason : "重新验证 Hidden 后仍有安全、保护、审批或停止边界；未继续 Gate F。";
+          await runtime.jobs.put(await controlJob(input,{status:"waiting",startedAt:input.requestedAt,
+            progress:{percent:76,detail:reason.slice(0,240)}}));
+          return {control:"stop",result:result(input,{status:"waiting-action",iterations:iteration+1,
+            nextAction:action,checkpointId:plan.checkpoint.id,reason})};
+        }
+      }
       const acceptanceOutcome=await runServerMissionArtifactAcceptance(campaignMission);
-      campaignMission=acceptanceOutcome.project;
+      campaignMission=acceptanceOutcome.control==="stop" ? checkpointServerMainFlowWait(acceptanceOutcome.project,input.controlJobId) : clearServerMainFlowWait(acceptanceOutcome.project);
       await runtime.missions.save(campaignMission);
       await runtime.events.append(createEvolutionEvent({
         id:`evt-${input.controlJobId}-campaign-artifact-acceptance-${iteration}`,
@@ -877,7 +966,7 @@ async function executeServerControlAction(
 
     if(campaignCheckpoint?.round===round&&campaignCheckpoint.completedPhase==="plan"){
       const experimentOutcome=await runServerMissionExperiment(campaignMission);
-      campaignMission=experimentOutcome.project;
+      campaignMission=experimentOutcome.control==="stop" ? checkpointServerMainFlowWait(experimentOutcome.project,input.controlJobId) : clearServerMainFlowWait(experimentOutcome.project);
       await runtime.missions.save(campaignMission);
       await runtime.events.append(createEvolutionEvent({
         id:`evt-${input.controlJobId}-campaign-experiment-${iteration}`,
@@ -922,7 +1011,7 @@ async function executeServerControlAction(
       diagnose:(payload)=>runServerAi("diagnose",payload),
       plan:(payload)=>runServerAi("plan",payload),
     });
-    await runtime.missions.save(outcome.project);
+    await runtime.missions.save(outcome.control==="stop" ? checkpointServerMainFlowWait(outcome.project,input.controlJobId) : clearServerMainFlowWait(outcome.project));
     const phasePercent=outcome.phase==="problem"?32:outcome.phase==="diagnose"?42:outcome.phase==="plan"?52:outcome.phase==="experiment"?60:outcome.phase==="settled"?80:24;
     await runtime.events.append(createEvolutionEvent({
       id:`evt-${input.controlJobId}-campaign-${iteration}-${outcome.phase}`,
@@ -1338,7 +1427,7 @@ async function executeServerControlAction(
       stage:plan.decision.stage,
       updatedAt:now,
     };
-    await runtime.missions.save(updated);
+    await runtime.missions.save(serverControlAiWait(updated) ? checkpointServerMainFlowWait(updated,input.controlJobId) : updated);
     await runtime.jobs.put(await controlJob(input,{
       status:"waiting",
       startedAt:input.requestedAt,

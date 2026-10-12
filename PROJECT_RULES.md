@@ -168,6 +168,17 @@ Required before merge/release:
 - browser/E2E evidence for UI/runtime behavior when applicable
 
 Tests should colocate with the implementation; shared fixtures belong in `@evolution/testkit`.
+### GitHub CI unavailable: mandatory local CI fallback
+
+- When GitHub Actions cannot run because of billing/quota limits, a service outage, or another verified infrastructure failure, automatically start the complete local Quality Gate. Do not wait for GitHub recovery or request separate approval for this fallback; the project owner authorized it on 2026-10-12.
+- Run against the exact candidate commit in a clean, isolated worktree. Preserve other ongoing changes and record the hosted run URL and its infrastructure failure separately.
+- Cover every applicable step in .github/workflows/quality-gate.yml: pinned dependencies installed with a frozen lockfile, full lint, architecture check, the complete Vitest suite, production build, Runner dependencies/browser setup, Runner tests, Chromium E2E, and local UI smoke. Serial batches with maxWorkers=1 are allowed only when the manifest proves complete coverage without omitted or duplicate files.
+- Preserve command logs, exit codes, runtime/tool versions, test counts, explicit skips, source/lockfile identity, and build hashes. Missing or failed required checks cannot be reported as a passed gate. Retain failed attempts when recording successful reruns.
+- A complete passing local gate for that exact candidate is an approved merge/release quality gate while hosted CI is unavailable. Label it LOCAL_CI_PASSED and keep the hosted result UNAVAILABLE or FAILED as observed; do not fabricate a GitHub green check. Functional test failures must be fixed and rerun rather than bypassed.
+- Git/CI owners may proceed under existing merge/deployment authorization after the local gate passes. Do not disable branch protection or circumvent repository access controls; an enforced remote restriction remains a separate blocker.
+- Production read-only verification must still match the deployed SHA. Real Mission execution, paired Hidden evidence, Gate F, and exact accepted download/reopen remain separate acceptance requirements. This fallback grants no production mutation, user-file cloud export, or secret-change authorization.
+- Follow the operational checklist in docs/local-ci-fallback.md.
+
 
 ## 12. Database rules
 

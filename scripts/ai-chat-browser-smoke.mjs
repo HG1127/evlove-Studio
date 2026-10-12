@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import {createServer} from 'node:http';
 import {mkdtemp,readFile,writeFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -15,6 +16,8 @@ if(path.dirname(scratch)!==temporaryRoot||!path.basename(scratch).startsWith('ev
 const fixtureKey='synthetic-only-fixture-key';
 let nextProbeError=false;
 const model=process.env.AI_CHAT_SMOKE_MODEL?.trim()||'main-flow-fixture';
+const artifact='<html><body>Literal <think>{"literal":true}</think>\n```json\n{"literal":"must remain"}\n```\nEnd;</body></html>';
+const artifactHash=createHash('sha256').update(artifact,'utf8').digest('hex');
 const requests=[];
 const appWrites=[];
 const pageErrors=[];
@@ -31,7 +34,7 @@ try{
   await writeFile(entry,[
     `export {createProviderConnection,saveProviderConnections,saveAiRoutingPolicy,resolveOperationConnection} from ${source('src/features/evolve/ai/providers/registry.ts')};`,
     `export {testByokConnection,callByokStructured} from ${source('src/features/evolve/ai/providers/byok.ts')};`,
-    `export {CopilotAiResultSchema} from ${source('packages/contracts/src/index.ts')};`,
+    `export {CopilotAiResultSchema,BuildCandidateAiResultSchema,jsonSchemas} from ${source('packages/contracts/src/index.ts')};`,
     `export {runEvolveAi} from ${source('src/features/evolve/ai/service.ts')};`,
   ].join('\n'));
   const config=ts.readConfigFile(path.join(root,'tsconfig.app.json'),ts.sys.readFile);
@@ -76,6 +79,12 @@ try{
       }
       assert.equal(format,'json_object');
       assert.match(body.messages[0].content,/JSON Schema/);
+      if(scenario.startsWith('candidate_')){
+        const candidate={artifacts:[{sourceArtifactId:'synthetic-source',name:'candidate.html',mimeType:'text/html',content:artifact}],summary:'Synthetic Candidate'};
+        const json=JSON.stringify(candidate);
+        const content=scenario==='candidate_wrapped'?'<think>Intermediate {"wrong":"reasoning"}.</think>\n```json\n'+json+'\n```':scenario==='candidate_incomplete'?json.slice(0,-8):json;
+        res.end(JSON.stringify({choices:[{finish_reason:'stop',message:{content}}]}));return;
+      }
       const content=JSON.stringify({answer:'native browser Chat passed',suggestedAction:'none',evidence:[]});
       const message={content:[{type:'text',text:content.slice(0,16)},{type:'output_text',text:content.slice(16)}],...(scenario==='refusal'?{refusal:'Synthetic refusal'}:{})};
       const finish_reason=['length','content_filter','tool_calls'].includes(scenario)?scenario:'stop';
@@ -99,7 +108,7 @@ try{
   const page=await context.newPage();
   page.on('pageerror',error=>pageErrors.push(error.message));
   await page.goto(appOrigin,{waitUntil:'domcontentloaded'});
-  const result=await page.evaluate(async({providerBase,fixtureKey,model})=>{
+  const result=await page.evaluate(async({providerBase,fixtureKey,model,artifact})=>{
     const api=await import('/fixture.js');
     const connection={...api.createProviderConnection('custom'),label:'Synthetic Chat fixture',apiKey:fixtureKey,baseUrl:providerBase+'/chat/completions',defaultModel:model,models:[model]};
     api.saveProviderConnections([connection]);
@@ -108,6 +117,15 @@ try{
     if(!route)throw new Error('Synthetic route unresolved');
     const health=await api.testByokConnection(route.resolved);
     const task=await api.runEvolveAi('copilot',{command:'Synthetic task; no original files',artifacts:[]},undefined,undefined,{forceRefresh:true,requireLive:true});
+    const candidateHashes=[];
+    for(const scenario of ['candidate_plain','candidate_wrapped']){
+      const candidate=await api.runEvolveAi('build-candidate',{command:'Scenario: '+scenario,artifacts:[]},undefined,undefined,{forceRefresh:true,requireLive:true});
+      if(candidate.artifacts[0].content!==artifact)throw new Error('Candidate literal bytes changed');
+      const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(candidate.artifacts[0].content));
+      candidateHashes.push(Array.from(new Uint8Array(digest),byte=>byte.toString(16).padStart(2,'0')).join(''));
+    }
+    const incomplete=await api.callByokStructured({resolved:route.resolved,system:'Synthetic only',user:'Scenario: candidate_incomplete',schema:api.jsonSchemas.buildCandidate,parser:api.BuildCandidateAiResultSchema,schemaRetries:0}).catch(error=>error);
+    if(!(incomplete instanceof Error))throw new Error('Incomplete Candidate accepted');
     const rejected=[];
     for(const scenario of ['length','content_filter','tool_calls','refusal','body_error']){
       const error=await api.callByokStructured({resolved:route.resolved,system:'Synthetic only',user:'Scenario: '+scenario,schema:{name:'copilot',schema:{type:'object'}},parser:api.CopilotAiResultSchema}).catch(error=>error);
@@ -117,14 +135,16 @@ try{
     }
     const unhealthy=await api.testByokConnection(route.resolved).catch(error=>error);
     if(!(unhealthy instanceof Error)||unhealthy.message.includes(fixtureKey))throw new Error('Failed body accepted by health probe');
-    return {health:health.text,task,routeModel:route.model,rejected,failedHealthRejected:true};
-  },{providerBase,fixtureKey,model});
+    return {health:health.text,task,routeModel:route.model,rejected,failedHealthRejected:true,candidateHashes,incompleteCandidateRejected:true};
+  },{providerBase,fixtureKey,model,artifact});
   assert.equal(result.health,'ok');
   assert.deepEqual(result.task,{answer:'native browser Chat passed',suggestedAction:'none',evidence:[]});
   assert.equal(result.routeModel,model);
-  assert.deepEqual(requests.map(item=>item.format),['none','json_schema','json_object',...Array(5).fill('json_object'),'none']);
+  assert.deepEqual(requests.map(item=>item.format),['none','json_schema','json_object',...Array(8).fill('json_object'),'none']);
   assert.deepEqual(result.rejected,['length','content_filter','tool_calls','refusal','body_error']);
   assert.equal(result.failedHealthRejected,true);
+  assert.deepEqual(result.candidateHashes,[artifactHash,artifactHash]);
+  assert.equal(result.incompleteCandidateRejected,true);
   assert.deepEqual(appWrites,[]);
   assert.deepEqual(pageErrors,[]);
   assert.deepEqual(fixtureErrors,[]);

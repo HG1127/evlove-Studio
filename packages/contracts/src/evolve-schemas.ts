@@ -674,6 +674,8 @@ export const EvolvedVersionSchema = z.object({
 export type EvolvedVersion = z.infer<typeof EvolvedVersionSchema>;
 
 export const ValidationRunSchema = z.object({
+  /** Assessment completion is distinct from baselineObservedAt physical execution time. */
+  completedAt: z.iso.datetime().optional(),
   evidenceFingerprint: z.string().optional(),
   id: z.string(),
   status: z.enum(["idle", "running", "completed", "failed"]),
@@ -943,6 +945,22 @@ export const CampaignCheckpointSchema = z.object({
 });
 export type CampaignCheckpoint = z.infer<typeof CampaignCheckpointSchema>;
 
+export const ServerCampaignRecoveryWaitSchema = z.object({
+  schemaVersion: z.literal("server-campaign-recovery-v1"),
+  controlJobId: z.string().min(1),
+  missionId: z.string().min(1),
+  round: z.number().int().min(1),
+  stage: StageSchema,
+  marker: z.string().min(1),
+  reason: z.string().min(1),
+  inputFingerprint: z.string().regex(/^[0-9a-f]{64}$/),
+  contextFingerprint: z.string().min(1),
+  status: z.enum(["waiting", "recovering"]),
+  resumedByControlJobId: z.string().min(1).optional(),
+  /** Exact machine capability request retained when a control-AI wait is resolved. */
+  controlAiAttentionRequestId: z.string().min(1).optional(),
+});
+export type ServerCampaignRecoveryWait = z.infer<typeof ServerCampaignRecoveryWaitSchema>;
 export const EvolutionCampaignSchema = z.object({
   status: z.enum(["idle", "scheduled", "running", "paused", "completed", "stopped"]).default("idle"),
   executionMode: z.enum(["manual", "auto-rounds"]).default("auto-rounds"),
@@ -975,6 +993,8 @@ export const EvolutionCampaignSchema = z.object({
   stopReason: z.string().optional(),
   /** 用户暂停 / 页面刷新打断时写入的轮内断点；恢复并跑完整轮后清除。 */
   checkpoint: CampaignCheckpointSchema.optional(),
+  serverRecoveryWait: ServerCampaignRecoveryWaitSchema.optional(),
+  freshBaselineRestartControlJobId: z.string().min(1).optional(),
 });
 export type EvolutionCampaign = z.infer<typeof EvolutionCampaignSchema>;
 

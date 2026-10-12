@@ -3,6 +3,7 @@ import {
   applyProductionLearningGovernance,
   applyReleaseResultToProject,
   currentReleaseCandidate,
+  htmlProtectionContractBlocker,
   expectedReleaseArtifactHashes,
   nextDurableReleaseAction,
   projectHasLiveReleaseDecision,
@@ -97,6 +98,8 @@ export async function runServerReleaseOrchestration(
     return pause(project,"[server-release-binding-pending] 需要显式绑定当前 Candidate 的 READY Preview Deployment，或当前 Release 状态暂不支持自动推进。");
   }
   if(action!=="rollback"){
+    const contractBlocker=htmlProtectionContractBlocker(project);
+    if(contractBlocker)return pause(project,"[server-release-contract-pending] "+contractBlocker);
     let authorization:{ok:boolean;reason?:string};
     try{
       authorization=await ports.authorize({action,candidateId:candidate.id});

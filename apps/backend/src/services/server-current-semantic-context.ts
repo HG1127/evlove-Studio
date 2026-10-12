@@ -44,7 +44,7 @@ export async function buildServerCurrentSemanticArtifactContext({ project, testC
     let sha256: string | undefined;
     const blobId = receipt?.blobId ?? (source.storageRef?.trim() || (source.inputMode === "upload" ? source.id : undefined));
     if (blobId) {
-      if (snapshot && !await verifyServerCandidateFrozenArtifact(snapshot)) throw new Error(`${source.name} 的 Champion 冻结凭证与文件不一致。`);
+      if (snapshot && !await verifyServerCandidateFrozenArtifact(snapshot,source)) throw new Error(`${source.name} 的 Champion 冻结凭证与文件不一致。`);
       const blob = await store.get(blobId);
       if (!blob || blob.size > (source.extension.toLowerCase() === "zip" ? 25_000_000 : MAX_FILE_BYTES) || blob.size !== (receipt?.size ?? source.size)) throw new Error(`${source.name} 的当前文件缺失、大小不一致或超出索引范围。`);
       const bytes = new Uint8Array(await blob.arrayBuffer());

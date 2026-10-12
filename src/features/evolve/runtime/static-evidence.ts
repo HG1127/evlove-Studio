@@ -1,3 +1,4 @@
+import { decodeArtifactUtf8 } from "@evolution/adapters";
 import { htmlFileEvidence } from "./html-file-evidence";
 import type { EvolveProject, TargetRunResult, TestCase } from "../schemas";
 import { retrieveTextContext } from "./context-retrieval";
@@ -68,7 +69,7 @@ export async function runRoundtripEvidence(project:EvolveProject,testCase:TestCa
   if (targets.length && targets.every((a) => /^(txt|md|markdown|csv|json|yaml|yml|css|js|ts)$/i.test(a.extension) && typeof a.textContent === "string" && a.textContent.length > 0)) {
     const details = targets.map((a) => {
       const bytes = new TextEncoder().encode(a.textContent!);
-      const restored = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+      const restored = decodeArtifactUtf8(bytes);
       return { name: a.name, format: a.extension, bytes: bytes.length, preserved: restored === a.textContent };
     });
     const preserved = details.every((item) => item.preserved);

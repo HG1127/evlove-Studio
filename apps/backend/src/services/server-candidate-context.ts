@@ -1,6 +1,6 @@
 import type { Candidate, EvolveProject, SourceArtifact } from "@evolution/contracts";
 import { buildExactCandidateTextEdits } from "@evolution/core";
-import { retrieveTextContext, trustedServerBaselineChampion } from "@evolution/harness";
+import { CandidateConstructionOutputError, retrieveTextContext, trustedServerBaselineChampion, verifiedCandidateTextAnchors } from "@evolution/harness";
 
 export const SERVER_TEXT_FAMILY = /^(txt|md|markdown|mdx|csv|tsv|json|yaml|yml|css|js|jsx|ts|tsx|html|htm|xml|svg)$/i;
 
@@ -44,8 +44,10 @@ export async function buildServerCandidateTargetContext(project: EvolveProject, 
     const source = textTarget ? await readCurrentText(artifact) : parent?.content || artifact.textContent || artifact.textExcerpt || "";
     const allowance = Math.max(0, Math.min(22_000, remaining));
     const query = [project.goal, project.evolutionCommand, candidate.title, candidate.change, candidate.hypothesis, ...(candidate.designRationale?.sourceEvidence ?? []), ...candidate.patches.filter((patch) => !patch.artifactId || patch.artifactId === artifact.id).map((patch) => `${patch.target} ${patch.rationale}`)].join(" ");
-    const content = textTarget ? retrieveTextContext(source, query, { maxChars: allowance, maxChunks: 6 }) : source.slice(0, allowance);
-    remaining = Math.max(0, remaining - content.length);
+    const verifiedAnchors=textTarget?verifiedCandidateTextAnchors(source,[...(candidate.designRationale?.sourceEvidence??[]),...candidate.patches.filter(patch=>!patch.artifactId||patch.artifactId===artifact.id).map(patch=>patch.target)],{maxChars:Math.min(2000,allowance)}):[];
+    const anchorChars=verifiedAnchors.reduce((sum,anchor)=>sum+anchor.text.length,0);
+    const content = textTarget ? retrieveTextContext(source, query, { maxChars: allowance-anchorChars, maxChunks: 6 }) : source.slice(0, allowance);
+    remaining = Math.max(0, remaining - content.length - anchorChars);
     result.push({
       id: artifact.id,
       name: parent?.name ?? artifact.name,
@@ -57,6 +59,7 @@ export async function buildServerCandidateTargetContext(project: EvolveProject, 
       currentVersion: parentCandidate?.id ?? (parent ? (project.searchChampion?.versionLabel ?? champion?.id) : project.version),
       currentSnapshotHash: parent?.contentHash,
       content,
+      verifiedAnchors,
       originalChars: source.length,
       truncated: content.length < source.length,
       mutationMode: textTarget && content.length < source.length ? "text-edits" : "full",
@@ -70,7 +73,7 @@ export function requireServerCandidateOutputModes(contexts: Array<{id: string; n
   for (const context of contexts) {
     const output = artifacts.find((artifact) => artifact.sourceArtifactId === context.id);
     if (context.mutationMode === "text-edits" && output && !isServerTextEditBlueprint(output.content)) {
-      throw new Error(`${context.name} 的 AI 上下文只是原文件片段，必须返回 text-edits；禁止用片段重写完整成果。`);
+      throw new CandidateConstructionOutputError("output-mode", `${context.name} 的 AI 上下文只是原文件片段，必须返回 text-edits；禁止用片段重写完整成果。`);
     }
   }
 }

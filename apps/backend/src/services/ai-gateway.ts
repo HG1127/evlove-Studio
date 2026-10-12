@@ -56,11 +56,13 @@ import {
   type VisualJudgeAiResult,
 } from "@evolution/contracts";
 import { SERVER_SEMANTIC_CONTEXT_VERSION } from "@evolution/harness";
-import {COMPATIBLE_RESPONSES_OUTPUT_VERSION,COMPATIBLE_CHAT_OUTPUT_VERSION,readCompatibleResponsesOutput,readCompatibleChatOutput} from "@evolution/adapters";
+import {COMPATIBLE_RESPONSES_OUTPUT_VERSION,COMPATIBLE_CHAT_OUTPUT_VERSION,readCompatibleResponsesOutput,readCompatibleChatOutput,parseStructuredAiOutput,requestCompatibleAiJson} from "@evolution/adapters";
 import type { ServerAiConfig } from "../server-env";
 import {resolveServerAiConfig} from "./server-ai-connection";
 
 export type ServerAiOperation=AiOperation;
+export const DIRECT_AI_SCHEMA_INSTRUCTION_VERSION="exact-schema-instructions-v1";
+export const DIRECT_AI_SCHEMA_RECOVERY_VERSION="schema-feedback-once-v1";
 /** Public scoring-route identity; API keys and timeout settings are deliberately excluded. */
 export async function serverAiScoringRouteFingerprint(): Promise<string | undefined> {
   const config = await resolveServerAiConfig();
@@ -71,7 +73,10 @@ export async function serverAiScoringRouteFingerprint(): Promise<string | undefi
   const responsesOutputVersion=config.mode==="openai-compatible"&&config.protocol!=="chat-completions"
     ?COMPATIBLE_RESPONSES_OUTPUT_VERSION:undefined;
   const chatOutputVersion=config.mode==="openai-compatible"&&config.protocol!=="responses"?COMPATIBLE_CHAT_OUTPUT_VERSION:undefined;
-  return createHash("sha256").update(JSON.stringify({ route, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION, responsesOutputVersion, chatOutputVersion })).digest("hex");
+  const directSchemaInstructionVersion=config.mode==="openai-compatible"&&(!config.responseFormat||config.responseFormat==="json-schema")
+    ?DIRECT_AI_SCHEMA_INSTRUCTION_VERSION:undefined;
+  const directSchemaRecoveryVersion=config.mode==="openai-compatible"?DIRECT_AI_SCHEMA_RECOVERY_VERSION:undefined;
+  return createHash("sha256").update(JSON.stringify({ route, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION, responsesOutputVersion, chatOutputVersion, directSchemaInstructionVersion, directSchemaRecoveryVersion })).digest("hex");
 }
 
 type StructuredSchema={name:string;schema:Record<string,unknown>};
@@ -135,6 +140,18 @@ function contract(operation:ServerAiOperation):Contract<unknown>{
   throw new Error("Unsupported Server AI operation: "+exhaustive);
 }
 
+class DirectAiSchemaMismatchError extends Error{
+  readonly code="AI_OUTPUT_SCHEMA_MISMATCH";
+  constructor(message:string,readonly correctableShape:boolean){super(message);}
+}
+
+function parseStructuredResult<T>(text:string,contract:Contract<T>):T{
+  const result=contract.parser.safeParse(parseStructuredAiOutput(text));
+  if(result.success)return result.data;
+  const fields=[...new Set(result.error.issues.map(issue=>issue.path.join(".")||"结果"))].slice(0,4).join("、");
+  throw new DirectAiSchemaMismatchError("模型返回的 JSON 不符合任务结构（"+fields+"）。请检查模型的结构化输出能力或切换模型。",result.error.issues.every(issue=>issue.code!=="custom"));
+}
+
 async function callVercelGateway<T>(args:{
   config:Extract<ServerAiConfig,{mode:"vercel-gateway"}>;
   contract:Contract<T>;
@@ -164,11 +181,11 @@ async function callVercelGateway<T>(args:{
   return args.contract.parser.parse(generated.output);
 }
 
-function directSystem<T>(config:Extract<ServerAiConfig,{mode:"openai-compatible"}>,contract:Contract<T>){
-  const base=SYSTEM+"\n\nTask: "+contract.instruction;
-  return config.responseFormat&&config.responseFormat!=="json-schema"
-    ?base+"\nReturn JSON matching this exact schema:\n"+JSON.stringify(contract.schema.schema)
-    :base;
+function directSystem<T>(contract:Contract<T>,correcting=false){
+  const feedback=correcting?"\nThe preceding response was rejected by the task schema. Return the complete root object with required fields "+JSON.stringify(contract.schema.schema.required??[])+". Preserve supplied evidence and identities; never invent facts or verification. This is one structural correction, not permission to change the task.":"";
+  const base=SYSTEM+"\n\nTask: "+contract.instruction+feedback;
+  // Compatible providers may accept response_format without enforcing its schema.
+  return base+"\nReturn JSON matching this exact schema:\n"+JSON.stringify(contract.schema.schema);
 }
 
 function directFormat<T>(config:Extract<ServerAiConfig,{mode:"openai-compatible"}>,contract:Contract<T>){
@@ -177,19 +194,19 @@ function directFormat<T>(config:Extract<ServerAiConfig,{mode:"openai-compatible"
   return {type:"json_schema" as const,name:contract.schema.name,strict:true,schema:contract.schema.schema};
 }
 
-async function callResponses<T>(args:{config:Extract<ServerAiConfig,{mode:"openai-compatible"}>;contract:Contract<T>;payload:unknown;images:ParsedImage[]}){
-  const response=await fetch(args.config.baseUrl+"/responses",{
+async function callResponses<T>(args:{config:Extract<ServerAiConfig,{mode:"openai-compatible"}>;contract:Contract<T>;payloadText:string;images:ParsedImage[];signal:AbortSignal;correcting:boolean}){
+  const {response,json}=await requestCompatibleAiJson(args.config.baseUrl+"/responses",{
     method:"POST",
     redirect:"error",
-    signal:AbortSignal.timeout(args.config.timeoutMs),
+    signal:args.signal,
     headers:{Authorization:"Bearer "+args.config.apiKey,"Content-Type":"application/json"},
     body:JSON.stringify({
       model:args.config.model,
       store:false,
       input:[
-        {role:"system",content:[{type:"input_text",text:directSystem(args.config,args.contract)}]},
+        {role:"system",content:[{type:"input_text",text:directSystem(args.contract,args.correcting)}]},
         {role:"user",content:[
-          {type:"input_text",text:JSON.stringify(args.payload)},
+          {type:"input_text",text:args.payloadText},
           ...args.images.map((image)=>({type:"input_image",image_url:image.dataUrl})),
         ]},
       ],
@@ -197,30 +214,30 @@ async function callResponses<T>(args:{config:Extract<ServerAiConfig,{mode:"opena
       ...(directFormat(args.config,args.contract)?{text:{format:directFormat(args.config,args.contract)}}:{}),
     }),
   });
-  const json:unknown=await response.json().catch(()=>({}));
+
   if(!response.ok){
     const parsed=CompatibleResponsesEnvelopeSchema.safeParse(json);
     const detail=parsed.success?parsed.data.error?.message:undefined;
     const error=Object.assign(new Error(detail||("Server AI Responses HTTP "+response.status)),{httpStatus:response.status});
     throw error;
   }
-  return args.contract.parser.parse(JSON.parse(readCompatibleResponsesOutput(json,{requireCompletedStatus:true})));
+  return parseStructuredResult(readCompatibleResponsesOutput(json,{requireCompletedStatus:true}),args.contract);
 }
 
-async function callChat<T>(args:{config:Extract<ServerAiConfig,{mode:"openai-compatible"}>;contract:Contract<T>;payload:unknown;images:ParsedImage[]}){
-  const response=await fetch(args.config.baseUrl+"/chat/completions",{
+async function callChat<T>(args:{config:Extract<ServerAiConfig,{mode:"openai-compatible"}>;contract:Contract<T>;payloadText:string;images:ParsedImage[];signal:AbortSignal;correcting:boolean}){
+  const {response,json}=await requestCompatibleAiJson(args.config.baseUrl+"/chat/completions",{
     method:"POST",
     redirect:"error",
-    signal:AbortSignal.timeout(args.config.timeoutMs),
+    signal:args.signal,
     headers:{Authorization:"Bearer "+args.config.apiKey,"Content-Type":"application/json"},
     body:JSON.stringify({
       model:args.config.model,
       messages:[
-        {role:"system",content:directSystem(args.config,args.contract)},
+        {role:"system",content:directSystem(args.contract,args.correcting)},
         {role:"user",content:args.images.length?[
-          {type:"text",text:JSON.stringify(args.payload)},
+          {type:"text",text:args.payloadText},
           ...args.images.map((image)=>({type:"image_url",image_url:{url:image.dataUrl}})),
-        ]:JSON.stringify(args.payload)},
+        ]:args.payloadText},
       ],
       ...(args.config.responseFormat==="prompt-json"?{}:{
         response_format:args.config.responseFormat==="json-object"
@@ -229,13 +246,13 @@ async function callChat<T>(args:{config:Extract<ServerAiConfig,{mode:"openai-com
       }),
     }),
   });
-  const json:unknown=await response.json().catch(()=>({}));
+
   if(!response.ok){
     const parsed=CompatibleChatEnvelopeSchema.safeParse(json);
     const detail=parsed.success?parsed.data.error?.message:undefined;
     throw Object.assign(new Error(detail||("Server AI Chat HTTP "+response.status)),{httpStatus:response.status});
   }
-  return args.contract.parser.parse(JSON.parse(readCompatibleChatOutput(json)));
+  return parseStructuredResult(readCompatibleChatOutput(json),args.contract);
 }
 
 async function structured<T>(payload:unknown,schema:Contract<T>,media?:ServerAiMedia):Promise<T>{
@@ -250,15 +267,26 @@ async function structured<T>(payload:unknown,schema:Contract<T>,media?:ServerAiM
   if(config.mode==="vercel-gateway"){
     return callVercelGateway({config,contract:schema,payload,images});
   }
+  const signal=AbortSignal.timeout(config.timeoutMs);
+  let protocol=config.protocol??"responses";
   try{
-    if(config.protocol==="chat-completions")return await callChat({config,contract:schema,payload,images});
-    if(config.protocol==="responses")return await callResponses({config,contract:schema,payload,images});
-    try{
-      return await callResponses({config,contract:schema,payload,images});
-    }catch(error){
-      const status=(error as {httpStatus?:number}).httpStatus;
-      if(status!==404&&status!==405&&status!==400)throw error;
-      return await callChat({config,contract:schema,payload,images});
+    const payloadText=JSON.stringify(payload);
+    const invoke=async(correcting:boolean)=>{
+      const args={config,contract:schema,payloadText,images,signal,correcting};
+      if(protocol==="chat-completions")return callChat(args);
+      try{return await callResponses(args);}catch(error){
+        const status=(error as {httpStatus?:number}).httpStatus;
+        if(config.protocol||correcting||status!==404&&status!==405&&status!==400)throw error;
+        protocol="chat-completions";
+        return callChat(args);
+      }
+    };
+    try{return await invoke(false);}catch(error){
+      // Only a completed, structurally invalid task object may receive one correction.
+      // Custom semantic checks, transport failures and nonfinal output are never regenerated.
+      if(!(error instanceof DirectAiSchemaMismatchError)||!error.correctableShape)throw error;
+      if(signal.aborted)throw Object.assign(new Error("模型结构纠正前请求已超时。"),{code:"AI_REQUEST_TIMEOUT"});
+      return await invoke(true);
     }
   }catch(error){
     const original=error as {message?:string;httpStatus?:number;code?:string};
@@ -310,7 +338,10 @@ function serverAiErrorChain(error:unknown){
 export function serverAiUnavailableReason(error:unknown):string|undefined{
   const chain=serverAiErrorChain(error);
   for(const item of chain){
-    if((item as {code?:string}).code==="SERVER_AI_UNAVAILABLE")return "not-configured";
+    const code=(item as {code?:string}).code;
+    if(code==="SERVER_AI_UNAVAILABLE")return "not-configured";
+    if(code==="AI_REQUEST_TIMEOUT")return "provider-timeout";
+    if(code==="AI_REQUEST_NETWORK_ERROR")return "provider-network-error";
   }
   const text=chain.map((item)=>item instanceof Error?item.message:String(item)).join(" | ").toLowerCase();
   if(/customer_verification_required|valid credit card|add-credit-card|credit card on file/.test(text))return "customer-verification-required";
@@ -325,6 +356,8 @@ export function serverAiUnavailableReason(error:unknown):string|undefined{
 }
 
 export function serverAiUnavailableMessage(reasonCode:string){
+  if(reasonCode==="provider-timeout")return "模型请求超时；未取得完整结果，请稍后重试或选择响应更快的模型。";
+  if(reasonCode==="provider-network-error")return "后端无法完成模型接口连接；请检查 Base URL 和模型服务可达性，然后重试。";
   if(reasonCode==="customer-verification-required")return "Vercel AI Gateway 已配置，但团队尚未完成信用卡/账户验证；请改用真实 BYOK，或之后完成 Vercel AI Gateway 计费验证。";
   if(reasonCode==="provider-auth-or-billing")return "Server AI Provider 鉴权或计费不可用；请检查服务端 Provider 配置，或改用真实 BYOK。";
   if(reasonCode==="provider-rate-limit")return "Server AI Provider 当前额度/频率受限；请稍后重试或改用真实 BYOK。";

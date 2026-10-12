@@ -129,7 +129,10 @@ export async function runServerMissionExperiment(project: EvolveProject) {
         })),
       },
     }),
-    verifyFrozenArtifact: verifyServerCandidateFrozenArtifact,
+    verifyFrozenArtifact: (snapshot) => {
+      const source=project.sourceArtifacts.find((item)=>item.id===snapshot.sourceArtifactId);
+      return source?verifyServerCandidateFrozenArtifact(snapshot,source):Promise.resolve(false);
+    },
     executeFrozenStatic: runServerFrozenArtifactStaticEvidence,
     executeExternalBatch: ({ project: current, candidate, testCases }) => executeServerCandidateExternal(current, candidate, testCases),
     judge: (payload) => runServerAi("evaluate", payload),

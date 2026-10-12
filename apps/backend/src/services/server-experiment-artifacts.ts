@@ -1,14 +1,16 @@
+import { decodeArtifactUtf8 } from "@evolution/adapters";
 import JSZip from "jszip";
 import {
   CandidateSchema,
+  CandidateConstructionBoundarySchema,
   type Candidate,
   type CandidateArtifactSnapshot,
   type EvolveProject,
   type FrozenArtifact,
   type SourceArtifact,
 } from "@evolution/contracts";
-import { trustedServerBaselineChampion } from "@evolution/harness";
-import { applyExactEdits } from "@evolution/core";
+import { CandidateConstructionOutputError, checkCandidateConstructionOutput, runCandidateConstruction, trustedServerBaselineChampion } from "@evolution/harness";
+import { applyExactEdits, hasSourceTextArtifactFileFormat, requiresHtmlProtectionBaseline } from "@evolution/core";
 import { buildServerCandidateTargetContext, buildServerExactCandidateArtifacts, isServerTextEditBlueprint, requireServerCandidateOutputModes, SERVER_TEXT_FAMILY as TEXT_FAMILY } from "./server-candidate-context";
 import { runServerAi } from "./ai-gateway";
 import { checkServerHtmlCandidateProtection } from "./server-html-candidate-protection";
@@ -115,7 +117,7 @@ async function currentBaseBlob(project: EvolveProject, source: SourceArtifact, p
   if (!binding.blobId) throw new Error(binding.reason ?? "当前 Candidate 父代 Artifact 不可用。");
   if (parentCandidate) {
     const parent = currentParentSnapshot(project, source.id, parentCandidate);
-    if (!parent || !await verifyServerCandidateFrozenArtifact(parent)) throw new Error(`${source.name} 的待修复 Candidate 冻结文件不可用或身份不一致。`);
+    if (!parent || !await verifyServerCandidateFrozenArtifact(parent,source)) throw new Error(`${source.name} 的待修复 Candidate 冻结文件不可用或身份不一致。`);
   }
   const blob = await getServerArtifactStore().get(binding.blobId);
   if (!blob) throw new Error(`找不到 Candidate 父代 Artifact Blob ${binding.blobId}。`);
@@ -132,11 +134,11 @@ export async function readServerCandidateParentText(project: EvolveProject, sour
     if (source.textContent === undefined) throw new Error(`${source.name} 缺少完整粘贴正文。`);
     return source.textContent;
   }
-  if (parent && !await verifyServerCandidateFrozenArtifact(parent)) throw new Error(`${source.name} 的父代冻结文件与 Snapshot 身份不一致。`);
+  if (parent && !await verifyServerCandidateFrozenArtifact(parent,source)) throw new Error(`${source.name} 的父代冻结文件与 Snapshot 身份不一致。`);
   const blob = await currentBaseBlob(project, source, parentCandidate);
   if (!parent && blob.size !== source.size) throw new Error(`${source.name} 的原文件大小与 Source 不一致。`);
   const bytes = new Uint8Array(await blob.arrayBuffer());
-  const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  const text = decodeArtifactUtf8(bytes);
   if (await sha256Text(text) !== await serverArtifactSha256(bytes)) throw new Error(`${source.name} 不能逐字节还原为 UTF-8 文本。`);
   return text;
 }
@@ -172,8 +174,9 @@ async function persistFrozenArtifact(
 }
 
 /** Recheck the persisted bytes at execution time, not just at materialization time. */
-export async function verifyServerCandidateFrozenArtifact(snapshot: CandidateArtifactSnapshot): Promise<boolean> {
+export async function verifyServerCandidateFrozenArtifact(snapshot: CandidateArtifactSnapshot, source?: SourceArtifact): Promise<boolean> {
   const receipt = snapshot.frozenArtifact;
+  if (source && (snapshot.sourceArtifactId !== source.id || !hasSourceTextArtifactFileFormat(source,snapshot.name))) return false;
   if (!receipt || receipt.sourceArtifactId !== snapshot.sourceArtifactId || receipt.size <= 0
     || receipt.name !== snapshot.name || receipt.mimeType !== snapshot.mimeType) return false;
   const contentHash = await sha256Text(snapshot.content);
@@ -185,7 +188,7 @@ export async function verifyServerCandidateFrozenArtifact(snapshot: CandidateArt
   const extension = receipt.name.split(".").pop()?.toLowerCase() ?? "";
   if (TEXT_FAMILY.test(extension)) {
     try {
-      if (new TextDecoder("utf-8", { fatal: true }).decode(bytes) !== snapshot.content) return false;
+      if (decodeArtifactUtf8(bytes) !== snapshot.content) return false;
     } catch {
       return false;
     }
@@ -238,14 +241,16 @@ async function materializeText(source: SourceArtifact, snapshot: CandidateArtifa
   if (!TEXT_FAMILY.test(extension || source.name.split(".").pop() || "")) {
     throw new Error(`${source.name} 暂无 Server 原格式 Materializer；不会把 AI 文本冒充 ${source.extension || "二进制"} 成果。`);
   }
-  if (!snapshot.content.trim()) throw new Error(`${source.name} Candidate 内容为空。`);
-  if (extension === "json") JSON.parse(snapshot.content);
+  if (!snapshot.content.trim()) throw new CandidateConstructionOutputError("text-format", `${source.name} Candidate 内容为空。`);
+  if (extension === "json") {
+    try { JSON.parse(snapshot.content.replace(/^\uFEFF/, "")); } catch { throw new CandidateConstructionOutputError("text-format", `${source.name} Candidate JSON 不完整或无效。`); }
+  }
   if (/^html?$/.test(extension)
     && (!/<html\b/i.test(snapshot.content) || !/<body\b/i.test(snapshot.content) || !/<\/html\s*>/i.test(snapshot.content))) {
-    throw new Error(`${source.name} Candidate HTML 缺少完整 html/body 容器。`);
+    throw new CandidateConstructionOutputError("text-format", `${source.name} Candidate HTML 缺少完整 html/body 容器。`);
   }
   const blob = new Blob([snapshot.content], { type: source.mimeType || "text/plain;charset=utf-8" });
-  if (await blob.text() !== snapshot.content) throw new Error(`${source.name} Candidate 文本物化不一致。`);
+  if (decodeArtifactUtf8(await blob.arrayBuffer()) !== snapshot.content) throw new Error(`${source.name} Candidate 文本物化不一致。`);
   return {
     blob,
     checks: ["Candidate Snapshot 已物化为实际文件", "持久化前全文逐字一致"],
@@ -291,12 +296,17 @@ export async function materializeServerCandidateArtifacts(
   artifacts:Array<{sourceArtifactId:string;name:string;mimeType:string;content:string;notes?:string[];buildMode?:"ai-full"|"deterministic"|"external-target"}>,
   summary:string,
   parentCandidate?:Candidate,
+  constructionBoundary?:{parentTexts:ReadonlyMap<string,string>;originalTexts:ReadonlyMap<string,string>;outputContexts?:Parameters<typeof requireServerCandidateOutputModes>[0]},
 ):Promise<Candidate>{
   const targets=project.sourceArtifacts.filter((artifact)=>artifact.role==="target");
+  if(!targets.length||new Set(targets.map(target=>target.id)).size!==targets.length) throw new Error("Target 输入身份缺失或重复。");
+  const targetIds=new Set(targets.map(target=>target.id));
+  if(artifacts.some(artifact=>!targetIds.has(artifact.sourceArtifactId))||new Set(artifacts.map(artifact=>artifact.sourceArtifactId)).size!==artifacts.length) throw new Error("Candidate 输出包含未知或重复的 Target 身份；禁止自动重生成。");
   const bySource=new Map(artifacts.map((artifact)=>[artifact.sourceArtifactId,artifact]));
   if(artifacts.length!==targets.length||targets.some((target)=>!bySource.has(target.id))){
-    throw new Error(`Server Artifact Builder 返回 ${artifacts.length} 个成果，但当前有 ${targets.length} 个 Target；禁止遗漏、重复或额外成果。`);
+    throw new CandidateConstructionOutputError("missing-target", `Server Artifact Builder 返回 ${artifacts.length} 个成果，但当前有 ${targets.length} 个 Target；禁止遗漏、重复或额外成果。`);
   }
+  if(constructionBoundary?.outputContexts)requireServerCandidateOutputModes(constructionBoundary.outputContexts,artifacts);
   const prepared:Array<{source:SourceArtifact;snapshot:CandidateArtifactSnapshot;built?:{blob:Blob;checks:string[];limitations:string[]};unchanged:boolean}>=[];
   // Validate and materialize the entire set before persisting any Candidate bytes.
   for(const [index,source] of targets.entries()){
@@ -310,9 +320,10 @@ export async function materializeServerCandidateArtifacts(
     const parentText=text
       ?await readServerCandidateParentText(project,source,parentCandidate)
       :parent?.content??source.textContent??"";
+    if(text&&constructionBoundary?.parentTexts.has(source.id)&&constructionBoundary.parentTexts.get(source.id)!==parentText) throw new Error(source.name+" 构造期间完整父代文件发生变化；必须恢复原执行边界后重试。");
     let snapshotContent=code?composeServerCodebaseOverlay(parent?.content,artifact.content):artifact.content;
     if (text && isServerTextEditBlueprint(artifact.content)) {
-      snapshotContent=applyExactEdits(parentText,artifact.content,{strict:true});
+      snapshotContent=checkCandidateConstructionOutput("text-edits",()=>applyExactEdits(parentText,artifact.content,{strict:true}));
     }
     const unchanged=snapshotContent.trim()===parentText.trim();
     if(unchanged&&!parent&&!text){
@@ -330,12 +341,19 @@ export async function materializeServerCandidateArtifacts(
       notes:[...(artifact.notes??[]),"Durable Workflow Server Materializer：实际文件已物化并冻结。"],
       createdAt:new Date().toISOString(),
     };
+    if (!hasSourceTextArtifactFileFormat(source,snapshot.name)) {
+      throw new CandidateConstructionOutputError("text-format", `${source.name} Candidate 文件名 ${snapshot.name} 不符合原文本格式 .${source.extension}。`);
+    }
     const protection=text?await checkServerHtmlCandidateProtection({
       project,source,candidateContent:snapshotContent,parentText,hasParent:Boolean(parent),
-      readOriginal:()=>readServerCandidateParentText({...project,searchChampion:undefined},source),
+      readOriginal:async()=>{
+        const original=await readServerCandidateParentText({...project,searchChampion:undefined},source);
+        if(constructionBoundary?.originalTexts.has(source.id)&&constructionBoundary.originalTexts.get(source.id)!==original) throw new Error(source.name+" 构造期间原始保护基线发生变化；必须恢复原执行边界后重试。");
+        return original;
+      },
     }):{checks:[],limitations:[]};
     if(unchanged&&parent){
-      if(!await verifyServerCandidateFrozenArtifact(parent)) throw new Error(`${source.name} 的父代 Candidate 冻结文件不可用或身份不一致。`);
+      if(!await verifyServerCandidateFrozenArtifact(parent,source)) throw new Error(`${source.name} 的父代 Candidate 冻结文件不可用或身份不一致。`);
       prepared.push({source,snapshot:{...parent,id:snapshot.id},unchanged:true});
       continue;
     }
@@ -345,7 +363,7 @@ export async function materializeServerCandidateArtifacts(
     prepared.push({source,snapshot,built,unchanged});
   }
   if(prepared.every((item)=>item.unchanged)){
-    throw new Error("Candidate 与当前父代完全相同，没有产生可验证变异。");
+    throw new CandidateConstructionOutputError("unchanged", "Candidate 与当前父代完全相同，没有产生可验证变异。");
   }
   const snapshots:CandidateArtifactSnapshot[]=[];
   for(const item of prepared){
@@ -366,38 +384,51 @@ export async function materializeServerCandidateArtifacts(
 }
 
 export async function buildServerExperimentCandidate(project: EvolveProject, candidate: Candidate): Promise<Candidate> {
-  const targets = project.sourceArtifacts.filter((artifact) => artifact.role === "target");
-  if (!targets.length) throw new Error("Mission 没有 Target Source Artifact。");
-  const planned = await buildServerExactCandidateArtifacts(project, candidate, (source) => readServerCandidateParentText(project, source));
-  if (planned) return materializeServerCandidateArtifacts(project, candidate, planned, "精确方案已应用到完整父代文件；AI Artifact Builder 未调用。");
-  const contexts = await buildServerCandidateTargetContext(project, candidate, (source) => readServerCandidateParentText(project, source));
-  const response = await runServerAi("build-candidate", {
-    project: {
-      name: project.name,
-      objectType: project.objectType,
-      goal: project.goal,
-      evolutionCommand: project.evolutionCommand,
-      protectedItems: project.protectedItems,
-      editableItems: project.editableItems,
-      acceptanceRubric: project.acceptanceRubric,
-      currentTargets: contexts,
-      currentParent: project.searchChampion ? {
-        id: project.searchChampion.id,
-        versionLabel: project.searchChampion.versionLabel,
-        score: project.searchChampion.score,
-      } : { versionLabel: project.version },
+  const targets = project.sourceArtifacts.filter(artifact => artifact.role === "target");
+  if (!targets.length || new Set(targets.map(target=>target.id)).size !== targets.length) throw new Error("Mission 没有唯一 Target Source Artifact。");
+  const pinned = new Map<string,string>();
+  const originals = new Map<string,string>();
+  const readPinnedText = async(source:SourceArtifact) => {
+    const current = await readServerCandidateParentText(project,source);
+    if(pinned.has(source.id) && pinned.get(source.id) !== current) throw new Error(source.name+" 构造期间完整父代文件发生变化；必须恢复原执行边界后重试。");
+    pinned.set(source.id,current);return current;
+  };
+  const readPinnedOriginal = async(source:SourceArtifact) => {
+    const original=await readServerCandidateParentText({...project,searchChampion:undefined},source);
+    if(originals.has(source.id)&&originals.get(source.id)!==original) throw new Error(source.name+" 构造期间原始保护基线发生变化；必须恢复原执行边界后重试。");
+    originals.set(source.id,original);return original;
+  };
+  for(const source of targets.filter(source=>TEXT_FAMILY.test(source.extension))){
+    await readPinnedText(source);
+    if(project.searchChampion&&requiresHtmlProtectionBaseline(project.protectedItems??[])&&(/^(html|htm)$/i.test(source.extension)||/^text\/html(?:;|$)/i.test(source.mimeType))) await readPinnedOriginal(source);
+  }
+  const planned = await buildServerExactCandidateArtifacts(project,candidate,readPinnedText);
+  let contexts:Awaited<ReturnType<typeof buildServerCandidateTargetContext>>|undefined;
+  const payload = async() => {
+    contexts ??= await buildServerCandidateTargetContext(project,candidate,readPinnedText);
+    for(const source of targets.filter(source=>pinned.has(source.id))) await readPinnedText(source);
+    for(const source of targets.filter(source=>originals.has(source.id))) await readPinnedOriginal(source);
+    return {
+      project:{name:project.name,objectType:project.objectType,goal:project.goal,evolutionCommand:project.evolutionCommand,protectedItems:project.protectedItems,editableItems:project.editableItems,acceptanceRubric:project.acceptanceRubric,currentTargets:contexts,currentParent:project.searchChampion?{id:project.searchChampion.id,versionLabel:project.searchChampion.versionLabel,score:project.searchChampion.score}:{versionLabel:project.version}},
+      candidate:{id:candidate.id,title:candidate.title??candidate.name,change:candidate.change,hypothesis:candidate.hypothesis,patches:candidate.patches,risks:candidate.risks,designRationale:candidate.designRationale},
+      outputInstruction:"Return exactly one artifact for every currentTargets item; sourceArtifactId must match exactly. For mutationMode text-edits, return content as JSON {kind:'text-edits',edits:[{before,after,start?,end?}]}. Copy before verbatim from source chunks or verifiedAnchors, without markers or ellipses; start/end refer to the COMPLETE parent file with end exclusive. The server applies strict edits to the complete file, preserving every untouched byte. Never rewrite a whole file from truncated context. An unchanged text Target uses an identical before/after unique anchor. Other text targets return the COMPLETE file. Codebase/package targets return JSON {kind:'codebase',overlay:true,files:[{path,content}],deletions:[path]} with actual changes, never prose or fake tests.",
+    };
+  };
+  return runCandidateConstruction({
+    initial:async()=>planned?{artifacts:planned,summary:"精确方案已应用到完整父代文件；AI Artifact Builder 未调用。"}:runServerAi("build-candidate",await payload()),
+    prepare:async(response,attempt)=>{
+      const artifacts=attempt?response.artifacts.map(artifact=>({...artifact,notes:[...artifact.notes,"首次完整性检查未通过，已执行一次定向构造修复并重新严格验证。"]})):response.artifacts;
+      return materializeServerCandidateArtifacts(project,candidate,artifacts,response.summary,undefined,{parentTexts:pinned,originalTexts:originals,outputContexts:contexts});
     },
-    candidate: {
-      id: candidate.id,
-      title: candidate.title ?? candidate.name,
-      change: candidate.change,
-      hypothesis: candidate.hypothesis,
-      patches: candidate.patches,
-      risks: candidate.risks,
-      designRationale: candidate.designRationale,
+    recover:async({attempt,failure,previousOutput})=>{
+      if(targets.some(source=>!TEXT_FAMILY.test(source.extension)||source.artifactKind==="codebase"||["codebase","package"].includes(source.artifactDescriptor?.family??""))) throw new CandidateConstructionOutputError(failure.code,failure.message);
+      const base=await payload();
+      const parentFingerprint=await sha256Text(JSON.stringify(await Promise.all(targets.map(async source=>[source.id,await sha256Text(pinned.get(source.id)!),originals.has(source.id)?await sha256Text(originals.get(source.id)!):null]))));
+      const generation=await sha256Text(JSON.stringify([project.id,candidate.id,candidate.patches,project.campaign?.checkpoint?.round??project.campaign?.currentRound??0,parentFingerprint]));
+      const boundary=CandidateConstructionBoundarySchema.parse({version:"candidate-construction-v1",missionId:project.id,candidateId:candidate.id,parentFingerprint,generation,sourceArtifactIds:targets.map(source=>source.id)});
+      let remaining=24000;
+      const previous=previousOutput.artifacts.map(artifact=>{const content=artifact.content.slice(0,Math.min(12000,remaining));remaining-=content.length;return {sourceArtifactId:artifact.sourceArtifactId,content};});
+      return runServerAi("build-candidate",{...base,recovery:{...boundary,attempt,failure,previousOutput:previous,instruction:"Repair only the failed construction on the SAME complete parent and Candidate plan. Return every original Target and no extras. Use exact, longer unique before anchors from currentTargets or verifiedAnchors and their full-file offsets. Never invent source text, loosen matching, use chunk markers, truncate/rewrite the document, remove protected original titles/content/structure, or introduce duplicate IDs. The original failed output remains rejected; all files are revalidated before freezing."}});
     },
-    outputInstruction: "Return exactly one artifact for every currentTargets item. For a text target with mutationMode text-edits, return content as JSON {kind:'text-edits',edits:[{before,after,start?,end?}]}. Copy before verbatim from the provided current source chunks, without chunk markers or ellipses; offsets are zero-based and end is exclusive. The server applies those edits to the complete current file and preserves every untouched byte. Never regenerate a whole file from truncated context. For an unchanged text Target, return one exact text-edit with identical before/after using a unique verbatim anchor; preserve that file rather than inventing another change. For other text/html/md/json targets return the COMPLETE evolved file. For codebase/package return content as JSON {kind:'codebase',overlay:true,files:[{path,content}],deletions:[path]} with actual changed/deleted files only; never return prose or fake test results. sourceArtifactId must exactly match currentTargets.id.",
   });
-  requireServerCandidateOutputModes(contexts, response.artifacts);
-  return materializeServerCandidateArtifacts(project,candidate,response.artifacts,response.summary);
 }

@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { EvaluateAiResult, EvolveProject, TargetRunResult } from "@evolution/contracts";
-import { campaignScoringInputFingerprint, fastHash } from "@evolution/core";
+import { campaignScoringInputFingerprint, fastHash, htmlProtectionContractBlocker, normalizeEvalSuiteForProject, reusableBaselineRuns, sourceGroundedHtmlProtectionSteps } from "@evolution/core";
 import { canReuseServerBaseline, runServerBaseline } from "./server-baseline";
 import { serverBaselineFingerprint } from "./server-baseline-evidence";
+import { exactServerHoldoutSuite } from "./server-holdout-preflight";
 
 function fixture(): EvolveProject {
   const now="2026-09-20T13:00:00.000Z";
@@ -420,5 +421,56 @@ describe("server Campaign scoring route binding", () => {
     expect(outcome.project.campaign.scoringRouteFingerprint).toBe("new-route");
     expect(outcome.project.campaign.rootBaseline).toEqual(outcome.baseline.result);
     expect(outcome.project.campaign.rootBaseline?.accuracy).not.toBe(1);
+  });
+});
+
+describe("generated HTML paper identity", () => {
+  function htmlPaper() {
+    const base = fixture();
+    const html = '<html><style>.search-hidden{display:none}</style><body><input id="search"><span id="searchCount"></span><article class="slide-card" id="slide-2" data-search="intro">Intro</article><article class="slide-card" id="slide-3" data-search="end">End</article><script>const search=document.querySelector("#search");search.addEventListener("input",()=>{document.querySelectorAll(".slide-card").forEach(card=>card.dataset.search.includes(search.value))});</script></body></html>';
+    const criterion = { ...base.acceptanceRubric[0]!, id: "PROTECT-ALL", weight: 100, protectedConstraint: true, artifactIds: ["source"] };
+    const test = { ...base.evalSuite[0]!, criterionIds: [criterion.id], executionMode: "external-runner" as const };
+    const paper = { ...base, acceptanceRubric: [criterion], sourceArtifacts: [{ ...base.sourceArtifacts[0]!, extension: "html", textContent: html }] };
+    const steps = sourceGroundedHtmlProtectionSteps(paper, [criterion], test)!;
+    const legacy = [...steps.slice(0, 3), ...steps.slice(6, 8), ...steps.slice(3, 6), ...steps.slice(11)];
+    return { ...paper, evalSuite: [{ ...test, browserSteps: legacy, tags: ["source-grounded-html-assertions"] }],
+      hiddenEvalSuite: [{ ...test, id: "H1", hidden: true, browserSteps: legacy, tags: ["source-grounded-html-assertions"] }] };
+  }
+
+  it("refuses a stored old recipe before any execution, judgment or frozen Hidden rewrite", async () => {
+    const paper = htmlPaper();
+    const calls: string[] = [];
+    const paused = await runServerBaseline(paper, {
+      executeSemanticBatch: async () => { calls.push("semantic"); throw new Error("unexpected"); },
+      executeExternalBatch: async () => { calls.push("browser"); throw new Error("unexpected"); },
+      judge: async () => { calls.push("judge"); throw new Error("unexpected"); },
+    });
+    expect(paused.ready).toBe(false);
+    expect(paused.reason).toContain("html-protection-contract-pending");
+    expect(paused.project.evalSuite).toEqual(paper.evalSuite);
+    expect(paused.project.hiddenEvalSuite).toEqual(paper.hiddenEvalSuite);
+    expect(paused.project.baselineRun).toEqual(paper.baselineRun);
+    expect(calls).toEqual([]);
+    expect(() => exactServerHoldoutSuite(paper)).toThrow("html-protection-contract-pending");
+    expect(canReuseServerBaseline(paper)).toBe(false);
+  });
+
+  it("binds upgraded visible and paired Hidden observations to a new paper identity", () => {
+    const old = htmlPaper();
+    const normalized = normalizeEvalSuiteForProject(old, old.evalSuite, old.hiddenEvalSuite);
+    const current = { ...old, evalSuite: normalized.validationCases, hiddenEvalSuite: normalized.hiddenCases };
+    const oldVisible = serverBaselineFingerprint(old, "same-route");
+    const oldHidden = serverBaselineFingerprint({ ...old, evalSuite: old.hiddenEvalSuite }, "same-route");
+    const currentVisible = serverBaselineFingerprint(current, "same-route");
+    const currentHidden = serverBaselineFingerprint({ ...current, evalSuite: current.hiddenEvalSuite }, "same-route");
+    expect(currentVisible).not.toBe(oldVisible);
+    expect(currentHidden).not.toBe(oldHidden);
+    expect(htmlProtectionContractBlocker(current)).toBeUndefined();
+    expect(exactServerHoldoutSuite(current)).toEqual(current.hiddenEvalSuite);
+    const prior = { ...current, baselineRun: { ...current.baselineRun, measurementFingerprint: oldVisible,
+      runs: current.evalSuite.map(test => ({ testCaseId: test.id, verificationStatus: "verified" as const, latencyMs: 1, cost: 0, output: "old", trace: [] })),
+      result: { ...judge(), averageCost: 0, averageLatencyMs: 1, criterionScores: [{ criterionId: "PROTECT-ALL", score: 100, pass: true, evidence: [], gaps: [], testCaseIds: ["V1"], verificationStatus: "verified" as const }] } as EvolveProject["baselineRun"]["result"],
+    } };
+    expect(reusableBaselineRuns(prior, currentVisible, true)).toEqual([]);
   });
 });

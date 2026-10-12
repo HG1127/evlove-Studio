@@ -52,13 +52,14 @@ export async function checkPublicReadiness():Promise<PublicReadinessSnapshot>{
 
 export async function startServerEvolutionWorkflow(
   missionId:string,
-  options?:{scheduledFor?:string;idempotencyKey?:string},
+  options?:{scheduledFor?:string;idempotencyKey?:string;intent?:"remeasure-current-input";expectedMissionUpdatedAt?:string},
 ):Promise<EvolutionWorkflowStartResponse>{
   const data=await apiJson("/api/evolution/start",{
     method:"POST",
     headers:{"Content-Type":"application/json"},
     body:JSON.stringify({
       missionId,
+      ...(options?.intent?{intent:options.intent,expectedMissionUpdatedAt:options.expectedMissionUpdatedAt}:{}),
       ...(options?.scheduledFor?{scheduledFor:options.scheduledFor}:{}),
       ...(options?.idempotencyKey?{idempotencyKey:options.idempotencyKey}:{}),
     }),

@@ -218,10 +218,34 @@ describe("accepted Git publisher",()=>{
     expect(executor).not.toHaveBeenCalled();
   });
 
-  it("rejects duplicate accepted paths before Git mutation",()=>{
+  it.each(["src/a.ts","SRC/A.TS"])("rejects duplicate accepted paths %s before Git mutation",async(path)=>{
     const mission=project();
-    mission.searchChampion!.candidate!.artifactSnapshots[1]!.name="src/a.ts";
+    // Both accepted files must first retain their original format and frozen identity.
+    Object.assign(mission.sourceArtifacts[1]!,{name:"src/b.ts",extension:"ts",mimeType:"text/plain"});
+    const snapshot=mission.searchChampion!.candidate!.artifactSnapshots[1]!;
+    Object.assign(snapshot,{name:path,mimeType:"text/plain",content:"export const b=2"});
+    const frozen=mission.searchChampion!.artifactAcceptance!.frozenArtifacts![1]!;
+    Object.assign(frozen,{name:path,mimeType:snapshot.mimeType,size:new TextEncoder().encode(snapshot.content).length});
+    snapshot.frozenArtifact={...frozen};
     refreshBinding(mission);
     expect(()=>acceptedChampionGitChanges(mission,false)).toThrow(/duplicate path/i);
+    const executor=vi.fn();
+    await expect(publishAcceptedChampionToGit(mission,{
+      repository,missionId:mission.id,expectedBaseSha:"base123",openPullRequest:true,includeMetadata:false,
+    },executor)).rejects.toThrow(/duplicate path/i);
+    expect(executor).not.toHaveBeenCalled();
+  });
+
+  it("rejects a cross-format renamed accepted path before Git mutation",async()=>{
+    const mission=project();
+    const snapshot=mission.searchChampion!.candidate!.artifactSnapshots[1]!;
+    snapshot.name="src/a.ts";
+    mission.searchChampion!.artifactAcceptance!.frozenArtifacts![1]!.name=snapshot.name;
+    refreshBinding(mission);
+    const executor=vi.fn();
+    await expect(publishAcceptedChampionToGit(mission,{
+      repository,missionId:mission.id,expectedBaseSha:"base123",openPullRequest:true,includeMetadata:false,
+    },executor)).rejects.toThrow(/frozen Artifact identities/i);
+    expect(executor).not.toHaveBeenCalled();
   });
 });

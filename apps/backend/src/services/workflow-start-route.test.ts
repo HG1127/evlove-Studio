@@ -37,6 +37,7 @@ function request(){
 describe("durable Workflow start idempotency",()=>{
   beforeEach(()=>{
     for(const mock of Object.values(mocks))mock.mockReset();
+    mocks.workflowGetRun.mockReturnValue({exists:Promise.resolve(true)});
     mocks.runtime.mockReturnValue({missions:{get:vi.fn(async()=>mission)},jobs:{get:vi.fn(async()=>priorJob)}});
   });
   afterEach(()=>vi.restoreAllMocks());

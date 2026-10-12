@@ -12,6 +12,7 @@ vi.mock("nitro/h3",()=>({
 }));
 vi.mock("@evolution/core",()=>({
   projectHasOnlineReleaseTarget:()=>true,
+  htmlProtectionContractBlocker:()=>undefined,
   projectUsesConnectorRelease:()=>false,
   projectUsesHttpRelease:()=>true,
   projectUsesVercelRelease:()=>false,

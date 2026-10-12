@@ -305,6 +305,7 @@ export async function runServerHoldout(
       const validation: ValidationRun = {
         id: `validation-server-r${round}`,
         status: "completed",
+        completedAt: now(),
         validationMode: "full",
         plannedCases: suite.length,
         executedCases: suite.length,
@@ -338,6 +339,7 @@ export async function runServerHoldout(
   const validation: ValidationRun = {
     id: `validation-server-r${round}`,
     status: "completed",
+    completedAt: now(),
     validationMode: "full",
     plannedCases: suite.length,
     executedCases: suite.length,

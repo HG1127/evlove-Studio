@@ -23,7 +23,7 @@ export type OperationProfile = {
 };
 
 const KEY = "evolve-studio:ai-performance:v2.8";
-const CACHE_KEY = "evolve-studio:ai-result-cache:v2.9";
+const CACHE_KEY = "evolve-studio:ai-result-cache:v2.10";
 const MAX_EVENTS = 120;
 const MAX_CACHE = 48;
 

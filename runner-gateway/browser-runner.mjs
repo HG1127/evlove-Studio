@@ -1,4 +1,5 @@
 import {chromium} from 'playwright';
+import {expect} from 'playwright/test';
 import {createHash} from 'node:crypto';
 let browser;
 let launching;
@@ -60,9 +61,18 @@ export async function executeBrowserTest({testCase,artifact}){
    const locator=page.locator(step.selector);
    if(step.action==='click')await locator.click();
    if(step.action==='fill')await locator.fill(step.value);
-   if(step.action==='visible'&&!await locator.isVisible())throw new Error(`元素不可见：${step.selector}`);
-   if(step.action==='text'&&!(await locator.innerText()).includes(step.value))throw new Error(`文本断言未通过：${step.selector}`);
-   if(step.action==='count'&&await locator.count()!==step.count)throw new Error(`数量断言未通过：${step.selector}`);
+   // Retry observations, never the preceding click/fill. Keep the existing 5s
+   // action budget and the context's 45s hard deadline.
+   if(step.action==='visible')await expect(locator).toBeVisible({timeout:5000})
+    .catch(()=>{throw new Error('元素不可见：'+step.selector);});
+   // A literal RegExp + innerText preserves the prior case/whitespace-sensitive
+   // substring predicate; string matchers would normalize meaningful whitespace.
+   if(step.action==='text')await expect(locator).toContainText(
+    new RegExp(step.value.replace(/[\\^$.*+?()[\]{}|]/g,'\\$&')),
+    {timeout:5000,useInnerText:true},
+   ).catch(()=>{throw new Error('文本断言未通过：'+step.selector);});
+   if(step.action==='count')await expect(locator).toHaveCount(step.count,{timeout:5000})
+    .catch(()=>{throw new Error('数量断言未通过：'+step.selector);});
    trace.push({id:`step-${index}`,stage:'interaction',status:'pass',summary:`${step.action} ${step.selector}`});
   }
   for(const width of [1440,390]){

@@ -23,7 +23,7 @@ describe("source-grounded HTML protection steps", () => {
     expect(steps).toContainEqual({ action: "count", selector: ".slide-card:not(.search-hidden)", count: 0 });
     expect(steps.some((step) => step.action === "fill")).toBe(true);
     expect(steps).toContainEqual({ action: "fill", selector: "#search", value: "intro" });
-    expect(steps).toHaveLength(12);
+    expect(steps).toHaveLength(15);
     const normalized = normalizeEvalSuiteForProject({ ...project, hiddenEvalSuite: [testCase] }, [], [testCase]).hiddenCases[0]!;
     expect(normalized.executionMode).toBe("external-runner");
     expect(normalized.browserSteps).toEqual(steps);
@@ -35,4 +35,45 @@ describe("source-grounded HTML protection steps", () => {
     const noSearch = { ...project, sourceArtifacts: [{ ...project.sourceArtifacts[0]!, textContent: "<html><body><article class='slide-card' id='slide-2'>Only content</article></body></html>" }] };
     expect(sourceGroundedHtmlProtectionSteps(noSearch, [criterion], testCase)).toBeUndefined();
   });
+
+  it("requires hidden-to-visible transitions for both matching search and clear", () => {
+    const steps = sourceGroundedHtmlProtectionSteps(project, [criterion], testCase)!;
+    const fills = steps.filter((step) => step.action === "fill").map((step) => step.value);
+    expect(fills).toEqual(["__evolution_runner_no_match_9f6d2__", "intro", "__evolution_runner_no_match_9f6d2__", ""]);
+    expect(steps).toHaveLength(15);
+    expect(steps.slice(3, 6)).toEqual(steps.slice(8, 11));
+  });
+
+  it("refreshes only the exact tagged old recipe and is stable after normalization", () => {
+    const steps = sourceGroundedHtmlProtectionSteps(project, [criterion], testCase)!;
+    const legacy = [...steps.slice(0, 3), ...steps.slice(6, 8), ...steps.slice(3, 6), ...steps.slice(11)];
+    const saved = { ...testCase, browserSteps: legacy, tags: ["source-grounded-html-assertions"] };
+    const upgraded = normalizeEvalSuiteForProject(project, [], [saved]).hiddenCases[0]!;
+    expect(upgraded.browserSteps).toEqual(steps);
+    expect(upgraded.id).toBe(saved.id);
+    expect(upgraded.tags).toContain("source-grounded-html-assertions");
+    expect(upgraded.expected).toEqual(saved.expected);
+    expect(normalizeEvalSuiteForProject(project, [], [upgraded]).hiddenCases[0]).toEqual(upgraded);
+    expect(sourceGroundedHtmlProtectionSteps(project, [criterion], { ...saved, browserSteps: legacy.map((step) =>
+      Object.fromEntries(Object.entries(step).reverse())) as TestCase["browserSteps"] })).toEqual(steps);
+  });
+
+  it.each(["untagged", "edited", "foreign-source"] as const)("preserves %s saved assertions", (kind) => {
+    const steps = sourceGroundedHtmlProtectionSteps(project, [criterion], testCase)!;
+    const legacy = [...steps.slice(0, 3), ...steps.slice(6, 8), ...steps.slice(3, 6), ...steps.slice(11)];
+    const saved = { ...testCase, tags: kind === "untagged" ? [] : ["source-grounded-html-assertions"], browserSteps: legacy };
+    if (kind === "edited") saved.browserSteps = legacy.map((step, index) => index === 0 ? { action: "visible" as const, selector: "#custom" } : step);
+    const current = kind === "foreign-source" ? { ...project, sourceArtifacts: [{ ...project.sourceArtifacts[0]!, textContent: html.replace('data-search="intro"', 'data-search="changed"') }] } : project;
+    expect(sourceGroundedHtmlProtectionSteps(current, [criterion], saved)).toBeUndefined();
+    expect(normalizeEvalSuiteForProject(current, [], [saved]).hiddenCases[0]!.browserSteps).toEqual(saved.browserSteps);
+  });
+
+  it("does not turn the narrow interaction trace into complete protected-content coverage", () => {
+    const normalized = normalizeEvalSuiteForProject(project, [], [testCase]).hiddenCases[0]!;
+    expect(normalized.criterionIds).toEqual(["PROTECT-ALL"]);
+    expect(normalized.expected).toEqual(testCase.expected);
+    expect(normalized.tags).toEqual(["source-grounded-html-assertions"]);
+    expect(normalized).not.toHaveProperty("verificationStatus");
+  });
+
 });

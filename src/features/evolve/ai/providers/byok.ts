@@ -2,7 +2,7 @@
 // 浏览器直连各家官方接口；密钥仅保存在本浏览器 localStorage，只发给所选供应商。
 // 全部 13 个 AI 环节沿用 service.ts 的 system + JSON Schema + zod 校验管线。
 // JSON 输出可靠性策略：schema 同时写进提示词与 response_format；校验失败自动带错误重试一次。
-import {callCompatibleResponses,readCompatibleChatOutput,type CompatibleResponsesFormat} from "@evolution/adapters";
+import {callCompatibleResponses,readCompatibleChatOutput,readStructuredAiFinalText,type CompatibleResponsesFormat} from "@evolution/adapters";
 import type { ZodType } from "zod";
 import { ZodError } from "zod";
 
@@ -116,8 +116,10 @@ function errorMessage(status: number, json: unknown): string {
 }
 
 function extractJsonBody(text: string): string {
-  const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(text);
-  const body = (fenced ? fenced[1] : text).trim();
+  const finalText=readStructuredAiFinalText(text);
+  // Compatibility shim: prose-wrapped JSON is retained, while literal artifact fences are not transport wrappers.
+  const fenced = finalText.startsWith("{")||finalText.startsWith("[")?null:/```(?:json)?\s*([\s\S]*?)```/.exec(finalText);
+  const body = (fenced ? fenced[1] : finalText).trim();
   const start = body.indexOf("{");
   const end = body.lastIndexOf("}");
   if (start >= 0 && end > start) return body.slice(start, end + 1);
@@ -172,46 +174,20 @@ function repairCommonJsonPunctuation(source: string): string | null {
   }
 }
 
-// 输出被 max_tokens 截断时的补救：按括号栈闭合字符串 / 对象 / 数组后再解析。
-function repairTruncatedJson(source: string): string | null {
-  const stack: string[] = [];
-  let inString = false;
-  let escaped = false;
-  for (const char of source) {
-    if (inString) {
-      if (escaped) escaped = false;
-      else if (char === "\\") escaped = true;
-      else if (char === '"') inString = false;
-    } else if (char === '"') inString = true;
-    else if (char === "{" || char === "[") stack.push(char);
-  }
-  if (!stack.length && !inString && !escaped) return null;
-  let repaired = escaped ? source.slice(0, -1) : source;
-  if (inString) repaired += '"';
-  repaired = repaired.replace(/(,|:\s*)$/, "");
-  for (let index = stack.length - 1; index >= 0; index -= 1) repaired += stack[index] === "{" ? "}" : "]";
-  try {
-    JSON.parse(repaired);
-    return repaired;
-  } catch {
-    return null;
+function parseJsonBody(text:string):unknown{
+  const body=extractJsonBody(text);
+  try{return JSON.parse(body);}
+  catch{
+    const repaired=repairCommonJsonPunctuation(body);
+    if(repaired)return JSON.parse(repaired);
+    // Never invent closing quotes/brackets for a partially returned Artifact.
+    throw Object.assign(new Error("模型最终回复不是完整、有效的 JSON。请重试或切换模型。"),{code:"AI_OUTPUT_INVALID_JSON"});
   }
 }
 
-function parseJsonBody(text: string): unknown {
-  const body = extractJsonBody(text);
-  try {
-    return JSON.parse(body);
-  } catch (firstError) {
-    const punctuationRepaired = repairCommonJsonPunctuation(body);
-    if (punctuationRepaired) return JSON.parse(punctuationRepaired);
-    const truncated = repairTruncatedJson(body);
-    if (truncated) {
-      const truncatedPunctuationRepaired = repairCommonJsonPunctuation(truncated);
-      return JSON.parse(truncatedPunctuationRepaired ?? truncated);
-    }
-    throw firstError;
-  }
+function nonfinalOutput(error:unknown):boolean{
+  const code=(error as {code?:string}|null)?.code;
+  return code==="AI_OUTPUT_INCOMPLETE"||code==="AI_OUTPUT_MISSING_FINAL";
 }
 
 function parseDataUrl(dataUrl: string): { mimeType: string; data: string } {
@@ -475,7 +451,7 @@ export async function callByokStructured<T>(args: {
     return args.parser.parse(parseJsonBody(firstText));
   } catch (error) {
     // 用户打断：不做格式修正重试，直接上抛给调用方按「暂停」处理。
-    if (args.signal?.aborted) throw error;
+    if (args.signal?.aborted||nonfinalOutput(error)) throw error;
     firstError = error;
   }
   const retries = Math.max(0, args.schemaRetries ?? 1);
@@ -486,7 +462,7 @@ export async function callByokStructured<T>(args: {
     try {
       return args.parser.parse(parseJsonBody(correctedText));
     } catch (error) {
-      if (args.signal?.aborted) throw error;
+      if (args.signal?.aborted||nonfinalOutput(error)) throw error;
       lastError = error;
     }
   }

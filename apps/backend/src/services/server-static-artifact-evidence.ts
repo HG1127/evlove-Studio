@@ -125,7 +125,7 @@ export async function runServerFrozenArtifactStaticEvidence(args: {
   const receipt = snapshot.frozenArtifact;
   if (!receipt || receipt.sourceArtifactId !== source.id || receipt.name !== snapshot.name) return unavailable(testCase, "Candidate 冻结文件缺少对应 Target 的凭证。");
   try {
-    if (!await verifyServerCandidateFrozenArtifact(snapshot)) return unavailable(testCase, "Candidate 冻结文件与 Snapshot 或存储字节不一致。");
+    if (!await verifyServerCandidateFrozenArtifact(snapshot,source)) return unavailable(testCase, "Candidate 冻结文件与 Snapshot 或存储字节不一致。");
     const blob = await getServerArtifactStore().get(receipt.blobId);
     if (!blob || blob.size !== receipt.size || blob.size > MAX_FILE_BYTES) return unavailable(testCase, "冻结文件缺失或超出静态索引范围。");
     const buffer = await blob.arrayBuffer();

@@ -1,4 +1,4 @@
-import {COMPATIBLE_CHAT_OUTPUT_VERSION} from "@evolution/adapters";
+import {COMPATIBLE_CHAT_OUTPUT_VERSION,STRUCTURED_AI_FINAL_OUTPUT_VERSION} from "@evolution/adapters";
 import type { BaselineRun, EvaluationResult, EvolveProject, TargetRunResult } from "../schemas";
 import { fastHash } from "../ai/performance";
 import { searchBaseCandidate } from "./search-base";
@@ -22,7 +22,7 @@ export function baselineScoringRouteFingerprint(project: EvolveProject): string 
   } : aiProfile;
   const liveRoutes = (["execute-artifact", "execute-artifact-batch", "evaluate", "evaluate-population"] as const).map((operation) => {
     const routed = resolveProjectOperationConnections(operation, aiProfile)[0];
-    if (routed) return [operation, routed.connection.id, routed.connection.providerId, routed.model, routed.resolved.baseUrl, ...(routed.resolved.preset.kind==="openai"?[COMPATIBLE_CHAT_OUTPUT_VERSION]:[])];
+    if (routed) return [operation, routed.connection.id, routed.connection.providerId, routed.model, routed.resolved.baseUrl, STRUCTURED_AI_FINAL_OUTPUT_VERSION, ...(routed.resolved.preset.kind==="openai"?[COMPATIBLE_CHAT_OUTPUT_VERSION]:[])];
     const fallback = getAiProviderStatus(operation, { aiProfile });
     return [operation, fallback.connectionId ?? fallback.providerId, fallback.model, fallback.routeSource];
   });

@@ -1,3 +1,4 @@
+import { decodeArtifactUtf8 } from "@evolution/adapters";
 import {createHash} from "node:crypto";
 import JSZip from "jszip";
 import * as XLSX from "xlsx";
@@ -180,7 +181,7 @@ export async function verifyRendered(source:SourceArtifact,snapshot:CandidateArt
     checks.push("工作簿重新打开","修改单元格/公式逐项核对");
     limitations.push("未执行 Office 公式重算；宏、复杂图表与外部连接仍需专用 Office 验证。");
   }else{
-    if(await blob.text()!==snapshot.content)throw new Error("Server Renderer 文本结果与 Candidate Snapshot 不一致。");
+    if(decodeArtifactUtf8(await blob.arrayBuffer())!==snapshot.content)throw new Error("Server Renderer 文本结果与 Candidate Snapshot 不一致。");
     checks.push("生成文本与 Candidate Snapshot 逐字一致");
   }
   return {checks,limitations};

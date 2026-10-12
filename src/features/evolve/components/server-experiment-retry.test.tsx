@@ -51,4 +51,20 @@ describe("main Mission panel can retry the stored backend Experiment", () => {
   it("does not offer another request while the Mission is busy", async () => {
     await render(true); expect(button()).toBeUndefined(); expect(m.retry).not.toHaveBeenCalled();
   });
+
+  it("offers explicit fresh measurement for a legacy zero-Candidate Plan, without calling local Resume", async () => {
+    const runtime = await render(); const p = runtime.project;
+    p.stage = "plan"; p.candidates = []; p.selectedCandidateIds = [];
+    p.experimentRun = { id: "experiment", status: "idle", candidateResults: [] };
+    p.campaign = { ...p.campaign, status: "paused", stopReason: "[server-campaign-plan-grounding-pending] empty proposal",
+      checkpoint: { round: 1, completedPhase: "diagnose", at } };
+    p.gates.push({ id: "target-ready", status: "approved", approvedAt: at });
+    await act(async () => root.render(<AutonomousEvolutionPanel runtime={runtime} onOpenSource={vi.fn()} onOpenOutputs={vi.fn()} onOpenAdvanced={vi.fn()} onOpenRuntime={vi.fn()}/>));
+    const retry = [...host.querySelectorAll("button")].find(b => b.textContent?.includes("从当前输入重新测量并重试"));
+    expect(retry).toBeDefined(); expect(host.textContent).toContain("旧 Baseline 与诊断会保留");
+    await act(async () => retry!.click());
+    expect(m.retry).toHaveBeenCalledExactlyOnceWith(p);
+    expect(runtime.runAutoPilot).not.toHaveBeenCalled(); expect(runtime.resumeAutonomousEvolution).not.toHaveBeenCalled();
+  });
+
 });

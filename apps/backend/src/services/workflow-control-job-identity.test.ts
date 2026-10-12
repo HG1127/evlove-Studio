@@ -8,8 +8,8 @@ import route from "../../server/api/evolution/start.post";
 import {EventIdempotencyConflictError} from "./event-persistence";
 import { initializeWorkflowControlStep, executeServerControlStep, planMissionStep } from "../../../../workflows/evolution-mission/steps";
 
-const mocks = vi.hoisted(() => ({ jobs: new Map<string, EvolutionJob>(), events: new Map<string, EvolutionEvent>(), readEvent: vi.fn(), start: vi.fn(), create: vi.fn(), bind: vi.fn(), runtime: vi.fn() }));
-vi.mock("workflow/api", () => ({ start: mocks.start, getRun: vi.fn() }));
+const mocks = vi.hoisted(() => ({ jobs: new Map<string, EvolutionJob>(), events: new Map<string, EvolutionEvent>(), readEvent: vi.fn(), start: vi.fn(), getRun: vi.fn(), create: vi.fn(), bind: vi.fn(), runtime: vi.fn() }));
+vi.mock("workflow/api", () => ({ start: mocks.start, getRun: mocks.getRun }));
 vi.mock("../../../../workflows/evolution-mission", () => ({ evolutionMissionWorkflow: vi.fn() }));
 vi.mock("./security-policy", () => ({ requireGovernedEvolutionPermission: vi.fn(async () => undefined) }));
 vi.mock("./production-runtime", async (original) => ({ ...await original<typeof import("./production-runtime")>(),
@@ -40,6 +40,7 @@ beforeEach(() => {
     if (previous) return { job: previous, reused: true };
     mocks.jobs.set(value.id, value); return { job: value, reused: false };
   });
+  mocks.getRun.mockReturnValue({exists:Promise.resolve(true)});
   mocks.start.mockImplementation(async () => ({ runId: `run-${mocks.start.mock.calls.length}` }));
   mocks.bind.mockImplementation(async (id: string, generation: number, runId: string) => {
     const saved = EvolutionJobSchema.parse({ ...mocks.jobs.get(id), generation, outputRef: runId }); mocks.jobs.set(id, saved); return saved;

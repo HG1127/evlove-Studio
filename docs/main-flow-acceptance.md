@@ -1,8 +1,40 @@
 # Main flow acceptance
 
+## 2026-10-10 — Asynchronous HTML assertions and current-file delivery (local only)
+
+[Incremental handoff](runner-assertion-readiness-handoff.md) fixes valid asynchronous observations reporting failure and generated search checks accepting pre-input visibility. The 15-step paper establishes hidden states before both matching-query and clear transitions. Only exact tagged old recipes update; fingerprints change, custom papers remain intact, narrow protected-content evidence stays partial.
+
+Old generated papers cannot reuse persisted passed state at Baseline, Holdout, Gate F, package/ZIP/current-file download or existing-grant release entries; rollback and explicit historical frozen-file readback remain available. Accepted Candidate files now render without a historical Champion. Actual SDK Chromium execution includes a passing 34.2-second search within the bounded revised command budget.
+
+Runtime 5e2cbb766d3262d8425a9916f4d1a65f4b429f97 passed 36 relevant files / 438 tests, architecture, full lint, production build and Runner23. Compiled readonly UI passed five routes/mobile390/denied storage with 26 source hashes and all 419 build hashes unchanged. Missing initial batch reports and initial fixture type failures were retained and replaced by actual passing reruns; the final count is unique.
+
+Production readonly before/after at 03:33 UTC still identifies main e3482e75. New full integrated CI and exact-SHA production proof are pending; prior 955408c unit receipts and frozen PR6 c24608a checks do not cover this increment. The real Mission's fresh Baseline, changed/frozen Candidate, paired Hidden, Gate F and exact download/reopen remain unproven. Model/operator/export and hosted billing boundaries remain deferred; no production mutation was triggered.
+
+
 Priority is one real imported HTML Mission completing: upload → baseline → changed Candidate → executable Hidden Validation → Gate F → download and reopen the exact accepted bytes. Release and Outcome follow after the local artifact path is proven with configured providers and live metrics. Shallow route checks and unit-test totals do not prove this flow.
 
+## 2026-10-10 — Frozen-file readback without a live model (local only)
+
+[Offline Artifact recovery](offline-artifact-readback-handoff.md) removes the forced model-health prerequisite only for an exactly bound frozen-file readback whose same-paper paired Hidden evidence, scoring context, Baseline and metadata settlement are already complete and fresh. Actual original/current/Candidate byte reads and Gate F hashing remain mandatory. A review regression also closes observation expiry during storage I/O: no new browser execution starts on that offline retry.
+
+Runtime f76c41c passed 55 relevant files / 824 tests, architecture, full lint and production build. Runner first returned 10 pass/1 fail; unchanged diagnostics and a full unchanged rerun passed 11/11. The initial intermittent failure is preserved and its cause is unclassified. Compiled readonly UI passed five routes/mobile390/denied storage, with all 419 generated files unchanged and zero page errors/writes. New integrated full CI is required; the previous c24608a full local gate does not cover this increment.
+
+Public readonly UI and before/after build-info at 01:11 UTC both identify main/production e3482e75f1ae6b88d7756e5ee35cecb0cbfa80f9. PR #6 remains frozen at c24608a, draft/open, hosted jobs blocked before any step by account billing/allowance; the existing human local-CI exception answer remains pending. No new source is production verified. The real Mission's fresh Baseline, changed frozen Candidate, paired execution, Gate F and exact accepted download/reopen remain unproven.
+
+
 ## Current verified status (2026-10-09)
+
+Latest public readonly check at 2026-10-09 10:05 UTC identifies production `e3482e75f1ae6b88d7756e5ee35cecb0cbfa80f9`, main/production. Readonly UI passed five routes, mobile 390px and denied-storage recovery with zero page errors or attempted writes. Main hosted Quality Gate remains blocked before execution by GitHub Actions account billing/allowance; dependent Smoke was skipped. Local final-JSON/first-construction/BOM/original-text-format branches and draft PR #6 have not been exact-SHA production verified.
+
+The latest previously authenticated Mission read available is revision 11, Plan/paused, zero Candidates. Its six stored verified Baseline runs are historical records, not new runtime execution. The original recorded Artifact remains artifact-2ac80e2f-b1f2-4cb9-a3bf-8587577f767f, 264173 bytes, SHA-256 6605429efe92470229601adfb3196bc74ae38855f55d71c8754f8336c52b580a; this slice did not re-export user bytes. Fresh Baseline, changed frozen Candidate, paired current/Candidate same-Hidden execution, Gate F and identical accepted downloaded/reopened bytes remain unproven.
+
+Priorities remain those real Mission receipts. Local [text boundary fixes](main-flow-text-boundaries-handoff.md) address construction/readback and original-format download failures. Manual custom model/key, operator/Vault and authorized cloud export setup are deferred; no current readiness is inferred from stale configuration probes. Regression totals and readonly routes do not satisfy business acceptance.
+
+### 2026-10-09 local recovery boundary
+
+[Main-flow recovery](server-main-flow-recovery-handoff.md) adds saved capability receipts, an explicit fresh-measurement entry for old zero-Candidate Plan pauses, renewed diagnosis gating, exact control-AI request identity, and Gate F physical/observation checks. Related regression passed 53 files / 729 synthetic tests; final local gates and independent integration evidence are recorded in that handoff. These checks do not satisfy this document's real Mission acceptance checklist. The 11:36 UTC public read still identified e3482e75, and the exact current real Mission marker was not freshly observed. Manual provider/operator/export configuration and hosted billing remain deferred while local main-flow defects are fixed.
+
+### Earlier 314e564 checkpoint
 
 Production commit 314e564679b10cbcb7e8a974ba12ec7e1708c244 passed full [Quality Gate](https://github.com/HG1127/evlove-Studio/actions/runs/37836669914) and exact-SHA [Production Smoke](https://github.com/HG1127/evlove-Studio/actions/runs/37837645722). Official authenticated CLI build-info independently returned that full SHA, main/production on its exact deployment; hosted Smoke explicitly verified the public main alias. Explicit current accepted-Candidate server delivery now reuses frozen bytes and binds the manifest, Gate F report, coverage matrix, scores and patch record to the same authoritative accepted record. Complete-file HTML protection, Candidate construction/repair and paired Hidden assessment recovery remain deployed. This is code/runtime verification; the complete real Mission remains unproven.
 
@@ -304,3 +336,13 @@ The configured upload failure is reproduced with the actual browser FormData cli
 The suspected unavailable-model retry trap was closed without changing scheduling semantics. A composed browser client → start.post → real plan/execute control → real Experiment regression proves ambiguous lost-ack retries reuse one start, the completed unavailable wait-human control persists a fresh Mission version, and a subsequent ready retry obtains a new key/run while reusing the original frozen file and recent execution. The earlier note that the helper alone leaves a version unchanged was incomplete: execute wait-human updates it. Existing 23 composition tests moved intact to the integration project; one full-chain regression was added so browser imports use the existing integration TypeScript configuration.
 
 Final local checks: 13 related suites / 141 tests passed; TypeScript, architecture check, lint and build passed; 11 Runner cases passed; compiled read-only UI passed five routes, 390px mobile and denied storage with zero page errors or writes. All five Chromium E2E cases passed under an explicitly unconfigured child backend environment; expected data-plane-unavailable/local-cache messages remain. Exact-SHA hosted verification is pending. These are transport and injected-store proofs, not a live source-parse Workflow or real SOP acceptance. Model/customer-verification, browser backend access and user-file cloud export boundaries remain deferred. The real changed Candidate, same-paper Hidden evidence, Gate F and exact accepted-download reopening are still outstanding. No mutating production Cron, cleanup or migration was triggered.
+
+## 2026-10-10 — direct model transport and pinned-route recovery
+
+Runtime commit 87b84338d4146bc4e58b9510c4eda90649cfa025 preserves timeout/network availability across Chat/Responses request and body reads. It uses one existing request deadline and typed safe errors; ordinary schema/programming failures remain ordinary errors. The existing durable capability-wait path now retains the current Baseline, Candidate, stage, checkpoint and Job generation for these outages. Model capability checks honor the already pinned route, including missing configuration, while preserving existing environment/Vault lookup outside that scope. Six transport and two pinned-route regressions failed before repair.
+
+Final local evidence: 19 unique relevant files, 214 passed, zero failed/skipped; architecture, full lint and TypeScript/production build exit 0. Actual synthetic local HTTP tests exercise post-header body timeout and socket loss; mocked-storage Workflow tests consume the real AI/probe/guard code. The first test-format lint and incomplete Response test-type build failures were repaired and retained. Full receipts, commands and remaining boundaries: docs/ai-transport-recovery-handoff.md and D:/Downloads/evolution-os-smoke-temp/ai-transport-recovery-final-summary.json.
+
+The preceding integration 95152c00 passed independent complete local CI (328 files, 2668 passed, one explicit skip, Runner 23 and compiled UI); that evidence excludes this increment. The production GET at 2026-10-10 04:02 UTC still identifies e3482e75 main/production. Its passive configuration reports unavailable saved-model encryption and browser operator access; initial/follow-up network failures are retained. Hosted CI/deployment and this increment's independent integration remain pending.
+
+Current localhost:8000 belongs to another application and was preserved. Fresh Tabbit project inspection failed on page/context closure; subsequent acquisition failed before dispatch. Owned scratch tabs were closed and task finalization succeeded. The real Mission still lacks fresh authorized model execution, changed frozen Candidate, paired Hidden/Gate F and identical downloaded/reopened acceptance receipts. No user files, model keys, business state, production secrets, migrations or mutating Cron were changed.

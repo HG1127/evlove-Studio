@@ -29,7 +29,7 @@ export async function verifyServerFrozenCandidateArtifacts({project,candidate}:{
       unavailable.push(`${targetId}: Artifact Blob ${receipt.blobId} 不可用`);
       continue;
     }
-    if(!await verifyServerCandidateFrozenArtifact(snapshot)){
+    if(!await verifyServerCandidateFrozenArtifact(snapshot,project.sourceArtifacts.find((item)=>item.id===targetId))){
       failed.push(`${targetId}: frozen bytes/hash/size、Snapshot 正文/hash 或文件名/MIME 与 receipt 不一致`);
       continue;
     }

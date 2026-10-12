@@ -89,10 +89,9 @@ describe("byok structured output recovery", () => {
     expect(seenFormats).toEqual(["json_schema", "json_object", "json_object"]);
   });
 
-  it("recovers from JSON truncated mid-object", async () => {
-    stubResponses(['{"answer": "被 max_tokens 截断的回答"']);
-    const result = await callByokStructured({ resolved, system: "s", user: "u", schema: { name: "t", schema: { type: "object" } }, parser });
-    expect(result.answer).toBe("被 max_tokens 截断的回答");
+  it("does not invent a completed result by closing truncated JSON",async()=>{
+    stubResponses(['{"answer":"truncated answer']);
+    await expect(callByokStructured({resolved,system:"s",user:"u",schema:{name:"t",schema:{type:"object"}},parser,schemaRetries:0})).rejects.toThrow(/有效.*JSON/);
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 

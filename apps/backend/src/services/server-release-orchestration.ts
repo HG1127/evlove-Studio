@@ -1,5 +1,5 @@
 import type {ArtifactStorePort,EvolveProject,ReleaseAdapterResult,ReleaseOutcomeTelemetryStatus} from "@evolution/contracts";
-import {currentReleaseCandidate,projectUsesConnectorRelease,projectUsesHttpRelease} from "@evolution/core";
+import {htmlProtectionContractBlocker,currentReleaseCandidate,projectUsesConnectorRelease,projectUsesHttpRelease} from "@evolution/core";
 import {runServerReleaseOrchestration,type ServerReleasePorts} from "@evolution/harness";
 import {executeConnectorReleaseAction} from "./connector-release";
 import {releaseHttpTarget} from "./http-target-gateway";
@@ -14,6 +14,8 @@ export async function executeServerReleaseProvider(
   args:Parameters<ServerReleasePorts["execute"]>[0],
   artifactStore?:Pick<ArtifactStorePort,"get">,
 ){
+  const contractBlocker=args.action!=="rollback" && htmlProtectionContractBlocker(project);
+  if(contractBlocker)throw new Error(contractBlocker);
   if(projectUsesConnectorRelease(project)){
     return executeConnectorReleaseAction(project,{
       action:args.action,

@@ -1,3 +1,4 @@
+import { decodeArtifactUtf8 } from "@evolution/adapters";
 import JSZip from "jszip";
 import { assertDeliverablePackageIdentity } from "@evolution/core";
 import * as XLSX from "xlsx";
@@ -176,8 +177,8 @@ export async function verifyGeneratedArtifact(source: SourceArtifact, snapshot: 
     checks.push("工作簿重新打开", "修改的单元格与公式逐项核对");
     limitations.push("公式已写入但未执行 Office 重算；宏、图表和外部连接需专用验证。");
   } else {
-    if (await blob.text() !== snapshot.content) throw new Error("生成文件与被验收内容不一致。");
-    if (source.extension === "json") JSON.parse(snapshot.content);
+    if (decodeArtifactUtf8(buffer) !== snapshot.content) throw new Error("生成文件与被验收内容不一致。");
+    if (source.extension === "json") JSON.parse(snapshot.content.replace(/^\uFEFF/, ""));
     if (/^(html|htm)$/i.test(source.extension)) {
       if (!/<html\b/i.test(snapshot.content) || !/<\/html\s*>/i.test(snapshot.content) || !/<body\b/i.test(snapshot.content)) throw new Error("HTML 候选缺少完整 html/body 结构，请修复文件后重试。");
       const parsed = new DOMParser().parseFromString(snapshot.content, "text/html");

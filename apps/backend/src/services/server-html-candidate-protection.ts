@@ -1,4 +1,5 @@
 import type { EvolveProject, SourceArtifact } from "@evolution/contracts";
+import { CandidateConstructionOutputError } from "@evolution/harness";
 import { htmlCandidateProtection, requiresHtmlProtectionBaseline } from "@evolution/core";
 
 /** Compose physical file reads with pure protection policy before any Candidate writes. */
@@ -18,7 +19,7 @@ export async function checkServerHtmlCandidateProtection(args: {
     protectedItems,
   }));
   const issues = [...new Set(reports.flatMap((report) => report.issues))];
-  if (issues.length) throw new Error(args.source.name + " HTML 候选前置检查失败：" + issues.join("；"));
+  if (issues.length) throw new CandidateConstructionOutputError("html-protection", args.source.name + " HTML 候选前置检查失败：" + issues.join("；"));
   const unresolved = [...new Set(reports.flatMap((report) => report.unresolvedProtectedIds))];
   return {
     checks: ["HTML 保护前置检查：完整父代文件无新增重复 ID；可定位的显式章节保护已逐项核对",
