@@ -1,4 +1,7 @@
 import JSZip from "jszip";
+import { z } from "zod";
+import { HTML_PROTECTION_CLOUD_LIMITS } from "./vercel-sandbox-html-protection-cloud-protocol";
+import type { HtmlProtectionPreparedBrowserFactory } from "./vercel-sandbox-html-protection-cloud-transport";
 import {VERCEL_SANDBOX_BROWSER_RUNNER_SCRIPT,sandboxBrowserCommandTimeoutMs} from "./vercel-sandbox-browser-runner";
 import { APIError, Sandbox, Snapshot, type NetworkPolicy, type SandboxRegion } from "@vercel/sandbox";
 import {
@@ -212,18 +215,23 @@ async function ensureBrowserRuntimeSnapshot(){
       }
     }
 
-    await base.updateNetworkPolicy("allow-all");
-    const mkdir=await base.runCommand("mkdir",["-p",".evolution/browser",".evolution/runtime"],{timeoutMs:10_000});
-    if(mkdir.exitCode!==0)throw new Error("Browser Runtime 目录初始化失败");
-    const npm=await base.runCommand("npm",["install","--prefix",".evolution/browser","playwright@1.63.0"],{timeoutMs:120_000});
-    if(npm.exitCode!==0)throw new Error("Playwright Runtime 安装失败："+clipped(await npm.stderr()));
-    const browser=await base.runCommand("node",[".evolution/browser/node_modules/playwright/cli.js","install","--with-deps","chromium"],{timeoutMs:240_000});
-    if(browser.exitCode!==0)throw new Error("Chromium Runtime 安装失败："+clipped(await browser.stderr()));
-    await base.writeFiles([
-      {path:".evolution/runtime/static-server.mjs",content:STATIC_SERVER_SCRIPT},
-      {path:".evolution/runtime/browser-runner.mjs",content:VERCEL_SANDBOX_BROWSER_RUNNER_SCRIPT},
-    ]);
-    await base.updateNetworkPolicy("deny-all");
+    // The shared cache contains trusted runtime only and warms independently of a caller's
+    // observation cancellation. Installation errors must not leave its network open.
+    try{
+      await base.updateNetworkPolicy("allow-all");
+      const mkdir=await base.runCommand("mkdir",["-p",".evolution/browser",".evolution/runtime"],{timeoutMs:10_000});
+      if(mkdir.exitCode!==0)throw new Error("Browser Runtime 目录初始化失败");
+      const npm=await base.runCommand("npm",["install","--prefix",".evolution/browser","playwright@1.63.0"],{timeoutMs:120_000});
+      if(npm.exitCode!==0)throw new Error("Playwright Runtime 安装失败："+clipped(await npm.stderr()));
+      const browser=await base.runCommand("node",[".evolution/browser/node_modules/playwright/cli.js","install","--with-deps","chromium"],{timeoutMs:240_000});
+      if(browser.exitCode!==0)throw new Error("Chromium Runtime 安装失败："+clipped(await browser.stderr()));
+      await base.writeFiles([
+        {path:".evolution/runtime/static-server.mjs",content:STATIC_SERVER_SCRIPT},
+        {path:".evolution/runtime/browser-runner.mjs",content:VERCEL_SANDBOX_BROWSER_RUNNER_SCRIPT},
+      ]);
+    }finally{
+      await base.updateNetworkPolicy("deny-all");
+    }
     const smoke=await base.runCommand("node",["-e",
       "import('./.evolution/browser/node_modules/playwright/index.mjs').then(async m=>{const b=await m.chromium.launch({headless:true});const p=await b.newPage();await p.setContent('<p id=ok>OK</p>');if(await p.locator('#ok').innerText()!=='OK')process.exit(2);await b.close()})",
     ],{timeoutMs:30_000});
@@ -237,6 +245,44 @@ async function ensureBrowserRuntimeSnapshot(){
   return browserSnapshotPromise;
 }
 
+const PreparedHtmlProtectionBrowserSchema=z.object({
+  name:z.string().regex(/^evo-protection-[a-f0-9]{24}$/),
+  persistent:z.literal(false),networkPolicy:z.literal("deny-all"),
+  timeout:z.literal(HTML_PROTECTION_CLOUD_LIMITS.deadlineMs),
+  signal:z.instanceof(AbortSignal),
+}).strict();
+
+/**
+ * Composition-owned disposable VM factory. Reuses only the existing trusted Playwright
+ * runtime snapshot; no Mission bytes enter the named persistent cache. No environment,
+ * command, URL, resource, port or persistent policy override is accepted by this port.
+ */
+export async function createVercelSandboxHtmlProtectionBrowser(
+  raw:Parameters<NonNullable<HtmlProtectionPreparedBrowserFactory["createPreparedBrowserSandbox"]>>[0],
+):Promise<Sandbox>{
+  const spec=PreparedHtmlProtectionBrowserSchema.parse(raw);
+  spec.signal.throwIfAborted();
+  const snapshotId=await ensureBrowserRuntimeSnapshot();
+  spec.signal.throwIfAborted();
+  const sandbox=await Sandbox.create({
+    name:spec.name,source:{type:"snapshot",snapshotId},persistent:false,
+    networkPolicy:"deny-all",timeout:spec.timeout,resources:{vcpus:SANDBOX_DEFAULT_VCPUS},
+    tags:{product:"evolution-os",purpose:"html-protection-observation"},signal:spec.signal,
+  });
+  // An unexpected/shared return is never stopped. The SDK-created VM has its own TTL.
+  if(sandbox.name!==spec.name||sandbox.persistent!==false||sandbox.cwd!==ROOT){
+    throw new Error("Trusted disposable browser Sandbox policy unavailable");
+  }
+  if(spec.signal.aborted){
+    const cleanup=AbortSignal.timeout(5_000);
+    try{await Promise.race([
+      sandbox.stop({signal:cleanup}),
+      new Promise<void>(resolve=>cleanup.addEventListener("abort",()=>resolve(),{once:true})),
+    ]);}catch{ /* Cleanup can touch only the newly created owned VM. */ }
+    spec.signal.throwIfAborted();
+  }
+  return sandbox;
+}
 type PreviewPlan={
   command:string;
   args:string[];

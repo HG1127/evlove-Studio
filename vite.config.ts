@@ -1,3 +1,4 @@
+import { htmlProtectionRuntimePlugin } from './apps/backend/build/html-protection-runtime-plugin'
 import path from 'node:path'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
@@ -5,7 +6,7 @@ import { nitro } from 'nitro/vite'
 import { builtinRunnerPlugin } from './runner-gateway/vite-plugin'
 
 export default defineConfig({
-  plugins: [nitro(), react(), builtinRunnerPlugin()],
+  plugins: [nitro(), react(), builtinRunnerPlugin(), htmlProtectionRuntimePlugin()],
   nitro: {
     preset: process.env.VERCEL ? 'vercel' : 'node-server',
     serverDir: './apps/backend/server',
