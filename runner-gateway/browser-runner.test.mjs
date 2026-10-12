@@ -478,7 +478,7 @@ test('viewport action enables a real 390px phone menu while desktop button stays
  assert.equal(result.verificationStatus,'verified',result.error);
  assert.equal(result.trace.filter(t=>t.summary==='click #menuBtn').length,1);
  assert.deepEqual(calls,[{width:390,height:844},{width:1440,height:960},{width:1440,height:960},{width:390,height:960}]);
- const output=JSON.parse(result.output);assert.equal(output.assertions,8);assert.equal(output.browserStepProtocol,'v4-typed-isolated-viewport');
+ const output=JSON.parse(result.output);assert.equal(output.assertions,8);assert.equal(output.browserStepProtocol,'v5-typed-hover');
  assert.deepEqual(output.requestedViewports,[{width:390,height:844},{width:1440,height:960}]);
  assert.equal(result.screenshots.length,2);
 });
@@ -519,6 +519,105 @@ test('viewport action respects copy-text preflight without launch or desktop cli
  try{
   const result=await runSteps(mobileMenuArtifact(),[{action:'viewport',selector:'html',width:390,height:844},{action:'copy-text',selector:'#menuBtn',value:'synthetic'}]);
   assert.equal(result.verificationStatus,'unverified');assert.equal(result.trace.length,0);assert.equal(result.screenshots.length,0);
-  assert.equal(JSON.parse(result.output).browserStepProtocol,'v4-typed-isolated-viewport');
+  assert.equal(JSON.parse(result.output).browserStepProtocol,'v5-typed-hover');
  }finally{if(original===undefined)delete process.env.BROWSER_CHANNEL;else process.env.BROWSER_CHANNEL=original;}
+});
+
+const hoverArtifact=script=>fixture('<header id="appbar">appbar</header><main><button id="control">control</button></main>'+(script?'<script>'+script+'</script>':''),'#appbar{position:fixed;top:0;left:0;right:0;height:64px;background:#eee}main{padding-top:120px}#control{transform:none;transition:transform .06s linear}#control:hover{transform:translateY(-2px)}');
+async function withHoverHook(hook,run){
+ return withViewportHook(page=>{const original=page.locator;page.locator=function(selector,...args){const locator=original.call(this,selector,...args);hook(locator,selector,page);return locator;};},run);
+}
+test('hover action validates selector-only strict fields and 24-step boundary',()=>{
+ assert.doesNotThrow(()=>validateBrowserSteps([{action:'hover',selector:'#control'}]));
+ for(const step of [{action:'hover',selector:''},{action:'hover',selector:' '},{action:'hover',selector:'a'.repeat(501)},{action:'hover',selector:'#control',value:'alert(1)'},{action:'hover',selector:'#control',count:1},{action:'hover',selector:'#control',position:{x:1,y:1}}])assert.throws(()=>validateBrowserSteps([step]));
+ assert.doesNotThrow(()=>validateBrowserSteps(Array.from({length:24},()=>({action:'hover',selector:'body'}))));
+ assert.throws(()=>validateBrowserSteps(Array.from({length:25},()=>({action:'hover',selector:'body'}))));
+});
+test('hover action applies real minus-two CSS then fixed appbar hover restores identity once',async()=>{
+ const calls=[];const result=await withHoverHook((locator,selector)=>{const original=locator.hover;locator.hover=function(options){calls.push({selector,options});return original.call(this,options);};},()=>runSteps(hoverArtifact(),[
+  {action:'computed-style',selector:'#control',property:'transform',mode:'identity-transform'},
+  {action:'hover',selector:'#control'},
+  {action:'computed-style',selector:'#control',property:'transform',mode:'literal',value:'matrix(1, 0, 0, 1, 0, -2)'},
+  {action:'hover',selector:'#appbar'},
+  {action:'computed-style',selector:'#control',property:'transform',mode:'identity-transform'},
+ ]));
+ assert.equal(result.verificationStatus,'verified',result.error);assert.deepEqual(calls.map(call=>call.selector),['#control','#appbar']);assert.ok(calls.every(call=>Object.keys(call.options).length===1&&call.options.timeout>0&&call.options.timeout<=5000));
+ assert.equal(result.trace.filter(t=>t.summary==='hover #control').length,1);assert.equal(result.trace.filter(t=>t.summary==='hover #appbar').length,1);
+ const output=JSON.parse(result.output);assert.equal(output.assertions,3);assert.equal(output.browserStepProtocol,'v5-typed-hover');assert.equal(output.fixedObservationRealm,'chromium-cdp-isolated-v1');
+});
+test('hover action alone remains partial with zero assertions',async()=>{
+ const result=await runSteps(hoverArtifact(),[{action:'hover',selector:'#control'}]);assert.equal(result.verificationStatus,'partial');assert.equal(JSON.parse(result.output).assertions,0);
+});
+test('hover action API no-op completion cannot replace actual CSS evidence',async()=>{
+ const result=await withHoverHook(locator=>{locator.hover=()=>Promise.resolve();},()=>runSteps(hoverArtifact(),[{action:'hover',selector:'#control'},{action:'computed-style',selector:'#control',property:'transform',mode:'literal',value:'matrix(1, 0, 0, 1, 0, -2)'}]));
+ assert.equal(result.verificationStatus,'failed','no-op hover must not verify a real transform');
+});
+test('hover action cannot forge identity with main-world style overrides',async()=>{
+ const artifact=hoverArtifact('window.getComputedStyle=()=>({opacity:"1",getPropertyValue:()=>"none"});window.DOMMatrixReadOnly=class {constructor(){Object.assign(this,{m11:1,m12:0,m13:0,m14:0,m21:0,m22:1,m23:0,m24:0,m31:0,m32:0,m33:1,m34:0,m41:0,m42:0,m43:0,m44:1})}}');
+ // Hold the wrong physical state stable; a transition's initial identity is a
+ // genuine transient sample and cannot establish the negative test premise.
+ artifact.content=artifact.content.replace('transition:transform .06s linear','transition:none');
+ const result=await runSteps(artifact,[{action:'hover',selector:'#control'},{action:'computed-style',selector:'#control',property:'transform',mode:'identity-transform'}]);
+ assert.equal(result.verificationStatus,'failed','independent realm must observe the real -2px hover');
+});
+test('hover action missing rejected and timeout capability terminates UNVERIFIED without retries',async()=>{
+ for(const mode of ['missing','rejected','timeout']){
+  let page;let calls=0;let deadlines=0;const originalTimer=globalThis.setTimeout;
+  if(mode==='timeout')globalThis.setTimeout=(callback,delay,...args)=>{if(delay===5000)deadlines++;return originalTimer(callback,delay===5000?150:delay,...args);};
+  try{
+   const result=await withHoverHook((locator,selector,value)=>{page=value;if(selector!=='#control')return;if(mode==='missing')locator.hover=undefined;else locator.hover=()=>{calls++;return mode==='rejected'?Promise.reject(new Error('synthetic unsupported hover')):new Promise(()=>{});};},()=>runSteps(hoverArtifact(),[{action:'hover',selector:'#control'},{action:'visible',selector:'#control'}]));
+   assert.equal(result.verificationStatus,'unverified',mode+': '+result.error);assert.match(result.error,/hover capability UNVERIFIED/);assert.equal(calls,mode==='missing'?0:1);
+   assert.equal(result.trace.filter(t=>t.summary==='visible #control').length,0);assert.equal(result.screenshots.length,0);assert.equal(page.isClosed(),true);
+   if(mode==='timeout'){assert.ok(deadlines>=1);assert.ok(result.latencyMs<6000);}
+  }finally{globalThis.setTimeout=originalTimer;}
+ }
+});
+test('hover action respects whole-case copy-text preflight before browser launch',async()=>{
+ await closeBrowser();const original=process.env.BROWSER_CHANNEL;process.env.BROWSER_CHANNEL='__no_launch_for_hover_copy__';
+ try{
+  const result=await runSteps(hoverArtifact(),[{action:'hover',selector:'#control'},{action:'copy-text',selector:'#control',value:'synthetic'}]);
+  assert.equal(result.verificationStatus,'unverified');assert.equal(result.trace.length,0);assert.equal(result.screenshots.length,0);assert.equal(JSON.parse(result.output).browserStepProtocol,'v5-typed-hover');
+ }finally{if(original===undefined)delete process.env.BROWSER_CHANNEL;else process.env.BROWSER_CHANNEL=original;}
+});
+
+test('hover action refuses expired action or case dispatch even before its timer callback',async()=>{
+ for(const mode of ['action','case']){
+  let calls=0;let offset=0;let armed=false;let actionTimer;let timerFired=false;
+  const originalNow=Date.now;const originalTimer=globalThis.setTimeout;
+  Date.now=()=>originalNow()+offset;
+  globalThis.setTimeout=(callback,delay,...args)=>{
+   if(armed&&actionTimer===undefined&&delay<=5000){actionTimer=originalTimer(()=>{timerFired=true;callback(...args);},delay);return actionTimer;}
+   return originalTimer(callback,delay,...args);
+  };
+  try{
+   const result=await withHoverHook((locator,selector)=>{
+    if(selector!=='#control')return;const hover=()=>{calls++;return Promise.resolve();};
+    if(mode==='action')Object.defineProperty(locator,'hover',{get(){offset=6000;armed=true;return hover;}});
+    else{offset=46000;armed=true;locator.hover=hover;}
+   },()=>runSteps(hoverArtifact(),[{action:'hover',selector:'#control'}]));
+   assert.equal(result.verificationStatus,'unverified',result.error);assert.equal(calls,0);assert.equal(timerFired,false);
+   assert.equal(result.trace.filter(t=>t.summary==='hover #control').length,0);assert.equal(result.screenshots.length,0);
+  }finally{Date.now=originalNow;globalThis.setTimeout=originalTimer;}
+ }
+});
+
+test('hover action rejects late action or case completion before its timer callback',async()=>{
+ for(const mode of ['action','case']){
+  let calls=0;let mockNow;let caseEpoch;let armed=false;let actionTimer;let timerFired=false;
+  const originalNow=Date.now;const originalTimer=globalThis.setTimeout;
+  Date.now=()=>mockNow??originalNow();
+  globalThis.setTimeout=(callback,delay,...args)=>{
+   if(delay===45000)caseEpoch=Date.now()+45000;
+   if(armed&&actionTimer===undefined&&delay<=5000){actionTimer=originalTimer(()=>{timerFired=true;callback(...args);},delay);return actionTimer;}
+   return originalTimer(callback,delay,...args);
+  };
+  try{
+   const result=await withHoverHook((locator,selector)=>{
+    if(selector!=='#control')return;armed=true;if(mode==='case')mockNow=caseEpoch-1000;
+    locator.hover=()=>{calls++;mockNow=mode==='case'?caseEpoch+1:originalNow()+6000;return Promise.resolve();};
+   },()=>runSteps(hoverArtifact(),[{action:'hover',selector:'#control'},{action:'computed-style',selector:'#control',property:'transform',mode:'identity-transform'}]));
+   assert.equal(result.verificationStatus,'unverified',result.error);assert.equal(calls,1);assert.equal(timerFired,false);
+   assert.equal(result.trace.filter(t=>t.summary==='hover #control').length,0);assert.equal(result.trace.filter(t=>t.summary==='computed-style #control').length,0);assert.equal(result.screenshots.length,0);
+  }finally{Date.now=originalNow;globalThis.setTimeout=originalTimer;}
+ }
 });

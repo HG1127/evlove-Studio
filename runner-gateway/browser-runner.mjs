@@ -44,7 +44,7 @@ export function validateBrowserSteps(steps){
    if(['fill','text'].includes(step.action))valid=valid&&literalValid(step.value);
    if(step.action==='count')valid=valid&&Number.isInteger(step.count)&&step.count>=0;
   }else if(step.action==='viewport')valid=fieldsOnly(step,['width','height'])&&step.selector==='html'&&Number.isInteger(step.width)&&Number.isInteger(step.height)&&step.width>=240&&step.width<=2560&&step.height>=240&&step.height<=2560;
-  else if(step.action==='scroll-into-view')valid=fieldsOnly(step,[]);
+  else if(step.action==='scroll-into-view'||step.action==='hover')valid=fieldsOnly(step,[]);
   else if(step.action==='in-viewport')valid=fieldsOnly(step,['ratio','expected'])&&(step.ratio===undefined||(Number.isFinite(step.ratio)&&step.ratio>=0&&step.ratio<=1))&&(step.expected===undefined||typeof step.expected==='boolean');
   else if(step.action==='attribute')valid=fieldsOnly(step,['name','value','mode'])&&typeof step.name==='string'&&step.name.length<=64&&(attributes.includes(step.name)||/^data-[a-z0-9-]+$/.test(step.name))&&literalValid(step.value)&&(step.mode===undefined||['equals','contains'].includes(step.mode));
   else if(step.action==='checked')valid=fieldsOnly(step,['checked'])&&typeof step.checked==='boolean';
@@ -77,6 +77,27 @@ async function setActionViewport(page,step){
   // changing any later observation; close failures do not reclassify capability.
   void Promise.resolve().then(()=>page.close()).catch(()=>{});
   throw new BrowserCapabilityUnavailable('viewport capability UNVERIFIED：无法可靠改变浏览器尺寸',{cause:error});
+ }finally{clearTimeout(timer);}
+}
+async function hoverAction(page,locator,caseDeadline){
+ let timer;let expired=false;const deadline=Math.min(Date.now()+5000,caseDeadline);
+ try{
+  const hover=locator.hover;
+  if(typeof hover!=='function')throw new Error('locator.hover 不可用');
+  // Check at actual dispatch: a delayed microtask must not grant a fresh 5s
+  // timeout after either the original action or case deadline has elapsed.
+  await Promise.race([
+   Promise.resolve().then(()=>{
+    const remaining=Math.min(5000,deadline-Date.now());
+    if(expired||remaining<=0)throw new Error('hover action deadline before dispatch');
+    return hover.call(locator,{timeout:remaining});
+   }),
+   new Promise((_,reject)=>{timer=setTimeout(()=>{expired=true;reject(new Error('hover action deadline'));},Math.min(5000,Math.max(0,deadline-Date.now())));}),
+  ]);
+  if(expired||Date.now()>=deadline)throw new Error('hover action deadline after completion');
+ }catch(error){
+  void Promise.resolve().then(()=>page.close()).catch(()=>{});
+  throw new BrowserCapabilityUnavailable('hover capability UNVERIFIED：无法可靠执行悬停',{cause:error});
  }finally{clearTimeout(timer);}
 }
 async function pollObservation(read,predicate,summary){
@@ -253,11 +274,11 @@ export async function executeBrowserTest({testCase,artifact}){
  if(!artifact?.content || !/\.html?$/i.test(artifact.name??''))return {...result,output:'此执行器需要单个完整 HTML 成果；工程构建需连接工程 Runner。',latencyMs:0};
  const steps=validateBrowserSteps(testCase?.browserSteps??[]);
  const hash=createHash('sha256').update(artifact.content).digest('hex');
- if(steps.some(step=>step.action==='copy-text'))return {...result,artifactHash:hash,latencyMs:Date.now()-started,error:'copy-text capability UNVERIFIED: Gateway cannot use the desktop clipboard',output:JSON.stringify({browserStepProtocol:'v4-typed-isolated-viewport',scope:'copy-text',assertions:0,capability:'unavailable',limitations:['本机 Gateway 禁止访问桌面剪贴板；需隔离 Sandbox 的可信探针。']})};
+ if(steps.some(step=>step.action==='copy-text'))return {...result,artifactHash:hash,latencyMs:Date.now()-started,error:'copy-text capability UNVERIFIED: Gateway cannot use the desktop clipboard',output:JSON.stringify({browserStepProtocol:'v5-typed-hover',scope:'copy-text',assertions:0,capability:'unavailable',limitations:['本机 Gateway 禁止访问桌面剪贴板；需隔离 Sandbox 的可信探针。']})};
  const instance=await getBrowser();
  let contextTimer;
  const context=await Promise.race([instance.newContext({serviceWorkers:'block',acceptDownloads:false,viewport:{width:1440,height:960}}),new Promise((_,reject)=>{contextTimer=setTimeout(()=>{void instance.close();reject(new Error('浏览器环境初始化超时'));},15000);})]).finally(()=>clearTimeout(contextTimer));
- let timedOut=false;const timer=setTimeout(()=>{timedOut=true;void context.close();},45000);
+ const caseDeadline=Date.now()+45000;let timedOut=false;const timer=setTimeout(()=>{timedOut=true;void context.close();},45000);
  const errors=[];const blocked=new Set();let clipboardBlocked=false;let observer;
  try{
   try{await denyDesktopClipboard(context,()=>{clipboardBlocked=true;});}
@@ -292,6 +313,7 @@ export async function executeBrowserTest({testCase,artifact}){
    // context's 45s deadline also bounds the complete sequence.
    switch(step.action){
     case 'viewport':requestedViewports.push(await setActionViewport(page,step));break;
+    case 'hover':await hoverAction(page,locator,caseDeadline);break;
     case 'click':await locator.click();break;
     case 'fill':await locator.fill(step.value);break;
     case 'scroll-into-view':await locator.scrollIntoViewIfNeeded();break;
@@ -321,7 +343,7 @@ export async function executeBrowserTest({testCase,artifact}){
   const assertions=steps.filter(s=>assertionActions.includes(s.action)).length;
   // Rendering alone never proves a business workflow passed.
   result.verificationStatus=failed?'failed':blocked.size||!assertions?'partial':'verified';
-  return {...result,artifactHash:hash,latencyMs:Date.now()-started,output:JSON.stringify({browserStepProtocol:'v4-typed-isolated-viewport',requestedViewports,fixedObservationRealm:'chromium-cdp-isolated-v1',scope:assertions?'所列浏览器断言':'浏览器渲染与布局',assertions,errors,blockedResources:[...blocked],limitations:['截图仅覆盖两个视口的当前画面；美观与语义效果需独立评审。','不安装上传代码的依赖，不执行服务器命令，不访问外部网络。','桌面剪贴板始终禁用；copy-text 需隔离 Sandbox。']}),...(failed?{error:'浏览器运行、断言或布局检查存在失败'}:{})};
+  return {...result,artifactHash:hash,latencyMs:Date.now()-started,output:JSON.stringify({browserStepProtocol:'v5-typed-hover',requestedViewports,fixedObservationRealm:'chromium-cdp-isolated-v1',scope:assertions?'所列浏览器断言':'浏览器渲染与布局',assertions,errors,blockedResources:[...blocked],limitations:['截图仅覆盖两个视口的当前画面；美观与语义效果需独立评审。','不安装上传代码的依赖，不执行服务器命令，不访问外部网络。','桌面剪贴板始终禁用；copy-text 需隔离 Sandbox。']}),...(failed?{error:'浏览器运行、断言或布局检查存在失败'}:{})};
  }catch(error){return {...result,artifactHash:hash,latencyMs:Date.now()-started,verificationStatus:timedOut||error instanceof BrowserCapabilityUnavailable||clipboardBlocked?'unverified':'failed',error:String(error),output:timedOut?'执行超时，需补充验证。':String(error)};}
  finally{clearTimeout(timer);await observer?.close().catch(()=>{});await context.close().catch(()=>{});}
 }
