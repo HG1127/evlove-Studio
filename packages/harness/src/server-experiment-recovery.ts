@@ -1,6 +1,6 @@
 import type { Candidate, EvolveProject, ExperimentCandidateCheckpoint, TargetRunResult } from "@evolution/contracts";
 import { ExperimentCandidateCheckpointSchema } from "@evolution/contracts";
-import { LIVE_TARGET_OBSERVATION_MAX_AGE_MS } from "@evolution/core";
+import { HTML_PROTECTION_SETTLEMENT_POLICY, LIVE_TARGET_OBSERVATION_MAX_AGE_MS } from "@evolution/core";
 import type { ServerExperimentExecutionPorts } from "./server-experiment-runner";
 
 export type ServerExperimentRecoveryPorts = Pick<ServerExperimentExecutionPorts, "verifyFrozenArtifact"> & {
@@ -71,7 +71,7 @@ export async function serverExperimentBuildCheckpoint(project: EvolveProject, ca
   return buildInputFingerprint && artifactFingerprint ? { candidateId: candidate.id, buildInputFingerprint, artifactFingerprint } : undefined;
 }
 async function executionBinding(project: EvolveProject, checkpoint: ExperimentCandidateCheckpoint, ports: ServerExperimentRecoveryPorts) {
-  return digest(ports, { version: "server-experiment-execution-input-v1", buildInput: checkpoint.buildInputFingerprint,
+  return digest(ports, { version: "server-experiment-execution-input-v1", protectionSettlementPolicy: HTML_PROTECTION_SETTLEMENT_POLICY, buildInput: checkpoint.buildInputFingerprint,
     candidateArtifacts: checkpoint.artifactFingerprint, suite: project.evalSuite, baseline: project.baselineRun,
     rubric: project.acceptanceRubric, metrics: project.metrics, target: project.targetConnection,
     profile: project.aiProfile, policy: project.experimentPolicy,

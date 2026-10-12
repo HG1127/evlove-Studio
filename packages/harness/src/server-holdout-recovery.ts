@@ -1,5 +1,5 @@
 import type { Candidate, EvaluationResult, EvolveProject, TargetRunResult, TestCase, ValidationRun } from "@evolution/contracts";
-import { criteriaRequiringJudge, evidenceFingerprint, fastHash, LIVE_TARGET_OBSERVATION_MAX_AGE_MS } from "@evolution/core";
+import { HTML_PROTECTION_SETTLEMENT_POLICY, criteriaRequiringJudge, evidenceFingerprint, fastHash, LIVE_TARGET_OBSERVATION_MAX_AGE_MS, htmlProtectionCoverageGap } from "@evolution/core";
 
 export type ServerHoldoutArtifactReader = (args: { project: EvolveProject; candidate: Candidate }) => Promise<string | undefined>;
 
@@ -13,7 +13,7 @@ export async function readServerHoldoutArtifactFingerprint(project: EvolveProjec
 
 /** Domain record identity, not an authentication/signature substitute. */
 export function serverHoldoutExecutionEvidenceFingerprint(prior: Pick<ValidationRun, "runs" | "baselineRuns" | "baselineObservedAt">) {
-  const wire = JSON.parse(JSON.stringify({ version: "server-holdout-execution-evidence-v1", runs: prior.runs,
+  const wire = JSON.parse(JSON.stringify({ version: "server-holdout-execution-evidence-v1", protectionSettlementPolicy: HTML_PROTECTION_SETTLEMENT_POLICY, runs: prior.runs,
     baselineRuns: prior.baselineRuns, baselineObservedAt: prior.baselineObservedAt }));
   return fastHash(wire);
 }
@@ -53,6 +53,7 @@ export function reusableServerHoldoutAssessment(project: EvolveProject, suite: T
   return criteriaRequiringJudge(project.acceptanceRubric, suite, runs).every(criterion => {
     const score = scores.find(item => item.criterionId === criterion.id);
     const ids = new Set(suite.filter(item => item.criterionIds.includes(criterion.id)).map(item => item.id));
+    if (htmlProtectionCoverageGap(criterion, project) && score?.pass) return false;
     return score && (score.verificationStatus === "verified" || score.verificationStatus === "partial")
       && score.testCaseIds.length > 0 && score.testCaseIds.every(id => ids.has(id));
   });

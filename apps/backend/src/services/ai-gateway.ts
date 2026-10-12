@@ -56,6 +56,7 @@ import {
   type VisualJudgeAiResult,
 } from "@evolution/contracts";
 import { SERVER_SEMANTIC_CONTEXT_VERSION } from "@evolution/harness";
+import { HTML_PROTECTION_SETTLEMENT_POLICY } from "@evolution/core";
 import {COMPATIBLE_RESPONSES_OUTPUT_VERSION,COMPATIBLE_CHAT_OUTPUT_VERSION,readCompatibleResponsesOutput,readCompatibleChatOutput,parseStructuredAiOutput,StructuredAiJsonError,STRUCTURED_AI_FINAL_OUTPUT_VERSION,type StructuredAiJsonFailureKind,requestCompatibleAiJson} from "@evolution/adapters";
 import type { ServerAiConfig } from "../server-env";
 import {resolveServerAiConfig} from "./server-ai-connection";
@@ -76,7 +77,7 @@ export async function serverAiScoringRouteFingerprint(): Promise<string | undefi
   const directSchemaInstructionVersion=config.mode==="openai-compatible"&&(!config.responseFormat||config.responseFormat==="json-schema")
     ?DIRECT_AI_SCHEMA_INSTRUCTION_VERSION:undefined;
   const directSchemaRecoveryVersion=config.mode==="openai-compatible"?DIRECT_AI_SCHEMA_RECOVERY_VERSION:undefined;
-  return createHash("sha256").update(JSON.stringify({ route, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION, responsesOutputVersion, chatOutputVersion, directSchemaInstructionVersion, directSchemaRecoveryVersion, finalOutputVersion: config.mode==="openai-compatible"?STRUCTURED_AI_FINAL_OUTPUT_VERSION:undefined })).digest("hex");
+  return createHash("sha256").update(JSON.stringify({ route, protectionSettlementPolicy: HTML_PROTECTION_SETTLEMENT_POLICY, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION, responsesOutputVersion, chatOutputVersion, directSchemaInstructionVersion, directSchemaRecoveryVersion, finalOutputVersion: config.mode==="openai-compatible"?STRUCTURED_AI_FINAL_OUTPUT_VERSION:undefined })).digest("hex");
 }
 
 type StructuredSchema={name:string;schema:Record<string,unknown>};

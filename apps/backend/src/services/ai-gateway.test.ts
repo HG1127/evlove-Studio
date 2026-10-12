@@ -1,3 +1,4 @@
+import { HTML_PROTECTION_SETTLEMENT_POLICY } from "@evolution/core";
 // @vitest-environment node
 import {createHash} from "node:crypto";
 import {SERVER_SEMANTIC_CONTEXT_VERSION} from "@evolution/harness";
@@ -50,7 +51,7 @@ describe("server AI scoring route identity",()=> {
     process.env.EVOLUTION_AI_BASE_URL="https://ai.example.test/v1";
     const route=["openai-compatible","https://ai.example.test/v1","model-a"];
     const legacy=createHash("sha256").update(JSON.stringify(route)).digest("hex");
-    const expected=createHash("sha256").update(JSON.stringify({route,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,responsesOutputVersion:COMPATIBLE_RESPONSES_OUTPUT_VERSION,chatOutputVersion:COMPATIBLE_CHAT_OUTPUT_VERSION,directSchemaInstructionVersion:DIRECT_AI_SCHEMA_INSTRUCTION_VERSION,directSchemaRecoveryVersion:DIRECT_AI_SCHEMA_RECOVERY_VERSION,finalOutputVersion:STRUCTURED_AI_FINAL_OUTPUT_VERSION})).digest("hex");
+    const expected=createHash("sha256").update(JSON.stringify({route,protectionSettlementPolicy:HTML_PROTECTION_SETTLEMENT_POLICY,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,responsesOutputVersion:COMPATIBLE_RESPONSES_OUTPUT_VERSION,chatOutputVersion:COMPATIBLE_CHAT_OUTPUT_VERSION,directSchemaInstructionVersion:DIRECT_AI_SCHEMA_INSTRUCTION_VERSION,directSchemaRecoveryVersion:DIRECT_AI_SCHEMA_RECOVERY_VERSION,finalOutputVersion:STRUCTURED_AI_FINAL_OUTPUT_VERSION})).digest("hex");
     expect(await serverAiScoringRouteFingerprint()).toBe(expected);
     expect(await serverAiScoringRouteFingerprint()).not.toBe(legacy);
   });

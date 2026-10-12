@@ -1,10 +1,12 @@
 import type { EvaluationResult, EvolveProject } from "@evolution/contracts";
 import { fastHash } from "./stable-hash";
+import { HTML_PROTECTION_SETTLEMENT_POLICY } from "./html-protection-scope";
 
 /** Score comparability depends on the user contract and original Target, never on the evolving Champion. */
 export function campaignScoringInputFingerprint(project: EvolveProject): string {
   return fastHash({
     version: "campaign-scoring-input-v1",
+    protectionSettlementPolicy: HTML_PROTECTION_SETTLEMENT_POLICY,
     goal: project.goal,
     objectType: project.objectType,
     evolutionCommand: project.evolutionCommand,

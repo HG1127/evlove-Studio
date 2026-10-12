@@ -64,7 +64,7 @@ function deterministicOnlyEvaluation(
   runs: TargetRunResult[],
 ): EvaluationResult {
   return settleDeterministicEvaluation({
-    criteria: project.acceptanceRubric, testCases, runs,
+    criteria: project.acceptanceRubric, scope: project, testCases, runs,
     notes: ["本轮没有需要 AI Judge 的可执行语义标准；仅结算确定性证据。通用质量维度未测量，因此保持 0，不代表产品失败。"],
   });
 }
@@ -251,7 +251,7 @@ export async function judgeServerExperimentCandidate(
   };
   const ai = await ports.judge(payload);
   return settleAiEvaluation({
-    criteria: project.acceptanceRubric,
+    criteria: project.acceptanceRubric, scope: project,
     testCases,
     runs: runs.map(run => judgeEvidence.find(item => item.run.testCaseId === run.testCaseId)?.run ?? run),
     ai,
