@@ -8,7 +8,14 @@ const SERVER_RELEASE_FIELDS=[
 
 function json(value:unknown){return JSON.stringify(value??null);}
 
+export function assertClientControlOwnerMutationSafe(current:EvolveProject|undefined,next:EvolveProject){
+  if(json(current?.campaign.serverControlOwner)!==json(next.campaign.serverControlOwner)){
+    throw new Error("后台控制预留只能通过专用 Workflow API 修改");
+  }
+}
+
 export function assertClientMissionMutationSafe(current:EvolveProject,next:EvolveProject){
+  assertClientControlOwnerMutationSafe(current,next);
   const currentGate=current.gates.find((gate)=>gate.id==="release-ready");
   const nextGate=next.gates.find((gate)=>gate.id==="release-ready");
   if(json(currentGate)!==json(nextGate)){

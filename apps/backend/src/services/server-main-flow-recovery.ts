@@ -43,14 +43,17 @@ export async function prepareServerFreshBaseline(
   project: EvolveProject, input: EvolutionWorkflowRunInput, append: (event: EvolutionEvent) => Promise<void>,
 ): Promise<EvolveProject> {
   if (!input.freshBaseline || project.campaign.freshBaselineRestartControlJobId === input.controlJobId) return project;
-  if (project.updatedAt !== input.freshBaseline.sourceUpdatedAt || !canRemeasureLegacyServerPlan(project)
+  const owner=project.campaign.serverControlOwner;
+  const sourceVersionMatches=project.updatedAt===input.freshBaseline.sourceUpdatedAt
+    ||owner?.controlJobId===input.controlJobId&&owner.sourceUpdatedAt===input.freshBaseline.sourceUpdatedAt;
+  if (!sourceVersionMatches || !canRemeasureLegacyServerPlan(project)
     || serverMainFlowRecoveryDigest(project) !== input.freshBaseline.inputFingerprint) {
     throw new Error("当前输入或旧 Plan 暂停已变化；未启动重新测量。请刷新并核对状态。");
   }
   await append(createEvolutionEvent({
     id: "evt-" + input.controlJobId + "-fresh-baseline-source", missionId: project.id, jobId: input.controlJobId,
     type: "MissionUpdated", source: "vercel-workflow-control", at: input.requestedAt,
-    payload: { action: "remeasure-current-input", sourceUpdatedAt: project.updatedAt,
+    payload: { action: "remeasure-current-input", sourceUpdatedAt: input.freshBaseline.sourceUpdatedAt,
       inputFingerprint: input.freshBaseline.inputFingerprint, baselineRun: project.baselineRun, rootBaseline: project.campaign.rootBaseline,
       problems: project.problems, selectedProblemId: project.selectedProblemId, diagnosis: project.diagnosis,
       checkpoint: project.campaign.checkpoint, priorStopReason: project.campaign.stopReason },

@@ -1,19 +1,20 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockEvent } from "nitro/h3";
-import { EvolutionJobSchema, type EvolutionJob, type EvolveProject, type EvolutionWorkflowStartResponse, type EvolutionEvent } from "@evolution/contracts";
+import { EvolutionJobSchema, type MissionEnvelope,missionEnvelope,type EvolutionJob, type EvolveProject, type EvolutionWorkflowStartResponse, type EvolutionEvent } from "@evolution/contracts";
 import type { ServerHarnessPlan } from "@evolution/harness";
 import { demoProject } from "../../../../src/features/evolve/data/mock-project";
 import route from "../../server/api/evolution/start.post";
 import {EventIdempotencyConflictError} from "./event-persistence";
 import { initializeWorkflowControlStep, executeServerControlStep, planMissionStep } from "../../../../workflows/evolution-mission/steps";
 
-const mocks = vi.hoisted(() => ({ jobs: new Map<string, EvolutionJob>(), events: new Map<string, EvolutionEvent>(), readEvent: vi.fn(), start: vi.fn(), getRun: vi.fn(), create: vi.fn(), bind: vi.fn(), runtime: vi.fn() }));
+const mocks = vi.hoisted(() => ({ jobs: new Map<string, EvolutionJob>(), events: new Map<string, EvolutionEvent>(), readEvent: vi.fn(), start: vi.fn(), getRun: vi.fn(), create: vi.fn(), bind: vi.fn(), runtime: vi.fn(), readEnvelope: vi.fn(), cas: vi.fn() }));
 vi.mock("workflow/api", () => ({ start: mocks.start, getRun: mocks.getRun }));
+vi.mock("workflow/runtime",()=>({getWorld:()=>({runs:{get:async(runId:string)=>({runId,status:"running"})}})}));
 vi.mock("../../../../workflows/evolution-mission", () => ({ evolutionMissionWorkflow: vi.fn() }));
 vi.mock("./security-policy", () => ({ requireGovernedEvolutionPermission: vi.fn(async () => undefined) }));
 vi.mock("./production-runtime", async (original) => ({ ...await original<typeof import("./production-runtime")>(),
-  getServerProductionRuntime: mocks.runtime, getServerEventById: mocks.readEvent, createServerJobIdempotentReceipt: mocks.create, bindServerJobWorkflowRun: mocks.bind,
+  getServerProductionRuntime: mocks.runtime, getServerMissionEnvelope: mocks.readEnvelope, compareAndSwapServerMissionEnvelope: mocks.cas, getServerEventById: mocks.readEvent, createServerJobIdempotentReceipt: mocks.create, bindServerJobWorkflowRun: mocks.bind,
 }));
 let mission: EvolveProject;
 let failCheckpointOnce=false;
@@ -24,8 +25,12 @@ function request() {
 beforeEach(() => {
   failCheckpointOnce=false;
   vi.clearAllMocks(); mocks.jobs.clear(); mocks.events.clear(); vi.useFakeTimers({toFake:["Date"]}); vi.setSystemTime(new Date("2026-10-08T00:00:00Z")); mission = { ...structuredClone(demoProject), id: "identity-mission" };
+  let revision=29;
+  mocks.readEnvelope.mockImplementation(async()=>missionEnvelope(mission,revision));
+  mocks.cas.mockImplementation(async(next:MissionEnvelope)=>{if(next.revision!==revision)throw new Error("test CAS conflict");revision++;mission=next.payload;return {...next,revision};});
   mocks.runtime.mockReturnValue({ missions: { get: async () => mission, save: async (value: EvolveProject) => { mission = value; } }, jobs: {
     get: async (id: string) => mocks.jobs.get(id),
+    list: async()=>[...mocks.jobs.values()],
     // Model the deployed monotonic RPC's key update and same-generation run-binding retention.
     put: async (value: EvolutionJob) => { const previous = mocks.jobs.get(value.id); mocks.jobs.set(value.id, EvolutionJobSchema.parse({ ...value, outputRef: value.outputRef ?? previous?.outputRef, metadata: { ...previous?.metadata, ...value.metadata } })); },
   }, events: { append: async (event: EvolutionEvent) => {

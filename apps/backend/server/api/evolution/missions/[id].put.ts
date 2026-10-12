@@ -5,7 +5,7 @@ import {
   getServerMissionEnvelope,
   MissionRevisionConflictError,
 } from "../../../../src/services/production-runtime";
-import {assertClientMissionMutationSafe} from "../../../../src/services/mission-mutation-policy";
+import {assertClientMissionMutationSafe,assertClientControlOwnerMutationSafe} from "../../../../src/services/mission-mutation-policy";
 import {requireGovernedEvolutionPermission} from "../../../../src/services/security-policy";
 
 export default defineEventHandler(async(event)=>{
@@ -17,6 +17,8 @@ export default defineEventHandler(async(event)=>{
     throw createError({statusCode:409,statusMessage:"Mission path id 与 payload 不一致"});
   }
   const current=await getServerMissionEnvelope(id);
+  try{assertClientControlOwnerMutationSafe(current?.payload,envelope.payload);}
+  catch(error){throw createError({statusCode:409,statusMessage:error instanceof Error?error.message:String(error)});}
   if(current){
     try{assertClientMissionMutationSafe(current.payload,envelope.payload);}
     catch(error){throw createError({statusCode:409,statusMessage:error instanceof Error?error.message:String(error)});}

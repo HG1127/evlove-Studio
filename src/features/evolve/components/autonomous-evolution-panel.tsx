@@ -1,10 +1,12 @@
-import { AlertTriangle, CheckCircle2, CirclePause, Loader2, PackageCheck, Play, Sparkles } from "lucide-react";
+import { useCallback, useState } from "react";
+import { AlertTriangle, CheckCircle2, CirclePause, Clock3, Loader2, PackageCheck, Play, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { autonomousAttention, autonomousEvolutionState, autonomousProgress } from "../runtime/autonomous-evolution";
 import type { ProjectRuntime } from "../runtime/use-project-runtime";
 import { canRetryStoredServerExperiment, serverMainFlowRetryUnavailableReason } from "../runtime/server-experiment-retry";
 import { ServerExperimentRetry } from "./server-experiment-retry";
+import { ServerWorkflowRecovery, type ServerWorkflowRecoveryState } from "./server-workflow-recovery";
 
 export function AutonomousEvolutionPanel({
   runtime,
@@ -20,12 +22,22 @@ export function AutonomousEvolutionPanel({
   onOpenRuntime: () => void;
 }) {
   const project = runtime.project;
+  const [recoveryObservation, setRecoveryObservation] = useState<{ missionId: string; updatedAt: string; state: ServerWorkflowRecoveryState }>();
+  const onRecoveryStateChange = useCallback((value: ServerWorkflowRecoveryState) => {
+    setRecoveryObservation({ missionId: project.id, updatedAt: project.updatedAt, state: value });
+  }, [project.id, project.updatedAt]);
+  const recoveryState = recoveryObservation?.missionId === project.id && recoveryObservation.updatedAt === project.updatedAt
+    ? recoveryObservation.state : undefined;
   const state = autonomousEvolutionState(project, runtime.status.busy);
   const attention = autonomousAttention(project);
   const progress = autonomousProgress(project);
   const completedCount = progress.filter((item) => item.done).length;
 
-  const copy = state === "completed"
+  const copy = recoveryState === "failed"
+    ? { title: "后台执行已中断", detail: "已确认后台执行失败或取消。已有成果和运行记录已保留，可重试后台执行。", tone: "border-amber-200 bg-amber-50/60" }
+    : recoveryState === "submitted"
+      ? { title: "新后台执行已提交", detail: "请查看实时运行状态，等待后台更新任务进展。", tone: "border-indigo-200 bg-indigo-50/60" }
+      : state === "completed"
     ? { title: "进化完成，等待你验收成果", detail: "最终版本已经通过独立验证和成果完整性检查，并已生成可领取成果物。", tone: "border-emerald-200 bg-emerald-50/60" }
     : state === "attention"
       ? { title: attention?.title ?? "需要你处理一个问题", detail: attention?.detail ?? "系统无法安全地自行决定这一项。", tone: "border-amber-200 bg-amber-50/60" }
@@ -57,23 +69,25 @@ export function AutonomousEvolutionPanel({
     <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
-          {state === "completed" ? <CheckCircle2 className="size-5 text-emerald-600" /> : state === "attention" ? <AlertTriangle className="size-5 text-amber-600" /> : state === "running" || state === "preparing" ? <Loader2 className="size-5 animate-spin text-indigo-600" /> : <Sparkles className="size-5 text-indigo-600" />}
+          {recoveryState === "failed" ? <AlertTriangle className="size-5 text-amber-600" /> : recoveryState === "submitted" ? <Clock3 className="size-5 text-indigo-600" /> : state === "completed" ? <CheckCircle2 className="size-5 text-emerald-600" /> : state === "attention" ? <AlertTriangle className="size-5 text-amber-600" /> : state === "running" || state === "preparing" ? <Loader2 className="size-5 animate-spin text-indigo-600" /> : <Sparkles className="size-5 text-indigo-600" />}
           <h2 className="text-lg font-bold text-slate-950">{copy.title}</h2>
           <Badge>{completedCount}/4</Badge>
         </div>
         <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{copy.detail}</p>
         {state === "attention" && serverMainFlowRetryUnavailableReason(project) && <p className="mt-1 text-xs text-amber-800">{serverMainFlowRetryUnavailableReason(project)}</p>}
-        {state === "running" && runtime.status.detail && <p className="mt-1 text-xs text-indigo-600">{runtime.status.detail}</p>}
+        {!recoveryState && state === "running" && runtime.status.detail && <p className="mt-1 text-xs text-indigo-600">{runtime.status.detail}</p>}
       </div>
       <div className="flex shrink-0 flex-wrap gap-2">
         {state === "waiting-input" && <Button onClick={onOpenSource}>输入任务</Button>}
-        {(state === "ready" || state === "preparing") && !runtime.status.busy && <Button onClick={() => void runtime.runAutoPilot()}><Play className="size-4" />{project.campaign.status === "paused" ? "继续自主进化" : "开始自主进化"}</Button>}
-        {state === "running" && <Button variant="secondary" onClick={runtime.pauseCampaign}><CirclePause className="size-4" />暂停</Button>}
-        {state === "attention" && canRetryStoredServerExperiment(project) && <ServerExperimentRetry key={project.id + ":" + project.updatedAt} project={project} busy={runtime.status.busy} onOpenRuntime={onOpenRuntime}/> }
-        {state === "attention" && !canRetryStoredServerExperiment(project) && <Button onClick={resolveAttention}><AlertTriangle className="size-4" />{attention?.request?.diagnosticCode === "local-evidence-incomplete" ? "查看证据详情" : "处理这个问题"}</Button>}
+        {!recoveryState && (state === "ready" || state === "preparing") && !runtime.status.busy && <Button onClick={() => void runtime.runAutoPilot()}><Play className="size-4" />{project.campaign.status === "paused" ? "继续自主进化" : "开始自主进化"}</Button>}
+        {!recoveryState && state === "running" && <Button variant="secondary" onClick={runtime.pauseCampaign}><CirclePause className="size-4" />暂停</Button>}
+        {!recoveryState && state === "attention" && canRetryStoredServerExperiment(project) && <ServerExperimentRetry key={project.id + ":" + project.updatedAt} project={project} busy={runtime.status.busy} onOpenRuntime={onOpenRuntime}/> }
+        {!recoveryState && state === "attention" && !canRetryStoredServerExperiment(project) && <Button onClick={resolveAttention}><AlertTriangle className="size-4" />{attention?.request?.diagnosticCode === "local-evidence-incomplete" ? "查看证据详情" : "处理这个问题"}</Button>}
         {state === "completed" && <Button onClick={onOpenOutputs}><PackageCheck className="size-4" />验收成果</Button>}
       </div>
     </div>
+
+    <ServerWorkflowRecovery key={project.id + ":" + project.updatedAt} project={project} busy={runtime.status.busy} onOpenRuntime={onOpenRuntime} onRecoveryStateChange={onRecoveryStateChange}/>
 
     <div className="mt-5 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
       {progress.map((item, index) => <div key={item.id} className={`rounded-xl border px-3 py-2.5 ${item.done ? "border-emerald-200 bg-white/80" : "border-slate-200 bg-white/50"}`}>

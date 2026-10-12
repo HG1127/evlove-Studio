@@ -4,20 +4,21 @@ import { mockEvent } from "nitro/h3";
 import { retryStoredServerExperiment } from "../../src/features/evolve/runtime/server-experiment-retry";
 import startRoute from "../../apps/backend/server/api/evolution/start.post";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { EvolveProjectSchema, EvolutionJobSchema, InputUnderstandingSchema, type Candidate, type EvolveProject, type TestCase } from "@evolution/contracts";
+import { EvolveProjectSchema, EvolutionJobSchema, InputUnderstandingSchema, type MissionEnvelope,missionEnvelope,type Candidate, type EvolveProject, type TestCase } from "@evolution/contracts";
 import { deriveAttentionRequest, serverBaselineFingerprint } from "@evolution/harness";
 import { experimentRecoveryAt as at, experimentRecoveryFixture } from "@evolution/testkit";
 import { runServerMissionExperiment } from "../../apps/backend/src/services/server-experiment";
 import { executeServerControlStep, planMissionStep } from "../../workflows/evolution-mission/steps";
-const m = vi.hoisted(() => ({ blobs: new Map<string, Blob>(), get: vi.fn(), put: vi.fn(), ai: vi.fn(), browser: vi.fn(), mission: vi.fn(), save: vi.fn(), job: vi.fn(), jobPut: vi.fn(), append: vi.fn(), probe: vi.fn(), start: vi.fn(), getRun: vi.fn(), create: vi.fn(), bind: vi.fn() }));
+const m = vi.hoisted(() => ({ blobs: new Map<string, Blob>(), get: vi.fn(), put: vi.fn(), ai: vi.fn(), browser: vi.fn(), mission: vi.fn(), save: vi.fn(), job: vi.fn(), jobPut: vi.fn(), append: vi.fn(), probe: vi.fn(), start: vi.fn(), getRun: vi.fn(), create: vi.fn(), bind: vi.fn(), list: vi.fn(), readEnvelope: vi.fn(), cas: vi.fn(), readRun: vi.fn() }));
 vi.mock("../../apps/backend/src/services/artifact-runtime", () => ({ getServerArtifactStore: () => ({ get: m.get, put: m.put }) }));
 vi.mock("../../apps/backend/src/services/ai-gateway", async (original) => ({ ...await original<typeof import("../../apps/backend/src/services/ai-gateway")>(), runServerAi: m.ai, serverAiScoringRouteFingerprint: () => "b".repeat(64) }));
 vi.mock("../../apps/backend/src/services/server-ai-health", () => ({ probeServerAiRuntime: m.probe }));
 vi.mock("../../apps/backend/src/services/server-html-artifact-execution", () => ({ serverHtmlArtifactTargetEnabled: () => true, runServerHtmlArtifactBatch: m.browser }));
 vi.mock("../../apps/backend/src/services/connector-target-source", () => ({ serverConnectorTargetEnabled: () => false }));
 vi.mock("../../apps/backend/src/services/server-http-target-execution", () => ({ serverHttpTargetEnabled: () => false }));
-vi.mock("../../apps/backend/src/services/production-runtime", async original => ({ ...await original<typeof import("../../apps/backend/src/services/production-runtime")>(), createServerJobIdempotentReceipt: m.create, bindServerJobWorkflowRun: m.bind, getServerProductionRuntime: () => ({ missions: { get: m.mission, save: m.save }, jobs: { get: m.job, put: m.jobPut }, events: { append: m.append } }) }));
+vi.mock("../../apps/backend/src/services/production-runtime", async original => ({ ...await original<typeof import("../../apps/backend/src/services/production-runtime")>(), createServerJobIdempotentReceipt: m.create, bindServerJobWorkflowRun: m.bind, getServerMissionEnvelope:m.readEnvelope,compareAndSwapServerMissionEnvelope:m.cas, getServerProductionRuntime: () => ({ missions: { get: m.mission, save: m.save }, jobs: { get: m.job, put: m.jobPut,list:m.list }, events: { append: m.append } }) }));
 vi.mock("../../apps/backend/src/server-env", async (original) => ({ ...await original<typeof import("../../apps/backend/src/server-env")>(), serverAiConfigured: () => true }));
+vi.mock("workflow/runtime",()=>({getWorld:()=>({runs:{get:m.readRun}})}));
 vi.mock("workflow/api", () => ({ start: m.start, getRun: m.getRun }));
 vi.mock("../../workflows/evolution-mission", () => ({ evolutionMissionWorkflow: vi.fn() }));
 vi.mock("../../apps/backend/src/services/security-policy", () => ({ requireGovernedEvolutionPermission: vi.fn(async () => undefined) }));
@@ -60,6 +61,11 @@ beforeEach(() => {
   m.mission.mockImplementation(async () => structuredClone(stored));
   m.save.mockImplementation(async (p: EvolveProject) => { stored = EvolveProjectSchema.parse(JSON.parse(JSON.stringify(p))); });
   m.job.mockResolvedValue(job);
+  m.list.mockResolvedValue([]);
+  let revision=29;
+  m.readEnvelope.mockImplementation(async()=>missionEnvelope(stored,revision));
+  m.cas.mockImplementation(async(next:MissionEnvelope)=>{if(next.revision!==revision)throw new Error("test CAS conflict");revision++;stored=next.payload;return {...next,revision};});
+  m.readRun.mockImplementation(async(runId:string)=>({runId,status:"running"}));
   m.probe.mockResolvedValue({ ready: true, status: "ready" });
   m.ai.mockRejectedValueOnce(new Error("independent model timeout")).mockImplementation(async (_role: string, payload: { mode?: string }) => {
     const score = payload.mode === "server-baseline" ? 60 : 92;
@@ -89,6 +95,7 @@ describe("explicit durable run restores the stored Experiment Judge checkpoint",
   it.each(["present", "temporarily-unavailable", "wrong-world"] as const)("dispatches a new explicit attempt after an unavailable run finishes and reuses a lost acknowledgement (%s)", async (lookup) => {
     await paused(); const firstVersion = structuredClone(stored);
     const jobs = new Map<string, typeof job>();
+    m.list.mockImplementation(async()=>[...jobs.values()]);
     m.create.mockImplementation(async (j: typeof job) => {
       const prior = [...jobs.values()].find(x => x.idempotencyKey === j.idempotencyKey);
       if (prior) return { job: prior, reused: true };
@@ -134,6 +141,7 @@ describe("explicit durable run restores the stored Experiment Judge checkpoint",
     expect(stored.updatedAt).not.toBe(firstVersion.updatedAt);
     expect(stored.experimentRun).toEqual(firstVersion.experimentRun);
     const nextVersion = structuredClone(stored);
+    m.readRun.mockImplementation(async(runId:string)=>({runId,status:runId==="run-1"?"completed":"running"}));
     vi.setSystemTime(new Date(Date.parse(at) + 120_000));
     m.probe.mockResolvedValue({ ready: true, status: "ready" });
     const secondReceipt = await retryStoredServerExperiment(nextVersion);

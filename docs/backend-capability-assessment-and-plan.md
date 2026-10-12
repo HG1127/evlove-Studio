@@ -1,5 +1,12 @@
 # Backend Capability Assessment and Delivery Plan
 
+## 2026-10-12 — Explicit failed Workflow retry (development verified)
+
+The query fix is deployed at main/production `bd6264067196addefdbec388b54211cef4653545`; public before/after reads at 11:09 UTC agree. Its earlier exact-query-commit complete local CI passed 336 files / 2798 tests plus Runner, Chromium E2E and UI smoke.
+
+[Failed-control retry handoff](workflow-failed-control-retry-handoff.md) adds a normal governed retry action with deterministic identity, metadata-only actual terminal checks, Mission-envelope atomic ownership and a frontend recovery entry. The new branch passed 21 relevant files / 337 tests, architecture, full lint, TypeScript and production build. Its own complete exact-commit CI and deployment are pending. The old failed Job/Run remains unchanged; no new real task was started from undeployed source. Paired Hidden, Gate F and exact accepted download/reopen remain unproven.
+
+
 ## 2026-10-12 — Real Workflow Event readback blocker
 
 The three runtime approvals are now explicit. Production operator access and independent Vault storage were restored; the saved direct MiniMax connection passed native structured-output checks at revision 2. Exact original/frozen preflight hashes were verified. The actual new Run failed during initialization: its inserted Event could not be read back because standalone scalar filters added literal double quotes. The Job's persisted running label does not establish a live Run.

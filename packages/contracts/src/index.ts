@@ -33,3 +33,5 @@ export * from "./ai-model-contract";
 export * from "./compatible-responses-contract";
 export * from "./compatible-chat-contract";
 export * from "./candidate-construction";
+
+export * from "./workflow-control-owner-contract";

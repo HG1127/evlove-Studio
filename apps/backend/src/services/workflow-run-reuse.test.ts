@@ -5,8 +5,9 @@ import {EvolutionJobSchema,type EvolveProject,type EvolutionJob} from "@evolutio
 import {acceptedPackageFixture} from "@evolution/testkit";
 import route from "../../server/api/evolution/start.post";
 
-const mocks=vi.hoisted(()=>({start:vi.fn(),getRun:vi.fn(),create:vi.fn(),bind:vi.fn(),readPrior:vi.fn(),runtime:vi.fn(),save:vi.fn(),put:vi.fn(),append:vi.fn(),cancel:vi.fn()}));
+const mocks=vi.hoisted(()=>({start:vi.fn(),getRun:vi.fn(),readRun:vi.fn(),create:vi.fn(),bind:vi.fn(),readPrior:vi.fn(),runtime:vi.fn(),save:vi.fn(),put:vi.fn(),append:vi.fn(),cancel:vi.fn()}));
 vi.mock("workflow/api",()=>({start:mocks.start,getRun:mocks.getRun}));
+vi.mock("workflow/runtime",()=>({getWorld:()=>({runs:{get:mocks.readRun}})}));
 vi.mock("../../../../workflows/evolution-mission",()=>({evolutionMissionWorkflow:vi.fn()}));
 vi.mock("./security-policy",()=>({requireGovernedEvolutionPermission:vi.fn(async()=>undefined)}));
 vi.mock("./production-runtime",async(original)=>({...await original<typeof import("./production-runtime")>(),getServerProductionRuntime:mocks.runtime,createServerJobIdempotentReceipt:mocks.create,bindServerJobWorkflowRun:mocks.bind,getServerJobByIdempotencyKey:mocks.readPrior}));
@@ -18,9 +19,10 @@ beforeEach(()=>{
  mission=structuredClone(acceptedPackageFixture().project);
  mission.updatedAt=at;
  prior=EvolutionJobSchema.parse({schemaVersion:"job-v1",id:"workflow-control-fixture",missionId:mission.id,type:"campaign",status:"queued",label:"Workflow",idempotencyKey:`workflow-control:${mission.id}:request-key`,generation:1,attempts:0,priority:70,outputRef:runId,createdAt:at,updatedAt:at});
- mocks.runtime.mockReturnValue({missions:{get:vi.fn(async()=>mission),save:mocks.save},jobs:{get:vi.fn(async()=>prior),put:mocks.put},events:{append:mocks.append}});
+ mocks.runtime.mockReturnValue({missions:{get:vi.fn(async()=>mission),save:mocks.save},jobs:{get:vi.fn(async()=>prior),list:vi.fn(async()=>[prior]),put:mocks.put},events:{append:mocks.append}});
  mocks.create.mockImplementation(async()=>({job:prior,reused:true}));
  mocks.readPrior.mockImplementation(async()=>prior);
+ mocks.readRun.mockResolvedValue({runId,status:"running",get input(){throw new Error("USER_INPUT_READ_FORBIDDEN");},get output(){throw new Error("USER_OUTPUT_READ_FORBIDDEN");}});
  mocks.getRun.mockReturnValue({exists:Promise.resolve(true),get status(){throw new Error("USER_PAYLOAD_STATUS_READ_FORBIDDEN");},cancel:mocks.cancel});
 });
 function request(kind:"normal"|"scheduled"|"remeasure"){
@@ -56,8 +58,26 @@ describe.each(["normal","scheduled","remeasure"] as const)("current-World %s Wor
   mocks.getRun.mockReturnValue({exists:Promise.resolve("true"),cancel:mocks.cancel});
   const event=request(kind);expect(await route(event)).toMatchObject({error:expect.any(String),controlJobId:prior.id});expect(event.res.status).toBe(503);noNewExecution();
  });
- it("replays a present binding using metadata presence only",async()=>{
+ it("replays a present binding using metadata presence and status only",async()=>{
   const event=request(kind),before=structuredClone({mission,prior});expect(await route(event)).toMatchObject({controlJobId:prior.id,runId,reused:true,status:"queued"});
-  expect(mocks.getRun).toHaveBeenCalledOnce();expect(mocks.getRun).toHaveBeenCalledWith(runId);expect({mission,prior}).toEqual(before);noNewExecution();
+  expect(mocks.getRun).toHaveBeenCalledOnce();expect(mocks.getRun).toHaveBeenCalledWith(runId);
+  expect(mocks.readRun).toHaveBeenCalledWith(runId,{resolveData:"none"});expect({mission,prior}).toEqual(before);noNewExecution();
  });
+ it.each(["failed","cancelled"])("rejects an existing %s Run even when the Job still says queued",async(status)=>{
+  mocks.readRun.mockResolvedValue({runId,status});
+  const event=request(kind),before=structuredClone({mission,prior});const result=await route(event);
+  expect(event.res.status).toBe(409);expect(result).toMatchObject({error:expect.any(String),controlJobId:prior.id});
+  expect({mission,prior}).toEqual(before);noNewExecution();
+ });
+ it.each(["pending","running","completed"])("retains idempotent acknowledgement for %s without a new execution",async(status)=>{
+  mocks.readRun.mockResolvedValue({runId,status});
+  const event=request(kind);expect(await route(event)).toMatchObject({controlJobId:prior.id,runId,reused:true});
+  expect(mocks.readRun).toHaveBeenCalledWith(runId,{resolveData:"none"});noNewExecution();
+ });
+ it.each([{runId:"foreign",status:"running"},{runId,status:"unknown"}])("rejects invalid or foreign metadata %o without reuse",async(metadata)=>{
+  mocks.readRun.mockResolvedValue(metadata);
+  const event=request(kind);expect(await route(event)).toMatchObject({error:expect.any(String)});
+  expect(event.res.status).toBe(503);noNewExecution();
+ });
+
 });

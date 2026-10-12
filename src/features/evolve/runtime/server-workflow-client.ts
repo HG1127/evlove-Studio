@@ -1,6 +1,7 @@
 import {
   EvolutionBackendHealthSchema,
   EvolutionWorkflowCapabilitiesSchema,
+  EvolutionWorkflowStartRequestSchema,
   EvolutionWorkflowStartResponseSchema,
   EvolutionWorkflowStatusQuerySchema,
   EvolutionWorkflowStatusResponseSchema,
@@ -10,6 +11,7 @@ import {
   ServerAiRuntimeHealthSchema,
   type EvolutionBackendHealth,
   type EvolutionWorkflowCapabilities,
+  type EvolutionWorkflowStartRequest,
   type EvolutionWorkflowStartResponse,
   type EvolveProject,
   type PublicReadinessSnapshot,
@@ -52,20 +54,18 @@ export async function checkPublicReadiness():Promise<PublicReadinessSnapshot>{
 
 export async function startServerEvolutionWorkflow(
   missionId:string,
-  options?:{scheduledFor?:string;idempotencyKey?:string;intent?:"remeasure-current-input";expectedMissionUpdatedAt?:string},
+  options?:Omit<EvolutionWorkflowStartRequest,"missionId">,
 ):Promise<EvolutionWorkflowStartResponse>{
+  const request=EvolutionWorkflowStartRequestSchema.parse({...options,missionId});
   const data=await apiJson("/api/evolution/start",{
     method:"POST",
     headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({
-      missionId,
-      ...(options?.intent?{intent:options.intent,expectedMissionUpdatedAt:options.expectedMissionUpdatedAt}:{}),
-      ...(options?.scheduledFor?{scheduledFor:options.scheduledFor}:{}),
-      ...(options?.idempotencyKey?{idempotencyKey:options.idempotencyKey}:{}),
-    }),
+    body:JSON.stringify(request),
   });
   const receipt=EvolutionWorkflowStartResponseSchema.parse(data);
   if(receipt.missionId!==missionId)throw new Error("Workflow start Mission identity mismatch");
+  if(request.intent==="retry-failed-control"&&(receipt.controlJobId===request.retryOfControlJobId||receipt.runId===request.retryOfRunId))
+    throw new Error("Workflow retry must create a new control Job and Run");
   return receipt;
 }
 

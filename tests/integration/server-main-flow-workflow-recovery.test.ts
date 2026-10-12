@@ -5,20 +5,21 @@ import { retryStoredServerExperiment } from "../../src/features/evolve/runtime/s
 import startRoute from "../../apps/backend/server/api/evolution/start.post";
 import { checkpointServerMainFlowWait, serverMainFlowRecoveryDigest } from "../../apps/backend/src/services/server-main-flow-recovery";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CandidateSchema, EvolveProjectSchema, EvolutionJobSchema, EvolutionWorkflowRunInputSchema, InputUnderstandingSchema, type Candidate, type EvolveProject, type TestCase } from "@evolution/contracts";
+import { CandidateSchema, EvolveProjectSchema, EvolutionJobSchema, EvolutionWorkflowRunInputSchema, InputUnderstandingSchema, type MissionEnvelope,missionEnvelope,type Candidate, type EvolveProject, type TestCase } from "@evolution/contracts";
 import { buildServerHarnessPlan, serverBaselineFingerprint } from "@evolution/harness";
 import { experimentRecoveryAt as at, experimentRecoveryFixture } from "@evolution/testkit";
 import { runServerMissionExperiment } from "../../apps/backend/src/services/server-experiment";
 import { executeServerControlStep, planMissionStep } from "../../workflows/evolution-mission/steps";
-const m = vi.hoisted(() => ({ blobs: new Map<string, Blob>(), get: vi.fn(), put: vi.fn(), ai: vi.fn(), browser: vi.fn(), mission: vi.fn(), save: vi.fn(), job: vi.fn(), jobPut: vi.fn(), append: vi.fn(), probe: vi.fn(), start: vi.fn(), getRun: vi.fn(), create: vi.fn(), bind: vi.fn(), lookup: vi.fn() }));
+const m = vi.hoisted(() => ({ blobs: new Map<string, Blob>(), get: vi.fn(), put: vi.fn(), ai: vi.fn(), browser: vi.fn(), mission: vi.fn(), save: vi.fn(), job: vi.fn(), jobPut: vi.fn(), append: vi.fn(), probe: vi.fn(), start: vi.fn(), getRun: vi.fn(), create: vi.fn(), bind: vi.fn(), list: vi.fn(), readEnvelope: vi.fn(), cas: vi.fn(), readRun: vi.fn(), lookup: vi.fn() }));
 vi.mock("../../apps/backend/src/services/artifact-runtime", () => ({ getServerArtifactStore: () => ({ get: m.get, put: m.put }) }));
 vi.mock("../../apps/backend/src/services/ai-gateway", async (original) => ({ ...await original<typeof import("../../apps/backend/src/services/ai-gateway")>(), runServerAi: m.ai, serverAiScoringRouteFingerprint: () => "b".repeat(64) }));
 vi.mock("../../apps/backend/src/services/server-ai-health", () => ({ probeServerAiRuntime: m.probe }));
 vi.mock("../../apps/backend/src/services/server-html-artifact-execution", () => ({ serverHtmlArtifactTargetEnabled: () => true, runServerHtmlArtifactBatch: m.browser }));
 vi.mock("../../apps/backend/src/services/connector-target-source", () => ({ serverConnectorTargetEnabled: () => false }));
 vi.mock("../../apps/backend/src/services/server-http-target-execution", () => ({ serverHttpTargetEnabled: () => false }));
-vi.mock("../../apps/backend/src/services/production-runtime", async original => ({ ...await original<typeof import("../../apps/backend/src/services/production-runtime")>(), createServerJobIdempotentReceipt: m.create, getServerJobByIdempotencyKey: m.lookup, bindServerJobWorkflowRun: m.bind, getServerProductionRuntime: () => ({ missions: { get: m.mission, save: m.save }, jobs: { get: m.job, put: m.jobPut }, events: { append: m.append } }) }));
+vi.mock("../../apps/backend/src/services/production-runtime", async original => ({ ...await original<typeof import("../../apps/backend/src/services/production-runtime")>(), createServerJobIdempotentReceipt: m.create, getServerJobByIdempotencyKey: m.lookup, bindServerJobWorkflowRun: m.bind, getServerMissionEnvelope:m.readEnvelope,compareAndSwapServerMissionEnvelope:m.cas, getServerProductionRuntime: () => ({ missions: { get: m.mission, save: m.save }, jobs: { get: m.job, put: m.jobPut,list:m.list }, events: { append: m.append } }) }));
 vi.mock("../../apps/backend/src/server-env", async (original) => ({ ...await original<typeof import("../../apps/backend/src/server-env")>(), serverAiConfigured: () => true }));
+vi.mock("workflow/runtime",()=>({getWorld:()=>({runs:{get:m.readRun}})}));
 vi.mock("workflow/api", () => ({ start: m.start, getRun: m.getRun }));
 vi.mock("../../workflows/evolution-mission", () => ({ evolutionMissionWorkflow: vi.fn() }));
 vi.mock("../../apps/backend/src/services/security-policy", () => ({ requireGovernedEvolutionPermission: vi.fn(async () => undefined) }));
@@ -52,6 +53,11 @@ beforeEach(() => {
   m.mission.mockImplementation(async () => structuredClone(stored));
   m.save.mockImplementation(async (p: EvolveProject) => { stored = EvolveProjectSchema.parse(JSON.parse(JSON.stringify(p))); });
   m.job.mockResolvedValue(job);
+  m.list.mockResolvedValue([]);
+  let revision=29;
+  m.readEnvelope.mockImplementation(async()=>missionEnvelope(stored,revision));
+  m.cas.mockImplementation(async(next:MissionEnvelope)=>{if(next.revision!==revision)throw new Error("test CAS conflict");revision++;stored=next.payload;return {...next,revision};});
+  m.readRun.mockImplementation(async(runId:string)=>({runId,status:"running"}));
   m.getRun.mockReturnValue({exists:Promise.resolve(true)});
   m.probe.mockResolvedValue({ ready: true, status: "ready" });
   m.ai.mockRejectedValueOnce(new Error("independent model timeout")).mockImplementation(async (_role: string, payload: { mode?: string }) => {
@@ -436,6 +442,7 @@ describe("fresh measurement start identity", () => {
   it("reuses a lost response after the fresh intent has already advanced the Mission", async () => {
     stored = legacy(); const old = structuredClone(stored);
     const jobs = new Map<string, typeof job>();
+    m.list.mockImplementation(async()=>[...jobs.values()]);
     m.lookup.mockImplementation(async (key: string) => [...jobs.values()].find(j => j.idempotencyKey === key));
     m.create.mockImplementation(async (j: typeof job) => {
       const prior = [...jobs.values()].find(x => x.idempotencyKey === j.idempotencyKey);
