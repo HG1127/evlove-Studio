@@ -35,3 +35,5 @@ export * from "./compatible-chat-contract";
 export * from "./candidate-construction";
 
 export * from "./workflow-control-owner-contract";
+
+export * from "./html-protection-proof-contract";

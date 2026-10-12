@@ -51,3 +51,4 @@ export * from "./html-candidate-protection";
 export * from "./html-document-observation";
 
 export * from "./baseline-comparison-phase";
+export * from "./html-protection-proof";

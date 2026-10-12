@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { HtmlProtectionProofSchema } from "./html-protection-proof-contract";
 import {ServerWorkflowControlOwnerSchema} from "./workflow-control-owner-contract";
 import { GitRepositoryBindingSchema, GitTargetSnapshotBindingSchema } from "./git-target-contract";
 import {ConnectorCandidateBindingSchema,ConnectorTargetBindingSchema,ConnectorTargetSnapshotBindingSchema} from "./connector-contract";
@@ -496,6 +497,7 @@ export const TestCaseSchema = z.object({
 export type TestCase = z.infer<typeof TestCaseSchema>;
 
 export const TargetRunResultSchema = z.object({
+  htmlProtectionProof: HtmlProtectionProofSchema.optional(),
   artifactHash:z.string().optional(),
   screenshots:z.array(z.object({name:z.string(),width:z.number(),height:z.number(),dataUrl:z.string(),artifactHash:z.string()})).optional(),
   visualEvidenceRefs:z.array(z.object({name:z.string(),width:z.number(),height:z.number(),artifactHash:z.string(),blobId:z.string()})).optional(),
