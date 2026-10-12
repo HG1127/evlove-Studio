@@ -2,12 +2,16 @@
 import vm from "node:vm";
 import { describe, expect, it } from "vitest";
 import { VERCEL_SANDBOX_ISOLATED_BROWSER_OBSERVER_SCRIPT } from "./vercel-sandbox-browser-isolated-observer";
-class SyntheticShadowRoot { constructor(public host: SyntheticElement) {} }
+class SyntheticShadowRoot {
+  host: SyntheticElement;
+  constructor(host: SyntheticElement) { this.host = host; }
+}
 class SyntheticElement {
   parentElement: SyntheticElement | null = null;
   assignedSlot: SyntheticElement | null = null;
   root: object = {};
-  constructor(public opacity: number) {}
+  opacity: number;
+  constructor(opacity: number) { this.opacity = opacity; }
   getRootNode() { return this.root; }
   getBoundingClientRect() { return { width: 80 }; }
 }
