@@ -39,3 +39,5 @@ export * from "./workflow-control-owner-contract";
 export * from "./html-protection-proof-contract";
 
 export * from "./browser-step-contract";
+
+export * from "./html-protection-snapshot-contract";
