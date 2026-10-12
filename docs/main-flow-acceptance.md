@@ -1,5 +1,10 @@
 # Main flow acceptance
 
+## 2026-10-13 — Independent whole protection settlement scope
+
+[Protection scope handoff](html-protection-scope-handoff.md) closes tag/static/format score upgrades, preserves actual native assertion failures and narrow format-only proof, and versions all affected score/evidence caches. Root28-file /340 tests plus architecture/full lint/production build passed. Acceptance/delivery closure and a new integrated complete gate remain pending. Actual Mission43 and fb3a9b5 production are not upgraded; complete collector, same-Hidden, Gate F and identical accepted download/reopen remain required.
+
+
 ## 2026-10-13 — Closed hover control (local validation)
 
 [Hover execution handoff](html-browser-hover-handoff.md) adds a strict selector-only action, zero assertions, one native locator call and an absolute dispatch/completion deadline. The final21-file regression passed335 tests plus architecture/full lint/TypeScript production build. All49 synthetic local Chromium cases matched their positive/negative expected states. Independent review closed expired deferred dispatch; failed attempts are preserved. Runner integration and a new complete exact-commit gate must be recorded independently.
