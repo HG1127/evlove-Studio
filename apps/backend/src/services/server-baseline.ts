@@ -144,7 +144,7 @@ export async function runServerMissionBaseline(project: EvolveProject) {
         criterionIds: testCase.criterionIds,
         evidenceScope: testCase.evidenceScope,
       })),
-      evidenceInstruction: "Inspect the current Baseline artifact only against its listed current criterion IDs. SYS-PAIRWISE relative improvement is deferred until Candidate comparison. For mixed papers record the current arm content observations; do not claim the future comparison or mark otherwise readable current content unavailable because no Candidate exists. Absent required content in complete readable document text is an observed current-product deficiency; report it concretely for independent judging. UNVERIFIED is for unavailable relevant content or runtime capability only. Never infer future Candidate behavior.",
+      evidenceInstruction: "Inspect the current Baseline artifact only against its listed current criterion IDs. Candidate-only relative improvement/protection comparisons omitted from the listed current criterion IDs are deferred until Candidate comparison. For mixed papers record the current arm content observations; do not claim the future comparison or mark otherwise readable current content unavailable because no Candidate exists. Absent required content in complete readable document text is an observed current-product deficiency; report it concretely for independent judging. UNVERIFIED is for unavailable relevant content or runtime capability only. Never infer future Candidate behavior.",
       variant: null,
     }),
     executeStoredEvidence: runServerCurrentStoredEvidence,

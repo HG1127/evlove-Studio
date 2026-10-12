@@ -265,9 +265,9 @@ export type ServerAiConfig=
   | {mode:"vercel-gateway";model:string;timeoutMs:number}
   | {mode:"openai-compatible";apiKey:string;model:string;baseUrl:string;timeoutMs:number;protocol?:"chat-completions"|"responses";responseFormat?:"json-schema"|"json-object"|"prompt-json"};
 
-function serverAiTimeoutMs(){
+export function serverAiTimeoutMs(defaultMs=90_000){
   const timeoutRaw=value(process.env.EVOLUTION_AI_TIMEOUT_MS,process.env.OPENAI_TIMEOUT_MS);
-  return Math.max(10_000,Math.min(Number(timeoutRaw||"90000")||90_000,300_000));
+  return Math.max(10_000,Math.min(Math.floor(Number(timeoutRaw)||defaultMs),300_000));
 }
 
 export function serverAiOidcAvailable(){

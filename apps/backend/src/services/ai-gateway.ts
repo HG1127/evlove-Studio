@@ -62,7 +62,7 @@ import {resolveServerAiConfig} from "./server-ai-connection";
 
 export type ServerAiOperation=AiOperation;
 export const DIRECT_AI_SCHEMA_INSTRUCTION_VERSION="exact-schema-instructions-v1";
-export const DIRECT_AI_SCHEMA_RECOVERY_VERSION="schema-feedback-once-v1";
+export const DIRECT_AI_SCHEMA_RECOVERY_VERSION="schema-feedback-once-v2-judge-json";
 /** Public scoring-route identity; API keys and timeout settings are deliberately excluded. */
 export async function serverAiScoringRouteFingerprint(): Promise<string | undefined> {
   const config = await resolveServerAiConfig();
@@ -80,7 +80,7 @@ export async function serverAiScoringRouteFingerprint(): Promise<string | undefi
 }
 
 type StructuredSchema={name:string;schema:Record<string,unknown>};
-type Contract<T>={schema:StructuredSchema;parser:ZodType<T>;instruction:string};
+type Contract<T>={schema:StructuredSchema;parser:ZodType<T>;instruction:string;allowCompletedJsonCorrection?:boolean};
 export type ServerAiMedia={imageDataUrls?:string[]};
 type ParsedImage={dataUrl:string;base64:string;mediaType:string};
 const MAX_AI_IMAGES=4;
@@ -125,7 +125,7 @@ function contract(operation:ServerAiOperation):Contract<unknown>{
   if(operation==="evaluate-population")return{schema:jsonSchemas.evaluatePopulation,parser:PopulationEvaluationAiResultSchema,instruction:"Compare the candidate population only from measured evidence. Score every candidate and enforce hard gates/safety without treating missing evidence as product failure."};
   if(operation==="artifact-acceptance")return{schema:jsonSchemas.artifactAcceptance,parser:ArtifactAcceptanceAiResultSchema,instruction:"Perform Gate F acceptance on exact supplied Candidate artifacts. Return every supplied criterion result and truthful coverage/integrity/pairwise/hard-gate conclusions."};
   if(operation==="materialize")return{schema:jsonSchemas.materialize,parser:MaterializeAiResultSchema,instruction:"Materialize only supplied accepted content, preserving sourceArtifactId and exact accepted content. Do not regenerate a different deliverable or claim unsupported binary fidelity."};
-  if(operation==="evaluate")return{schema:jsonSchemas.evaluate,parser:EvaluateAiResultSchema,instruction:"Act as an independent evidence judge. Score only supplied current-artifact runs/criteria. Missing evidence is not product failure and must not be invented."};
+  if(operation==="evaluate")return{schema:jsonSchemas.evaluate,parser:EvaluateAiResultSchema,allowCompletedJsonCorrection:true,instruction:"Act as an independent evidence judge. Score only supplied current-artifact runs/criteria. Missing evidence is not product failure and must not be invented."};
   if(operation==="problem-analysis")return{schema:jsonSchemas.problemAnalysis,parser:ProblemAnalysisAiResultSchema,instruction:"Analyze measured Baseline and current artifact evidence. Return only concrete user/business problems supported by supplied evidence; capability limitations are not product defects."};
   if(operation==="diagnose")return{schema:jsonSchemas.diagnosis,parser:DiagnosisAiResultSchema,instruction:"Diagnose the selected problem from supplied Baseline/source/traces. Give evidence, counter-evidence and falsifier; do not invent implementation facts."};
   if(operation==="plan")return{schema:jsonSchemas.plan,parser:PlanAiResultSchema,instruction:"Generate a small diverse Candidate population for the selected diagnosed problem. Ground every design rationale in supplied evidence and never claim measured improvement before experiment."};
@@ -182,7 +182,7 @@ async function callVercelGateway<T>(args:{
 }
 
 function directSystem<T>(contract:Contract<T>,correcting=false){
-  const feedback=correcting?"\nThe preceding response was rejected by the task schema. Return the complete root object with required fields "+JSON.stringify(contract.schema.schema.required??[])+". Preserve supplied evidence and identities; never invent facts or verification. This is one structural correction, not permission to change the task.":"";
+  const feedback=correcting?"\nThe preceding response was rejected by the task schema. Return the complete root object with required fields "+JSON.stringify(contract.schema.schema.required??[])+". Preserve supplied evidence and identities; never invent facts or verification. This is one structural correction, not permission to change the task. Return a single complete valid JSON object; escape newlines, quotes and control characters inside JSON strings.":"";
   const base=SYSTEM+"\n\nTask: "+contract.instruction+feedback;
   // Compatible providers may accept response_format without enforcing its schema.
   return base+"\nReturn JSON matching this exact schema:\n"+JSON.stringify(contract.schema.schema);
@@ -282,9 +282,13 @@ async function structured<T>(payload:unknown,schema:Contract<T>,media?:ServerAiM
       }
     };
     try{return await invoke(false);}catch(error){
-      // Only a completed, structurally invalid task object may receive one correction.
-      // Custom semantic checks, transport failures and nonfinal output are never regenerated.
-      if(!(error instanceof DirectAiSchemaMismatchError)||!error.correctableShape)throw error;
+      // One correction shares the captured evidence, protocol, format and deadline.
+      // A completed independent Judge reply may correct JSON syntax; Candidate
+      // generation, nonfinal/refused output, transport and semantic rejections may not.
+      const invalidJudgeJson = schema.allowCompletedJsonCorrection
+        && (error as {code?:string}).code === "AI_OUTPUT_INVALID_JSON";
+      const invalidShape = error instanceof DirectAiSchemaMismatchError && error.correctableShape;
+      if(!invalidShape && !invalidJudgeJson)throw error;
       if(signal.aborted)throw Object.assign(new Error("模型结构纠正前请求已超时。"),{code:"AI_REQUEST_TIMEOUT"});
       return await invoke(true);
     }

@@ -1,5 +1,6 @@
 import type { EvaluationResult, EvolveProject, TargetRunResult, TestCase, ValidationRun } from "@evolution/contracts";
 import { indexUniqueById } from "./identity-index";
+import { baselineDeferredComparisonCriterionIds } from "./baseline-comparison-phase";
 
 /** Baseline is usable for diagnosis only when real, sufficiently complete evidence exists. */
 export function baselineReadiness(project: EvolveProject) {
@@ -7,7 +8,7 @@ export function baselineReadiness(project: EvolveProject) {
   const supportedModes = project.targetConnection.adapter === "http"
     ? new Set(project.evalSuite.map((testCase) => testCase.executionMode))
     : new Set(["artifact-runtime", "static-evidence", "roundtrip", ...(project.targetConnection.adapter === "artifact" ? ["external-runner"] : [])]);
-  const comparisonOnly = new Set(project.acceptanceRubric.filter((criterion) => criterion.id === "SYS-PAIRWISE").map((criterion) => criterion.id));
+  const comparisonOnly = baselineDeferredComparisonCriterionIds(project);
   const requiredCases = project.evalSuite.filter((testCase) => supportedModes.has(testCase.executionMode)
     && !(testCase.criterionIds.length > 0 && testCase.criterionIds.every((id) => comparisonOnly.has(id))));
   const requiredCaseIndex = indexUniqueById(requiredCases, (testCase) => testCase.id);
