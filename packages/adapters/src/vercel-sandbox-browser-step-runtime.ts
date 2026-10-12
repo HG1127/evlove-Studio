@@ -29,7 +29,7 @@ function validateFixedBrowserStep(step) {
     else if(step.mode==="identity-transform")keys.push("tolerance");
     else if(step.mode==="parent-relative")keys.push("relativeTo","min","max");
     else throw browserCapabilityError("Unknown computed-style mode");
-  }else if(step.action!=="scroll-into-view")throw browserCapabilityError("Unknown browser action");
+  }else if(!["scroll-into-view","hover"].includes(step.action))throw browserCapabilityError("Unknown browser action");
   if(Object.keys(step).some(key=>!keys.includes(key)))throw browserCapabilityError("Unsupported browser operation field");
 }
 
@@ -53,8 +53,32 @@ async function setFixedBrowserViewport(page,step) {
     return {operation:"viewport",width:step.width,height:step.height};
   }catch(error){throw browserCapabilityError("Trusted viewport control unavailable: "+String(error));}
   finally{clearTimeout(timer);}
-}async function runFixedTypedBrowserStep({page,context,locator,step,clipboardProbeUrl}) {
+}
+async function hoverFixedBrowserTarget(page,locator) {
+  let timer,expired=false;
+  const deadline=Date.now()+7000;
+  const bounded=new Promise((_,reject)=>{timer=setTimeout(()=>{
+    expired=true;void Promise.resolve().then(()=>page.close?.()).catch(()=>{});
+    reject(browserCapabilityError("Trusted hover control exceeded its action deadline"));
+  },7000);});
+  try {
+    if(typeof locator?.hover!=="function")throw browserCapabilityError("Trusted locator hover is unavailable");
+    await Promise.race([Promise.resolve().then(()=>{
+      const remaining=deadline-Date.now();
+      if(expired||remaining<=0){
+        expired=true;void Promise.resolve().then(()=>page.close?.()).catch(()=>{});
+        throw browserCapabilityError("Trusted hover control reached its deadline before dispatch");
+      }
+      return locator.hover({timeout:remaining});
+    }),bounded]);
+    if(expired||Date.now()>=deadline)throw browserCapabilityError("Trusted hover control completed after its action deadline");
+    return {operation:"hover"};
+  }catch(error){throw browserCapabilityError("Trusted hover control unavailable: "+String(error));}
+  finally{clearTimeout(timer);}
+}
+async function runFixedTypedBrowserStep({page,context,locator,step,clipboardProbeUrl}) {
   if(step.action==="viewport")return setFixedBrowserViewport(page,step);
+  if(step.action==="hover")return hoverFixedBrowserTarget(page,locator);
   if(step.action==="scroll-into-view") {await locator.scrollIntoViewIfNeeded({timeout:7000});return {operation:"scroll-into-view"};}
   if(step.action==="in-viewport") {
     const ratio=step.ratio??0,expected=step.expected??true;

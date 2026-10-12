@@ -28,7 +28,7 @@ describe("vercel sandbox adapter boundaries",()=>{
     expect(getVercelSandboxPolicyCapabilities()).toEqual({
       codeReady:true,
       runtimeImage:"vercel/sandbox/universal:latest",
-      browserRuntimeVersion:"pw-1.63.0-v4-typed-isolated-viewport",
+      browserRuntimeVersion:"pw-1.63.0-v5-typed-hover",
       playwrightVersion:"1.63.0",
       ephemeral:true,
       persistent:false,

@@ -32,8 +32,8 @@ const SANDBOX_MAX_COMMAND_TIMEOUT_MS=15*60_000;
 const SANDBOX_MAX_ARCHIVE_FILES=2500;
 const SANDBOX_MAX_FILE_BYTES=20*1024*1024;
 const SANDBOX_MAX_EXTRACTED_BYTES=100*1024*1024;
-const BROWSER_RUNTIME_NAME="evolution-browser-pw163-v4-typed-isolated-viewport";
-const BROWSER_RUNTIME_VERSION="pw-1.63.0-v4-typed-isolated-viewport";
+const BROWSER_RUNTIME_NAME="evolution-browser-pw163-v5-typed-hover";
+const BROWSER_RUNTIME_VERSION="pw-1.63.0-v5-typed-hover";
 const BROWSER_SNAPSHOT_TTL_MS=7*24*60*60*1000;
 const BROWSER_PORT=4173;
 

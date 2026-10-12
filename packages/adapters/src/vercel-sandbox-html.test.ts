@@ -28,6 +28,7 @@ describe("standalone HTML Sandbox transport", () => {
   });
   it.each([
     { action: "viewport", selector: "html", width: 390, height: 844 },
+    { action: "hover", selector: "#actual" },
     { action: "scroll-into-view", selector: "#actual" },
     { action: "computed-style", selector: "#actual", property: "opacity", mode: "numeric-range", min: 0.99, max: 1 },
     { action: "checked", selector: "#actual", checked: true },

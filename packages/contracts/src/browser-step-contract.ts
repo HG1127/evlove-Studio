@@ -18,6 +18,7 @@ const ViewportSchema = z.object({
   action: z.literal("viewport"), selector: z.literal("html"),
   width: z.number().int().min(240).max(2560), height: z.number().int().min(240).max(2560),
 }).strict();
+const HoverSchema = z.object({ action: z.literal("hover"), selector }).strict();
 const ScrollIntoViewSchema = z.object({ action: z.literal("scroll-into-view"), selector }).strict();
 const InViewportSchema = z.object({
   action: z.literal("in-viewport"), selector,
@@ -62,7 +63,7 @@ const CopyTextSchema = z.object({ action: z.literal("copy-text"), selector, valu
 
 /** Closed typed operations. No supplied JS, evaluate, callbacks or regex fields. */
 const BrowserStepUnionSchema = z.union([
-  LegacyBrowserStepSchema, ViewportSchema, ScrollIntoViewSchema, InViewportSchema, AttributeSchema,
+  LegacyBrowserStepSchema, ViewportSchema, HoverSchema, ScrollIntoViewSchema, InViewportSchema, AttributeSchema,
   CheckedSchema, ScrollPositionSchema, CssLiteralSchema, CssRangeSchema, CssIdentitySchema,
   CssRelativeSchema, CopyTextSchema,
 ]);

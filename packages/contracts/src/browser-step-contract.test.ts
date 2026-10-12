@@ -12,6 +12,7 @@ describe("bounded additive browser operation contract", () => {
   ])("preserves legacy $action JSON", step => expect(BrowserStepSchema.parse(step)).toEqual(step));
 
   it.each([
+    { action: "hover", selector: "#card" },
     { action: "scroll-into-view", selector: "#card" },
     { action: "in-viewport", selector: "#card", ratio: 0.5, expected: true },
     { action: "in-viewport", selector: "#menu", expected: false },
@@ -38,6 +39,10 @@ describe("bounded additive browser operation contract", () => {
     expect(TestCaseSchema.safeParse({ ...paper, browserSteps: Array(25).fill(step) }).success).toBe(false);
   });
   it.each([
+    { action: "hover", selector: "#card", value: "arbitrary" },
+    { action: "hover", selector: "#card", position: { x: 1, y: 1 } },
+    { action: "hover", selector: "#card", force: true },
+    { action: "hover", selector: "#card", timeout: 60_000 },
     { action: "evaluate", selector: "html", value: "process.exit()" },
     { action: "visible", selector: "body", evaluate: "arbitrary" },
     { action: "text", selector: "body", value: "x", regex: true },
@@ -66,7 +71,7 @@ describe("bounded additive browser operation contract", () => {
     for (const action of ["visible", "text", "count", "in-viewport", "attribute", "checked", "scroll-position", "computed-style", "copy-text"] as const) {
       expect(browserStepHasAssertion({ action })).toBe(true);
     }
-    for (const action of ["click", "fill", "scroll-into-view", "viewport"] as const) expect(browserStepHasAssertion({ action })).toBe(false);
+    for (const action of ["click", "fill", "scroll-into-view", "viewport", "hover"] as const) expect(browserStepHasAssertion({ action })).toBe(false);
   });
 });
 

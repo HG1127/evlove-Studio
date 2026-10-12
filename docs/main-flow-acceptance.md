@@ -1,5 +1,12 @@
 # Main flow acceptance
 
+## 2026-10-13 — Closed hover control (local validation)
+
+[Hover execution handoff](html-browser-hover-handoff.md) adds a strict selector-only action, zero assertions, one native locator call and an absolute dispatch/completion deadline. The final21-file regression passed335 tests plus architecture/full lint/TypeScript production build. All49 synthetic local Chromium cases matched their positive/negative expected states. Independent review closed expired deferred dispatch; failed attempts are preserved. Runner integration and a new complete exact-commit gate must be recorded independently.
+
+Earlier f1cccf4 passed the complete local gate (3380 tests,Runner65,E2E5), but latest production18:49 UTC remainsfb3a9b5. Actual Mission43 is Baselinefailed/paused, SDKcompleted/Jobwaiting after malformed Judge JSON. The finite snapshot/profile/full collector and fresh actual Experiment, same-Hidden, Gate F and exact accepted download/reopen remain required; this capability does not upgrade unknown obligations.
+
+
 ## 2026-10-13 — Closed browser execution and mobile viewport (local integration)
 
 [Browser protection runtime handoff](browser-html-protection-runtime-handoff.md) adds closed typed browser actions/observations and a bounded viewport action, with trusted isolated Chromium observations and a fresh Sandbox cache version. The integrated20-file regression passed308 tests with no failures or skips. Runner, architecture, full lint, build and a new complete gate remain separate checks.
