@@ -1,5 +1,10 @@
 # Main flow acceptance
 
+## 2026-10-12 — Full protection evidence foundations (development only)
+
+[Protection foundations](html-protection-evidence-foundations.md) add complete original-card/raw-source inventories, exact physical input/paper binding and an internal domain-separated execution attestation. The actual original has111cards; saved C1 retains them and adds3. Runtime coverage, semantic preservation, same-Hidden and Gate F remain unproven. These modules do not yet alter Workflow routes or settlement. Main fb3a9b5 contains the fully local-CI-verified Baseline/model fix and was actually observed serving production at15:42:49 UTC. Normal Run RCN is running on that main; the new protection foundation remains local. Original/current/Candidate execution and acceptance receipts are still required.
+
+
 ## 2026-10-12 — Original Baseline and live direct-model blockers (local increment)
 
 Mainfde3ef3 deployed the independently complete-CI-verified63981aa tree. Actual authorized RunR78 (Job workflow-control-0772c984-20a2-43cd-a769-cf91fe6a040d) measured complete source HTML and passed the exact-byte9-step cloud Chromium search. All3 semantic cases timed out; independent Judge produced malformed JSON. Mission38 is paused, SDK completed and Job waiting; fresh Experiment/Hidden/Gate F/download remain unproven.
