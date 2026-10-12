@@ -16,8 +16,8 @@ vi.mock("../../apps/backend/src/services/release-outcome-telemetry",()=>({record
 import route from "../../apps/backend/server/api/evolution/release-action.post";
 import {executeServerReleaseProvider} from "../../apps/backend/src/services/server-release-orchestration";
 const app=new H3().post("/release-action",route);
-function fixture(){
- const f=acceptedLegacyHtmlPaperFixture();
+function fixture(mode:Parameters<typeof acceptedLegacyHtmlPaperFixture>[1]="prior-generated"){
+ const f=acceptedLegacyHtmlPaperFixture(false,mode);
  f.project.releaseTarget={provider:"vercel",mode:"preview-promote",status:"connected",label:"Synthetic Release",healthPath:"/"};
  f.project.gates=[{id:"artifact-ready",status:"approved"},{id:"release-ready",status:"approved"}];
  f.project.release={...f.project.release,status:"idle",candidateId:f.current.id,deploymentId:"candidate-deployment",stableDeploymentId:"stable-deployment"};
@@ -53,5 +53,46 @@ describe("prior HTML paper cannot reuse an existing Release approval",()=>{
   const authorize=vi.fn(async()=>({ok:true}));
   const outcome=await runServerReleaseOrchestration(f.project,{execute,authorize});
   expect(execute).toHaveBeenCalledWith(expect.objectContaining({action:"rollback"}));expect(authorize).not.toHaveBeenCalled();expect(outcome.action).toBe("rollback");
+ });
+});
+
+describe("whole HTML scope cannot reuse stored accepted release permission",()=>{
+ it.each(["search","static","mixed"] as const)("blocks %s API shadow before approval, provider or writes",async mode=>{
+  const f=fixture(mode);mocks.get.mockResolvedValue(f.project);
+  const response=await app.fetch(new Request("http://localhost/release-action",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({missionId:f.project.id,candidateId:f.current.id,deploymentId:"candidate-deployment",action:"shadow"})}));
+  expect(response.status).toBe(409);expect(await response.text()).toContain("html-protection-scope-pending");
+  for(const call of [mocks.grant,mocks.execute,mocks.http,mocks.connector,mocks.prepare,mocks.save,mocks.append])expect(call).not.toHaveBeenCalled();
+ });
+ it.each(["vercel","http","connector"] as const)("blocks direct %s provider before I/O for mixed static/browser paper",async provider=>{
+  const f=fixture("mixed");f.project.releaseTarget!.provider=provider;
+  await expect(executeServerReleaseProvider(f.project,{action:"shadow",deploymentId:"candidate-deployment",artifactHashes:[]})).rejects.toThrow("html-protection-scope-pending");
+  for(const call of [mocks.execute,mocks.http,mocks.connector,mocks.prepare])expect(call).not.toHaveBeenCalled();
+ });
+ it("durably pauses before authorizing an otherwise accepted static paper",async()=>{
+  const f=fixture("static"),execute=vi.fn(),authorize=vi.fn(async()=>({ok:true}));
+  const outcome=await runServerReleaseOrchestration(f.project,{execute,authorize});
+  expect(outcome.control).toBe("stop");expect(outcome.reason).toContain("html-protection-scope-pending");
+  expect(outcome.project.campaign.stopReason).toBe(outcome.reason);expect(execute).not.toHaveBeenCalled();expect(authorize).not.toHaveBeenCalled();
+ });
+ it("retains rollback for whole-scope HTML even without complete protection acceptance",async()=>{
+  const f=fixture("mixed");mocks.execute.mockResolvedValue({ok:true,effectiveAction:"rollback"});
+  await expect(executeServerReleaseProvider(f.project,{action:"rollback",deploymentId:"stable-deployment",artifactHashes:[]})).resolves.toMatchObject({effectiveAction:"rollback"});
+  expect(mocks.execute).toHaveBeenCalledOnce();
+ });
+});
+describe("stored release terminal does not replace whole acceptance",()=>{
+ it("keeps a stored promoted healthy Candidate pending without authoritative protection",async()=>{
+  const f=fixture("search");f.project.release={...f.project.release,status:"promoted",healthy:true,evidenceMode:"live",observationStatus:"healthy"};
+  const execute=vi.fn(),authorize=vi.fn(async()=>({ok:true}));
+  const outcome=await runServerReleaseOrchestration(f.project,{execute,authorize});
+  expect(outcome.control).toBe("stop");expect(outcome.terminal).toBe(false);expect(outcome.reason).toContain("html-protection-scope-pending");
+  expect(outcome.project.campaign.stopReason).toBe(outcome.reason);expect(execute).not.toHaveBeenCalled();expect(authorize).not.toHaveBeenCalled();
+ });
+ it("retains observed healthy rollback terminal without claiming new Candidate acceptance",async()=>{
+  const f=fixture("mixed");f.project.release={...f.project.release,status:"rolled-back",healthy:true,evidenceMode:"live",observationStatus:"healthy"};
+  const execute=vi.fn(),authorize=vi.fn(async()=>({ok:true}));
+  const outcome=await runServerReleaseOrchestration(f.project,{execute,authorize});
+  expect(outcome.control).toBe("continue");expect(outcome.terminal).toBe(true);expect(outcome.project.release.status).toBe("rolled-back");
+  expect(execute).not.toHaveBeenCalled();expect(authorize).not.toHaveBeenCalled();
  });
 });

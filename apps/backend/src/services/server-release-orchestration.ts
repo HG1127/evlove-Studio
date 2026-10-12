@@ -1,5 +1,5 @@
 import type {ArtifactStorePort,EvolveProject,ReleaseAdapterResult,ReleaseOutcomeTelemetryStatus} from "@evolution/contracts";
-import {htmlProtectionContractBlocker,currentReleaseCandidate,projectUsesConnectorRelease,projectUsesHttpRelease} from "@evolution/core";
+import {htmlProtectionAcceptanceBlocker,currentReleaseCandidate,projectUsesConnectorRelease,projectUsesHttpRelease} from "@evolution/core";
 import {runServerReleaseOrchestration,type ServerReleasePorts} from "@evolution/harness";
 import {executeConnectorReleaseAction} from "./connector-release";
 import {releaseHttpTarget} from "./http-target-gateway";
@@ -14,7 +14,7 @@ export async function executeServerReleaseProvider(
   args:Parameters<ServerReleasePorts["execute"]>[0],
   artifactStore?:Pick<ArtifactStorePort,"get">,
 ){
-  const contractBlocker=args.action!=="rollback" && htmlProtectionContractBlocker(project);
+  const contractBlocker=args.action!=="rollback" && htmlProtectionAcceptanceBlocker(project);
   if(contractBlocker)throw new Error(contractBlocker);
   if(projectUsesConnectorRelease(project)){
     return executeConnectorReleaseAction(project,{
@@ -25,7 +25,10 @@ export async function executeServerReleaseProvider(
     });
   }
   if(projectUsesHttpRelease(project)){
-    const candidate=currentReleaseCandidate(project);
+    const candidate=args.action==="rollback"&&project.release.candidateId
+      ?project.candidates.find(item=>item.id===project.release.candidateId)
+        ??(project.searchChampion?.candidate?.id===project.release.candidateId?project.searchChampion.candidate:undefined)
+      :currentReleaseCandidate(project);
     if(!candidate)throw new Error("HTTP Release 找不到 exact Candidate");
     const connectionId=project.releaseTarget?.connectionId;
     if(!connectionId)throw new Error("HTTP Release 缺少独立 releaseTarget.connectionId");

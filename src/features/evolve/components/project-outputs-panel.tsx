@@ -1,6 +1,6 @@
 import { ArchiveRestore, Boxes, Download, ExternalLink, Eye, FileArchive, FileText, GitBranch, GitCompareArrows, History, PackageCheck, Rocket, RotateCcw, Trophy, X } from "lucide-react";
 import { useMemo, useState } from "react";
-import { htmlProtectionContractBlocker } from "@evolution/core";
+import { htmlProtectionAcceptanceBlocker } from "@evolution/core";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -155,7 +155,7 @@ export function ProjectOutputsPanel({ runtime }: { runtime: ProjectRuntime }) {
   const downloadOne = async (artifact: DownloadableArtifact, archival = false) => {
     try {
       if (artifact.kind === "primary" || artifact.frozenArtifact) {
-        const contractBlocker = !archival && htmlProtectionContractBlocker(project);
+        const contractBlocker = !archival && htmlProtectionAcceptanceBlocker(project);
         if (contractBlocker) throw new Error(contractBlocker);
         if (artifact.kind === "primary" && !artifact.accepted) throw new Error("此成果尚未通过验收，请先完成验证。");
         const blob = await readFrozenArtifact(artifact.frozenArtifact, artifact.content);
