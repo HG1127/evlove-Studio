@@ -18,11 +18,11 @@ import {
   candidateArtifactContext,
   candidateLocalEvidence,
   snapshotsForTest,
-  compactExperimentRunOutput,
   serverExperimentSemanticStatus,
   unavailableExperimentRun,
 } from "./server-experiment-evidence";
 import { normalizeLocallyVerifiableCandidateRuns } from "./candidate-snapshot-evidence";
+import { serverJudgeEvidence } from "./server-judge-evidence";
 import { indexUniqueBatchResults } from "./server-batch-results";
 
 export type ServerExperimentExecutionPorts = {
@@ -222,6 +222,11 @@ export async function judgeServerExperimentCandidate(
   const effectiveCriteria = judgeCriteria.filter((criterion) =>
     judgeCases.some((testCase) => testCase.criterionIds.includes(criterion.id)));
   if (!judgeCases.length || !effectiveCriteria.length) return deterministicOnlyEvaluation(project, testCases, runs);
+  const judgeEvidence = runs.filter(run => judgeCaseIds.has(run.testCaseId)).map(run => {
+    const testCase = testCases.find(item => item.id === run.testCaseId);
+    const query = `${testCase?.title ?? ""} ${testCase?.input ?? ""} ${(testCase?.expected ?? []).join(" ")}`;
+    return serverJudgeEvidence(run, query);
+  });
   const payload = {
     mode,
     candidate: { id: candidate.id },
@@ -242,22 +247,13 @@ export async function judgeServerExperimentCandidate(
       executionMode: testCase.executionMode,
       evidenceScope: testCase.evidenceScope,
     })),
-    runs: runs.filter((run) => judgeCaseIds.has(run.testCaseId)).map((run) => {
-      const testCase = testCases.find((item) => item.id === run.testCaseId);
-      const query = `${testCase?.title ?? ""} ${testCase?.input ?? ""} ${(testCase?.expected ?? []).join(" ")}`;
-      return {
-        testCaseId: run.testCaseId,
-        verificationStatus: run.verificationStatus,
-        outputChunks: [compactExperimentRunOutput(run.output, query)],
-        trace: run.trace.slice(0, 12).map((step) => ({ stage: step.stage, status: step.status, summary: step.summary })),
-      };
-    }),
+    runs: judgeEvidence.map(item => item.payload),
   };
   const ai = await ports.judge(payload);
   return settleAiEvaluation({
     criteria: project.acceptanceRubric,
     testCases,
-    runs,
+    runs: runs.map(run => judgeEvidence.find(item => item.run.testCaseId === run.testCaseId)?.run ?? run),
     ai,
     notes: [
       `Server Experiment：Candidate ${candidate.id} 已完成实际 Artifact 执行与独立 Judge。`,

@@ -47,3 +47,5 @@ export * from "./mission-blob-references";
 export * from "./exact-edits";
 
 export * from "./html-candidate-protection";
+
+export * from "./html-document-observation";

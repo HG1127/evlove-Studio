@@ -7,7 +7,7 @@ import { serverArtifactSha256 } from "./server-experiment-artifacts";
 const { blobs, run, visual } = vi.hoisted(() => ({ blobs: new Map<string, Blob>(), run: vi.fn(), visual: vi.fn() }));
 vi.mock("./artifact-runtime", () => ({ getServerArtifactStore: () => ({ get: async (id: string) => blobs.get(id) }) }));
 vi.mock("@evolution/adapters/sandbox", () => ({ runVercelSandboxHtmlValidation: run, runVercelSandboxCodebaseValidation: vi.fn() }));
-vi.mock("./server-http-target-execution", async (importOriginal) => ({ ...await importOriginal<typeof import("./server-http-target-execution")>(), serverHttpTargetEnabled: () => false }));
+vi.mock("./server-http-target-execution", async (importOriginal) => ({ ...await importOriginal<typeof import("./server-http-target-execution")>(), runServerHttpTargetBatch: vi.fn() }));
 vi.mock("./connector-target-source", () => ({ serverConnectorTargetEnabled: () => false }));
 vi.mock("./server-visual-evidence", () => ({ attachServerVisualEvidence: visual }));
 const original = '<html><body><p id="actual">完整原文件</p></body></html>';
@@ -27,6 +27,7 @@ async function candidate(project: EvolveProject) {
   return CandidateSchema.parse({ id: "evolved", name: "Current Candidate", change: "真实改进", artifactSnapshots: [{ id: "snapshot", sourceArtifactId: source.id, name: "evolved.html", mimeType: source.mimeType, content: evolved, contentHash: sha256, createdAt: source.createdAt, frozenArtifact: { sourceArtifactId: source.id, snapshotHash: sha256, blobId, name: "evolved.html", mimeType: source.mimeType, sha256, size: Buffer.byteLength(evolved), verifiedAt: source.createdAt, checks: [], limitations: [] } }] });
 }
 beforeEach(() => {
+  vi.stubEnv("EVOLUTION_TARGET_RUN_URL", ""); vi.stubEnv("EVOLVE_TARGET_RUN_URL", "");
   blobs.clear(); run.mockReset(); visual.mockReset();
   visual.mockImplementation(async (_project: EvolveProject, _cases: unknown, runs: unknown) => runs);
   run.mockImplementation(async (args: { expectedSha256: string; testCases: Array<{ id: string }> }) => ({ artifactHash: args.expectedSha256, scriptsRun: [], results: args.testCases.map((testCase) => ({ testCaseId: testCase.id, output: "actual browser assertions", latencyMs: 1, cost: 0, artifactHash: args.expectedSha256, verificationStatus: "verified", trace: [] })) }));
@@ -86,4 +87,25 @@ describe("server standalone HTML browser composition", () => {
     const result = await runServerHtmlArtifactBatch(fixture(), [testCase]);
     expect(result[0]!.verificationStatus).toBe("unverified");
   });
+});
+
+
+it("runs stored HTML from a historical runner-gateway connection when the server proxy is unconfigured",async()=>{
+  const project=fixture();
+  project.targetConnection={adapter:"http",status:"connected",connectionId:"runner-gateway",label:"Server Target Proxy"};
+  const result=await executeServerBaselineExternal(project,[testCase]);
+  expect(result[0]?.verificationStatus).toBe("verified");
+  expect(new TextDecoder().decode(run.mock.calls[0]![0].html)).toBe(original);
+  expect(project.targetConnection.adapter).toBe("http");
+});
+it("does not change a configured proxy or a nonhistorical HTTP connection",()=>{
+  const project=fixture();project.targetConnection={adapter:"http",status:"connected",connectionId:"runner-gateway",label:"Proxy"};
+  expect(serverHtmlArtifactTargetEnabled(project,{httpRunConfigured:false})).toBe(true);
+  expect(serverHtmlArtifactTargetEnabled(project,{httpRunConfigured:true})).toBe(false);
+  project.targetConnection.connectionId="customer-live-api";
+  expect(serverHtmlArtifactTargetEnabled(project,{httpRunConfigured:false})).toBe(false);
+  project.targetConnection.connectionId="runner-gateway";project.targetConnection.status="not-configured";
+  expect(serverHtmlArtifactTargetEnabled(project,{httpRunConfigured:false})).toBe(false);
+  project.targetConnection.status="connected";project.sourceArtifacts[0]!.extension="zip";
+  expect(serverHtmlArtifactTargetEnabled(project,{httpRunConfigured:false})).toBe(false);
 });

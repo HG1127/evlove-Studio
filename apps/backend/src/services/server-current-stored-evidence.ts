@@ -1,6 +1,7 @@
 import { decodeArtifactUtf8 } from "@evolution/adapters";
 import type { EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
 import { trustedServerBaselineChampion } from "@evolution/harness";
+import { serverHtmlStaticObservation } from "./server-html-static-observation";
 import { getServerArtifactStore } from "./artifact-runtime";
 import { serverArtifactSha256, verifyServerCandidateFrozenArtifact } from "./server-experiment-artifacts";
 import { extractServerStaticArtifactText, runServerFrozenArtifactStaticEvidence, serverStaticTextExtension } from "./server-static-artifact-evidence";
@@ -67,11 +68,12 @@ export async function runServerCurrentStoredEvidence({ project, testCase }: { pr
     }
     const text = await extractServerStaticArtifactText(extension, bytes);
     if (!text?.trim()) return unavailable(testCase, "当前文件没有受支持的静态文本索引。");
-    const complete = text.length <= MAX_OUTPUT_CHARS;
+    const htmlIndex = /^(html|htm)$/i.test(extension) ? serverHtmlStaticObservation(text) : undefined;
+    const complete = htmlIndex?.complete ?? (text.length <= MAX_OUTPUT_CHARS);
     const status: TargetRunResult["verificationStatus"] = complete && testCase.evidenceScope !== "product-behavior" ? "verified" : "partial";
     return {
       testCaseId: testCase.id,
-      output: `CURRENT SOURCE FILE STATIC EVIDENCE · SHA-256 ${sha256}\n${source.name} · ${extension}\n${text.slice(0, MAX_OUTPUT_CHARS)}\n${complete ? "已从实际上传文件读取受支持的静态文本索引。" : "文本索引超过输出预算，仅展示前段。"}\n静态证据不能证明真实交互、公式重算或视觉保真。`,
+      output: `CURRENT SOURCE FILE STATIC EVIDENCE · SHA-256 ${sha256}\n${source.name} · ${extension}\n${htmlIndex?.content ?? text.slice(0, MAX_OUTPUT_CHARS)}\n${complete ? "已从实际上传文件读取受支持的静态文本索引。" : "文本索引超过输出预算，仅展示前段。"}\n${htmlIndex?.limitation ?? ""}\n静态证据不能证明真实交互、公式重算或视觉保真。`,
       latencyMs: 0, cost: 0, verificationStatus: status, artifactHash: sha256,
       trace: [{ id: `server-current-file-${testCase.id}`, stage: "static-evidence", summary: "从当前 Source 文件字节建立静态索引", status: "pass", detail: JSON.stringify([source.id, blobId, sha256]) }],
     };

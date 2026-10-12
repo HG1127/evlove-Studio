@@ -6,7 +6,7 @@ import {executeServerExperimentCandidate} from "./server-experiment-runner";
 import {executeServerCurrentArtifactSuite} from "./server-current-artifact-runner";
 
 const quote="REFUND_APPROVAL_CASE 必须由主管批准并记录退款编号。";
-const html="<html><head><style>"+".presentation-style{color:red}\n".repeat(2500)+"</style></head><body>"+"<p>其他章节</p>".repeat(6000)+"<article>"+quote+"</article>"+"<p>后续附件</p>".repeat(6000)+"</body></html>";
+const html="<html><head><style>"+".presentation-style{color:red}\n".repeat(2500)+"</style></head><body>"+"<p>其他章节</p>".repeat(8000)+"<article>"+quote+"</article>"+"<p>后续附件</p>".repeat(8000)+"</body></html>";
 const source=SourceArtifactSchema.parse({id:"source",name:"sop.html",extension:"html",mimeType:"text/html",role:"target",artifactKind:"document",inputMode:"paste",parseStatus:"ready",textContent:html,size:html.length,createdAt:"2026-10-08T00:00:00.000Z"});
 const testCase=TestCaseSchema.parse({id:"H1",title:"退款审批",input:quote,expected:[quote],criterionIds:["CONTENT"],executionMode:"artifact-runtime",hidden:true});
 const project={id:"mission",version:"V1",goal:"细化流程",evolutionCommand:"细化流程",sourceArtifacts:[source],acceptanceRubric:[],evalSuite:[testCase],hiddenEvalSuite:[testCase]} as unknown as EvolveProject;
@@ -15,13 +15,13 @@ const candidate=CandidateSchema.parse({id:"C1",name:"candidate",change:"improve"
 describe("same-paper semantic source context",()=>{
   it("retrieves a late current-source body clause for the actual paper",()=>{
     const item=boundedBaselineArtifacts(project)[0]!;
-    expect(item.content).toContain(quote);expect(item.content).toContain("source body starts @");
-    expect(item.content.length).toBeLessThanOrEqual(18000);expect(item.truncated).toBe(true);
+    expect(item.content).toContain(quote);expect(item.contextRepresentation).toBe("html-document-text-v1");
+    expect(item.content.length).toBeLessThanOrEqual(56000);expect(item.truncated).toBe(true);
   });
   it("retrieves a late Candidate body clause instead of repeating the style header",()=>{
     const item=candidateArtifactContext(project,candidate)[0]!;
-    expect(item.content).toContain(quote);expect(item.content).toContain("source body starts @");
-    expect(item.content.length).toBeLessThanOrEqual(20000);expect(item.truncated).toBe(true);
+    expect(item.content).toContain(quote);expect(item.contextRepresentation).toBe("html-document-text-v1");
+    expect(item.content.length).toBeLessThanOrEqual(64000);expect(item.truncated).toBe(true);
     expect(candidate.artifactSnapshots[0]!.content).toBe(html);
   });
   it("does not label a bounded Candidate model observation as full evidence",async()=>{

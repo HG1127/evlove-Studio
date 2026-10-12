@@ -1,8 +1,9 @@
 import type { EvolveProject, TestCase } from "@evolution/contracts";
+import { htmlDocumentObservation } from "@evolution/core";
 import { retrieveTextContext } from "./context-retrieval";
 
 // Bump when semantic source selection changes so cached scores are not mixed across policies.
-export const SERVER_SEMANTIC_CONTEXT_VERSION = "body-and-paper-context-v1";
+export const SERVER_SEMANTIC_CONTEXT_VERSION = "whole-document-text-v2";
 
 export const SERVER_SOURCE_CONTEXT_INSTRUCTION = "Source content is bounded parsed-text context, not proof of complete Storage bytes or runtime behavior. originalChars measures available parsed source text. Do not invent section counts, facts or coverage outside supplied excerpts. For HTML body excerpts, chunk offsets are relative to the stated body start.";
 
@@ -59,4 +60,21 @@ export function compactServerSourceArtifacts(project: SourceProject | undefined)
       truncated: content !== source || (!artifact.textContent && Boolean(artifact.textExcerpt)),
     };
   }).filter((artifact) => artifact.content || artifact.role === "target");
+}
+
+
+/** A complete document-text projection is distinct from raw HTML or browser evidence. */
+export function serverSemanticTextContext(source: string, query: string, allowance: number, html: boolean, documentContent: boolean) {
+  if (source.length <= allowance) return { content: source, originalChars: source.length, truncated: false, contextRepresentation: "raw-source-complete-v1" };
+  if (html && documentContent) {
+    const index = htmlDocumentObservation(source);
+    const indexed = "HTML DOCUMENT TEXT INDEX · complete static text, section IDs included\n"
+      + "Scripts, styles, rendered visibility and runtime interaction are not represented.\n" + index.documentText;
+    const content = compactServerSourceText(indexed, query, allowance, false);
+    return { content, truncated: content !== indexed, contextRepresentation: "html-document-text-v1",
+      indexedCharacters: indexed.length, originalChars: source.length,
+      observationScope: "complete static document text when truncated=false; never browser behavior or raw HTML fidelity" };
+  }
+  const content = compactServerSourceText(source, query, allowance, html);
+  return { content, originalChars: source.length, truncated: content !== source, contextRepresentation: "raw-source-excerpts-v1" };
 }

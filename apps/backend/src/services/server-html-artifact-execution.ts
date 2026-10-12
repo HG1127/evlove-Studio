@@ -1,3 +1,4 @@
+import { targetProxyCapabilities } from "../server-env";
 import { runVercelSandboxHtmlValidation } from "@evolution/adapters/sandbox";
 import type { Candidate, EvolveProject, SourceArtifact, TargetRunResult, TestCase } from "@evolution/contracts";
 import { trustedServerBaselineChampion } from "@evolution/harness";
@@ -5,9 +6,12 @@ import { readServerCandidateParentText, serverArtifactSha256 } from "./server-ex
 import { resolveServerTestTargetArtifact } from "./server-http-target-execution";
 import { attachServerVisualEvidence } from "./server-visual-evidence";
 
-export function serverHtmlArtifactTargetEnabled(project: EvolveProject) {
+export function serverHtmlArtifactTargetEnabled(project: EvolveProject, config = { httpRunConfigured: targetProxyCapabilities().runConfigured }) {
   const targets = project.sourceArtifacts.filter((source) => source.role === "target");
-  return project.targetConnection?.adapter === "artifact" && targets.length > 0 && targets.every((source) => /^(html|htm)$/i.test(source.extension));
+  const target = project.targetConnection;
+  const fileRoute = target?.adapter === "artifact" || (target?.adapter === "http" && target.status === "connected"
+    && target.connectionId === "runner-gateway" && !config.httpRunConfigured);
+  return fileRoute && targets.length > 0 && targets.every((source) => /^(html|htm)$/i.test(source.extension));
 }
 function unavailable(testCase: TestCase, message: string): TargetRunResult {
   return { testCaseId: testCase.id, output: `UNVERIFIED：Server HTML Sandbox 未完成：${message}`, verificationStatus: "unverified", cost: 0, latencyMs: 0, trace: [{ id: `html-sandbox-${testCase.id}`, stage: "external-runner", status: "warning", summary: "原 HTML 隔离浏览器证据未完成", detail: message }] };

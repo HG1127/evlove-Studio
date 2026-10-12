@@ -14,8 +14,8 @@ beforeEach(()=>{blobs.clear();blobs.set("original",new Blob([html],{type:"text/h
 describe("actual-file semantic body context",()=>{
   it("reads the complete actual upload then selects late body evidence on the same paper",async()=>{
     const [item]=await buildServerCurrentSemanticArtifactContext({project});
-    expect(item!.content).toContain(quote);expect(item!.content).toContain("source body starts @");
-    expect((item!.content as string).length).toBeLessThanOrEqual(18000);
+    expect(item!.content).toContain(quote);expect(item!.contextRepresentation).toBe("html-document-text-v1");
+    expect((item!.content as string).length).toBeLessThanOrEqual(56000);
     expect(item).toMatchObject({originalChars:html.length,truncated:true,artifactSha256:createHash("sha256").update(html).digest("hex")});
     expect(item!.content).not.toContain("STALE PARSED INDEX");
     expect(await blobs.get("original")!.text()).toBe(html);

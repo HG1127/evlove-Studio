@@ -474,3 +474,43 @@ describe("generated HTML paper identity", () => {
     expect(reusableBaselineRuns(prior, currentVisible, true)).toEqual([]);
   });
 });
+
+
+it("defers Candidate-only pairwise requirements while measuring current deficiencies",async()=>{
+  const project=fixture();
+  const comparison={...project.acceptanceRubric[0]!,id:"SYS-PAIRWISE",title:"Relative improvement",requirement:"Candidate improves over current",weight:5,judgeType:"pairwise" as const};
+  project.acceptanceRubric=[...project.acceptanceRubric.map(c=>({...c,weight:c.weight*0.95})),comparison];
+  const pure={...project.evalSuite[0]!,id:"PAIRWISE",criterionIds:[comparison.id]};
+  project.evalSuite=[{...project.evalSuite[0]!,criterionIds:["CONTENT",comparison.id]},...project.evalSuite.slice(1),pure];
+  project.hiddenEvalSuite=[...project.hiddenEvalSuite,{...pure,id:"H-PAIRWISE",hidden:true}];
+  const original=JSON.stringify(project.acceptanceRubric);
+  const outcome=await runServerBaseline(project,{
+    executeSemanticBatch:async({testCases})=>{
+      expect(testCases.flatMap(t=>t.criterionIds)).not.toContain("SYS-PAIRWISE");
+      return {results:testCases.map(t=>({testCaseId:t.id,output:"Observed full current guide. Required rollback instructions are absent.",trace:[]}))};
+    },judge:async(payload)=>{
+      expect(JSON.stringify(payload)).not.toContain('"criterionId":"SYS-PAIRWISE"');
+      return judge();
+    },
+  });
+  expect(outcome.ready).toBe(true);
+  expect(outcome.project.stage).toBe("problem");
+  expect(outcome.baseline.runs.find(r=>r.testCaseId==="PAIRWISE")?.verificationStatus).toBe("unverified");
+  expect(outcome.baseline.result?.criterionScores?.find(s=>s.criterionId==="SYS-PAIRWISE")?.pass).toBe(false);
+  expect(outcome.baseline.result?.criterionScores?.find(s=>s.criterionId==="CONTENT")).toMatchObject({verificationStatus:"verified",pass:false});
+  expect(JSON.stringify(outcome.project.acceptanceRubric)).toBe(original);
+  expect(outcome.project.hiddenEvalSuite.at(-1)?.criterionIds).toEqual([comparison.id]);
+});
+
+
+it("does not reuse a completed Baseline that failed required current hard evidence",async()=>{
+  const project=fixture();
+  const outcome=await runServerBaseline(project,{
+    executeSemanticBatch:async({testCases})=>({results:testCases.map(t=>({testCaseId:t.id,output:"Install observed. UNVERIFIED rollback details outside the supplied index.",trace:[]}))}),
+    judge:async()=>judge(),
+  });
+  expect(outcome.baseline.status).toBe("completed");
+  expect(outcome.ready).toBe(false);
+  expect(outcome.capabilityGaps).toContain("criterion:CONTENT");
+  expect(canReuseServerBaseline(outcome.project)).toBe(false);
+});

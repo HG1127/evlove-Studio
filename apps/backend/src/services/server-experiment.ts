@@ -53,8 +53,8 @@ function unavailableExternal(testCase: TestCase, detail: string): TargetRunResul
 
 async function executeServerCandidateExternal(project: EvolveProject, candidate: Candidate, testCases: TestCase[]) {
   if(serverConnectorTargetEnabled(project))return runServerConnectorTargetBatch(project,testCases,candidate);
-  if (serverHttpTargetEnabled(project)) return runServerHttpTargetBatch(project, testCases, candidate);
   if(serverHtmlArtifactTargetEnabled(project))return runServerHtmlArtifactBatch(project,testCases,candidate);
+  if (serverHttpTargetEnabled(project)) return runServerHttpTargetBatch(project, testCases, candidate);
   const source = codebaseTarget(project);
   if (!source) return testCases.map((testCase) => unavailableExternal(testCase, "当前 Server External Runner 仅支持 codebase/package ZIP Target。"));
   const snapshots = candidate.artifactSnapshots.filter((item) => item.sourceArtifactId === source.id);
@@ -116,7 +116,7 @@ export async function runServerMissionExperiment(project: EvolveProject) {
         criterionIds: testCase.criterionIds,
         evidenceScope: testCase.evidenceScope,
       })),
-      evidenceInstruction: `Inspect Candidate ${candidate.id} exact artifact snapshots only. Missing runtime evidence must be UNVERIFIED. Never use plan/designRationale as observed proof.`,
+      evidenceInstruction: `Inspect Candidate ${candidate.id} exact artifact snapshots only. Absent requirements in complete readable document content are observed product deficiencies. Use UNVERIFIED only for unavailable relevant content or runtime evidence. Never use plan/designRationale as observed proof.`,
       variant: {
         id: candidate.id,
         artifactSnapshots: candidate.artifactSnapshots.map((snapshot) => ({

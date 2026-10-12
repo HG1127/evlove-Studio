@@ -224,3 +224,42 @@ it("uses the accepted Champion filename rather than requiring the original uploa
   expect((await runServerCurrentStoredEvidence({project:current,testCase:testCase("roundtrip")})).verificationStatus).toBe("unverified");
   await expect(buildServerCurrentSemanticArtifactContext({project:current})).rejects.toThrow();
 });
+
+
+it("indexes the complete large HTML document instead of its stylesheet head", async () => {
+  const current = project("html");
+  const articles = Array.from({length:111},(_,i)=>'<article class="slide-card" id="slide-'+(i+1)+'"><h2>Section '+(i+1)+'</h2><p>Complete configuration '+(i+1)+'</p></article>').join("");
+  const html='<!doctype html><html><head><style>'+".head{color:red}".repeat(9000)+'</style></head><body>'+articles+'<p>TAIL CONFIGURATION VALUE=final</p></body></html>';
+  await storeSource(current,html);
+  const context=await buildServerCurrentSemanticArtifactContext({project:current});
+  expect(context[0]?.truncated).toBe(false);
+  expect(context[0]?.contextRepresentation).toBe("html-document-text-v1");
+  expect(context[0]?.content).toContain("TAIL CONFIGURATION VALUE=final");
+  expect(context[0]?.content).not.toContain(".head{color:red}");
+  const run=await runServerCurrentStoredEvidence({project:current,testCase:testCase("static-evidence")});
+  expect(run.verificationStatus).toBe("verified");
+  expect(run.output).toContain('"slideCardCount":111');
+  expect(run.output).toContain('"bodyEnd":true');
+  expect(run.output).toContain('"id":"slide-111"');
+  expect(run.artifactHash).toBe(context[0]?.artifactSha256);
+});
+
+it("keeps large software HTML excerpts and oversized document indexes partial", async () => {
+  const current=project("html");
+  await storeSource(current,'<html><body><article id="s">'+'Long configuration example '.repeat(9000)+'</article></body></html>');
+  const context=await buildServerCurrentSemanticArtifactContext({project:current});
+  expect(context[0]?.truncated).toBe(true);
+  current.semanticEvolution={semanticObject:{typeId:"software-system"}} as EvolveProject["semanticEvolution"];
+  const software=await buildServerCurrentSemanticArtifactContext({project:current});
+  expect(software[0]?.truncated).toBe(true);
+  expect(software[0]?.contextRepresentation).not.toBe("html-document-text-v1");
+});
+
+
+it("does not project legacy HTML software Missions as complete document text",async()=>{
+  const current=project("html");current.objectType="codebase";
+  await storeSource(current,'<html><body><p>Small static label</p><script>'+'const configuration = 1;'.repeat(9000)+'</script></body></html>');
+  const context=await buildServerCurrentSemanticArtifactContext({project:current});
+  expect(context[0]?.truncated).toBe(true);
+  expect(context[0]?.contextRepresentation).toBe("raw-source-excerpts-v1");
+});

@@ -1,7 +1,7 @@
 import type { EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
-import { campaignScoringInputFingerprint, citesHistoricalEvidence, fastHash } from "@evolution/core";
+import { projectSupportsStaticDocumentText, campaignScoringInputFingerprint, citesHistoricalEvidence, fastHash } from "@evolution/core";
 
-import { compactServerSourceText, serverSemanticContextQuery, SERVER_SEMANTIC_CONTEXT_VERSION } from "./server-source-context";
+import { serverSemanticTextContext, serverSemanticContextQuery, SERVER_SEMANTIC_CONTEXT_VERSION } from "./server-source-context";
 
 const TEXT_ROUNDTRIP = /^(txt|md|markdown|csv|json|yaml|yml|css|js|jsx|ts|tsx)$/i;
 
@@ -61,10 +61,11 @@ export function boundedBaselineArtifacts(project: EvolveProject, budget = 56_000
   return ordered.slice(0, 12).map((artifact) => {
     const snapshot = trustedSnapshot(project, artifact.id);
     const source = artifactText(project, artifact);
-    const allowance = Math.max(0, Math.min(18_000, remaining));
+    const documentContent = projectSupportsStaticDocumentText(project);
+    const allowance = Math.max(0, Math.min(documentContent ? budget : 18_000, remaining));
     const html = /^(html|htm)$/i.test(artifact.extension) || /^text\/html(?:;|$)/i.test(artifact.mimeType);
-    const content = compactServerSourceText(source, query, allowance, html);
-    remaining = Math.max(0, remaining - content.length);
+    const bounded = serverSemanticTextContext(source, query, allowance, html, documentContent);
+    remaining = Math.max(0, remaining - bounded.content.length);
     return {
       id: artifact.id,
       name: artifact.name,
@@ -73,11 +74,10 @@ export function boundedBaselineArtifacts(project: EvolveProject, budget = 56_000
       artifactKind: artifact.artifactKind,
       extension: artifact.extension,
       structure: artifact.structure.slice(0, 80),
-      content,
+      ...bounded,
       currentVersion: snapshot ? (project.searchChampion?.versionLabel ?? project.searchChampion?.id) : project.version,
       snapshotHash: snapshot?.contentHash,
-      originalChars: source.length,
-      truncated: content !== source || (!snapshot && !artifact.textContent && Boolean(artifact.textExcerpt)),
+      truncated: bounded.truncated || (!snapshot && !artifact.textContent && Boolean(artifact.textExcerpt)),
     };
   });
 }
