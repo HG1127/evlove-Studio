@@ -32,3 +32,9 @@ export function criterionCanUseLocalSnapshotEvidence(project: EvolveProject, cri
   if (!targets.length) return false;
   return targets.every(readableDocumentSource);
 }
+
+
+/** Full static document text can be observed separately from software source/runtime. */
+export function projectSupportsStaticDocumentText(project: EvolveProject) {
+  return !isCodebaseProject(project) && projectSupportsLocalDocumentSnapshot(project);
+}

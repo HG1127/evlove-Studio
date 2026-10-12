@@ -34,8 +34,8 @@ function codebaseTarget(project:EvolveProject){
 
 async function executeCurrentExternal(project:EvolveProject,testCases:TestCase[]){
   if(serverConnectorTargetEnabled(project))return runServerConnectorTargetBatch(project,testCases);
-  if(serverHttpTargetEnabled(project))return runServerHttpTargetBatch(project,testCases);
   if(serverHtmlArtifactTargetEnabled(project))return runServerHtmlArtifactBatch(project,testCases);
+  if(serverHttpTargetEnabled(project))return runServerHttpTargetBatch(project,testCases);
   const binding=resolveServerBaselineCodebaseBinding(project);
   if(!binding.source||!binding.blobId)return testCases.map((testCase)=>unavailable(testCase,binding.reason??"当前版本 External Runner 尚未连接。"));
   try{
@@ -63,8 +63,8 @@ async function executeCurrentExternal(project:EvolveProject,testCases:TestCase[]
 
 async function executeCandidateExternal(project:EvolveProject,candidate:Candidate,testCases:TestCase[]){
   if(serverConnectorTargetEnabled(project))return runServerConnectorTargetBatch(project,testCases,candidate);
-  if(serverHttpTargetEnabled(project))return runServerHttpTargetBatch(project,testCases,candidate);
   if(serverHtmlArtifactTargetEnabled(project))return runServerHtmlArtifactBatch(project,testCases,candidate);
+  if(serverHttpTargetEnabled(project))return runServerHttpTargetBatch(project,testCases,candidate);
   const source=codebaseTarget(project);
   if(!source)return testCases.map((testCase)=>unavailable(testCase,"Candidate External Runner 当前仅支持 codebase/package ZIP Target。"));
   const snapshots=candidate.artifactSnapshots.filter((item)=>item.sourceArtifactId===source.id);
@@ -103,7 +103,7 @@ export async function runServerMissionHoldout(project:EvolveProject){
       executeSemanticBatch:({project:current,testCases,artifactContext})=>runServerAi("execute-artifact-batch",{
         project:{name:current.name,objectType:current.objectType,goal:current.goal,evolutionCommand:current.evolutionCommand,protectedItems:current.protectedItems,editableItems:current.editableItems,sourceArtifacts:artifactContext},
         testCases:testCases.map((testCase)=>({id:testCase.id,title:testCase.title,input:testCase.input,expected:testCase.expected,criterionIds:testCase.criterionIds,evidenceScope:testCase.evidenceScope})),
-        evidenceInstruction:"Inspect only the CURRENT VERSION on this frozen hidden paper. Missing runtime evidence must be UNVERIFIED. Never infer Candidate behavior.",
+        evidenceInstruction:"Inspect only the CURRENT VERSION on this frozen hidden paper. Absent requirements in complete readable document content are observed product deficiencies. Use UNVERIFIED only for unavailable relevant content or runtime evidence. Never infer Candidate behavior.",
         variant:null,
       }),
       executeStoredEvidence:runServerCurrentStoredEvidence,
@@ -115,7 +115,7 @@ export async function runServerMissionHoldout(project:EvolveProject){
       executeSemanticBatch:({project:current,candidate,testCases,artifactContext})=>runServerAi("execute-artifact-batch",{
         project:{name:current.name,objectType:current.objectType,goal:current.goal,evolutionCommand:current.evolutionCommand,protectedItems:current.protectedItems,editableItems:current.editableItems,sourceArtifacts:artifactContext},
         testCases:testCases.map((testCase)=>({id:testCase.id,title:testCase.title,input:testCase.input,expected:testCase.expected,criterionIds:testCase.criterionIds,evidenceScope:testCase.evidenceScope})),
-        evidenceInstruction:`Inspect only exact frozen Candidate ${candidate.id} on this hidden paper. Missing runtime evidence must be UNVERIFIED. Never use plan/designRationale as observed proof.`,
+        evidenceInstruction:`Inspect only exact frozen Candidate ${candidate.id} on this hidden paper. Absent requirements in complete readable document content are observed product deficiencies. Use UNVERIFIED only for unavailable relevant content or runtime evidence. Never use plan/designRationale as observed proof.`,
         variant:{id:candidate.id,artifactSnapshots:candidate.artifactSnapshots.map((snapshot)=>({id:snapshot.id,sourceArtifactId:snapshot.sourceArtifactId,name:snapshot.name,mimeType:snapshot.mimeType,contentHash:snapshot.contentHash,buildMode:snapshot.buildMode}))},
       }),
       verifyFrozenArtifact:(snapshot)=>{

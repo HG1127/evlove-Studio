@@ -75,8 +75,8 @@ function unavailableExternal(testCase: TestCase, detail: string): TargetRunResul
 
 export async function executeServerBaselineExternal(current:EvolveProject,testCases:TestCase[]){
   if(serverConnectorTargetEnabled(current))return runServerConnectorTargetBatch(current,testCases);
-  if (serverHttpTargetEnabled(current)) return runServerHttpTargetBatch(current, testCases);
   if(serverHtmlArtifactTargetEnabled(current))return runServerHtmlArtifactBatch(current,testCases);
+  if (serverHttpTargetEnabled(current)) return runServerHttpTargetBatch(current, testCases);
   const binding = resolveServerBaselineCodebaseBinding(current);
   if (!binding.source || !binding.blobId) {
     return testCases.map((testCase) => unavailableExternal(
@@ -144,7 +144,7 @@ export async function runServerMissionBaseline(project: EvolveProject) {
         criterionIds: testCase.criterionIds,
         evidenceScope: testCase.evidenceScope,
       })),
-      evidenceInstruction: "Inspect the current Baseline artifact only. Missing evidence must be reported as UNVERIFIED; never infer future Candidate behavior.",
+      evidenceInstruction: "Inspect the current Baseline artifact only against its listed current criterion IDs. SYS-PAIRWISE relative improvement is deferred until Candidate comparison. For mixed papers record the current arm content observations; do not claim the future comparison or mark otherwise readable current content unavailable because no Candidate exists. Absent required content in complete readable document text is an observed current-product deficiency; report it concretely for independent judging. UNVERIFIED is for unavailable relevant content or runtime capability only. Never infer future Candidate behavior.",
       variant: null,
     }),
     executeStoredEvidence: runServerCurrentStoredEvidence,

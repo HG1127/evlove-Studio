@@ -1,7 +1,7 @@
 import type { Candidate, EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
-import { citesHistoricalEvidence } from "@evolution/core";
+import { projectSupportsStaticDocumentText, citesHistoricalEvidence } from "@evolution/core";
 
-import { compactServerSourceText, serverSemanticContextQuery } from "./server-source-context";
+import { serverSemanticTextContext, serverSemanticContextQuery } from "./server-source-context";
 
 const TEXT_ROUNDTRIP = /^(txt|md|markdown|mdx|csv|json|yaml|yml|css|js|jsx|ts|tsx|html|htm)$/i;
 
@@ -115,10 +115,11 @@ export function candidateArtifactContext(project: EvolveProject, candidate: Cand
   let remaining = budget;
   return candidate.artifactSnapshots.slice(0, 12).map((snapshot) => {
     const source = sourceById.get(snapshot.sourceArtifactId);
-    const allowance = Math.max(0, Math.min(20_000, remaining));
+    const documentContent = projectSupportsStaticDocumentText(project);
+    const allowance = Math.max(0, Math.min(documentContent ? budget : 20_000, remaining));
     const html = /^(html|htm)$/i.test(source?.extension ?? "") || /^text\/html(?:;|$)/i.test(snapshot.mimeType);
-    const content = compactServerSourceText(snapshot.content, query, allowance, html);
-    remaining = Math.max(0, remaining - content.length);
+    const bounded = serverSemanticTextContext(snapshot.content, query, allowance, html, documentContent);
+    remaining = Math.max(0, remaining - bounded.content.length);
     return {
       id: snapshot.sourceArtifactId,
       snapshotId: snapshot.id,
@@ -126,9 +127,7 @@ export function candidateArtifactContext(project: EvolveProject, candidate: Cand
       mimeType: snapshot.mimeType,
       artifactKind: source?.artifactKind,
       extension: source?.extension,
-      content,
-      originalChars: snapshot.content.length,
-      truncated: content !== snapshot.content,
+      ...bounded,
       contentHash: snapshot.contentHash,
       frozenSha256: snapshot.frozenArtifact?.sha256,
       buildMode: snapshot.buildMode,

@@ -1,5 +1,12 @@
 # Main flow acceptance
 
+## 2026-10-12 — Real Baseline file evidence (development checked)
+
+Production 645aa1d completed the authorized real Baseline at 11:50:57 UTC, but Mission33 remains paused at 42% usable evidence. [Complete-file evidence handoff](baseline-file-evidence-handoff.md) addresses historical HTML-to-unconfigured-HTTP dispatch, full byte-backed document structure/text observations, phase-correct visible comparison requirements, conservative independent Judge coverage and failed-Baseline cache reuse. Eighteen actual relevant files / 249 tests, architecture, full lint and TypeScript/production build passed; complete CI and deployment of this increment remain pending.
+
+Physical original read still matches SHA-256 6605429efe92470229601adfb3196bc74ae38855f55d71c8754f8336c52b580a. Its whole-file index is 111 cards, whereas inferred protection prose says83. The current saved machine-pause context fingerprint also does not match readback, so normal recovery is not claimed. No old result was upgraded. Fresh Experiment, same-Hidden pairing, Gate F and exact accepted download/reopen remain unproven.
+
+
 ## 2026-10-12 — Explicit failed Workflow retry (development verified)
 
 The query fix is deployed at main/production `bd6264067196addefdbec388b54211cef4653545`; public before/after reads at 11:09 UTC agree. Its earlier exact-query-commit complete local CI passed 336 files / 2798 tests plus Runner, Chromium E2E and UI smoke.

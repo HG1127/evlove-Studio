@@ -22,7 +22,6 @@ import {
 } from "@evolution/core";
 import {
   baselineLocalEvidence,
-  compactBaselineRunOutput,
   currentSemanticArtifactContext,
   serverBaselineCurrentViewGap,
   semanticEvidenceStatus,
@@ -30,6 +29,7 @@ import {
   storedBaselineEvidence,
   unavailableBaselineRun,
 } from "./server-baseline-evidence";
+import { serverJudgeEvidence } from "./server-judge-evidence";
 import { indexUniqueBatchResults } from "./server-batch-results";
 import { serverExperimentRecoveryCheckpoint } from "./server-experiment-wait";
 import { serverMainFlowRecoveryCheckpoint } from "./server-main-flow-wait";
@@ -49,6 +49,8 @@ export function canReuseServerBaseline(project: EvolveProject, routeFingerprint?
     || !campaignLiveObservationFresh(project, project.baselineRun.completedAt, nowMs))) return false;
 
   return baselineReadiness(project).ready
+    && !serverBaselineEvidenceGaps(project).requiredCapabilityGaps.length
+    && !serverBaselineEvidenceGaps(project).hardGateGaps.length
     && project.baselineRun.measurementFingerprint === serverBaselineFingerprint(project, routeFingerprint);
 }
 export type ServerBaselinePorts = {
@@ -133,7 +135,9 @@ export async function runServerBaseline(
   const ordered = new Map<string, TargetRunResult>();
   const semanticCases: TestCase[] = [];
   const externalCases: TestCase[] = [];
-  for (const testCase of project.evalSuite) {
+  for (const originalCase of project.evalSuite) {
+    const comparisonOnly = originalCase.criterionIds.length > 0 && originalCase.criterionIds.every(id => id === "SYS-PAIRWISE");
+    const testCase = comparisonOnly ? originalCase : { ...originalCase, criterionIds: originalCase.criterionIds.filter(id => id !== "SYS-PAIRWISE") };
     const stored = await storedBaselineEvidence(project, testCase, ports.executeStoredEvidence);
     if (stored) { ordered.set(testCase.id, stored); continue; }
     const currentViewGap = testCase.executionMode === "artifact-runtime" && ports.buildCurrentArtifactContext
@@ -237,7 +241,9 @@ export async function runServerBaseline(
     return { project: nextProject, baseline, ready: false, reason, capabilityGaps: runs.map((run) => run.testCaseId) };
   }
 
-  const judgeCriteria = criteriaRequiringJudge(project.acceptanceRubric, project.evalSuite, runs);
+  // Relative improvement is measured after a Candidate exists, never by the current-only baseline.
+  const baselineCases = project.evalSuite.map(testCase => ({ ...testCase, criterionIds: testCase.criterionIds.filter(id => id !== "SYS-PAIRWISE") }));
+  const judgeCriteria = criteriaRequiringJudge(project.acceptanceRubric, baselineCases, runs);
   const judgeIds = new Set(judgeCriteria.map((criterion) => criterion.id));
   const evaluableIds = new Set(
     project.evalSuite
@@ -246,8 +252,14 @@ export async function runServerBaseline(
   );
   const judgeRuns = evaluableRuns.filter((run) => evaluableIds.has(run.testCaseId));
   const judgeRunIds = new Set(judgeRuns.map((run) => run.testCaseId));
-  const judgeCases = project.evalSuite.filter((testCase) => judgeRunIds.has(testCase.id));
+  const judgeCases = baselineCases.filter((testCase) => judgeRunIds.has(testCase.id));
   const effectiveCriteria = judgeCriteria.filter((criterion) => judgeCases.some((testCase) => testCase.criterionIds.includes(criterion.id)));
+  const judgeEvidence = judgeRuns.map(run => {
+    const testCase = baselineCases.find(item => item.id === run.testCaseId);
+    const query = `${testCase?.title ?? ""} ${testCase?.input ?? ""} ${(testCase?.expected ?? []).join(" ")}`;
+    return serverJudgeEvidence(run, query);
+  });
+  const evaluationRuns = runs.map(run => judgeEvidence.find(item => item.run.testCaseId === run.testCaseId)?.run ?? run);
   const judgePayload = {
     mode: "server-baseline",
     project: {
@@ -256,7 +268,7 @@ export async function runServerBaseline(
       acceptanceRubric: effectiveCriteria,
     },
     acceptanceRubric: effectiveCriteria,
-    evaluatorInstruction: "Judge only supplied current Baseline evidence. Never cite diagnosis, plans or patches. UNVERIFIED tests are omitted and must not be invented as failures. PARTIAL evidence cannot fully satisfy a hard gate.",
+    evaluatorInstruction: "Judge only supplied current Baseline evidence for the explicitly listed criterion IDs. SYS-PAIRWISE relative improvement is deferred until Candidate comparison; if a mixed paper also mentions Original vs Evolved, judge the current arm against current applicable content requirements only. Never cite diagnosis, plans or patches. UNVERIFIED tests are omitted and must not be invented as failures. PARTIAL evidence cannot fully satisfy a hard gate.",
     testCases: judgeCases.map((testCase) => ({
       id: testCase.id,
       title: testCase.title,
@@ -267,16 +279,7 @@ export async function runServerBaseline(
       executionMode: testCase.executionMode,
       evidenceScope: testCase.evidenceScope,
     })),
-    runs: judgeRuns.map((run) => {
-      const testCase = project.evalSuite.find((item) => item.id === run.testCaseId);
-      const query = `${testCase?.title ?? ""} ${testCase?.input ?? ""} ${(testCase?.expected ?? []).join(" ")}`;
-      return {
-        testCaseId: run.testCaseId,
-        verificationStatus: run.verificationStatus,
-        outputChunks: [compactBaselineRunOutput(run.output, query)],
-        trace: run.trace.slice(0, 12).map((step) => ({ stage: step.stage, status: step.status, summary: step.summary })),
-      };
-    }),
+    runs: judgeEvidence.map(item => item.payload),
   };
 
   let evaluation;
@@ -284,7 +287,7 @@ export async function runServerBaseline(
     if (!judgeRuns.length || !effectiveCriteria.length) {
       evaluation = settleDeterministicEvaluation({
         criteria: project.acceptanceRubric,
-        testCases: project.evalSuite,
+        testCases: baselineCases,
         runs,
         notes: ["Server Baseline：仅结算已获得的确定性证据；缺失语义评审的标准保持 UNVERIFIED，通用质量维度未测量。"],
       });
@@ -292,8 +295,8 @@ export async function runServerBaseline(
       const judged = await ports.judge(judgePayload);
       evaluation = settleAiEvaluation({
         criteria: project.acceptanceRubric,
-        testCases: project.evalSuite,
-        runs,
+        testCases: baselineCases,
+        runs: evaluationRuns,
         ai: judged,
         notes: [
           "Server Baseline：执行与独立 Judge 均在 Durable Workflow 后端完成。",
@@ -333,16 +336,7 @@ export async function runServerBaseline(
     runs,
     result: evaluation,
   };
-  const runById = new Map(runs.map((run) => [run.testCaseId, run]));
-  const requiredCapabilityGaps = project.evalSuite.filter((testCase) => {
-    const comparisonOnly = testCase.criterionIds.length > 0 && testCase.criterionIds.every((id) => id === "SYS-PAIRWISE");
-    if (comparisonOnly) return false;
-    const status = runById.get(testCase.id)?.verificationStatus ?? "unverified";
-    return status === "unverified" || status === "failed";
-  });
-  const criterionById = new Map((evaluation.criterionScores ?? []).map((item) => [item.criterionId, item]));
-  const hardGateGaps = project.acceptanceRubric.filter((criterion) =>
-    criterion.hardGate && criterionById.get(criterion.id)?.verificationStatus !== "verified");
+  const { requiredCapabilityGaps, hardGateGaps } = serverBaselineEvidenceGaps({ ...project, baselineRun: baseline });
   const measured: EvolveProject = {
     ...project,
     baselineRun: baseline,
@@ -413,4 +407,20 @@ export async function runServerBaseline(
     reason: `Server Baseline 已完成：${readiness.verified} verified / ${readiness.partial} partial，证据覆盖 ${readiness.evidenceCoverage}%`,
     capabilityGaps: [],
   };
+}
+
+
+/** Initial measurement and cache reuse must obey the same evidence boundary. */
+function serverBaselineEvidenceGaps(project: EvolveProject) {
+  const runById = new Map(project.baselineRun.runs.map((run) => [run.testCaseId, run]));
+  const requiredCapabilityGaps = project.evalSuite.filter((testCase) => {
+    const comparisonOnly = testCase.criterionIds.length > 0 && testCase.criterionIds.every((id) => id === "SYS-PAIRWISE");
+    if (comparisonOnly) return false;
+    const status = runById.get(testCase.id)?.verificationStatus ?? "unverified";
+    return status === "unverified" || status === "failed";
+  });
+  const criterionById = new Map((project.baselineRun.result?.criterionScores ?? []).map((item) => [item.criterionId, item]));
+  const hardGateGaps = project.acceptanceRubric.filter((criterion) =>
+    criterion.hardGate && criterion.id !== "SYS-PAIRWISE" && criterionById.get(criterion.id)?.verificationStatus !== "verified");
+  return { requiredCapabilityGaps, hardGateGaps };
 }

@@ -8,13 +8,13 @@ import type {
 import { criteriaRequiringJudge, settleDeterministicEvaluation, settleAiEvaluation } from "@evolution/core";
 import {
   baselineLocalEvidence,
-  compactBaselineRunOutput,
   currentSemanticArtifactContext,
   semanticEvidenceStatus,
   serverBaselineCurrentViewGap,
   storedBaselineEvidence,
   unavailableBaselineRun,
 } from "./server-baseline-evidence";
+import { serverJudgeEvidence } from "./server-judge-evidence";
 import { indexUniqueBatchResults } from "./server-batch-results";
 
 export type ServerCurrentArtifactPorts = {
@@ -113,20 +113,21 @@ export async function judgeServerCurrentArtifactSuite(
   const judgeCaseIds=new Set(judgeCases.map((testCase)=>testCase.id));
   const effectiveCriteria=judgeCriteria.filter((criterion)=>judgeCases.some((testCase)=>testCase.criterionIds.includes(criterion.id)));
   if(!judgeCases.length||!effectiveCriteria.length)return deterministicOnly(project,testCases,runs);
+  const judgeEvidence = runs.filter(run => judgeCaseIds.has(run.testCaseId)).map(run => {
+    const testCase = testCases.find(item => item.id === run.testCaseId);
+    const query = `${testCase?.title ?? ""} ${testCase?.input ?? ""} ${(testCase?.expected ?? []).join(" ")}`;
+    return serverJudgeEvidence(run, query);
+  });
   const ai=await ports.judge({
     mode:"server-holdout-baseline",
     project:{goal:project.goal,metrics:project.metrics,acceptanceRubric:effectiveCriteria},
     acceptanceRubric:effectiveCriteria,
     evaluatorInstruction:"Judge only supplied CURRENT VERSION evidence from the hidden same-paper baseline. UNVERIFIED tests are omitted and must not be invented as failures. Never cite diagnosis, plan or Candidate claims.",
     testCases:judgeCases.map((testCase)=>({id:testCase.id,title:testCase.title,input:testCase.input.slice(0,1600),expected:testCase.expected,tags:testCase.tags,criterionIds:testCase.criterionIds,executionMode:testCase.executionMode,evidenceScope:testCase.evidenceScope})),
-    runs:runs.filter((run)=>judgeCaseIds.has(run.testCaseId)).map((run)=>{
-      const testCase=testCases.find((item)=>item.id===run.testCaseId);
-      const query=`${testCase?.title??""} ${testCase?.input??""} ${(testCase?.expected??[]).join(" ")}`;
-      return {testCaseId:run.testCaseId,verificationStatus:run.verificationStatus,outputChunks:[compactBaselineRunOutput(run.output,query)],trace:run.trace.slice(0,12).map((step)=>({stage:step.stage,status:step.status,summary:step.summary}))};
-    }),
+    runs:judgeEvidence.map(item=>item.payload),
   });
   return settleAiEvaluation({
-    criteria:project.acceptanceRubric,testCases,runs,ai,
+    criteria:project.acceptanceRubric,testCases,runs:runs.map(run=>judgeEvidence.find(item=>item.run.testCaseId===run.testCaseId)?.run??run),ai,
     notes:["Server Hidden Holdout：当前版本已在隐藏同卷执行并独立 Judge。",...(runs.some((run)=>run.verificationStatus==="unverified")?["部分隐藏题缺真实执行能力；对应 Criterion 保持 UNVERIFIED。"]:[])],
   });
 }

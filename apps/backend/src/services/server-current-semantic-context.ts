@@ -1,5 +1,6 @@
 import type { EvolveProject, TestCase } from "@evolution/contracts";
-import { compactServerSourceText, serverSemanticContextQuery, trustedServerBaselineChampion } from "@evolution/harness";
+import { serverSemanticTextContext, serverSemanticContextQuery, trustedServerBaselineChampion } from "@evolution/harness";
+import { projectSupportsStaticDocumentText } from "@evolution/core";
 import { getServerArtifactStore } from "./artifact-runtime";
 import { serverArtifactSha256, verifyServerCandidateFrozenArtifact } from "./server-experiment-artifacts";
 import { extractServerStaticArtifactText } from "./server-static-artifact-evidence";
@@ -60,16 +61,17 @@ export async function buildServerCurrentSemanticArtifactContext({ project, testC
       if (source.inputMode !== "paste" || !source.textContent?.trim()) throw new Error(`${source.name} 缺少实际文件或完整粘贴正文。`);
       content = source.textContent;
     }
-    const allowance = Math.max(0, Math.min(MAX_ARTIFACT_CHARS, remaining));
+    const documentContent = projectSupportsStaticDocumentText(project);
+    const allowance = Math.max(0, Math.min(documentContent ? MAX_TOTAL_CHARS : MAX_ARTIFACT_CHARS, remaining));
     const html = /^(html|htm)$/i.test(source.extension) || /^text\/html(?:;|$)/i.test(receipt?.mimeType ?? source.mimeType);
-    const bounded = compactServerSourceText(content, query, allowance, html);
-    remaining -= bounded.length;
+    const bounded = serverSemanticTextContext(content, query, allowance, html, documentContent);
+    remaining -= bounded.content.length;
     context.push({
       id: source.id, name: source.name, role: source.role, mimeType: source.mimeType,
-      artifactKind: source.artifactKind, extension: source.extension, content: bounded,
+      artifactKind: source.artifactKind, extension: source.extension, ...bounded,
       currentVersion: snapshot ? (project.searchChampion?.versionLabel ?? champion?.id) : project.version,
       snapshotHash: snapshot?.contentHash, artifactSha256: sha256,
-      originalChars: content.length, truncated: bounded !== content || source.extension.toLowerCase() === "zip",
+      truncated: bounded.truncated || source.extension.toLowerCase() === "zip",
     });
   }
   return context;
