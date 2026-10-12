@@ -57,3 +57,5 @@ export * from "./html-protection-inventory";
 export * from "./html-protection-file-comparison";
 
 export * from "./html-protection-scope";
+
+export * from "./html-protection-obligation-plan";
