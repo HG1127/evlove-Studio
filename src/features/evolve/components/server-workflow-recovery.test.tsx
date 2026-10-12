@@ -9,11 +9,12 @@ vi.mock("../runtime/server-failed-control-retry", () => ({ loadServerFailedContr
 const target = { missionId: "mission", jobId: "control-old", runId: "run-old" };
 let host: HTMLDivElement, root: ReturnType<typeof createRoot>;
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   m.load.mockReset().mockResolvedValue(target); m.retry.mockReset().mockResolvedValue({});
   host = document.createElement("div"); document.body.append(host); root = createRoot(host);
 });
-afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals(); });
+afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 const retryButton = () => [...host.querySelectorAll("button")].find(button => button.textContent?.includes("重试后台执行"));
 function runtime(busy = false) {
   return { project: { ...structuredClone(demoProject), id: "mission", updatedAt: "2026-10-12T03:00:00.000Z", stage: "plan",
@@ -81,5 +82,86 @@ describe("main panel explicit backend execution recovery", () => {
     const value = await render(); expect(retryButton()).toBeUndefined();
     await render({ ...value, project: { ...value.project, updatedAt: "2026-10-12T03:02:00.000Z" } });
     await act(async () => complete(target)); expect(retryButton()).toBeUndefined(); expect(m.retry).not.toHaveBeenCalled();
+  });
+  it("observes SDK failure without a Mission version change and never automatically starts", async () => {
+    m.load.mockResolvedValueOnce(undefined).mockResolvedValue(target);
+    const value = await render(), snapshot = structuredClone(value.project);
+    expect(retryButton()).toBeUndefined();
+    await act(async () => vi.advanceTimersByTimeAsync(14_999)); expect(m.load).toHaveBeenCalledTimes(1);
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(m.load).toHaveBeenCalledTimes(2); expect(retryButton()).toBeDefined();
+    expect(host.querySelector("h2")?.textContent).toBe("后台执行已中断");
+    expect(value.project).toEqual(snapshot); expect(m.retry).not.toHaveBeenCalled();
+    expect(value.runAutoPilot).not.toHaveBeenCalled(); expect(value.commit).not.toHaveBeenCalled();
+  });
+  it("allows one metadata read at a time and waits 15 seconds after completion", async () => {
+    let complete!: (value: undefined) => void;
+    m.load.mockImplementationOnce(() => new Promise<undefined>(resolve => { complete = resolve; })).mockResolvedValue(target);
+    await render(); await act(async () => vi.advanceTimersByTimeAsync(60_000));
+    expect(m.load).toHaveBeenCalledTimes(1);
+    await act(async () => complete(undefined));
+    await act(async () => vi.advanceTimersByTimeAsync(14_999)); expect(m.load).toHaveBeenCalledTimes(1);
+    await act(async () => vi.advanceTimersByTimeAsync(1)); expect(m.load).toHaveBeenCalledTimes(2);
+    expect(retryButton()).toBeDefined(); expect(m.retry).not.toHaveBeenCalled();
+  });
+  it("recovers from a permission or network read error without stacking requests", async () => {
+    m.load.mockResolvedValueOnce(target).mockRejectedValueOnce(new Error("后台访问暂不可用")).mockResolvedValue(target);
+    await render(); await act(async () => vi.advanceTimersByTimeAsync(15_000));
+    expect(m.load).toHaveBeenCalledTimes(2); expect(retryButton()).toBeUndefined();
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("后台访问暂不可用");
+    await act(async () => vi.advanceTimersByTimeAsync(14_999)); expect(m.load).toHaveBeenCalledTimes(2);
+    await act(async () => vi.advanceTimersByTimeAsync(1)); expect(m.load).toHaveBeenCalledTimes(3);
+    expect(retryButton()).toBeDefined(); expect(host.querySelector('[role="alert"]')).toBeNull();
+    expect(m.retry).not.toHaveBeenCalled();
+  });
+  it("cleans up the refresh timer on unmount", async () => {
+    await render(); expect(vi.getTimerCount()).toBe(1);
+    await act(async () => root.render(null)); expect(vi.getTimerCount()).toBe(0);
+    await act(async () => vi.advanceTimersByTimeAsync(60_000)); expect(m.load).toHaveBeenCalledTimes(1);
+  });
+  it("ignores an old Project object response and waits for it before reading the replacement", async () => {
+    let complete!: (value: typeof target) => void;
+    m.load.mockImplementationOnce(() => new Promise<typeof target>(resolve => { complete = resolve; }))
+      .mockResolvedValueOnce(undefined).mockResolvedValue(target);
+    const oldValue = await render();
+    const newValue = { ...oldValue, project: { ...oldValue.project, name: "Updated projection" } };
+    await render(newValue); expect(m.load).toHaveBeenCalledTimes(1);
+    await act(async () => complete(target)); expect(retryButton()).toBeUndefined();
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+    expect(m.load).toHaveBeenCalledTimes(2); expect(m.load.mock.calls[1]![0]).toBe(newValue.project);
+    expect(retryButton()).toBeUndefined();
+    await act(async () => vi.advanceTimersByTimeAsync(15_000)); expect(retryButton()).toBeDefined();
+    expect(m.retry).not.toHaveBeenCalled();
+  });
+  it("keeps submission truthful until a distinct new Run is confirmed failed", async () => {
+    const nextTarget = { ...target, jobId: "control-next", runId: "run-next" };
+    m.load.mockResolvedValueOnce(target).mockResolvedValueOnce(undefined).mockResolvedValueOnce(target).mockResolvedValue(nextTarget);
+    const value = await render(); await act(async () => retryButton()!.click());
+    await act(async () => vi.advanceTimersByTimeAsync(30_000));
+    expect(host.querySelector("h2")?.textContent).toBe("新后台执行已提交");
+    expect(host.textContent).toContain("请查看实时运行状态"); expect(retryButton()).toBeUndefined();
+    expect(host.querySelector(".animate-spin")).toBeNull(); expect(m.retry).toHaveBeenCalledTimes(1);
+    await act(async () => vi.advanceTimersByTimeAsync(15_000));
+    expect(retryButton()).toBeDefined(); expect(host.querySelector("h2")?.textContent).toBe("后台执行已中断");
+    expect(m.retry).toHaveBeenCalledTimes(1);
+    await act(async () => retryButton()!.click()); expect(m.retry).toHaveBeenLastCalledWith(value.project, nextTarget);
+  });
+  it("does not read or automatically start while an explicit retry is in flight", async () => {
+    let complete!: () => void;
+    m.retry.mockImplementation(() => new Promise<void>(resolve => { complete = resolve; }));
+    await render(); await act(async () => retryButton()!.click());
+    await act(async () => vi.advanceTimersByTimeAsync(45_000));
+    expect(m.load).toHaveBeenCalledTimes(1); expect(m.retry).toHaveBeenCalledTimes(1);
+    await act(async () => complete());
+    await act(async () => vi.advanceTimersByTimeAsync(15_000));
+    expect(m.load).toHaveBeenCalledTimes(2); expect(host.querySelector("h2")?.textContent).toBe("新后台执行已提交");
+    expect(m.retry).toHaveBeenCalledTimes(1);
+  });
+  it("retains a real start rejection across a successful metadata refresh", async () => {
+    m.retry.mockRejectedValue(new Error("后台拒绝了重试请求"));
+    await render(); await act(async () => retryButton()!.click());
+    await act(async () => vi.advanceTimersByTimeAsync(15_000));
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("后台拒绝了重试请求");
+    expect(retryButton()!.disabled).toBe(false); expect(m.retry).toHaveBeenCalledTimes(1);
   });
 });

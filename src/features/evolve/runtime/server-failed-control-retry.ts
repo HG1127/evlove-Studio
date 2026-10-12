@@ -32,14 +32,15 @@ export async function retryServerFailedControl(project: EvolveProject, target: S
   });
   if (!serverFailedControlRetryEligibility(project, status, target))
     throw new ServerFailedControlRetryUnavailableError();
-  const wire = serverFailedControlRetryWire(project.id, project.updatedAt, target.jobId, target.runId);
+  const sourceUpdatedAt = target.sourceUpdatedAt ?? project.updatedAt;
+  const wire = serverFailedControlRetryWire(project.id, sourceUpdatedAt, target.jobId, target.runId);
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(wire));
   const sha = [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, "0")).join("");
   return startServerEvolutionWorkflow(project.id, {
     intent: "retry-failed-control",
     retryOfControlJobId: target.jobId,
     retryOfRunId: target.runId,
-    expectedMissionUpdatedAt: project.updatedAt,
+    expectedMissionUpdatedAt: sourceUpdatedAt,
     idempotencyKey: "server-failed-control-retry:" + sha,
   });
 }

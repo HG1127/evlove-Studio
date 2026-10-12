@@ -102,6 +102,20 @@ describe("explicit retry of a bound failed backend control", () => {
     const posts = m.fetch.mock.calls.filter(call => call[0] === "/api/evolution/start");
     expect(JSON.parse(String(posts[0]![1].body)).idempotencyKey).not.toBe(JSON.parse(String(posts[1]![1].body)).idempotencyKey);
   });
+  it("keeps the reserved operation version after Mission CAS advances its timestamp", async () => {
+    const p = { ...project(), updatedAt: "2026-10-12T03:02:00.000Z" };
+    const reservedTarget = { ...target, sourceUpdatedAt: at };
+    const snapshot = structuredClone(p);
+    await retryServerFailedControl(p, reservedTarget);
+    await retryServerFailedControl({ ...p, updatedAt: "2026-10-12T03:03:00.000Z" }, reservedTarget);
+    const posts = m.fetch.mock.calls.filter(call => call[0] === "/api/evolution/start");
+    const expectedWire = JSON.stringify(["server-failed-control-retry-v1", p.id, at, target.jobId, target.runId]);
+    const requests = posts.map(call => JSON.parse(String(call[1].body)));
+    expect(requests[0]).toEqual(requests[1]);
+    expect(requests[0].expectedMissionUpdatedAt).toBe(at);
+    expect(requests[0].idempotencyKey).toBe("server-failed-control-retry:" + createHash("sha256").update(expectedWire).digest("hex"));
+    expect(p).toEqual(snapshot); expect(m.save).not.toHaveBeenCalled(); expect(m.put).not.toHaveBeenCalled();
+  });
   it.each([401, 409, 503])("preserves an HTTP %s rejection and never calls local write ports", async code => {
     m.fetch.mockImplementation(async (url: RequestInfo | URL) => String(url).startsWith("/api/evolution/status?") ? json(status()) : json({ error: "后台请求被拒绝" }, code));
     await expect(retryServerFailedControl(project(), target)).rejects.toThrow("后台请求被拒绝");
