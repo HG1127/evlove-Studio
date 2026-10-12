@@ -1,5 +1,12 @@
 # Backend Capability Assessment and Delivery Plan
 
+## 2026-10-12 — Real Workflow Event readback blocker
+
+The three runtime approvals are now explicit. Production operator access and independent Vault storage were restored; the saved direct MiniMax connection passed native structured-output checks at revision 2. Exact original/frozen preflight hashes were verified. The actual new Run failed during initialization: its inserted Event could not be read back because standalone scalar filters added literal double quotes. The Job's persisted running label does not establish a live Run.
+
+[Query recovery handoff](postgrest-scalar-readback-handoff.md) fixes eight scalar sites in six storage services while retaining nested cursor/list quoting and identity/signature checks. Four real production read-only requests using the repaired local application functions returned the exact Event and scoped/cursor rows. Fourteen focused files / 154 tests, architecture, lint and build passed. Complete exact-commit CI and deployment are pending; production still serves 2ea17671. This is not fresh Experiment, paired Hidden, Gate F or accepted download/reopen evidence. Manual Job repair/Cron/cleanup/migrations were not performed.
+
+
 ## 2026-10-10 — Main-flow asynchronous execution and accepted delivery (local validation)
 
 Actual local/SDK browser regressions reproduced valid delayed state being judged too early and broken search being accepted from initial visibility. Retrying observations preserve literal text semantics and single input/click actions. Source-generated assertions now require hidden-to-visible transitions for matching search and clear; exact tagged old papers require renewed confirmation/evidence rather than reuse of old passed records.

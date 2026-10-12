@@ -1,9 +1,6 @@
+import {postgrestScalarValue} from "./postgrest-filter-values";
 import {type EvolutionEvent} from "@evolution/contracts";
 import {rowEvent} from "./event-persistence";
-
-function filterValue(value:string){
-  return "%22"+encodeURIComponent(value.replace(/\\/g,"\\\\").replace(/"/g,'\\"'))+"%22";
-}
 
 export async function readEventEvidencePage(
   request:(path:string)=>Promise<unknown>,
@@ -11,8 +8,8 @@ export async function readEventEvidencePage(
 ){
   const bounded=Math.max(1,Math.min(args.limit,50));
   const path="events?select=*&order=id.asc&limit="+bounded
-    +(args.missionId?"&mission_id=eq."+filterValue(args.missionId):"")
-    +(args.afterId?"&id=gt."+filterValue(args.afterId):"");
+    +(args.missionId?"&mission_id=eq."+postgrestScalarValue(args.missionId):"")
+    +(args.afterId?"&id=gt."+postgrestScalarValue(args.afterId):"");
   const raw=await request(path);
   if(!Array.isArray(raw)||raw.length>bounded)throw new Error("Event Evidence page is invalid");
   const events:EvolutionEvent[]=[];

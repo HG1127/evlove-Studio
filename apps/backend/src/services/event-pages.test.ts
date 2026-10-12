@@ -23,7 +23,18 @@ describe("server Event pages",()=>{
       .toEqual(["z","y","x"]);
     expect(paths).toHaveLength(3);
     expect(paths.every((path)=>new URL("https://db.test/"+path).searchParams.get("order")==="at.desc,id.desc"
-      &&new URL("https://db.test/"+path).searchParams.get("mission_id")==='eq."mission-1"')).toBe(true);
+      &&new URL("https://db.test/"+path).searchParams.get("mission_id")==='eq.mission-1')).toBe(true);
+  });
+
+  it("finds a Mission with literal punctuation rather than adding quotes to its ID",async()=>{
+    const missionId='mission:一,()"\\&or=(id.eq.foreign)#%22';
+    const stored=[row("event-1",missionId)];
+    const request=vi.fn(async(path:string)=>{
+      const query=new URL("https://db.test/"+path).searchParams;
+      expect([...query.keys()]).toEqual(["select","order","limit","mission_id"]);
+      return stored.filter((event)=>query.get("mission_id")==="eq."+event.mission_id);
+    });
+    expect(await readServerEventRows(request,missionId,1)).toEqual(stored);
   });
 
   it("continues until an empty page when the server cap is below the request",async()=>{
@@ -68,7 +79,7 @@ describe("server Event pages",()=>{
   it("probes the same cursor grammar without reading user Events",async()=>{
     const request=vi.fn(async(path:string)=>{
       const query=new URL("https://db.test/"+path).searchParams;
-      expect(query.get("mission_id")).toBe('eq."health-probe-no-such-mission"');
+      expect(query.get("mission_id")).toBe('eq.health-probe-no-such-mission');
       expect(query.get("or")).toContain('id.lt."health-probe-no-such-event"');
       expect(query.get("limit")).toBe("1");
       return [];

@@ -23,12 +23,27 @@ describe("active Job pages",()=>{
     })).rejects.toThrow("does not match");
   });
 
+  it("finds the literal Mission scope while keeping nested cursor quotes",async()=>{
+    const missionId='mission:一,()"\\&limit=100#%22';
+    const stored={...row,mission_id:missionId};
+    const request=vi.fn(async(path:string)=>{
+      const query=new URL("https://db.test/"+path).searchParams;
+      expect(query.get("mission_id")).toBe("eq."+missionId);
+      expect(query.get("or")).toContain('id.gt."before,(id)\\"\\\\"');
+      return query.get("mission_id")==="eq."+stored.mission_id?[stored]:[];
+    });
+    expect(await readActiveJobRows(request,{
+      status:"running",kind:"parse",limit:1,missionId,
+      initialCursor:{updatedAt:at,id:'before,(id)"\\'},
+    })).toEqual([stored]);
+  });
+
   it("probes the production cursor grammar against an empty Mission",async()=>{
     const paths:string[]=[];
     const request=vi.fn(async(path:string)=>{paths.push(path);return [];});
     expect(await probeActiveJobPage(request)).toBe(true);
     const url=new URL("https://example.supabase.co/rest/v1/"+paths[0]);
-    expect(url.searchParams.get("mission_id")).toBe('eq."health-probe-no-such-mission"');
+    expect(url.searchParams.get("mission_id")).toBe('eq.health-probe-no-such-mission');
     expect(url.searchParams.get("or")).toContain('id.gt."health-probe-no-such-job"');
     expect(url.searchParams.get("order")).toBe("updated_at.asc,id.asc");
   });
