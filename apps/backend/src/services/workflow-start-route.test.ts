@@ -20,6 +20,11 @@ vi.mock("./production-runtime",async(importOriginal)=>({
 }));
 
 const mission={...demoProject,id:"mission-1"};
+vi.mock("./workflow-control-owner",()=>({
+ WorkflowControlOwnerError:class extends Error{},requireServerNewControlAllowed:vi.fn(async()=>undefined),
+ reserveServerWorkflowControl:vi.fn(async()=>({controlJobId:"workflow-control-fresh",operationKey:"workflow-control:mission-1:autopilot:revision-1",requestedAt:"2026-09-24T00:00:00.000Z",phase:"reserved"})),
+ beginServerWorkflowDispatchForMission:vi.fn(async()=>undefined),bindServerWorkflowOwner:vi.fn(async()=>undefined),
+}));
 const at="2026-09-24T00:00:00.000Z";
 const priorJob=EvolutionJobSchema.parse({
   schemaVersion:"job-v1",id:"workflow-control-prior",missionId:mission.id,type:"campaign",
@@ -39,7 +44,7 @@ describe("durable Workflow start idempotency",()=>{
   beforeEach(()=>{
     for(const mock of Object.values(mocks))mock.mockReset();
     mocks.workflowGetRun.mockReturnValue({exists:Promise.resolve(true)});
-    mocks.runtime.mockReturnValue({missions:{get:vi.fn(async()=>mission)},jobs:{get:vi.fn(async()=>priorJob)}});
+    mocks.runtime.mockReturnValue({missions:{get:vi.fn(async()=>mission)},jobs:{get:vi.fn(async()=>priorJob),list:vi.fn(async()=>[priorJob])}});
   });
   afterEach(()=>vi.restoreAllMocks());
 
@@ -54,8 +59,9 @@ describe("durable Workflow start idempotency",()=>{
 
   it("does not start a second run while the first request is still binding",async()=>{
     mocks.createJob.mockResolvedValue({job:{...priorJob,outputRef:undefined},reused:true});
+    mocks.runtime.mockReturnValue({missions:{get:vi.fn(async()=>mission)},jobs:{get:vi.fn(),list:vi.fn(async()=>[{...priorJob,outputRef:undefined}])}});
     expect(await route(request())).toMatchObject({
-      error:expect.stringContaining("没有可复用的活动 run"),controlJobId:priorJob.id,
+      error:expect.stringContaining("启动结果尚未确认"),controlJobId:priorJob.id,
     });
     expect(mocks.workflowStart).not.toHaveBeenCalled();
   });
@@ -63,7 +69,7 @@ describe("durable Workflow start idempotency",()=>{
   it("starts and binds a run only for a newly created Control Job",async()=>{
     const fresh=EvolutionJobSchema.parse({...priorJob,id:"workflow-control-fresh",status:"queued",outputRef:undefined});
     mocks.createJob.mockResolvedValue({job:fresh,reused:false});
-    mocks.runtime.mockReturnValue({missions:{get:vi.fn(async()=>mission)},jobs:{get:vi.fn(async()=>fresh)}});
+    mocks.runtime.mockReturnValue({missions:{get:vi.fn(async()=>mission)},jobs:{get:vi.fn(async()=>fresh),list:vi.fn(async()=>[])}});
     mocks.workflowStart.mockResolvedValue({runId:"run-fresh"});
     mocks.bindRun.mockResolvedValue({...fresh,outputRef:"run-fresh"});
     expect(await route(request())).toEqual({
@@ -77,7 +83,7 @@ describe("durable Workflow start idempotency",()=>{
   it("reports cancellation failure when a started run loses its Control Job",async()=>{
     const fresh=EvolutionJobSchema.parse({...priorJob,id:"workflow-control-fresh",status:"queued",outputRef:undefined});
     mocks.createJob.mockResolvedValue({job:fresh,reused:false});
-    mocks.runtime.mockReturnValue({missions:{get:vi.fn(async()=>mission)},jobs:{get:vi.fn(async()=>undefined)}});
+    mocks.runtime.mockReturnValue({missions:{get:vi.fn(async()=>mission)},jobs:{get:vi.fn(async()=>undefined),list:vi.fn(async()=>[])}});
     mocks.workflowStart.mockResolvedValue({runId:"run-orphan"});
     mocks.workflowGetRun.mockReturnValue({exists:Promise.resolve(true),status:Promise.resolve("running"),cancel:vi.fn().mockRejectedValue(new Error("unavailable"))});
     expect(await route(request())).toMatchObject({
@@ -89,7 +95,7 @@ describe("durable Workflow start idempotency",()=>{
   it("returns the actual cleanup receipt when a Control Job disappeared",async()=>{
     const fresh=EvolutionJobSchema.parse({...priorJob,id:"workflow-control-fresh",status:"queued",outputRef:undefined});
     mocks.createJob.mockResolvedValue({job:fresh,reused:false});
-    mocks.runtime.mockReturnValue({missions:{get:vi.fn(async()=>mission)},jobs:{get:vi.fn(async()=>undefined)}});
+    mocks.runtime.mockReturnValue({missions:{get:vi.fn(async()=>mission)},jobs:{get:vi.fn(async()=>undefined),list:vi.fn(async()=>[])}});
     mocks.workflowStart.mockResolvedValue({runId:"run-orphan"});
     mocks.workflowGetRun.mockReturnValue({exists:Promise.resolve(true),status:Promise.resolve("running"),cancel:vi.fn().mockResolvedValue(undefined)});
     expect(await route(request())).toMatchObject({

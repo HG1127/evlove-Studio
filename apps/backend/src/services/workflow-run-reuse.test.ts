@@ -19,7 +19,7 @@ beforeEach(()=>{
  mission=structuredClone(acceptedPackageFixture().project);
  mission.updatedAt=at;
  prior=EvolutionJobSchema.parse({schemaVersion:"job-v1",id:"workflow-control-fixture",missionId:mission.id,type:"campaign",status:"queued",label:"Workflow",idempotencyKey:`workflow-control:${mission.id}:request-key`,generation:1,attempts:0,priority:70,outputRef:runId,createdAt:at,updatedAt:at});
- mocks.runtime.mockReturnValue({missions:{get:vi.fn(async()=>mission),save:mocks.save},jobs:{get:vi.fn(async()=>prior),put:mocks.put},events:{append:mocks.append}});
+ mocks.runtime.mockReturnValue({missions:{get:vi.fn(async()=>mission),save:mocks.save},jobs:{get:vi.fn(async()=>prior),list:vi.fn(async()=>[prior]),put:mocks.put},events:{append:mocks.append}});
  mocks.create.mockImplementation(async()=>({job:prior,reused:true}));
  mocks.readPrior.mockImplementation(async()=>prior);
  mocks.readRun.mockResolvedValue({runId,status:"running",get input(){throw new Error("USER_INPUT_READ_FORBIDDEN");},get output(){throw new Error("USER_OUTPUT_READ_FORBIDDEN");}});

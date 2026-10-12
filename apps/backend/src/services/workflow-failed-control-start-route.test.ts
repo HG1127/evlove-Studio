@@ -2,19 +2,20 @@
 import {createHash} from "node:crypto";
 import {beforeEach,describe,expect,it,vi} from "vitest";
 import {mockEvent} from "nitro/h3";
-import {EvolutionJobSchema,type EvolutionJob,type EvolutionWorkflowRunInput} from "@evolution/contracts";
+import {EvolutionJobSchema,type EvolveProject,type MissionEnvelope,missionEnvelope,type EvolutionJob,type EvolutionWorkflowRunInput} from "@evolution/contracts";
 import {acceptedPackageFixture} from "@evolution/testkit";
 import {serverFailedControlRetryWire} from "@evolution/harness";
 import route from "../../server/api/evolution/start.post";
+import {MissionRevisionConflictError} from "./production-runtime";
 import {initializeWorkflowControlStep} from "../../../../workflows/evolution-mission/steps";
-const mocks=vi.hoisted(()=>({start:vi.fn(),getRun:vi.fn(),readRun:vi.fn(),create:vi.fn(),bind:vi.fn(),readPrior:vi.fn(),runtime:vi.fn(),save:vi.fn(),put:vi.fn(),append:vi.fn(),cancel:vi.fn()}));
+const mocks=vi.hoisted(()=>({start:vi.fn(),getRun:vi.fn(),readRun:vi.fn(),create:vi.fn(),bind:vi.fn(),readPrior:vi.fn(),runtime:vi.fn(),readEnvelope:vi.fn(),cas:vi.fn(),save:vi.fn(),put:vi.fn(),append:vi.fn(),cancel:vi.fn()}));
 vi.mock("workflow/api",()=>({start:mocks.start,getRun:mocks.getRun}));
 vi.mock("workflow/runtime",()=>({getWorld:()=>({runs:{get:mocks.readRun}})}));
 vi.mock("../../../../workflows/evolution-mission",()=>({evolutionMissionWorkflow:vi.fn()}));
 vi.mock("./security-policy",()=>({requireGovernedEvolutionPermission:vi.fn(async()=>undefined)}));
-vi.mock("./production-runtime",async(original)=>({...await original<typeof import("./production-runtime")>(),getServerProductionRuntime:mocks.runtime,createServerJobIdempotentReceipt:mocks.create,bindServerJobWorkflowRun:mocks.bind,getServerJobByIdempotencyKey:mocks.readPrior}));
+vi.mock("./production-runtime",async(original)=>({...await original<typeof import("./production-runtime")>(),getServerProductionRuntime:mocks.runtime,getServerMissionEnvelope:mocks.readEnvelope,compareAndSwapServerMissionEnvelope:mocks.cas,createServerJobIdempotentReceipt:mocks.create,bindServerJobWorkflowRun:mocks.bind,getServerJobByIdempotencyKey:mocks.readPrior}));
 const fixture=acceptedPackageFixture().project;
-let mission={...fixture,campaign:{...fixture.campaign,status:"running" as const}};
+let mission:EvolveProject={...fixture,campaign:{...fixture.campaign,status:"running" as const}};
 const sourceUpdatedAt=mission.updatedAt;
 const old=EvolutionJobSchema.parse({schemaVersion:"job-v1",id:"old-control",missionId:mission.id,type:"campaign",status:"running",label:"old",idempotencyKey:`workflow-control:${mission.id}:original`,generation:1,attempts:1,priority:70,outputRef:"old-run",createdAt:"2026-10-12T00:00:00Z",updatedAt:"2026-10-12T00:00:00Z"});
 const jobs=new Map<string,EvolutionJob>();
@@ -23,6 +24,9 @@ function event(body:unknown){return mockEvent(new Request("http://localhost/api/
 function retryRequest(){return event({missionId:mission.id,intent:"retry-failed-control",retryOfControlJobId:old.id,retryOfRunId:"old-run",expectedMissionUpdatedAt:sourceUpdatedAt,idempotencyKey:key});}
 beforeEach(()=>{
  for(const fn of Object.values(mocks))fn.mockReset();jobs.clear();jobs.set(old.id,structuredClone(old));
+ let revision=29;
+ mocks.readEnvelope.mockImplementation(async()=>missionEnvelope(mission,revision));
+ mocks.cas.mockImplementation(async(next:MissionEnvelope)=>{if(next.revision!==revision)throw new MissionRevisionConflictError(mission.id,next.revision,revision);revision++;mission=next.payload;return {...next,revision};});
  mission={...structuredClone(fixture),campaign:{...structuredClone(fixture.campaign),status:"running"}};
  mocks.runtime.mockReturnValue({missions:{get:async()=>mission,save:mocks.save},jobs:{list:async()=>[...jobs.values()],get:async(id:string)=>jobs.get(id),put:async(job:EvolutionJob)=>{mocks.put(job);jobs.set(job.id,job);}},events:{append:mocks.append}});
  mocks.readPrior.mockImplementation(async(key:string)=>[...jobs.values()].find(job=>job.idempotencyKey===key));
@@ -31,6 +35,7 @@ beforeEach(()=>{
  mocks.start.mockResolvedValue({runId:"new-run"});
  mocks.getRun.mockReturnValue({exists:Promise.resolve(true),get status(){throw new Error("FULL_USER_DATA_READ_FORBIDDEN");},cancel:mocks.cancel});
  mocks.readRun.mockImplementation(async(runId:string)=>({runId,status:runId==="old-run"?"failed":"running",get input(){throw new Error("USER_INPUT_READ_FORBIDDEN");},get output(){throw new Error("USER_OUTPUT_READ_FORBIDDEN");}}));
+
 });
 describe("governed failed control retry through normal start",()=>{
  it("creates a distinct bound Job/Run and starts only the new control",async()=>{
@@ -56,8 +61,77 @@ describe("governed failed control retry through normal start",()=>{
  });
  it("rejects Mission changes between accepted retry and actual initialization before Job/Event writes",async()=>{
   await route(retryRequest());const input=mocks.start.mock.calls[0][1][0] as EvolutionWorkflowRunInput;
-  mission={...mission,updatedAt:"2026-10-12T02:00:00Z"};
+  mission={...mission,goal:mission.goal+" changed",updatedAt:"2026-10-12T02:00:00Z"};
   await expect(initializeWorkflowControlStep(input)).rejects.toThrow("后台重试的输入或当前断点已变化");
   expect(mocks.put).not.toHaveBeenCalled();expect(mocks.append).not.toHaveBeenCalled();expect(jobs.get(old.id)).toEqual(old);
+ }); it("recovers a known Run whose owner binding receipt was lost without starting another Run",async()=>{
+  const original=mocks.cas.getMockImplementation()!;let failures=1;
+  mocks.cas.mockImplementation(async(next:MissionEnvelope)=>{
+   if(next.payload.campaign.serverControlOwner?.phase==="bound"&&failures-->0)throw new Error("bind transport lost");
+   return original(next);
+  });
+  const req=retryRequest();
+  expect(await route(req)).toMatchObject({code:"WORKFLOW_OWNER_BIND_PENDING",runId:"new-run"});
+  expect(req.res.status).toBe(503);expect(mission.campaign.serverControlOwner?.phase).toBe("dispatching");
+  expect(await route(retryRequest())).toMatchObject({runId:"new-run",reused:true});
+  expect(mission.campaign.serverControlOwner?.phase).toBe("bound");
+  await initializeWorkflowControlStep(mocks.start.mock.calls[0][1][0]);
+  expect(mocks.start).toHaveBeenCalledOnce();expect(jobs.get(old.id)).toEqual(old);
  });
+ it("resumes failed retry reservation before Job creation using its fixed control ID",async()=>{
+  mocks.create.mockRejectedValueOnce(new Error("Job transport lost"));
+  await expect(route(retryRequest())).rejects.toThrow("Job transport lost");
+  const fixedId=mission.campaign.serverControlOwner!.controlJobId;
+  expect(jobs.size).toBe(1);expect(mocks.start).not.toHaveBeenCalled();
+  expect(await route(retryRequest())).toMatchObject({controlJobId:fixedId,runId:"new-run"});
+  expect(mocks.start).toHaveBeenCalledOnce();expect(jobs.get(old.id)).toEqual(old);
+ });
+ it("ordinary same-key unsent reservation resumes before or after Job creation",async()=>{
+  jobs.clear();const req=()=>event({missionId:mission.id,idempotencyKey:"ordinary"});
+  mocks.create.mockRejectedValueOnce(new Error("Job transport lost"));
+  await expect(route(req())).rejects.toThrow("Job transport lost");
+  const owner=mission.campaign.serverControlOwner!;
+  const saved={...old,id:owner.controlJobId,outputRef:undefined,idempotencyKey:owner.operationKey,status:"queued" as const,createdAt:owner.requestedAt};
+  jobs.set(saved.id,saved);
+  expect(await route(req())).toMatchObject({controlJobId:owner.controlJobId,runId:"new-run"});
+  expect(mocks.start).toHaveBeenCalledOnce();
+ });
+ it("a start result unknown never sends a second Run for the same request",async()=>{
+  mocks.start.mockRejectedValueOnce(new Error("response lost"));
+  const first=retryRequest();expect(await route(first)).toMatchObject({code:"WORKFLOW_START_RESULT_UNKNOWN"});
+  expect(first.res.status).toBe(503);expect(mission.campaign.serverControlOwner?.phase).toBe("dispatching");
+  const second=retryRequest();expect(await route(second)).toMatchObject({error:expect.any(String)});
+  expect(second.res.status).toBe(409);expect(mocks.start).toHaveBeenCalledOnce();expect(jobs.get(old.id)).toEqual(old);
+ });
+ it("different ordinary keys and missing keys do not disguise a failed Run retry",async()=>{
+  for(const body of [{missionId:mission.id,idempotencyKey:"different"},{missionId:mission.id}]){
+   const req=event(body);expect(await route(req)).toMatchObject({error:expect.any(String)});expect(req.res.status).toBe(409);
+  }
+  expect(mocks.create).not.toHaveBeenCalled();expect(mocks.start).not.toHaveBeenCalled();expect(mission.campaign.serverControlOwner).toBeUndefined();
+ });
+ it("concurrent same-key explicit retries send start only once",async()=>{
+  const requests=[retryRequest(),retryRequest()];
+  const results=await Promise.all(requests.map(req=>route(req)));
+  expect(results.filter(result=>"runId" in result)).toHaveLength(1);
+  expect(requests.some(req=>req.res.status===409)).toBe(true);
+  expect(mocks.start).toHaveBeenCalledOnce();expect(jobs.get(old.id)).toEqual(old);
+ });
+
+ it("recovers scheduled Job/Run binding and schedule acknowledgement using the same request",async()=>{
+  jobs.clear();const scheduledFor="2026-10-13T03:00:00Z";
+  mission={...mission,campaign:{...mission.campaign,status:"scheduled",schedule:{...mission.campaign.schedule,enabled:true,nextRunAt:scheduledFor}}};
+  mocks.save.mockImplementation(async(value:EvolveProject)=>{mission=value;});
+  const original=mocks.cas.getMockImplementation()!;let fail=true;
+  mocks.cas.mockImplementation(async(next:MissionEnvelope)=>{
+   if(next.payload.campaign.serverControlOwner?.phase==="bound"&&fail){fail=false;throw new Error("bind response lost");}
+   return original(next);
+  });
+  const req=()=>event({missionId:mission.id,scheduledFor,idempotencyKey:"schedule"});
+  const first=req();expect(await route(first)).toMatchObject({code:"WORKFLOW_OWNER_BIND_PENDING"});
+  expect(first.res.status).toBe(503);expect(mission.campaign.schedule.durableRunId).toBeUndefined();
+  expect(await route(req())).toMatchObject({runId:"new-run",reused:true});
+  expect(mission.campaign.schedule.durableRunId).toBe("new-run");expect(mission.campaign.serverControlOwner?.phase).toBe("bound");
+  expect(mocks.start).toHaveBeenCalledOnce();
+ });
+
 });

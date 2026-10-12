@@ -57,4 +57,21 @@ describe("explicit failed control retry preparation",()=>{
     readPrior.mockResolvedValue({...job,idempotencyKey:`workflow-control:${project.id}:${key}`,metadata:{workflowIntent:"retry-failed-control",sourceUpdatedAt:project.updatedAt,retryOfControlJobId:job.id,retryOfRunId:"foreign"}});
     await expect(prepareServerFailedControlRetry(runtime,project,request,readPrior,readRun)).rejects.toMatchObject({statusCode:409});
   });
+  it.each([
+    {generation:2},
+    {metadata:{runId:"foreign"}},
+  ])("rejects same-key invalid generation or contradictory Run identity %o",async(change)=>{
+    const metadata={workflowIntent:"retry-failed-control",sourceUpdatedAt:project.updatedAt,retryOfControlJobId:job.id,retryOfRunId:"run-1"};
+    readPrior.mockResolvedValue({...job,id:"new-control",idempotencyKey:"workflow-control:"+project.id+":"+key,outputRef:"run-2",...change,metadata:{...metadata,...change.metadata}});
+    await expect(prepareServerFailedControlRetry(runtime,project,request,readPrior,readRun)).rejects.toMatchObject({statusCode:409});
+    expect(save).not.toHaveBeenCalled();expect(put).not.toHaveBeenCalled();expect(readRun).not.toHaveBeenCalled();
+  });
+
+  it("requires the authoritative bound owner Run to match the requested failed source",async()=>{
+    const owner={schemaVersion:"server-workflow-control-owner-v1" as const,controlJobId:job.id,operationKey:job.idempotencyKey,sourceUpdatedAt:project.updatedAt,inputFingerprint:"a".repeat(64),requestedAt:project.updatedAt,phase:"bound" as const,runId:"actually-active-run"};
+    const owned={...project,campaign:{...project.campaign,serverControlOwner:owner}};
+    await expect(prepareServerFailedControlRetry(runtime,owned,request,readPrior,readRun)).rejects.toMatchObject({statusCode:409});
+    expect(readRun).not.toHaveBeenCalled();expect(save).not.toHaveBeenCalled();expect(put).not.toHaveBeenCalled();
+  });
+
 });

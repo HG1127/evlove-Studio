@@ -1,6 +1,6 @@
 import {createHash} from "node:crypto";
 import type {EvolveProject,EvolutionJob,EvolutionWorkflowRunInput,EvolutionWorkflowStartRequest,ProductionRuntimePorts} from "@evolution/contracts";
-import {serverFailedControlRetryEligibility,serverFailedControlRetryTarget,serverFailedControlRetryWire} from "@evolution/harness";
+import {serverFailedControlRetryEligibility,serverFailedControlRetryTarget,serverFailedControlRetryWire,serverControlJobRunId} from "@evolution/harness";
 import {getServerJobByIdempotencyKey} from "./production-runtime";
 import {readWorkflowRunMetadata} from "./workflow-run-metadata";
 import {serverMainFlowRecoveryDigest} from "./server-main-flow-recovery";
@@ -25,12 +25,33 @@ export async function prepareServerFailedControlRetry(
   const operationKey=`workflow-control:${mission.id}:${key}`;
   const existing=await readPrior(operationKey);
   if(existing){
-    if(existing.missionId!==mission.id||existing.type!=="campaign"||existing.idempotencyKey!==operationKey
+    if(existing.missionId!==mission.id||existing.type!=="campaign"||existing.generation!==1||existing.idempotencyKey!==operationKey
       ||existing.metadata?.workflowIntent!=="retry-failed-control"||existing.metadata?.sourceUpdatedAt!==sourceUpdatedAt
       ||existing.metadata?.retryOfControlJobId!==jobId||existing.metadata?.retryOfRunId!==runId){
       throw new WorkflowControlRetryError(409,"已有后台重试的生成身份与当前请求不一致");
     }
-    return {reused:existing};
+    const metadataRun=typeof existing.metadata?.runId==="string"?existing.metadata.runId.trim():undefined;
+    if(metadataRun&&existing.outputRef?.trim()&&metadataRun!==existing.outputRef.trim()){
+      throw new WorkflowControlRetryError(409,"已有后台重试的 Run 绑定相互冲突");
+    }
+    if(serverControlJobRunId(existing,mission))return {reused:existing};
+    const owner=mission.campaign.serverControlOwner;
+    if(!owner||owner.phase!=="reserved"||owner.controlJobId!==existing.id||owner.operationKey!==operationKey){
+      throw new WorkflowControlRetryError(409,"后台启动结果尚未确认，请保留原请求并查看运行记录");
+    }
+    // A persisted reserved phase proves no caller acquired permission to send start.
+    return {binding:{sourceUpdatedAt:owner.sourceUpdatedAt,inputFingerprint:owner.inputFingerprint,
+      retryOfControlJobId:jobId,retryOfRunId:runId},metadata:existing.metadata};
+  }
+  const reservation=mission.campaign.serverControlOwner;
+  if(reservation?.operationKey===operationKey&&reservation.phase==="reserved"
+    &&reservation.sourceUpdatedAt===sourceUpdatedAt&&reservation.retryOfControlJobId===jobId&&reservation.retryOfRunId===runId
+    &&serverMainFlowRecoveryDigest(mission)===reservation.inputFingerprint){
+    return {binding:{sourceUpdatedAt,inputFingerprint:reservation.inputFingerprint,retryOfControlJobId:jobId,retryOfRunId:runId},
+      metadata:{workflowIntent:"retry-failed-control",sourceUpdatedAt,inputFingerprint:reservation.inputFingerprint,retryOfControlJobId:jobId,retryOfRunId:runId}};
+  }
+  if(reservation&&(reservation.controlJobId!==jobId||reservation.phase!=="bound"||reservation.runId!==runId)){
+    throw new WorkflowControlRetryError(409,"已有其他后台控制预留，请刷新运行状态");
   }
   if(mission.updatedAt!==sourceUpdatedAt)throw new WorkflowControlRetryError(409,"Mission 已变化，请刷新后核对最新后台执行");
   const inputFingerprint=serverMainFlowRecoveryDigest(mission);

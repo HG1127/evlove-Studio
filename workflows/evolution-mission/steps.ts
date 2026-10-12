@@ -49,7 +49,10 @@ import { lockGitTargetSnapshot,materializeLockedGitTargetSource } from "../../ap
 import { lockConnectorTargetSnapshot,materializeLockedConnectorTargetSource } from "../../apps/backend/src/services/connector-target-source";
 import {serverAiConnectionConfigured as serverAiConfigured} from "../../apps/backend/src/services/server-ai-connection";
 import {appendWorkflowControlEvent} from "../../apps/backend/src/services/workflow-control-events";
+import {getServerWorkflowControlRuntime,requireServerWorkflowControlOwner} from "../../apps/backend/src/services/workflow-control-runtime";
 import {planWorkflowResultFinalization} from "../../apps/backend/src/services/workflow-result-finalization";
+
+
 
 async function controlJob(input:EvolutionWorkflowRunInput,args:WorkflowControlJobUpdate){
   const current=await getServerProductionRuntime().jobs.get(input.controlJobId);
@@ -63,12 +66,19 @@ async function controlJob(input:EvolutionWorkflowRunInput,args:WorkflowControlJo
 
 export async function initializeWorkflowControlStep(input:EvolutionWorkflowRunInput){
   "use step";
-  const runtime=getServerProductionRuntime();
+  await requireServerWorkflowControlOwner(input);
+  const runtime=getServerWorkflowControlRuntime(input);
   const mission=await runtime.missions.get(input.missionId);
   if(!mission)throw new FatalError(`Mission 不存在：${input.missionId}`);
-  if(input.failedControlRetry&&(mission.updatedAt!==input.failedControlRetry.sourceUpdatedAt
+  if(input.failedControlRetry&&((!mission.campaign.serverControlOwner&&mission.updatedAt!==input.failedControlRetry.sourceUpdatedAt)
     ||serverMainFlowRecoveryDigest(mission)!==input.failedControlRetry.inputFingerprint)){
     throw new FatalError("后台重试的输入或当前断点已变化；未接管新执行，请刷新并核对状态");
+  }
+  const owner=mission.campaign.serverControlOwner;
+  if(owner){
+    if(owner.controlJobId!==input.controlJobId)throw new FatalError("已有其他后台控制接管当前 Mission");
+    if(owner.phase!=="bound")throw new Error("后台 Run 绑定尚未完成，请稍后继续");
+    if(serverMainFlowRecoveryDigest(mission)!==owner.inputFingerprint)throw new FatalError("预留后输入已变化，未接管后台执行");
   }
   const startedAt=new Date().toISOString();
   const initializedJob=await controlJob(input,{
@@ -110,7 +120,8 @@ export async function prepareScheduledTriggerStep(
   | {control:"stop";result:EvolutionWorkflowResult}
 >{
   "use step";
-  const runtime=getServerProductionRuntime();
+  await requireServerWorkflowControlOwner(input);
+  const runtime=getServerWorkflowControlRuntime(input);
   const mission=await runtime.missions.get(input.missionId);
   if(!mission)throw new FatalError(`Mission 不存在：${input.missionId}`);
   const schedule=mission.campaign.schedule;
@@ -184,7 +195,8 @@ export async function settleScheduledManualRoundStep(
   | {settled:true;result:EvolutionWorkflowResult}
 >{
   "use step";
-  const runtime=getServerProductionRuntime();
+  await requireServerWorkflowControlOwner(input);
+  const runtime=getServerWorkflowControlRuntime(input);
   const mission=await runtime.missions.get(input.missionId);
   if(!mission)throw new FatalError(`Mission 不存在：${input.missionId}`);
   if(mission.campaign.currentRound<targetRound)return {settled:false};
@@ -333,7 +345,8 @@ export async function settleScheduledManualRoundStep(
 
 export async function planMissionStep(input:EvolutionWorkflowRunInput,iteration:number):Promise<ServerHarnessPlan>{
   "use step";
-  const runtime=getServerProductionRuntime();
+  await requireServerWorkflowControlOwner(input);
+  const runtime=getServerWorkflowControlRuntime(input);
   let mission=await runtime.missions.get(input.missionId);
   if(!mission)throw new FatalError(`Mission 不存在：${input.missionId}`);
   if(input.freshBaseline && iteration===0){
@@ -484,11 +497,12 @@ export async function executeServerControlStep(
   iteration:number,
 ):Promise<{control:"continue"|"stop";result?:EvolutionWorkflowResult;sleepMs?:number}>{
   "use step";
+  await requireServerWorkflowControlOwner(input);
   try {
     return await executeServerControlAction(input,plan,iteration);
   } catch (error) {
     if (!(error instanceof ServerControlAiUnavailableError)) throw error;
-    const runtime=getServerProductionRuntime();
+    const runtime=getServerWorkflowControlRuntime(input);
     const currentJob=await runtime.jobs.get(input.controlJobId);
     // An old Step must not reopen a cancelled, settled or replaced control generation.
     if(!currentJob || currentJob.missionId!==input.missionId || currentJob.generation!==1
@@ -512,7 +526,7 @@ async function executeServerControlAction(
   plan:ServerHarnessPlan,
   iteration:number,
 ):Promise<{control:"continue"|"stop";result?:EvolutionWorkflowResult;sleepMs?:number}>{
-  const runtime=getServerProductionRuntime();
+  const runtime=getServerWorkflowControlRuntime(input);
   const mission=await runtime.missions.get(input.missionId);
   if(!mission)throw new FatalError(`Mission 不存在：${input.missionId}`);
   const now=new Date().toISOString();
@@ -1521,7 +1535,7 @@ async function executeServerControlAction(
 
 export async function finalizeWorkflowResultStep(input:EvolutionWorkflowRunInput,result:EvolutionWorkflowResult){
   "use step";
-  const runtime=getServerProductionRuntime();
+  const runtime=getServerWorkflowControlRuntime(input);
   const now=new Date().toISOString();
   const current=await runtime.jobs.get(input.controlJobId);
   const settlement=planWorkflowResultFinalization(current,result,now);
@@ -1539,7 +1553,7 @@ export async function finalizeWorkflowResultStep(input:EvolutionWorkflowRunInput
 
 export async function failLoopGuardStep(input:EvolutionWorkflowRunInput,iterations:number):Promise<EvolutionWorkflowResult>{
   "use step";
-  const runtime=getServerProductionRuntime();
+  const runtime=getServerWorkflowControlRuntime(input);
   const now=new Date().toISOString();
   const message=`Workflow control loop 超过安全上限 ${iterations}`;
   await runtime.jobs.put(await controlJob(input,{

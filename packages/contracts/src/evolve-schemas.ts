@@ -1,4 +1,5 @@
 import { z } from "zod";
+import {ServerWorkflowControlOwnerSchema} from "./workflow-control-owner-contract";
 import { GitRepositoryBindingSchema, GitTargetSnapshotBindingSchema } from "./git-target-contract";
 import {ConnectorCandidateBindingSchema,ConnectorTargetBindingSchema,ConnectorTargetSnapshotBindingSchema} from "./connector-contract";
 
@@ -995,6 +996,7 @@ export const EvolutionCampaignSchema = z.object({
   checkpoint: CampaignCheckpointSchema.optional(),
   serverRecoveryWait: ServerCampaignRecoveryWaitSchema.optional(),
   freshBaselineRestartControlJobId: z.string().min(1).optional(),
+  serverControlOwner:ServerWorkflowControlOwnerSchema.optional(),
 });
 export type EvolutionCampaign = z.infer<typeof EvolutionCampaignSchema>;
 

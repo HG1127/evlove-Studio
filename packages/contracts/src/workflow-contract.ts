@@ -42,6 +42,7 @@ export type HarnessPrepareRequest=z.infer<typeof HarnessPrepareRequestSchema>;
 export const EvolutionWorkflowRunInputSchema = z.object({
   missionId: z.string().min(1),
   controlJobId: z.string().min(1),
+  controlOwnerKey: z.string().min(1).optional(),
   requestedAt: z.string(),
   freshBaseline: z.object({ sourceUpdatedAt: z.string().min(1), inputFingerprint: z.string().regex(/^[0-9a-f]{64}$/) }).optional(),
   failedControlRetry:z.object({

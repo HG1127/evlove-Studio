@@ -41,4 +41,14 @@ describe("failed control retry policy",()=>{
     expect(serverFailedControlRetryWire(...args)).toBe(wire);
     expect(serverFailedControlRetryWire(project.id,project.updatedAt,job.id,"run-2")).not.toBe(wire);
   });
+  it("resumes only the original source of a proven unsent reserved retry",()=>{
+    const owner={schemaVersion:"server-workflow-control-owner-v1" as const,controlJobId:"new",operationKey:"workflow-control:"+project.id+":new",sourceUpdatedAt:"original-version",inputFingerprint:"a".repeat(64),requestedAt:"2026-10-12T01:00:00Z",phase:"reserved" as const,retryOfControlJobId:job.id,retryOfRunId:"run-1"};
+    const reserved={...project,updatedAt:owner.requestedAt,campaign:{...project.campaign,serverControlOwner:owner}};
+    const newJob={...job,id:"new",outputRef:undefined,createdAt:owner.requestedAt};
+    expect(serverFailedControlRetryTarget(reserved,[job])).toEqual({...target,sourceUpdatedAt:"original-version"});
+    expect(serverFailedControlRetryTarget(reserved,[job,newJob])).toEqual({...target,sourceUpdatedAt:"original-version"});
+    expect(serverFailedControlRetryTarget({...reserved,campaign:{...reserved.campaign,serverControlOwner:{...owner,phase:"dispatching"}}},[job,newJob])).toBeUndefined();
+    expect(serverFailedControlRetryTarget(reserved,[{...job,outputRef:"foreign"},newJob])).toBeUndefined();
+  });
+
 });
