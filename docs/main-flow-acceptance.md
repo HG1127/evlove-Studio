@@ -1,5 +1,11 @@
 # Main flow acceptance
 
+## 2026-10-13 — Private cloud observation composition (local checks)
+
+[Cloud observation handoff](html-protection-cloud-observation-handoff.md) adds the owned browser factory, fixed server-only ESM compilation, bounded private custody/readback and selected DOM comparison.15 actual related files/334 tests, architecture/full lint/TypeScript production build passed with independent dependencies; all failed launcher and shared-cache build attempts remain retained. The Campaign collector, actual state transitions/copy, Original runtime profile, whole semantic/visual/provenance, same-Hidden, Gate F and exact accepted download/reopen remain incomplete. A new exact complete gate is required.
+
+Prior b19f76c passed the independently audited complete local gate (57 stages,3597 tests,Runner76,E2E5); it does not cover this increment. Production23:12 UTC still servedfb3a9b5, with actual Mission43 Baselinefailed/paused, SDKcompleted/Jobwaiting. Dedicated owner dispatch was rejected by inactive-window; Root made no main push, deployment or new real-file execution.
+
 ## 2026-10-13 — Original scope and native DOM observation foundations (local integration)
 
 [Collector foundations](html-protection-collector-foundations-handoff.md) add an Original-only complete expected scope, retained runtime residuals and native isolated DOM projections with mutation latching and shallow bounded reads. The integrated9-file/292 regression, architecture, full lint and TypeScript/production build passed; the initial type-build failure is retained. Clipboard/template/unknown runtime, semantic/visual closure, physical Page startup custody and collector/settlement/Gate F wiring remain incomplete. The new exact integrated complete gate is required separately.
