@@ -4,6 +4,7 @@ import { campaignScoringInputFingerprint, fastHash, htmlProtectionContractBlocke
 import { canReuseServerBaseline, runServerBaseline } from "./server-baseline";
 import { serverBaselineFingerprint } from "./server-baseline-evidence";
 import { exactServerHoldoutSuite } from "./server-holdout-preflight";
+import { executeServerCurrentArtifactSuite } from "./server-current-artifact-runner";
 
 function fixture(): EvolveProject {
   const now="2026-09-20T13:00:00.000Z";
@@ -513,4 +514,63 @@ it("does not reuse a completed Baseline that failed required current hard eviden
   expect(outcome.ready).toBe(false);
   expect(outcome.capabilityGaps).toContain("criterion:CONTENT");
   expect(canReuseServerBaseline(outcome.project)).toBe(false);
+});
+
+it("defers canonical original protection only in the current-only Baseline without inventing a pass",async()=>{
+  const project=fixture();
+  const protection={...project.acceptanceRubric[0]!,id:"PROTECT-ALL",title:"Protection compared with original",
+    source:"protected-item" as const,judgeType:"pairwise" as const,validationMethod:"semantic-judge" as const,
+    protectedConstraint:true,category:"protected" as const,weight:8,minScore:95,artifactIds:[],
+    requirement:"以下保护项必须全部保持不变："+project.protectedItems.join("；"),
+    evidenceExpected:project.protectedItems.map(item=>"与原始版本对比确认未破坏："+item)};
+  project.acceptanceRubric=[...project.acceptanceRubric.map(c=>({...c,weight:c.weight*0.92})),protection];
+  const pure={...project.evalSuite[0]!,id:"PROTECTED-PAIR",criterionIds:[protection.id],executionMode:"external-runner" as const,tags:["source-grounded-html-assertions"]};
+  project.evalSuite=[{...project.evalSuite[0]!,criterionIds:["CONTENT",protection.id]},...project.evalSuite.slice(1),pure];
+  project.hiddenEvalSuite=[...project.hiddenEvalSuite,{...pure,id:"H-PROTECTED-PAIR",hidden:true}];
+  const originalContract=JSON.stringify([project.acceptanceRubric,project.evalSuite,project.hiddenEvalSuite]);
+  let externalCalls=0;
+  const outcome=await runServerBaseline(project,{
+    executeSemanticBatch:async({testCases})=>{
+      expect(testCases.flatMap(t=>t.criterionIds)).not.toContain("PROTECT-ALL");
+      return {results:testCases.map(t=>({testCaseId:t.id,output:"Observed complete current installation instructions; rollback absent.",trace:[]}))};
+    },
+    executeExternalBatch:async({testCases})=>{externalCalls++;return testCases.map(t=>({testCaseId:t.id,output:"search measured only",verificationStatus:"verified" as const,latencyMs:1,cost:0,trace:[]}));},
+    judge:async(payload)=>{expect(JSON.stringify(payload)).not.toContain('"criterionId":"PROTECT-ALL"');return judge();},
+  });
+  expect(outcome.ready).toBe(true);
+  expect(externalCalls).toBe(0);
+  expect(outcome.baseline.runs.find(r=>r.testCaseId===pure.id)).toMatchObject({verificationStatus:"unverified"});
+  expect(outcome.baseline.result?.criterionScores?.find(c=>c.criterionId===protection.id)).toMatchObject({pass:false,verificationStatus:"unverified"});
+  expect(outcome.baseline.result?.criterionScores?.find(c=>c.criterionId==="CONTENT")).toMatchObject({pass:false,verificationStatus:"verified"});
+  expect(JSON.stringify([outcome.project.acceptanceRubric,outcome.project.evalSuite,outcome.project.hiddenEvalSuite])).toBe(originalContract);
+  expect(canReuseServerBaseline(outcome.project)).toBe(true);
+});
+
+it("does not defer PROTECT on the paired Hidden current arm",async()=>{
+ const project=fixture();
+ const protect={...project.acceptanceRubric[0]!,id:"PROTECT-ALL",source:"protected-item" as const,judgeType:"pairwise" as const,
+  protectedConstraint:true,category:"protected" as const,requirement:project.protectedItems.join("；"),evidenceExpected:project.protectedItems.map(item=>"与原始版本对比确认未破坏："+item)};
+ project.acceptanceRubric=[protect];
+ const hidden={...project.hiddenEvalSuite[0]!,id:"H-PROTECT",criterionIds:[protect.id]};
+ const before=JSON.stringify(hidden);
+ let calls=0;
+ const runs=await executeServerCurrentArtifactSuite(project,[hidden],{executeSemanticBatch:async({testCases})=>{
+  calls++;expect(testCases[0]!.criterionIds).toEqual(["PROTECT-ALL"]);
+  return {results:[{testCaseId:hidden.id,output:"Current content measured; runtime protection UNVERIFIED.",trace:[]}]};
+ },judge:async()=>judge()});
+ expect(calls).toBe(1);
+ expect(runs[0]).toMatchObject({testCaseId:hidden.id,verificationStatus:"partial"});
+ expect(JSON.stringify(hidden)).toBe(before);
+});
+it("retains the current hard evidence requirement in a mixed comparison paper",async()=>{
+ const project=fixture();
+ const protect={...project.acceptanceRubric[0]!,id:"PROTECT-ALL",source:"protected-item" as const,judgeType:"pairwise" as const,
+  protectedConstraint:true,category:"protected" as const,weight:8,requirement:project.protectedItems.join("；"),evidenceExpected:project.protectedItems.map(item=>"与原始版本对比确认未破坏："+item)};
+ project.acceptanceRubric=[...project.acceptanceRubric.map(c=>({...c,weight:c.weight*0.92})),protect];
+ project.evalSuite=project.evalSuite.map(c=>c.id==="V1"?{...c,criterionIds:["CONTENT","PROTECT-ALL"]}:c);
+ project.hiddenEvalSuite.push({...project.hiddenEvalSuite[0]!,id:"H-PROTECT",criterionIds:["PROTECT-ALL"]});
+ const result=await runServerBaseline(project,{executeSemanticBatch:async({testCases})=>({results:testCases.map(t=>({testCaseId:t.id,output:"UNVERIFIED current content unavailable",trace:[]}))}),judge:async()=>judge()});
+ expect(result.ready).toBe(false);
+ expect(result.capabilityGaps).toContain("criterion:CONTENT");
+ expect(result.baseline.result?.criterionScores?.find(c=>c.criterionId==="PROTECT-ALL")).toMatchObject({pass:false,verificationStatus:"unverified"});
 });

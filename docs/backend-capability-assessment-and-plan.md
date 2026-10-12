@@ -1,5 +1,12 @@
 # Backend Capability Assessment and Delivery Plan
 
+## 2026-10-12 — Original Baseline and live direct-model blockers (local increment)
+
+Mainfde3ef3 deployed the independently complete-CI-verified63981aa tree. Actual authorized RunR78 (Job workflow-control-0772c984-20a2-43cd-a769-cf91fe6a040d) measured complete source HTML and passed the exact-byte9-step cloud Chromium search. All3 semantic cases timed out; independent Judge produced malformed JSON. Mission38 is paused, SDK completed and Job waiting; fresh Experiment/Hidden/Gate F/download remain unproven.
+
+[Phase and model recovery handoff](main-flow-baseline-model-recovery-handoff.md) preserves canonical future protection as UNVERIFIED only in the original visible Baseline, keeps paired Hidden/current hard evidence strict, honors saved-model timeout independently of environment credentials, and permits one fully validated completed Judge JSON correction with the same evidence/deadline.26 unique related files /338 cases passed; exact new complete CI and production proof are required. No existing failed result or physical acceptance was upgraded.
+
+
 ## 2026-10-12 — Real Baseline file evidence (development checked)
 
 Production 645aa1d completed the authorized real Baseline at 11:50:57 UTC, but Mission33 remains paused at 42% usable evidence. [Complete-file evidence handoff](baseline-file-evidence-handoff.md) addresses historical HTML-to-unconfigured-HTTP dispatch, full byte-backed document structure/text observations, phase-correct visible comparison requirements, conservative independent Judge coverage and failed-Baseline cache reuse. Eighteen actual relevant files / 249 tests, architecture, full lint and TypeScript/production build passed; complete CI and deployment of this increment remain pending.

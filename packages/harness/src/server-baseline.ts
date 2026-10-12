@@ -8,6 +8,7 @@ import type {
 } from "@evolution/contracts";
 import {
   baselineReadiness,
+  baselineDeferredComparisonCriterionIds,
   htmlProtectionContractBlocker,
   campaignLiveObservationFresh,
   campaignObservesLiveTarget,
@@ -135,9 +136,14 @@ export async function runServerBaseline(
   const ordered = new Map<string, TargetRunResult>();
   const semanticCases: TestCase[] = [];
   const externalCases: TestCase[] = [];
+  const deferredCriteria = baselineDeferredComparisonCriterionIds(project);
   for (const originalCase of project.evalSuite) {
-    const comparisonOnly = originalCase.criterionIds.length > 0 && originalCase.criterionIds.every(id => id === "SYS-PAIRWISE");
-    const testCase = comparisonOnly ? originalCase : { ...originalCase, criterionIds: originalCase.criterionIds.filter(id => id !== "SYS-PAIRWISE") };
+    const comparisonOnly = originalCase.criterionIds.length > 0 && originalCase.criterionIds.every(id => deferredCriteria.has(id));
+    if (comparisonOnly) {
+      ordered.set(originalCase.id, unavailableBaselineRun(originalCase, "原版 Baseline 是对照起点；Candidate 相对改进与原始保护对照在实验及 Hidden 阶段验证，不在此处声明通过。"));
+      continue;
+    }
+    const testCase = { ...originalCase, criterionIds: originalCase.criterionIds.filter(id => !deferredCriteria.has(id)) };
     const stored = await storedBaselineEvidence(project, testCase, ports.executeStoredEvidence);
     if (stored) { ordered.set(testCase.id, stored); continue; }
     const currentViewGap = testCase.executionMode === "artifact-runtime" && ports.buildCurrentArtifactContext
@@ -241,8 +247,8 @@ export async function runServerBaseline(
     return { project: nextProject, baseline, ready: false, reason, capabilityGaps: runs.map((run) => run.testCaseId) };
   }
 
-  // Relative improvement is measured after a Candidate exists, never by the current-only baseline.
-  const baselineCases = project.evalSuite.map(testCase => ({ ...testCase, criterionIds: testCase.criterionIds.filter(id => id !== "SYS-PAIRWISE") }));
+  // The current-only phase keeps its complete stored paper; only its Judge projection omits future comparisons.
+  const baselineCases = project.evalSuite.map(testCase => ({ ...testCase, criterionIds: testCase.criterionIds.filter(id => !deferredCriteria.has(id)) }));
   const judgeCriteria = criteriaRequiringJudge(project.acceptanceRubric, baselineCases, runs);
   const judgeIds = new Set(judgeCriteria.map((criterion) => criterion.id));
   const evaluableIds = new Set(
@@ -268,7 +274,7 @@ export async function runServerBaseline(
       acceptanceRubric: effectiveCriteria,
     },
     acceptanceRubric: effectiveCriteria,
-    evaluatorInstruction: "Judge only supplied current Baseline evidence for the explicitly listed criterion IDs. SYS-PAIRWISE relative improvement is deferred until Candidate comparison; if a mixed paper also mentions Original vs Evolved, judge the current arm against current applicable content requirements only. Never cite diagnosis, plans or patches. UNVERIFIED tests are omitted and must not be invented as failures. PARTIAL evidence cannot fully satisfy a hard gate.",
+    evaluatorInstruction: "Judge only supplied current Baseline evidence for the explicitly listed criterion IDs. Candidate-only relative improvement/protection comparisons omitted from this phase are deferred until Candidate comparison; if a mixed paper also mentions Original vs Evolved, judge the current arm against current applicable content requirements only. Never cite diagnosis, plans or patches. UNVERIFIED tests are omitted and must not be invented as failures. PARTIAL evidence cannot fully satisfy a hard gate.",
     testCases: judgeCases.map((testCase) => ({
       id: testCase.id,
       title: testCase.title,
@@ -413,14 +419,15 @@ export async function runServerBaseline(
 /** Initial measurement and cache reuse must obey the same evidence boundary. */
 function serverBaselineEvidenceGaps(project: EvolveProject) {
   const runById = new Map(project.baselineRun.runs.map((run) => [run.testCaseId, run]));
+  const deferredCriteria = baselineDeferredComparisonCriterionIds(project);
   const requiredCapabilityGaps = project.evalSuite.filter((testCase) => {
-    const comparisonOnly = testCase.criterionIds.length > 0 && testCase.criterionIds.every((id) => id === "SYS-PAIRWISE");
+    const comparisonOnly = testCase.criterionIds.length > 0 && testCase.criterionIds.every((id) => deferredCriteria.has(id));
     if (comparisonOnly) return false;
     const status = runById.get(testCase.id)?.verificationStatus ?? "unverified";
     return status === "unverified" || status === "failed";
   });
   const criterionById = new Map((project.baselineRun.result?.criterionScores ?? []).map((item) => [item.criterionId, item]));
   const hardGateGaps = project.acceptanceRubric.filter((criterion) =>
-    criterion.hardGate && criterion.id !== "SYS-PAIRWISE" && criterionById.get(criterion.id)?.verificationStatus !== "verified");
+    criterion.hardGate && !deferredCriteria.has(criterion.id) && criterionById.get(criterion.id)?.verificationStatus !== "verified");
   return { requiredCapabilityGaps, hardGateGaps };
 }

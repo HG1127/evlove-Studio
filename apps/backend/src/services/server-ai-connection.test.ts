@@ -20,7 +20,7 @@ const input={
   model:"arbitrary-model-id",apiKey:"private-key-never-return",
   protocol:"chat-completions" as const,responseFormat:"json-object" as const,
 };
-const keys=["NODE_ENV","EVOLUTION_AI_API_KEY","OPENAI_API_KEY","EVOLUTION_AI_MODEL","OPENAI_MODEL","EVOLUTION_AI_BASE_URL","VERCEL","VERCEL_ENV","VERCEL_OIDC_TOKEN","EVOLUTION_AI_GATEWAY_ENABLED"];
+const keys=["NODE_ENV","EVOLUTION_AI_API_KEY","OPENAI_API_KEY","EVOLUTION_AI_MODEL","OPENAI_MODEL","EVOLUTION_AI_BASE_URL","EVOLUTION_AI_TIMEOUT_MS","OPENAI_TIMEOUT_MS","VERCEL","VERCEL_ENV","VERCEL_OIDC_TOKEN","EVOLUTION_AI_GATEWAY_ENABLED"];
 const previous=new Map<string,string|undefined>();
 beforeEach(()=>{
   for(const key of keys){previous.set(key,process.env[key]);delete process.env[key];}
@@ -154,4 +154,21 @@ describe("pinned provider capability",()=>{
     });
     expect(await serverAiConnectionConfigured()).toBe(true);
   });
+});
+
+describe("saved direct model request budget",()=>{
+ it("honors timeout env independently of unrelated environment credentials",async()=>{
+  process.env.EVOLUTION_AI_TIMEOUT_MS="240000";
+  vault.resolve.mockResolvedValue(JSON.stringify({...input,version:"server-ai-connection-v1"}));
+  expect(await resolveServerAiConfig()).toMatchObject({mode:"openai-compatible",timeoutMs:240000});
+ });
+ it("uses a bounded full-file budget when a saved model has no timeout override",async()=>{
+  vault.resolve.mockResolvedValue(JSON.stringify({...input,version:"server-ai-connection-v1"}));
+  expect((await resolveServerAiConfig())?.timeoutMs).toBe(180000);
+ });
+ it.each([["1",10000],["999999",300000]])("pins explicit connection budget within bounds %s",async(value,expected)=>{
+  process.env.EVOLUTION_AI_TIMEOUT_MS=value;
+  await withExplicitServerAiConnection(input,async()=>expect((await resolveServerAiConfig())?.timeoutMs).toBe(expected));
+  expect(vault.resolve).not.toHaveBeenCalled();
+ });
 });

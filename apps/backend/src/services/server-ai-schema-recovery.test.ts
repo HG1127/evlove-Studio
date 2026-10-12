@@ -61,3 +61,34 @@ describe("direct model bounded schema feedback",()=>{
   const error=await withExplicitServerAiConnection({...settings,protocol:"chat-completions"},()=>runServerAi("build-candidate",{})).catch(error=>error);expect(serverAiUnavailableReason(error)).toBe("provider-network-error");expect(fetch).toHaveBeenCalledTimes(2);
  });
 });
+describe("independent Judge final JSON correction",()=>{
+ for(const protocol of ["responses","chat-completions"] as const){
+  it(protocol+" corrects completed malformed Judge JSON once with the identical evidence",async()=>{
+   const payload={mode:"server-baseline",artifactSha256:"a".repeat(64),runs:[{testCaseId:"V1",output:"Actual frozen-file observations"}]};
+   const requests:Array<{user:string;system:string;signal:AbortSignal;format:unknown}>=[];
+   const fetch=vi.fn(async(_url:unknown,init?:RequestInit)=>{
+    const b=JSON.parse(String(init?.body));
+    requests.push({user:protocol==="responses"?b.input[1].content[0].text:b.messages[1].content,system:protocol==="responses"?b.input[0].content[0].text:b.messages[0].content,signal:init!.signal as AbortSignal,format:protocol==="responses"?b.text.format:b.response_format});
+    if(requests.length===1)return new Response(JSON.stringify(protocol==="responses"?{status:"completed",output_text:'{"criteria": malformed private rejection'}:{choices:[{finish_reason:"stop",message:{content:'{"criteria": malformed private rejection'}}]}),{status:200});
+    return envelope(protocol,report);
+   });vi.stubGlobal("fetch",fetch);
+   expect(await withExplicitServerAiConnection({...settings,protocol},()=>runServerAi("evaluate",payload))).toEqual(report);
+   expect(requests).toHaveLength(2);
+   expect(requests[1].user).toBe(requests[0].user);
+   expect(requests[1].format).toEqual(requests[0].format);
+   expect(requests[1].signal).toBe(requests[0].signal);
+   expect(requests[1].system).toContain("The preceding response was rejected by the task schema");
+   expect(requests[1].system).not.toContain("malformed private rejection");
+  });
+ }
+ it("rejects a second malformed Judge reply without a third call",async()=>{
+  const fetch=vi.fn(async()=>new Response(JSON.stringify({choices:[{finish_reason:"stop",message:{content:"{invalid final report"}}]}),{status:200}));vi.stubGlobal("fetch",fetch);
+  await expect(withExplicitServerAiConnection({...settings,protocol:"chat-completions"},()=>runServerAi("evaluate",{}))).rejects.toMatchObject({code:"AI_OUTPUT_INVALID_JSON"});
+  expect(fetch).toHaveBeenCalledTimes(2);
+ });
+ it.each(["length","content_filter","tool_calls"])("never corrects the Judge's nonfinal %s response",async finish=>{
+  const fetch=vi.fn(async()=>new Response(JSON.stringify({choices:[{finish_reason:finish,message:{content:JSON.stringify(report)}}]}),{status:200}));vi.stubGlobal("fetch",fetch);
+  await expect(withExplicitServerAiConnection({...settings,protocol:"chat-completions"},()=>runServerAi("evaluate",{}))).rejects.toBeInstanceOf(Error);
+  expect(fetch).toHaveBeenCalledOnce();
+ });
+});
