@@ -8,8 +8,16 @@ import {
 } from "@evolution/contracts";
 
 /** Internal browser-controller port; never populated from a route, model or page JSON. */
+const DOM_MUTATION_EVENTS = [
+  "DOM.attributeModified", "DOM.attributeRemoved", "DOM.characterDataModified",
+  "DOM.childNodeCountUpdated", "DOM.childNodeInserted", "DOM.childNodeRemoved",
+  "DOM.distributedNodesUpdated", "DOM.documentUpdated", "DOM.inlineStyleInvalidated",
+  "DOM.shadowRootPushed", "DOM.shadowRootPopped", "DOM.pseudoElementAdded", "DOM.pseudoElementRemoved",
+  "DOM.adoptedStyleSheetsModified", "DOM.topLayerElementsUpdated",
+] as const;
+type SnapshotCdpEvent = "Runtime.executionContextCreated" | typeof DOM_MUTATION_EVENTS[number];
 export interface HtmlProtectionSnapshotCdpPort {
-  on(event: "Runtime.executionContextCreated", callback: (event: unknown) => void): void;
+  on(event: SnapshotCdpEvent, callback: (event: unknown) => void): void;
   send(method: string, params?: Record<string, unknown>): Promise<unknown>;
   detach(): Promise<unknown>;
 }
@@ -30,7 +38,16 @@ function collectRegisteredNativeDomProjection(args) {
   const encode=TextEncoder.prototype.encode,encoder=new TextEncoder(),gaps=[],seenGaps=new Set();
   let scannedNodes=0,shadowRoots=0,readBytes=0;
   const gap=(code,targetId)=>{const key=code+"|"+(targetId??"");if(!seenGaps.has(key)){seenGaps.add(key);gaps.push(targetId?{code,targetId}:{code});}};
-  const account=value=>{if(typeof value==="string"){readBytes+=apply(encode,encoder,[value]).byteLength;if(readBytes>limits.textUtf8Bytes)throw Error("SNAPSHOT_LIMIT");}return value;};
+  const account=value=>{if(typeof value==="string"){
+    // UTF-8 bytes cannot be fewer than UTF-16 code units. Reject before encoder allocation.
+    if(value.length>limits.textUtf8Bytes-readBytes)throw Error("SNAPSHOT_LIMIT");
+    readBytes+=apply(encode,encoder,[value]).byteLength;if(readBytes>limits.textUtf8Bytes)throw Error("SNAPSHOT_LIMIT");
+  }return value;};
+  const finish=value=>{
+    const encoded=JSON.stringify(value);
+    if(encoded.length>limits.bodyUtf8Bytes||apply(encode,encoder,[encoded]).byteLength>limits.bodyUtf8Bytes)throw Error("SNAPSHOT_LIMIT");
+    return value;
+  };
   const attr=(element,name)=>account(apply(getAttribute,element,[name]));
   const children=node=>{const list=childNodes(node);if(list.length>limits.nodes)throw Error("SNAPSHOT_LIMIT");return Array.from(list);};
   const roots=[document],seen=new Set(),pending=[{node:document,depth:0}];
@@ -40,7 +57,7 @@ function collectRegisteredNativeDomProjection(args) {
     if(++scannedNodes>limits.nodes||depth>limits.depth)throw Error("SNAPSHOT_LIMIT");
     account(nodeValue(node));
     if(nodeType(node)===1){
-      const tag=nodeName(node).toLowerCase();
+      const tag=account(nodeName(node)).toLowerCase();
       if(["iframe","object","embed"].includes(tag))gap(tag);
       const attrs=attributes(node);if(attrs.length>limits.attributesPerNode)throw Error("SNAPSHOT_LIMIT");
       for(const item of Array.from(attrs)){account(attrName(item));account(attrValue(item));account(attrNamespace(item));}
@@ -65,8 +82,8 @@ function collectRegisteredNativeDomProjection(args) {
         if(++counters.collectedNodes>limits.nodes||depth>limits.depth)throw Error("SNAPSHOT_LIMIT");
         const index=nodes.length,type=nodeType(node),element=type===1,attrs=element?Array.from(attributes(node)):[];
         indexes.set(node,index);physical.push(node);
-        nodes.push({index,parent,edge,type,name:nodeName(node),namespace:element?namespace(node):null,
-          value:account(nodeValue(node)),attributes:attrs.map(item=>({name:attrName(item),namespace:attrNamespace(item),value:attrValue(item)})),assignedIndexes:[],assignedOutsideTarget:0});
+        nodes.push({index,parent,edge,type,name:account(nodeName(node)),namespace:element?account(namespace(node)):null,
+          value:account(nodeValue(node)),attributes:attrs.map(item=>({name:account(attrName(item)),namespace:account(attrNamespace(item)),value:account(attrValue(item))})),assignedIndexes:[],assignedOutsideTarget:0});
         // Reverse pushes preserve light-child order; extra trees retain explicit edge identities.
         if(element&&nodeName(node).toLowerCase()==="template")work.push({node:templateContent(node),parent:index,edge:"template",depth:depth+1});
         const shadow=element?shadowRoot(node):null;if(shadow)work.push({node:shadow,parent:index,edge:"shadow",depth:depth+1});
@@ -79,7 +96,7 @@ function collectRegisteredNativeDomProjection(args) {
       }
       return {targetId:target.targetId,matchCount:1,nodes};
     });
-    return {projection:"boot-subtree-v1",targets,counters,gaps};
+    return finish({projection:"boot-subtree-v1",targets,counters,gaps});
   }
   if(registry.projection!=="search-membership-v1")throw Error("Unsupported fixed projection");
   const ancestor=node=>{const root=apply(getRootNode,node,[]);return assignedSlot(node)||parentElement(node)||(root instanceof ShadowRoot?shadowHost(root):null);};
@@ -104,9 +121,9 @@ function collectRegisteredNativeDomProjection(args) {
   const input=inputs.length===1?inputs[0]:null,isInput=input&&nodeName(input).toLowerCase()==="input"&&namespace(input)==="http://www.w3.org/1999/xhtml";
   if(input&&!isInput)gap("unsupported-input",registry.targetId);
   const textContent=getter(Node.prototype,"textContent");
-  return {projection:"search-membership-v1",targetId:registry.targetId,cards,chapters,
-    input:{matchCount:inputs.length,tag:input?nodeName(input):null,value:isInput?account(inputValue(input)):null},
-    count:{matchCount:counts.length,text:counts.length===1?account(textContent(counts[0])):null},counters,gaps};
+  return finish({projection:"search-membership-v1",targetId:registry.targetId,cards,chapters,
+    input:{matchCount:inputs.length,tag:input?account(nodeName(input)):null,value:isInput?account(inputValue(input)):null},
+    count:{matchCount:counts.length,text:counts.length===1?account(textContent(counts[0])):null},counters,gaps});
   } catch(error) { if(error?.message==="SNAPSHOT_LIMIT")return {capabilityGap:"limit-exceeded"};throw error; }
 }
 `;
@@ -120,7 +137,9 @@ const WorldSchema = z.object({ executionContextId: z.number().int() });
 const ResponseSchema = z.object({ result: z.object({ type: z.literal("object"), value: z.unknown() }), exceptionDetails: z.unknown().optional() });
 const MirrorSchema = z.object({ root: z.unknown() });
 const MirrorNodeSchema = z.object({
+  nodeId: z.number().int().positive(), backendNodeId: z.number().int().positive(),
   nodeType: z.number().int(), nodeName: z.string(), nodeValue: z.string(),
+  childNodeCount: z.number().int().nonnegative().optional(),
   children: z.array(z.unknown()).optional(), shadowRoots: z.array(z.unknown()).optional(),
   templateContent: z.unknown().optional(), contentDocument: z.unknown().optional(),
   shadowRootType: z.enum(["open", "closed", "user-agent"]).optional(),
@@ -142,24 +161,71 @@ export function htmlProtectionSnapshotRegistrySha256(registry: unknown) {
 }
 function noFragment(url: string) { const parsed = new URL(url); parsed.hash = ""; return parsed.href; }
 type Gap = HtmlProtectionSnapshotResult["gaps"][number];
-function nativeMirrorGaps(root: unknown): Gap[] {
-  const pending = [{ value: root, depth: 0 }], codes = new Set<Gap["code"]>(); let nodes = 0, bytes = 0, shadows = 0;
+/**
+ * One-level native requests map light/open containers within fixed budgets.
+ * Never recursively serialize unknown closed/frame/plugin content. Shallow CDP metadata
+ * can still include a large text/attribute field before transport parsing: caller-owned
+ * isolated browser/process limits remain required; this is not a hard memory guarantee.
+ * DOM.setChildNodes is protocol population, not a mutation, and is not counted.
+ */
+async function nativeMirror(session: HtmlProtectionSnapshotCdpPort, root: unknown, active: () => void) {
+  const pending = [{ value: root, depth: 0, parent: null as number | null, edge: "root" }];
+  const codes = new Set<Gap["code"]>(), ids = new Set<number>(), records: unknown[] = [];
+  let bytes = 0, shadows = 0;
+  const parseNode = (value: unknown) => {
+    // Cap response arrays/strings before Zod traversal or UTF-8 allocation. The raw
+    // protocol response itself has already crossed the CDP transport boundary.
+    const data = z.object({ nodeValue: z.string(), children: z.unknown().optional(),
+      attributes: z.unknown().optional(), shadowRoots: z.unknown().optional() }).passthrough().parse(value);
+    if (data.nodeValue.length > HTML_PROTECTION_SNAPSHOT_LIMITS.textUtf8Bytes
+      || (Array.isArray(data.children) && data.children.length > HTML_PROTECTION_SNAPSHOT_LIMITS.nodes)
+      || (Array.isArray(data.attributes) && data.attributes.length > HTML_PROTECTION_SNAPSHOT_LIMITS.attributesPerNode * 2)
+      || (Array.isArray(data.shadowRoots) && data.shadowRoots.length > HTML_PROTECTION_SNAPSHOT_LIMITS.shadowRoots)) throw new Error("SNAPSHOT_LIMIT");
+    if (Array.isArray(data.attributes) && data.attributes.some(item => typeof item === "string" && item.length > HTML_PROTECTION_SNAPSHOT_LIMITS.textUtf8Bytes)) throw new Error("SNAPSHOT_LIMIT");
+    return MirrorNodeSchema.parse(value);
+  };
   while (pending.length) {
-    const { value, depth } = pending.pop()!, node = MirrorNodeSchema.parse(value);
-    if (++nodes > HTML_PROTECTION_SNAPSHOT_LIMITS.nodes || depth > HTML_PROTECTION_SNAPSHOT_LIMITS.depth) throw new Error("SNAPSHOT_LIMIT");
-    bytes += Buffer.byteLength(node.nodeValue, "utf8") + (node.attributes ?? []).reduce((total, item) => total + Buffer.byteLength(item, "utf8"), 0);
+    const current = pending.pop()!; let node = parseNode(current.value);
+    active();
+    if (records.length >= HTML_PROTECTION_SNAPSHOT_LIMITS.nodes || current.depth > HTML_PROTECTION_SNAPSHOT_LIMITS.depth) throw new Error("SNAPSHOT_LIMIT");
+    const opaque = node.shadowRootType === "closed" || node.shadowRootType === "user-agent";
+    if (!opaque && [1, 9, 11].includes(node.nodeType)) {
+      if (node.childNodeCount === undefined) throw new Error("Native container count unavailable");
+      if (node.childNodeCount > HTML_PROTECTION_SNAPSHOT_LIMITS.nodes - records.length) throw new Error("SNAPSHOT_LIMIT");
+      if (node.childNodeCount !== (node.children?.length ?? 0)) {
+        await session.send("DOM.requestChildNodes", { nodeId: node.nodeId, depth: 1, pierce: false }); active();
+        node = parseNode(z.object({ node: z.unknown() }).parse(await session.send("DOM.describeNode", {
+          backendNodeId: node.backendNodeId, depth: 1, pierce: false,
+        })).node); active();
+        if (node.childNodeCount !== (node.children?.length ?? 0)) throw new Error("Native mirror incomplete");
+      }
+    }
+    if (ids.has(node.backendNodeId)) throw new Error("Duplicate native mirror identity"); ids.add(node.backendNodeId);
+    const strings = [node.nodeName, node.nodeValue, ...(node.attributes ?? [])];
+    if (strings.reduce((total, item) => total + item.length, 0) > HTML_PROTECTION_SNAPSHOT_LIMITS.textUtf8Bytes - bytes) throw new Error("SNAPSHOT_LIMIT");
+    bytes += strings.reduce((total, item) => total + Buffer.byteLength(item, "utf8"), 0);
     if (bytes > HTML_PROTECTION_SNAPSHOT_LIMITS.textUtf8Bytes) throw new Error("SNAPSHOT_LIMIT");
     if (node.shadowRootType === "closed") codes.add("closed-shadow-root");
     if (["IFRAME", "OBJECT", "EMBED"].includes(node.nodeName.toUpperCase())) codes.add(node.nodeName.toLowerCase() as "iframe" | "object" | "embed");
     if ((node.children?.length ?? 0) > HTML_PROTECTION_SNAPSHOT_LIMITS.nodes || (node.attributes?.length ?? 0) > HTML_PROTECTION_SNAPSHOT_LIMITS.attributesPerNode * 2) throw new Error("SNAPSHOT_LIMIT");
-    for (const value of node.children ?? []) pending.push({ value, depth: depth + 1 });
-    for (const value of node.shadowRoots ?? []) {
-      if (++shadows > HTML_PROTECTION_SNAPSHOT_LIMITS.shadowRoots) throw new Error("SNAPSHOT_LIMIT"); pending.push({ value, depth: depth + 1 });
+    const index = records.length;
+    records.push({ parent: current.parent, edge: current.edge, backendNodeId: node.backendNodeId,
+      nodeType: node.nodeType, nodeName: node.nodeName, nodeValue: node.nodeValue,
+      attributes: node.attributes ?? [], shadowRootType: node.shadowRootType ?? null,
+      childNodeCount: node.childNodeCount ?? null });
+    if (opaque) continue;
+    const add = (value: unknown, edge: string) => pending.push({ value, edge, parent: index, depth: current.depth + 1 });
+    // Embedded documents are unsupported, and closed/UA shadow descendants stay opaque.
+    // Inert-template instrumentation is not established by ordinary frame DOM events.
+    if (node.templateContent) throw new Error("SNAPSHOT_TEMPLATE_UNSUPPORTED");
+    for (const value of [...(node.shadowRoots ?? [])].reverse()) {
+      if (++shadows > HTML_PROTECTION_SNAPSHOT_LIMITS.shadowRoots) throw new Error("SNAPSHOT_LIMIT"); add(value, "shadow");
     }
-    if (node.templateContent) pending.push({ value: node.templateContent, depth: depth + 1 });
-    if (node.contentDocument) pending.push({ value: node.contentDocument, depth: depth + 1 });
+    for (const value of [...(node.children ?? [])].reverse()) add(value, "light");
   }
-  return [...codes].map(code => ({ code }));
+  const encoded = canonicalJson(records);
+  if (Buffer.byteLength(encoded, "utf8") > HTML_PROTECTION_SNAPSHOT_LIMITS.bodyUtf8Bytes) throw new Error("SNAPSHOT_LIMIT");
+  return { gaps: [...codes].map(code => ({ code })), sha256: digest(encoded) };
 }
 function collectedTextBytes(body: HtmlProtectionSnapshotBody) {
   if (body.projection === "boot-subtree-v1") return body.targets.reduce((total, target) => total + target.nodes.reduce((sum, node) =>
@@ -203,7 +269,9 @@ function projectionGaps(body: HtmlProtectionSnapshotBody): Gap[] {
  * Collect only the registered projection in a positively identified native isolated realm.
  * The caller derives registry/expectations from physical Original and owns the loaded Page.
  * Supplied bytes are hashed here; binding those bytes to the served document remains the
- * trusted execution service responsibility. No whole-scope verdict or signing is performed.
+ * trusted execution service responsibility. Native event generation is latched across a
+ * fully materialized pre/post mirror window, including transient insert/remove cycles.
+ * This is DOM snapshot stability, not cross-script/visual closure. No signing is performed.
  */
 export async function collectVercelSandboxHtmlProtectionSnapshot(args: {
   request: unknown; physicalHtml: Uint8Array; createSession(): Promise<HtmlProtectionSnapshotCdpPort>;
@@ -227,32 +295,54 @@ export async function collectVercelSandboxHtmlProtectionSnapshot(args: {
     session = await args.createSession(); active();
     const contexts = new Map<number, z.infer<typeof ContextSchema>["context"]>();
     session.on("Runtime.executionContextCreated", event => { const result = ContextSchema.safeParse(event); if (result.success) contexts.set(result.data.context.id, result.data.context); });
+    let mutationEvents = 0, monitoring = false;
+    for (const event of DOM_MUTATION_EVENTS) session.on(event, () => { if (monitoring) mutationEvents = Math.min(Number.MAX_SAFE_INTEGER, mutationEvents + 1); });
     await session.send("Runtime.enable"); active();
+    await session.send("DOM.enable", { includeWhitespace: "all" }); active();
+    monitoring = true;
+    const stable = () => { active(); if (mutationEvents) throw new Error("UNSTABLE_DOM"); };
     const before = FrameTreeSchema.parse(await session.send("Page.getFrameTree")).frameTree.frame; active();
     if (noFragment(before.url) !== noFragment(request.documentUrl)) throw new Error("UNSTABLE_DOCUMENT");
-    const boundaries = nativeMirrorGaps(MirrorSchema.parse(await session.send("DOM.getDocument", { depth: -1, pierce: true })).root); active();
     const name = "evolution-dom-snapshot-" + randomUUID();
     const world = WorldSchema.parse(await session.send("Page.createIsolatedWorld", { frameId: before.id, worldName: name, grantUniveralAccess: false })); active();
     const context = contexts.get(world.executionContextId);
     if (!context || context.name !== name || context.auxData.frameId !== before.id) throw new Error("Native independent realm not established");
-    const observed = ResponseSchema.parse(await session.send("Runtime.callFunctionOn", {
-      functionDeclaration: HTML_PROTECTION_NATIVE_SNAPSHOT_FUNCTION, uniqueContextId: context.uniqueId,
-      arguments: [{ value: { registry: request.registry, limits: HTML_PROTECTION_SNAPSHOT_LIMITS } }],
-      returnByValue: true, awaitPromise: false, silent: true, userGesture: false,
-    })); active();
-    if (observed.exceptionDetails) throw new Error("SNAPSHOT_CAPABILITY");
-    if (z.object({ capabilityGap: z.literal("limit-exceeded") }).strict().safeParse(observed.result.value).success) throw new Error("SNAPSHOT_LIMIT");
-    const after = FrameTreeSchema.parse(await session.send("Page.getFrameTree")).frameTree.frame; active();
+    const observe = async () => {
+      const response = ResponseSchema.parse(await session!.send("Runtime.callFunctionOn", {
+        functionDeclaration: HTML_PROTECTION_NATIVE_SNAPSHOT_FUNCTION, uniqueContextId: context.uniqueId,
+        arguments: [{ value: { registry: request.registry, limits: HTML_PROTECTION_SNAPSHOT_LIMITS } }],
+        returnByValue: true, awaitPromise: false, silent: true, userGesture: false,
+      })); active();
+      if (response.exceptionDetails) throw new Error("SNAPSHOT_CAPABILITY");
+      if (z.object({ capabilityGap: z.literal("limit-exceeded") }).strict().safeParse(response.result.value).success) throw new Error("SNAPSHOT_LIMIT");
+      return response;
+    };
+    // A native light/open/template preflight bounds the known tree before CDP metadata
+    // requests. It is not the authoritative body and cannot prove unknown closed domains.
+    HtmlProtectionSnapshotBodySchema.parse((await observe()).result.value);
+    const root = MirrorSchema.parse(await session.send("DOM.getDocument", { depth: 0, pierce: false })).root; active();
+    const preMirror = await nativeMirror(session, root, active); stable();
+    const documentBackendId = MirrorNodeSchema.parse(root).backendNodeId;
+    // All supported physical containers are now mapped for native mutation events.
+    // Never clear the latch: even a transient mutation restoring identical endpoints fails.
+    const observed = await observe(); stable();
+    const postRoot = z.object({ node: z.unknown() }).parse(await session.send("DOM.describeNode", {
+      backendNodeId: documentBackendId, depth: 0, pierce: false,
+    })).node; stable();
+    const postMirror = await nativeMirror(session, postRoot, stable); stable();
+    const after = FrameTreeSchema.parse(await session.send("Page.getFrameTree")).frameTree.frame; stable();
     if (before.id !== after.id || before.loaderId !== after.loaderId || noFragment(before.url) !== noFragment(after.url)) throw new Error("UNSTABLE_DOCUMENT");
+    if (preMirror.sha256 !== postMirror.sha256) throw new Error("UNSTABLE_DOM");
     const body = HtmlProtectionSnapshotBodySchema.parse(observed.result.value); validateRegisteredBody(request, body);
     body.counters.textUtf8Bytes = collectedTextBytes(body);
-    const gaps = [...body.gaps]; for (const gap of [...boundaries, ...projectionGaps(body)]) if (!gaps.some(item => item.code === gap.code && item.targetId === gap.targetId)) gaps.push(gap);
+    const gaps = [...body.gaps]; for (const gap of [...preMirror.gaps, ...postMirror.gaps, ...projectionGaps(body)]) if (!gaps.some(item => item.code === gap.code && item.targetId === gap.targetId)) gaps.push(gap);
     body.gaps = gaps; HtmlProtectionSnapshotBodySchema.parse(body);
     const encoded = canonicalJson(body), bodyUtf8Bytes = Buffer.byteLength(encoded, "utf8");
     if (bodyUtf8Bytes > HTML_PROTECTION_SNAPSHOT_LIMITS.bodyUtf8Bytes) throw new Error("SNAPSHOT_LIMIT");
     return HtmlProtectionSnapshotResultSchema.parse({
       ...base, observedAt: new Date().toISOString(), availability: "available", projectionComplete: gaps.length === 0,
-      realm: { observerVersion: "chromium-cdp-isolated-dom-v1", frameId: before.id, loaderId: before.loaderId, uniqueContextId: context.uniqueId },
+      realm: { observerVersion: "chromium-cdp-isolated-stable-dom-v2", frameId: before.id, loaderId: before.loaderId, uniqueContextId: context.uniqueId },
+      stability: { protocol: "chromium-cdp-dom-mutation-window-v1", preMirrorSha256: preMirror.sha256, postMirrorSha256: postMirror.sha256, mutationEvents: 0 },
       body, bodySha256: digest(encoded), bodyUtf8Bytes, gaps,
     });
   })();
@@ -262,6 +352,6 @@ export async function collectVercelSandboxHtmlProtectionSnapshot(args: {
     })]);
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
-    return unavailable(message.includes("SNAPSHOT_LIMIT") ? "limit-exceeded" : message.includes("UNSTABLE_DOCUMENT") ? "unstable-document" : "capability-unavailable");
+    return unavailable(message.includes("SNAPSHOT_LIMIT") ? "limit-exceeded" : message.includes("UNSTABLE_DOCUMENT") ? "unstable-document" : message.includes("UNSTABLE_DOM") ? "unstable-dom" : message.includes("SNAPSHOT_TEMPLATE_UNSUPPORTED") ? "template-mutation-unavailable" : "capability-unavailable");
   } finally { expired = true; if (timer) clearTimeout(timer); if (session) detach(session); }
 }

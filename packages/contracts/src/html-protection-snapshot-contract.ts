@@ -37,7 +37,7 @@ export type HtmlProtectionSnapshotRequest = z.infer<typeof HtmlProtectionSnapsho
 export const HtmlProtectionSnapshotGapCodeSchema = z.enum([
   "missing-target", "ambiguous-target", "missing-or-duplicate-id", "unsupported-input", "slot-outside-target",
   "closed-shadow-root", "iframe", "object", "embed", "limit-exceeded",
-  "copy-material-undefined", "capability-unavailable", "unstable-document", "physical-input-mismatch",
+  "copy-material-undefined", "template-mutation-unavailable", "capability-unavailable", "unstable-document", "unstable-dom", "physical-input-mismatch",
 ]);
 const GapSchema = z.object({ code: HtmlProtectionSnapshotGapCodeSchema, targetId: identity.optional() }).strict();
 const AttributeSchema = z.object({
@@ -95,12 +95,12 @@ export const HtmlProtectionSnapshotBodySchema = z.discriminatedUnion("projection
 export type HtmlProtectionSnapshotBody = z.infer<typeof HtmlProtectionSnapshotBodySchema>;
 export const HtmlProtectionSnapshotLimitations = [
   "Selected projection and targets only; not whole protection or cross-script closure.",
-  "Closed Shadow content and iframe/object/embed documents are not collected.",
+  "Closed/UA Shadow and iframe/object/embed contents are not collected; inert template mutation coverage is unavailable and shallow CDP transport is not a hard memory bound.",
   "No semantic or visual preservation verdict; page-returned JSON is not observation authority.",
   "Physical input hash identifies supplied bytes; caller must independently bind the served document.",
 ] as const;
 const RealmSchema = z.object({
-  observerVersion: z.literal("chromium-cdp-isolated-dom-v1"), frameId: identity,
+  observerVersion: z.literal("chromium-cdp-isolated-stable-dom-v2"), frameId: identity,
   loaderId: identity, uniqueContextId: identity,
 }).strict();
 export const HtmlProtectionSnapshotResultSchema = z.object({
@@ -111,6 +111,11 @@ export const HtmlProtectionSnapshotResultSchema = z.object({
   observedAt: z.string().datetime({ offset: true }),
   physicalInput: z.object({ sha256, byteLength: z.number().int().nonnegative() }).strict(),
   realm: RealmSchema.optional(),
+  // The trusted controller observes this window; a page-supplied counter is not authority.
+  stability: z.object({
+    protocol: z.literal("chromium-cdp-dom-mutation-window-v1"),
+    preMirrorSha256: sha256, postMirrorSha256: sha256, mutationEvents: z.literal(0),
+  }).strict().refine(value => value.preMirrorSha256 === value.postMirrorSha256, "Unstable native mirror").optional(),
   body: HtmlProtectionSnapshotBodySchema.optional(),
   bodySha256: sha256.optional(), bodyUtf8Bytes: z.number().int().positive().max(HTML_PROTECTION_SNAPSHOT_LIMITS.bodyUtf8Bytes).optional(),
   gaps: z.array(GapSchema).max(512),
@@ -119,10 +124,10 @@ export const HtmlProtectionSnapshotResultSchema = z.object({
     z.literal(HtmlProtectionSnapshotLimitations[2]), z.literal(HtmlProtectionSnapshotLimitations[3]),
   ]),
 }).strict().superRefine((result, ctx) => {
-  if (result.availability === "available" && (!result.realm || !result.body || !result.bodySha256 || !result.bodyUtf8Bytes)) {
+  if (result.availability === "available" && (!result.realm || !result.body || !result.bodySha256 || !result.bodyUtf8Bytes || !result.stability)) {
     ctx.addIssue({ code: "custom", message: "Available projection requires complete native material and Node digest" });
   }
-  if (result.availability === "unavailable" && (result.projectionComplete || result.body || result.bodySha256 || result.bodyUtf8Bytes)) {
+  if (result.availability === "unavailable" && (result.projectionComplete || result.body || result.bodySha256 || result.bodyUtf8Bytes || result.stability)) {
     ctx.addIssue({ code: "custom", message: "Unavailable observation cannot claim a body or completeness" });
   }
   if (result.body && result.body.projection !== result.request.registry.projection) ctx.addIssue({ code: "custom", message: "Wrong registered projection" });

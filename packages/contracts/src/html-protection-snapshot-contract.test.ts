@@ -20,7 +20,8 @@ const body = { projection: "boot-subtree-v1", targets: [{ targetId: "card", matc
   counters: { scannedNodes: 8, collectedNodes: 1, shadowRoots: 0, textUtf8Bytes: 4 }, gaps: [] };
 const result = { schemaVersion: "html-protection-snapshot-result-v1", request, availability: "available",
   projectionComplete: true, observedAt: "2026-10-13T00:00:00Z", physicalInput: { sha256: sha, byteLength: 10 },
-  realm: { observerVersion: "chromium-cdp-isolated-dom-v1", frameId: "frame", loaderId: "loader", uniqueContextId: "isolated" },
+  realm: { observerVersion: "chromium-cdp-isolated-stable-dom-v2", frameId: "frame", loaderId: "loader", uniqueContextId: "isolated" },
+  stability: { protocol: "chromium-cdp-dom-mutation-window-v1", preMirrorSha256: sha, postMirrorSha256: sha, mutationEvents: 0 },
   body, bodySha256: sha, bodyUtf8Bytes: 600, gaps: [], limitations: [...HtmlProtectionSnapshotLimitations] };
 
 describe("closed HTML protection snapshot transport", () => {
@@ -49,7 +50,7 @@ describe("closed HTML protection snapshot transport", () => {
   it("allows an explicitly unavailable copy projection", () => {
     const copy = { ...request, registry: { ...registry, projection: "copy-material-v1" } };
     expect(HtmlProtectionSnapshotResultSchema.safeParse({ ...result, request: copy, availability: "unavailable",
-      projectionComplete: false, realm: undefined, body: undefined, bodySha256: undefined, bodyUtf8Bytes: undefined,
+      projectionComplete: false, realm: undefined, stability: undefined, body: undefined, bodySha256: undefined, bodyUtf8Bytes: undefined,
       gaps: [{ code: "copy-material-undefined" }] }).success).toBe(true);
   });
   it.each(["closed-shadow-root", "iframe", "object", "embed", "limit-exceeded"])("cannot hide the %s boundary behind complete", code => {
@@ -59,9 +60,17 @@ describe("closed HTML protection snapshot transport", () => {
     expect(HtmlProtectionSnapshotResultSchema.safeParse({ ...result, availability: "unavailable", projectionComplete: false }).success).toBe(false);
   });
   it("requires Node digest, byte length and independently identified realm", () => {
-    for (const key of ["body", "bodySha256", "bodyUtf8Bytes", "realm"]) {
+    for (const key of ["body", "bodySha256", "bodyUtf8Bytes", "realm", "stability"]) {
       expect(HtmlProtectionSnapshotResultSchema.safeParse({ ...result, [key]: undefined }).success).toBe(false);
     }
+  });
+  it("requires native stable-window mirrors and cannot accept a page-generated generation", () => {
+    for (const stability of [
+      { ...result.stability, postMirrorSha256: "b".repeat(64) },
+      { ...result.stability, mutationEvents: 1 },
+      { ...result.stability, pageGeneration: 0 },
+    ]) expect(HtmlProtectionSnapshotResultSchema.safeParse({ ...result, stability }).success).toBe(false);
+    expect(HtmlProtectionSnapshotResultSchema.safeParse({ ...result, gaps: [{ code: "unstable-dom" }] }).success).toBe(false);
   });
   it("rejects over-budget receipts and non-ordered/foreign slot references", () => {
     expect(HtmlProtectionSnapshotResultSchema.safeParse({ ...result, bodyUtf8Bytes: HTML_PROTECTION_SNAPSHOT_LIMITS.bodyUtf8Bytes + 1 }).success).toBe(false);

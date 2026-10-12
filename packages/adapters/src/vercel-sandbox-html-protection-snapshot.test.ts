@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { createHash } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { chromium, type Browser } from "@playwright/test";
+import { chromium, type Browser, type Page } from "@playwright/test";
 import {
   HtmlProtectionSnapshotRequestSchema, HTML_PROTECTION_SNAPSHOT_LIMITS,
   type HtmlProtectionSnapshotRequest, type HtmlProtectionSnapshotBody,
@@ -28,7 +28,19 @@ function request(projection: "boot-subtree-v1" | "search-membership-v1" | "copy-
     execution: { executionId: "execution", jobId: "job", generation: 1 }, stateId: "boot", batchId: "batch",
   });
 }
-const emptyMirror = { nodeType: 9, nodeName: "#document", nodeValue: "", children: [] };
+const emptyMirror = { nodeId: 1, backendNodeId: 1, nodeType: 9, nodeName: "#document", nodeValue: "", children: [] };
+function mirrorIds(value: unknown) {
+  let next = 0;
+  const prepare = (input: unknown): unknown => {
+    const node = input as Record<string, unknown>, id = ++next;
+    const children = ((node.children ?? []) as unknown[]).map(prepare);
+    return { ...node, nodeId: node.nodeId ?? id, backendNodeId: node.backendNodeId ?? id,
+      ...([1, 9, 11].includes(node.nodeType as number) ? { childNodeCount: node.childNodeCount ?? children.length } : {}),
+      children, ...(node.shadowRoots ? { shadowRoots: (node.shadowRoots as unknown[]).map(prepare) } : {}),
+      ...(node.templateContent ? { templateContent: prepare(node.templateContent) } : {}) };
+  };
+  return prepare(value);
+}
 function body(): HtmlProtectionSnapshotBody {
   return { projection: "boot-subtree-v1", targets: [{ targetId: "card", matchCount: 1, nodes: [
     { index: 0, parent: null, edge: "root", type: 1, name: "ARTICLE", namespace: "http://www.w3.org/1999/xhtml",
@@ -40,27 +52,33 @@ function body(): HtmlProtectionSnapshotBody {
 function fakePort(options: {
   material?: unknown; mirror?: unknown; defaultRealm?: boolean; wrongFrame?: boolean;
   navigation?: boolean; noRealmEvent?: boolean; unavailable?: boolean;
+  mutationEvents?: readonly string[]; postMirror?: unknown; noDomEvents?: boolean;
 } = {}) {
-  let callback: (event: unknown) => void = () => {};
-  let frameReads = 0, detached = 0;
+  const callbacks = new Map<string, (event: unknown) => void>();
+  let frameReads = 0, detached = 0, observations = 0;
   const calls: Array<{ method: string; params?: Record<string, unknown> }> = [];
   const port: HtmlProtectionSnapshotCdpPort = {
-    on(_event, cb) { callback = cb; },
+    on(event, cb) { callbacks.set(event, cb); },
     async send(method, params) {
       calls.push({ method, params });
       if (options.unavailable) throw new Error("CDP unavailable");
-      if (method === "Runtime.enable") return {};
+      if (method === "Runtime.enable" || method === "DOM.requestChildNodes") return {};
+      if (method === "DOM.enable") { if (options.noDomEvents) throw new Error("DOM monitoring unavailable"); return {}; }
       if (method === "Page.getFrameTree") {
         frameReads++;
         return { frameTree: { frame: { id: "frame", loaderId: options.navigation && frameReads > 1 ? "new-loader" : "loader", url: "about:blank" } } };
       }
-      if (method === "DOM.getDocument") return { root: options.mirror ?? emptyMirror };
+      if (method === "DOM.getDocument") return { root: mirrorIds(options.mirror ?? emptyMirror) };
+      if (method === "DOM.describeNode") return { node: mirrorIds(options.postMirror ?? options.mirror ?? emptyMirror) };
       if (method === "Page.createIsolatedWorld") {
-        if (!options.noRealmEvent) callback({ context: { id: 41, uniqueId: "independent-realm", name: params?.worldName,
+        if (!options.noRealmEvent) callbacks.get("Runtime.executionContextCreated")?.({ context: { id: 41, uniqueId: "independent-realm", name: params?.worldName,
           auxData: { frameId: options.wrongFrame ? "foreign" : "frame", type: "isolated", isDefault: options.defaultRealm ?? false } } });
         return { executionContextId: 41 };
       }
-      if (method === "Runtime.callFunctionOn") return { result: { type: "object", value: options.material ?? body() } };
+      if (method === "Runtime.callFunctionOn") {
+        if (++observations === 2) for (const event of options.mutationEvents ?? []) callbacks.get(event)?.({});
+        return { result: { type: "object", value: options.material ?? body() } };
+      }
       throw new Error("Unexpected method");
     },
     async detach() { detached++; },
@@ -87,7 +105,7 @@ describe("native snapshot controller with synthetic CDP", () => {
     expect(fake.calls.find(item => item.method === "Page.createIsolatedWorld")?.params?.grantUniveralAccess).toBe(false);
     expect(fake.detached()).toBe(1);
   });
-  it.each([{ defaultRealm: true }, { wrongFrame: true }, { noRealmEvent: true }, { unavailable: true }])("never falls back to page/main-world observations: %j", async options => {
+  it.each([{ defaultRealm: true }, { wrongFrame: true }, { noRealmEvent: true }, { unavailable: true }, { noDomEvents: true }])("never falls back to page/main-world observations: %j", async options => {
     const fake = fakePort(options), result = await collectVercelSandboxHtmlProtectionSnapshot({ request: request(), physicalHtml: bytes, createSession: async () => fake.port });
     expect(result.availability).toBe("unavailable"); expect(result.projectionComplete).toBe(false);
     expect(fake.calls.some(call => call.method === "Runtime.evaluate")).toBe(false);
@@ -124,8 +142,8 @@ describe("native snapshot controller with synthetic CDP", () => {
     }
   });
   it.each(["closed", "iframe", "object", "embed"])("reports unsupported native boundary %s", async kind => {
-    const boundary = kind === "closed" ? { ...emptyMirror, nodeType: 11, nodeName: "#document-fragment", shadowRootType: "closed" }
-      : { ...emptyMirror, nodeType: 1, nodeName: kind.toUpperCase() };
+    const boundary = kind === "closed" ? { nodeType: 11, nodeName: "#document-fragment", nodeValue: "", shadowRootType: "closed" }
+      : { nodeType: 1, nodeName: kind.toUpperCase(), nodeValue: "" };
     const fake = fakePort({ mirror: { ...emptyMirror, children: [boundary] } });
     const result = await collectVercelSandboxHtmlProtectionSnapshot({ request: request(), physicalHtml: bytes, createSession: async () => fake.port });
     expect(result.availability).toBe("available"); expect(result.projectionComplete).toBe(false);
@@ -134,6 +152,47 @@ describe("native snapshot controller with synthetic CDP", () => {
   it("rejects post-observation document replacement", async () => {
     const fake = fakePort({ navigation: true }), result = await collectVercelSandboxHtmlProtectionSnapshot({ request: request(), physicalHtml: bytes, createSession: async () => fake.port });
     expect(result.gaps[0]?.code).toBe("unstable-document"); expect(result).not.toHaveProperty("body");
+  });
+  it.each([
+    "DOM.shadowRootPushed", "DOM.shadowRootPopped", "DOM.childNodeInserted", "DOM.childNodeRemoved",
+    "DOM.attributeModified", "DOM.attributeRemoved", "DOM.characterDataModified", "DOM.documentUpdated",
+    "DOM.distributedNodesUpdated", "DOM.inlineStyleInvalidated", "DOM.childNodeCountUpdated",
+  ])("rejects native %s in the window even when both mirror endpoints match", async event => {
+    const fake = fakePort({ mutationEvents: [event] });
+    const result = await collectVercelSandboxHtmlProtectionSnapshot({ request: request(), physicalHtml: bytes, createSession: async () => fake.port });
+    expect(result.availability).toBe("unavailable"); expect(result.gaps[0]?.code).toBe("unstable-dom");
+    expect(result).not.toHaveProperty("body"); expect(result).not.toHaveProperty("stability");
+  });
+  it("never clears transient native insertion/removal generations using endpoint equality", async () => {
+    const fake = fakePort({ mutationEvents: ["DOM.childNodeInserted", "DOM.shadowRootPushed", "DOM.childNodeRemoved"] });
+    const result = await collectVercelSandboxHtmlProtectionSnapshot({ request: request(), physicalHtml: bytes, createSession: async () => fake.port });
+    expect(result.gaps[0]?.code).toBe("unstable-dom"); expect(result).not.toHaveProperty("bodySha256");
+  });
+  it("rejects a changed backend identity or tree even without a delivered native event", async () => {
+    for (const postMirror of [{ ...emptyMirror, backendNodeId: 42 }, { ...emptyMirror, nodeValue: "changed" }]) {
+      const fake = fakePort({ postMirror });
+      const result = await collectVercelSandboxHtmlProtectionSnapshot({ request: request(), physicalHtml: bytes, createSession: async () => fake.port });
+      expect(result.gaps[0]?.code).toBe("unstable-dom"); expect(result.projectionComplete).toBe(false);
+    }
+  });
+  it("uses only bounded shallow native requests and records the stable-window identity", async () => {
+    const fake = fakePort();
+    const result = await collectVercelSandboxHtmlProtectionSnapshot({ request: request(), physicalHtml: bytes, createSession: async () => fake.port });
+    expect(result.stability?.mutationEvents).toBe(0); expect(result.stability?.preMirrorSha256).toBe(result.stability?.postMirrorSha256);
+    expect(fake.calls.find(item => item.method === "DOM.enable")?.params?.includeWhitespace).toBe("all");
+    const reads = fake.calls.filter(item => ["DOM.getDocument", "DOM.describeNode", "DOM.requestChildNodes"].includes(item.method));
+    expect(reads.every(item => item.params?.depth === 0 || item.params?.depth === 1)).toBe(true);
+    expect(reads.every(item => item.params?.pierce === false)).toBe(true);
+  });
+  it("refuses unproven inert template mutation coverage", async () => {
+    const fake = fakePort({ mirror: { ...emptyMirror, templateContent: { nodeType: 11, nodeName: "#document-fragment", nodeValue: "" } } });
+    const result = await collectVercelSandboxHtmlProtectionSnapshot({ request: request(), physicalHtml: bytes, createSession: async () => fake.port });
+    expect(result.gaps[0]?.code).toBe("template-mutation-unavailable"); expect(result).not.toHaveProperty("body");
+  });
+  it("rejects oversized shallow protocol text without hashing a partial body", async () => {
+    const fake = fakePort({ mirror: { ...emptyMirror, nodeValue: "x".repeat(HTML_PROTECTION_SNAPSHOT_LIMITS.textUtf8Bytes + 1) } });
+    const result = await collectVercelSandboxHtmlProtectionSnapshot({ request: request(), physicalHtml: bytes, createSession: async () => fake.port });
+    expect(result.gaps[0]?.code).toBe("limit-exceeded"); expect(result).not.toHaveProperty("bodySha256");
   });
   it("does not hash truncated material when the fixed observer reaches its budget", async () => {
     const fake = fakePort({ material: { capabilityGap: "limit-exceeded" } });
@@ -158,7 +217,7 @@ describe("actual isolated DOM snapshots over synthetic Chromium HTML", () => {
     browser = await chromium.launch({ headless: true, args: process.env.RUNNER_BROWSER_CI_NO_SANDBOX === "1" ? ["--no-sandbox"] : [] });
   }, 30_000);
   afterAll(async () => { await browser?.close(); });
-  async function collect(html: string, projection: "boot-subtree-v1" | "search-membership-v1" = "boot-subtree-v1", tweak?: (value: HtmlProtectionSnapshotRequest) => void) {
+  async function collect(html: string, projection: "boot-subtree-v1" | "search-membership-v1" = "boot-subtree-v1", tweak?: (value: HtmlProtectionSnapshotRequest) => void, interleave?: (page: Page) => Promise<void>) {
     const physical = new TextEncoder().encode(html), context = await browser.newContext(), page = await context.newPage();
     try {
       const documentUrl = "http://synthetic-snapshot.invalid/";
@@ -168,17 +227,27 @@ describe("actual isolated DOM snapshots over synthetic Chromium HTML", () => {
       value.registrySha256 = htmlProtectionSnapshotRegistrySha256(value.registry);
       return await collectVercelSandboxHtmlProtectionSnapshot({
         request: value, physicalHtml: physical,
-        createSession: async () => await context.newCDPSession(page) as unknown as HtmlProtectionSnapshotCdpPort,
+        createSession: async () => {
+          const port = await context.newCDPSession(page) as unknown as HtmlProtectionSnapshotCdpPort;
+          let observations = 0;
+          return {
+            on: (event, callback) => port.on(event, callback),
+            send: async (method, params) => {
+              if (method === "Runtime.callFunctionOn" && ++observations === 2) await interleave?.(page);
+              return port.send(method, params);
+            },
+            detach: () => port.detach(),
+          };
+        },
       });
     } finally { await context.close(); }
   }
-  it("captures complete real Unicode text and ordered attributes/template descendants", async () => {
-    const result = await collect('<article id="card" data-value="真实"><p>首段</p><template><span>模板</span></template><p>完整尾部😄</p></article>');
+  it("captures complete real Unicode text and ordered attributes", async () => {
+    const result = await collect('<article id="card" data-value="真实"><p>首段</p><p>完整尾部😄</p></article>');
     expect(result.availability).toBe("available"); expect(result.projectionComplete).toBe(true);
     const material = result.body; if (material?.projection !== "boot-subtree-v1") throw Error("missing boot body");
     const nodes = material.targets[0]!.nodes;
-    expect(nodes.map(node => node.value ?? "").join("")).toBe("首段模板完整尾部😄");
-    expect(nodes.some(node => node.edge === "template")).toBe(true);
+    expect(nodes.map(node => node.value ?? "").join("")).toBe("首段完整尾部😄");
     expect(nodes[0]!.attributes).toContainEqual({ name: "data-value", namespace: null, value: "真实" });
   });
   it("ignores poisoned main-world DOM prototypes and page-generated fake JSON", async () => {
@@ -236,6 +305,34 @@ describe("actual isolated DOM snapshots over synthetic Chromium HTML", () => {
     const result = await collect('<article id="card">公开<' + tag + '></' + tag + '></article>');
     expect(result.availability).toBe("available"); expect(result.projectionComplete).toBe(false);
     expect(result.gaps.map(gap => gap.code)).toContain(tag);
+  });
+  it("rejects a timer attaching a closed root after the pre-mirror and before the native observation", async () => {
+    const result = await collect('<article id="card">public</article>', "boot-subtree-v1", undefined, async page => {
+      await page.evaluate(() => new Promise<void>(resolve => setTimeout(() => {
+        document.getElementById("card")!.attachShadow({ mode: "closed" }).innerHTML = "<p>private</p>";
+        resolve();
+      }, 0)));
+    });
+    expect(result.availability).toBe("unavailable"); expect(result.gaps[0]?.code).toBe("unstable-dom");
+    expect(result).not.toHaveProperty("bodySha256");
+  });
+  it("rejects a transient closed host inserted and removed in one timer while both endpoint trees are identical", async () => {
+    const result = await collect('<article id="card">public</article>', "boot-subtree-v1", undefined, async page => {
+      await page.evaluate(() => new Promise<void>(resolve => setTimeout(() => {
+        const host = document.createElement("div"); document.getElementById("card")!.appendChild(host);
+        host.attachShadow({ mode: "closed" }).innerHTML = "<p>private</p>"; host.remove(); resolve();
+      }, 0)));
+    });
+    expect(result.availability).toBe("unavailable"); expect(result.gaps[0]?.code).toBe("unstable-dom");
+    expect(result).not.toHaveProperty("body");
+  });
+  it("keeps inert template instrumentation unavailable, including hidden closed hosts", async () => {
+    const result = await collect('<article id="card"><template><div id="inert"></div></template></article><script>document.querySelector("template").content.querySelector("#inert").attachShadow({mode:"closed"}).innerHTML="<p>private</p>"</script>');
+    expect(result.availability).toBe("unavailable"); expect(result.gaps[0]?.code).toBe("template-mutation-unavailable");
+  });
+  it("bounds native text before UTF-8 encoding and does not request a full CDP tree", async () => {
+    const result = await collect('<article id="card">' + "x".repeat(HTML_PROTECTION_SNAPSHOT_LIMITS.textUtf8Bytes + 1) + "</article>");
+    expect(result.availability).toBe("unavailable"); expect(result.gaps[0]?.code).toBe("limit-exceeded");
   });
   it("returns unavailable for unsupported native selector syntax", async () => {
     const result = await collect('<article id="card">公开</article>', "boot-subtree-v1", value => {
