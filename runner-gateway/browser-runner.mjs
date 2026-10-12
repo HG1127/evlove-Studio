@@ -61,16 +61,22 @@ export function validateBrowserSteps(steps){
  return steps;
 }
 class BrowserCapabilityUnavailable extends Error{}
-async function setActionViewport(page,step){
- let timer;
+async function setActionViewport(page,step,caseDeadline){
+ let timer;let expired=false;const deadline=Math.min(Date.now()+5000,caseDeadline);
  try{
-  if(typeof page.setViewportSize!=='function')throw new Error('setViewportSize 不可用');
-  // Match Gateway's existing 5s action budget; the unchanged 45s case timer also
-  // bounds this action. Call once, never retry or turn resize into an observation.
+  const resize=page.setViewportSize;
+  if(typeof resize!=='function')throw new Error('setViewportSize 不可用');
+  // Keep the original action/case deadline across microtask dispatch and API
+  // completion. Call once with dimensions only; resizing is not an observation.
   await Promise.race([
-   Promise.resolve().then(()=>page.setViewportSize({width:step.width,height:step.height})),
-   new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('viewport action deadline')),5000);}),
+   Promise.resolve().then(()=>{
+    const remaining=deadline-Date.now();
+    if(expired||remaining<=0)throw new Error('viewport action deadline before dispatch');
+    return resize.call(page,{width:step.width,height:step.height});
+   }),
+   new Promise((_,reject)=>{timer=setTimeout(()=>{expired=true;reject(new Error('viewport action deadline'));},Math.min(5000,Math.max(0,deadline-Date.now())));}),
   ]);
+  if(expired||Date.now()>=deadline)throw new Error('viewport action deadline after completion');
   return {width:step.width,height:step.height};
  }catch(error){
   // Stop this case immediately. Close the page to prevent a late resize from
@@ -312,7 +318,7 @@ export async function executeBrowserTest({testCase,artifact}){
    // Perform each action once. Only observations are retried within 5s; the
    // context's 45s deadline also bounds the complete sequence.
    switch(step.action){
-    case 'viewport':requestedViewports.push(await setActionViewport(page,step));break;
+    case 'viewport':requestedViewports.push(await setActionViewport(page,step,caseDeadline));break;
     case 'hover':await hoverAction(page,locator,caseDeadline);break;
     case 'click':await locator.click();break;
     case 'fill':await locator.fill(step.value);break;

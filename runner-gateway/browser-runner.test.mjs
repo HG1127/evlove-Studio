@@ -502,10 +502,10 @@ test('viewport action API completion cannot substitute for real responsive evide
 });
 test('viewport action missing rejected and timed out capability stops the case UNVERIFIED',async()=>{
  for(const mode of ['missing','rejected','timeout']){
-  let page;let calls=0;let deadlines=0;const originalTimer=globalThis.setTimeout;
-  if(mode==='timeout')globalThis.setTimeout=(callback,delay,...args)=>{if(delay===5000)deadlines++;return originalTimer(callback,delay===5000?150:delay,...args);};
+  let page;let calls=0;let deadlines=0;let armed=false;let compressed=false;const originalTimer=globalThis.setTimeout;
+  if(mode==='timeout')globalThis.setTimeout=(callback,delay,...args)=>{if(armed&&!compressed&&delay<=5000){compressed=true;deadlines++;return originalTimer(callback,150,...args);}return originalTimer(callback,delay,...args);};
   try{
-   const result=await withViewportHook(value=>{page=value;if(mode==='missing')page.setViewportSize=undefined;else page.setViewportSize=()=>{calls++;return mode==='rejected'?Promise.reject(new Error('synthetic unsupported resize')):new Promise(()=>{});};},()=>runSteps(mobileMenuArtifact(),[
+   const result=await withViewportHook(value=>{page=value;const originalLocator=page.locator;page.locator=function(selector,...args){if(selector==='html')armed=true;return originalLocator.call(this,selector,...args);};if(mode==='missing')page.setViewportSize=undefined;else page.setViewportSize=()=>{calls++;return mode==='rejected'?Promise.reject(new Error('synthetic unsupported resize')):new Promise(()=>{});};},()=>runSteps(mobileMenuArtifact(),[
     {action:'viewport',selector:'html',width:390,height:844},{action:'click',selector:'#menuBtn'},
    ]));
    assert.equal(result.verificationStatus,'unverified',mode+': '+result.error);assert.match(result.error,/viewport capability UNVERIFIED/);
@@ -618,6 +618,48 @@ test('hover action rejects late action or case completion before its timer callb
    },()=>runSteps(hoverArtifact(),[{action:'hover',selector:'#control'},{action:'computed-style',selector:'#control',property:'transform',mode:'identity-transform'}]));
    assert.equal(result.verificationStatus,'unverified',result.error);assert.equal(calls,1);assert.equal(timerFired,false);
    assert.equal(result.trace.filter(t=>t.summary==='hover #control').length,0);assert.equal(result.trace.filter(t=>t.summary==='computed-style #control').length,0);assert.equal(result.screenshots.length,0);
+  }finally{Date.now=originalNow;globalThis.setTimeout=originalTimer;}
+ }
+});
+
+test('viewport action refuses expired action or case dispatch before its timer callback',async()=>{
+ for(const mode of ['action','case']){
+  let page;let calls=0;let offset=0;let armed=false;let actionTimer;let timerFired=false;
+  const originalNow=Date.now;const originalTimer=globalThis.setTimeout;
+  Date.now=()=>originalNow()+offset;
+  globalThis.setTimeout=(callback,delay,...args)=>{
+   if(armed&&actionTimer===undefined&&delay<=5000){actionTimer=originalTimer(()=>{timerFired=true;callback(...args);},delay);return actionTimer;}
+   return originalTimer(callback,delay,...args);
+  };
+  try{
+   const result=await withViewportHook(value=>{
+    page=value;const originalLocator=page.locator;
+    page.locator=function(selector,...args){if(selector==='html'&&mode==='case'){offset=46000;armed=true;}return originalLocator.call(this,selector,...args);};
+    Object.defineProperty(page,'setViewportSize',{get(){if(mode==='action'){offset=6000;armed=true;}return ()=>{calls++;return Promise.resolve();};}});
+   },()=>runSteps(mobileMenuArtifact(),[{action:'viewport',selector:'html',width:390,height:844},{action:'computed-style',selector:'#menuBtn',property:'display',mode:'literal',value:'inline-block'}]));
+   assert.equal(result.verificationStatus,'unverified',mode+': '+result.error);assert.equal(calls,0);assert.equal(timerFired,false);assert.equal(page.isClosed(),true);
+   assert.equal(result.trace.filter(t=>t.summary==='viewport html').length,0);assert.equal(result.trace.filter(t=>t.summary==='computed-style #menuBtn').length,0);assert.equal(result.screenshots.length,0);
+  }finally{Date.now=originalNow;globalThis.setTimeout=originalTimer;}
+ }
+});
+test('viewport action rejects late action or case completion before its timer callback',async()=>{
+ for(const mode of ['action','case']){
+  let page;let calls=0;let mockNow;let caseEpoch;let armed=false;let actionTimer;let timerFired=false;
+  const originalNow=Date.now;const originalTimer=globalThis.setTimeout;
+  Date.now=()=>mockNow??originalNow();
+  globalThis.setTimeout=(callback,delay,...args)=>{
+   if(delay===45000)caseEpoch=Date.now()+45000;
+   if(armed&&actionTimer===undefined&&delay<=5000){actionTimer=originalTimer(()=>{timerFired=true;callback(...args);},delay);return actionTimer;}
+   return originalTimer(callback,delay,...args);
+  };
+  try{
+   const result=await withViewportHook(value=>{
+    page=value;const originalLocator=page.locator;
+    page.locator=function(selector,...args){if(selector==='html'){armed=true;if(mode==='case')mockNow=caseEpoch-1000;}return originalLocator.call(this,selector,...args);};
+    page.setViewportSize=function(size){assert.deepEqual(size,{width:390,height:844});assert.equal(arguments.length,1);calls++;mockNow=mode==='case'?caseEpoch+1:originalNow()+6000;return Promise.resolve();};
+   },()=>runSteps(mobileMenuArtifact(),[{action:'viewport',selector:'html',width:390,height:844},{action:'computed-style',selector:'#menuBtn',property:'display',mode:'literal',value:'inline-block'}]));
+   assert.equal(result.verificationStatus,'unverified',mode+': '+result.error);assert.equal(calls,1);assert.equal(timerFired,false);assert.equal(page.isClosed(),true);
+   assert.equal(result.trace.filter(t=>t.summary==='viewport html').length,0);assert.equal(result.trace.filter(t=>t.summary==='computed-style #menuBtn').length,0);assert.equal(result.screenshots.length,0);
   }finally{Date.now=originalNow;globalThis.setTimeout=originalTimer;}
  }
 });
