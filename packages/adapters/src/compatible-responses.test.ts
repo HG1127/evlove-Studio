@@ -11,7 +11,7 @@ const makeArgs=(request:CompatibleResponsesOptions["request"],over:Partial<Compa
 
 describe("compatible Responses adapter",()=>{
   it("joins all output text parts before the task parser receives them",async()=>{
-    const request=vi.fn(async()=>reply({status:"completed",output:[{content:[{type:"output_text",text:'{"answer":'},{type:"refusal",refusal:"ignored"}]},{content:[{type:"output_text",text:'"ok"}'}]}]}));
+    const request=vi.fn(async()=>reply({status:"completed",output:[{content:[{type:"output_text",text:'{"answer":'}]},{content:[{type:"output_text",text:'"ok"}'}]}]}));
     await expect(callCompatibleResponses(makeArgs(request))).resolves.toMatchObject({text:'{"answer":"ok"}',format:"json-schema"});
   });
 
@@ -75,4 +75,19 @@ describe("shared Responses envelope decoding",()=>{
   it("checks the envelope before trusting an aggregate text field",()=>{
     expect(()=>readCompatibleResponsesOutput({output_text:'{"answer":"ok"}',output:"invalid"})).toThrow(/格式无效/);
   });
+});
+
+describe("Responses refusal is never final task output",()=>{
+ it.each([
+  {refusal:key},
+  {output:[{type:"refusal"}]},
+  {output:[{content:[{type:"refusal",refusal:key}]}]},
+  {output:[{content:[{type:"output_text",text:"mixed",refusal:key}]}]},
+ ])("rejects refusal before trusting aggregate JSON",async refusal=>{
+  const body={status:"completed",output_text:'{"answer":"ok"}',...refusal};
+  expect(()=>readCompatibleResponsesOutput(body)).toThrow(/拒绝/);
+  const request=vi.fn(async()=>reply(body));
+  const error=await callCompatibleResponses(makeArgs(request)).catch(error=>error);
+  expect(error).toBeInstanceOf(Error);expect(error.message).not.toContain(key);expect(request).toHaveBeenCalledOnce();
+ });
 });

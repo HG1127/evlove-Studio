@@ -56,13 +56,13 @@ import {
   type VisualJudgeAiResult,
 } from "@evolution/contracts";
 import { SERVER_SEMANTIC_CONTEXT_VERSION } from "@evolution/harness";
-import {COMPATIBLE_RESPONSES_OUTPUT_VERSION,COMPATIBLE_CHAT_OUTPUT_VERSION,readCompatibleResponsesOutput,readCompatibleChatOutput,parseStructuredAiOutput,requestCompatibleAiJson} from "@evolution/adapters";
+import {COMPATIBLE_RESPONSES_OUTPUT_VERSION,COMPATIBLE_CHAT_OUTPUT_VERSION,readCompatibleResponsesOutput,readCompatibleChatOutput,parseStructuredAiOutput,StructuredAiJsonError,STRUCTURED_AI_FINAL_OUTPUT_VERSION,type StructuredAiJsonFailureKind,requestCompatibleAiJson} from "@evolution/adapters";
 import type { ServerAiConfig } from "../server-env";
 import {resolveServerAiConfig} from "./server-ai-connection";
 
 export type ServerAiOperation=AiOperation;
 export const DIRECT_AI_SCHEMA_INSTRUCTION_VERSION="exact-schema-instructions-v1";
-export const DIRECT_AI_SCHEMA_RECOVERY_VERSION="schema-feedback-once-v2-judge-json";
+export const DIRECT_AI_SCHEMA_RECOVERY_VERSION="schema-feedback-once-v3-observation-json";
 /** Public scoring-route identity; API keys and timeout settings are deliberately excluded. */
 export async function serverAiScoringRouteFingerprint(): Promise<string | undefined> {
   const config = await resolveServerAiConfig();
@@ -76,7 +76,7 @@ export async function serverAiScoringRouteFingerprint(): Promise<string | undefi
   const directSchemaInstructionVersion=config.mode==="openai-compatible"&&(!config.responseFormat||config.responseFormat==="json-schema")
     ?DIRECT_AI_SCHEMA_INSTRUCTION_VERSION:undefined;
   const directSchemaRecoveryVersion=config.mode==="openai-compatible"?DIRECT_AI_SCHEMA_RECOVERY_VERSION:undefined;
-  return createHash("sha256").update(JSON.stringify({ route, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION, responsesOutputVersion, chatOutputVersion, directSchemaInstructionVersion, directSchemaRecoveryVersion })).digest("hex");
+  return createHash("sha256").update(JSON.stringify({ route, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION, responsesOutputVersion, chatOutputVersion, directSchemaInstructionVersion, directSchemaRecoveryVersion, finalOutputVersion: config.mode==="openai-compatible"?STRUCTURED_AI_FINAL_OUTPUT_VERSION:undefined })).digest("hex");
 }
 
 type StructuredSchema={name:string;schema:Record<string,unknown>};
@@ -121,7 +121,7 @@ function contract(operation:ServerAiOperation):Contract<unknown>{
   if(operation==="build-candidate")return{schema:jsonSchemas.buildCandidate,parser:BuildCandidateAiResultSchema,instruction:"Construct exact Candidate artifacts from the CURRENT target version and Candidate plan. Preserve protected/untouched scope; never claim tests passed."};
   if(operation==="execute-artifact")return{schema:jsonSchemas.executeArtifact,parser:ExecuteArtifactAiResultSchema,instruction:"Inspect or execute one supplied current artifact against the test intent. Return concrete output/trace from supplied evidence; say UNVERIFIED when behavior cannot be established."};
   if(operation==="repair-artifact")return{schema:jsonSchemas.repairArtifact,parser:RepairArtifactAiResultSchema,instruction:"Repair only explicitly supplied VERIFIED failed criteria on exact current Candidate artifacts. Preserve unrelated/protected behavior; never claim validation passed."};
-  if(operation==="execute-artifact-batch")return{schema:jsonSchemas.executeArtifactBatch,parser:ExecuteArtifactBatchAiResultSchema,instruction:"Inspect CURRENT artifact evidence against each supplied test. Return concrete observations only. In complete readable supplied artifact content, absence or weakness of required content is an observed product deficiency for the independent Judge, not UNVERIFIED. Use UNVERIFIED only when the relevant artifact content is unavailable, truncated outside the relevant scope, or required runtime evidence cannot be obtained. Static document text never proves scripts, rendered appearance or browser interaction."};
+  if(operation==="execute-artifact-batch")return{schema:jsonSchemas.executeArtifactBatch,parser:ExecuteArtifactBatchAiResultSchema,allowCompletedJsonCorrection:true,instruction:"Inspect CURRENT artifact evidence against each supplied test. Return concrete observations only. In complete readable supplied artifact content, absence or weakness of required content is an observed product deficiency for the independent Judge, not UNVERIFIED. Use UNVERIFIED only when the relevant artifact content is unavailable, truncated outside the relevant scope, or required runtime evidence cannot be obtained. Static document text never proves scripts, rendered appearance or browser interaction."};
   if(operation==="evaluate-population")return{schema:jsonSchemas.evaluatePopulation,parser:PopulationEvaluationAiResultSchema,instruction:"Compare the candidate population only from measured evidence. Score every candidate and enforce hard gates/safety without treating missing evidence as product failure."};
   if(operation==="artifact-acceptance")return{schema:jsonSchemas.artifactAcceptance,parser:ArtifactAcceptanceAiResultSchema,instruction:"Perform Gate F acceptance on exact supplied Candidate artifacts. Return every supplied criterion result and truthful coverage/integrity/pairwise/hard-gate conclusions."};
   if(operation==="materialize")return{schema:jsonSchemas.materialize,parser:MaterializeAiResultSchema,instruction:"Materialize only supplied accepted content, preserving sourceArtifactId and exact accepted content. Do not regenerate a different deliverable or claim unsupported binary fidelity."};
@@ -145,11 +145,16 @@ class DirectAiSchemaMismatchError extends Error{
   constructor(message:string,readonly correctableShape:boolean){super(message);}
 }
 
-function parseStructuredResult<T>(text:string,contract:Contract<T>):T{
-  const result=contract.parser.safeParse(parseStructuredAiOutput(text));
+function parseStructuredResult<T>(text:string,contract:Contract<T>,explicitlyCompleted:boolean):T{
+  let output:unknown;
+  try{output=parseStructuredAiOutput(text);}catch(error){
+    if(error instanceof StructuredAiJsonError&&!explicitlyCompleted)throw Object.assign(new Error(error.message),{code:error.code});
+    throw error;
+  }
+  const result=contract.parser.safeParse(output);
   if(result.success)return result.data;
   const fields=[...new Set(result.error.issues.map(issue=>issue.path.join(".")||"结果"))].slice(0,4).join("、");
-  throw new DirectAiSchemaMismatchError("模型返回的 JSON 不符合任务结构（"+fields+"）。请检查模型的结构化输出能力或切换模型。",result.error.issues.every(issue=>issue.code!=="custom"));
+  throw new DirectAiSchemaMismatchError("模型返回的 JSON 不符合任务结构（"+fields+"）。请检查模型的结构化输出能力或切换模型。",explicitlyCompleted&&result.error.issues.every(issue=>issue.code!=="custom"));
 }
 
 async function callVercelGateway<T>(args:{
@@ -181,9 +186,10 @@ async function callVercelGateway<T>(args:{
   return args.contract.parser.parse(generated.output);
 }
 
-function directSystem<T>(contract:Contract<T>,correcting=false){
+function directSystem<T>(contract:Contract<T>,correcting=false,jsonFailureKind?:StructuredAiJsonFailureKind){
   const feedback=correcting?"\nThe preceding response was rejected by the task schema. Return the complete root object with required fields "+JSON.stringify(contract.schema.schema.required??[])+". Preserve supplied evidence and identities; never invent facts or verification. This is one structural correction, not permission to change the task. Return a single complete valid JSON object; escape newlines, quotes and control characters inside JSON strings.":"";
-  const base=SYSTEM+"\n\nTask: "+contract.instruction+feedback;
+  const syntaxFeedback=jsonFailureKind?"\nThe locally decoded JSON failure kind is "+jsonFailureKind+". Correct that syntax only while preserving the supplied evidence and identities.":"";
+  const base=SYSTEM+"\n\nTask: "+contract.instruction+feedback+syntaxFeedback;
   // Compatible providers may accept response_format without enforcing its schema.
   return base+"\nReturn JSON matching this exact schema:\n"+JSON.stringify(contract.schema.schema);
 }
@@ -194,7 +200,7 @@ function directFormat<T>(config:Extract<ServerAiConfig,{mode:"openai-compatible"
   return {type:"json_schema" as const,name:contract.schema.name,strict:true,schema:contract.schema.schema};
 }
 
-async function callResponses<T>(args:{config:Extract<ServerAiConfig,{mode:"openai-compatible"}>;contract:Contract<T>;payloadText:string;images:ParsedImage[];signal:AbortSignal;correcting:boolean}){
+async function callResponses<T>(args:{config:Extract<ServerAiConfig,{mode:"openai-compatible"}>;contract:Contract<T>;payloadText:string;images:ParsedImage[];signal:AbortSignal;correcting:boolean;jsonFailureKind?:StructuredAiJsonFailureKind}){
   const {response,json}=await requestCompatibleAiJson(args.config.baseUrl+"/responses",{
     method:"POST",
     redirect:"error",
@@ -204,7 +210,7 @@ async function callResponses<T>(args:{config:Extract<ServerAiConfig,{mode:"opena
       model:args.config.model,
       store:false,
       input:[
-        {role:"system",content:[{type:"input_text",text:directSystem(args.contract,args.correcting)}]},
+        {role:"system",content:[{type:"input_text",text:directSystem(args.contract,args.correcting,args.jsonFailureKind)}]},
         {role:"user",content:[
           {type:"input_text",text:args.payloadText},
           ...args.images.map((image)=>({type:"input_image",image_url:image.dataUrl})),
@@ -221,10 +227,10 @@ async function callResponses<T>(args:{config:Extract<ServerAiConfig,{mode:"opena
     const error=Object.assign(new Error(detail||("Server AI Responses HTTP "+response.status)),{httpStatus:response.status});
     throw error;
   }
-  return parseStructuredResult(readCompatibleResponsesOutput(json,{requireCompletedStatus:true}),args.contract);
+  return parseStructuredResult(readCompatibleResponsesOutput(json,{requireCompletedStatus:true}),args.contract,CompatibleResponsesEnvelopeSchema.parse(json).status==="completed");
 }
 
-async function callChat<T>(args:{config:Extract<ServerAiConfig,{mode:"openai-compatible"}>;contract:Contract<T>;payloadText:string;images:ParsedImage[];signal:AbortSignal;correcting:boolean}){
+async function callChat<T>(args:{config:Extract<ServerAiConfig,{mode:"openai-compatible"}>;contract:Contract<T>;payloadText:string;images:ParsedImage[];signal:AbortSignal;correcting:boolean;jsonFailureKind?:StructuredAiJsonFailureKind}){
   const {response,json}=await requestCompatibleAiJson(args.config.baseUrl+"/chat/completions",{
     method:"POST",
     redirect:"error",
@@ -233,7 +239,7 @@ async function callChat<T>(args:{config:Extract<ServerAiConfig,{mode:"openai-com
     body:JSON.stringify({
       model:args.config.model,
       messages:[
-        {role:"system",content:directSystem(args.contract,args.correcting)},
+        {role:"system",content:directSystem(args.contract,args.correcting,args.jsonFailureKind)},
         {role:"user",content:args.images.length?[
           {type:"text",text:args.payloadText},
           ...args.images.map((image)=>({type:"image_url",image_url:{url:image.dataUrl}})),
@@ -252,7 +258,7 @@ async function callChat<T>(args:{config:Extract<ServerAiConfig,{mode:"openai-com
     const detail=parsed.success?parsed.data.error?.message:undefined;
     throw Object.assign(new Error(detail||("Server AI Chat HTTP "+response.status)),{httpStatus:response.status});
   }
-  return parseStructuredResult(readCompatibleChatOutput(json),args.contract);
+  return parseStructuredResult(readCompatibleChatOutput(json),args.contract,CompatibleChatEnvelopeSchema.parse(json).choices?.[0]?.finish_reason==="stop");
 }
 
 async function structured<T>(payload:unknown,schema:Contract<T>,media?:ServerAiMedia):Promise<T>{
@@ -271,8 +277,8 @@ async function structured<T>(payload:unknown,schema:Contract<T>,media?:ServerAiM
   let protocol=config.protocol??"responses";
   try{
     const payloadText=JSON.stringify(payload);
-    const invoke=async(correcting:boolean)=>{
-      const args={config,contract:schema,payloadText,images,signal,correcting};
+    const invoke=async(correcting:boolean,jsonFailureKind?:StructuredAiJsonFailureKind)=>{
+      const args={config,contract:schema,payloadText,images,signal,correcting,jsonFailureKind};
       if(protocol==="chat-completions")return callChat(args);
       try{return await callResponses(args);}catch(error){
         const status=(error as {httpStatus?:number}).httpStatus;
@@ -283,14 +289,14 @@ async function structured<T>(payload:unknown,schema:Contract<T>,media?:ServerAiM
     };
     try{return await invoke(false);}catch(error){
       // One correction shares the captured evidence, protocol, format and deadline.
-      // A completed independent Judge reply may correct JSON syntax; Candidate
+      // Completed Judge/semantic observation replies may correct JSON syntax; Candidate
       // generation, nonfinal/refused output, transport and semantic rejections may not.
-      const invalidJudgeJson = schema.allowCompletedJsonCorrection
-        && (error as {code?:string}).code === "AI_OUTPUT_INVALID_JSON";
+      const invalidObservationJson = schema.allowCompletedJsonCorrection
+        && error instanceof StructuredAiJsonError;
       const invalidShape = error instanceof DirectAiSchemaMismatchError && error.correctableShape;
-      if(!invalidShape && !invalidJudgeJson)throw error;
+      if(!invalidShape && !invalidObservationJson)throw error;
       if(signal.aborted)throw Object.assign(new Error("模型结构纠正前请求已超时。"),{code:"AI_REQUEST_TIMEOUT"});
-      return await invoke(true);
+      return await invoke(true,error instanceof StructuredAiJsonError?error.kind:undefined);
     }
   }catch(error){
     const original=error as {message?:string;httpStatus?:number;code?:string};

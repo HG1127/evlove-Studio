@@ -1,5 +1,12 @@
 # Main flow acceptance
 
+## 2026-10-13 — Direct-model JSON completion and refusal boundaries
+
+[Direct model JSON handoff](direct-model-json-recovery-handoff.md) adds safe syntax diagnostics, one completed semantic observation correction with pinned evidence/deadline, explicit completion eligibility, and strict Responses refusal rejection.33 unique related files /370 tests, architecture, full lint and TypeScript/production build passed; independent review findings were fixed and rerun. Complete exact-commit CI and deployment are pending.
+
+Saved MiniMax direct synthetic large numeric and Chinese-document checks returned HTTP200 with correct identities on production fb3a9b5. Actual RCN is terminal completed/Job waiting, Mission43 baseline/paused after invalid JSON; Experiment, same-Hidden, Gate F and exact accepted download/reopen remain unproven. The synthetic health evidence does not verify the new local branch.
+
+
 ## 2026-10-12 — Full protection evidence foundations (development only)
 
 [Protection foundations](html-protection-evidence-foundations.md) add complete original-card/raw-source inventories, exact physical input/paper binding and an internal domain-separated execution attestation. The actual original has111cards; saved C1 retains them and adds3. Runtime coverage, semantic preservation, same-Hidden and Gate F remain unproven. These modules do not yet alter Workflow routes or settlement. Main fb3a9b5 contains the fully local-CI-verified Baseline/model fix and was actually observed serving production at15:42:49 UTC. Normal Run RCN is running on that main; the new protection foundation remains local. Original/current/Candidate execution and acceptance receipts are still required.
