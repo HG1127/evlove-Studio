@@ -26,6 +26,25 @@ describe("standalone HTML Sandbox transport", () => {
     expect(result.results[0]!.verificationStatus).toBe(status);
     expect(result.results[0]!.trace.at(-1)!.detail).toContain("transport ZIP SHA-256");
   });
+  it.each([
+    { action: "scroll-into-view", selector: "#actual" },
+    { action: "computed-style", selector: "#actual", property: "opacity", mode: "numeric-range", min: 0.99, max: 1 },
+    { action: "checked", selector: "#actual", checked: true },
+    { action: "copy-text", selector: "#actual", value: "真实完整 HTML" },
+  ])("transports additive typed $action unchanged without relabeling file identity", async step => {
+    const paper = TestCaseSchema.parse({ ...testCase, browserSteps: [step] });
+    execute.mockImplementation(async (args: { archive: Uint8Array; expectedSha256: string; testCases: unknown[] }) => {
+      expect(args.testCases).toEqual([paper]);
+      const zip = await JSZip.loadAsync(args.archive, { checkCRC32: true });
+      expect(await zip.file("dist/index.html")!.async("uint8array")).toEqual(html);
+      return { artifactHash: args.expectedSha256, results: [{ testCaseId: paper.id, output: "typed boundary fixture",
+        latencyMs: 1, cost: 0, artifactHash: args.expectedSha256, verificationStatus: "partial", trace: [] }] };
+    });
+    const result = await runVercelSandboxHtmlValidation({ ...fixture(), testCases: [paper] });
+    expect(result.artifactHash).toBe(hash(html));
+    expect(result.results[0]?.verificationStatus).toBe("partial");
+  });
+
   it("copies mutable input bytes before asynchronous ZIP preparation", async () => {
     execute.mockImplementation(async (args: { archive: Uint8Array; expectedSha256: string }) => {
       const zip = await JSZip.loadAsync(args.archive, { checkCRC32: true });

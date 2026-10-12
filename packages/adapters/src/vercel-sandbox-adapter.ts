@@ -2,6 +2,7 @@ import JSZip from "jszip";
 import {VERCEL_SANDBOX_BROWSER_RUNNER_SCRIPT,sandboxBrowserCommandTimeoutMs} from "./vercel-sandbox-browser-runner";
 import { APIError, Sandbox, Snapshot, type NetworkPolicy, type SandboxRegion } from "@vercel/sandbox";
 import {
+  BrowserStepSchema,
   SandboxBrowserHealthSchema,
   SandboxHealthSchema,
   SandboxPolicyCapabilitiesSchema,
@@ -31,8 +32,8 @@ const SANDBOX_MAX_COMMAND_TIMEOUT_MS=15*60_000;
 const SANDBOX_MAX_ARCHIVE_FILES=2500;
 const SANDBOX_MAX_FILE_BYTES=20*1024*1024;
 const SANDBOX_MAX_EXTRACTED_BYTES=100*1024*1024;
-const BROWSER_RUNTIME_NAME="evolution-browser-pw163-v2";
-const BROWSER_RUNTIME_VERSION="pw-1.63.0-v2";
+const BROWSER_RUNTIME_NAME="evolution-browser-pw163-v3-typed-isolated";
+const BROWSER_RUNTIME_VERSION="pw-1.63.0-v3-typed-isolated";
 const BROWSER_SNAPSHOT_TTL_MS=7*24*60*60*1000;
 const BROWSER_PORT=4173;
 
@@ -323,6 +324,7 @@ type BrowserCaseEvidence={
 function validateSandboxBrowserCases(testCases:TestCase[]){
   for(const testCase of testCases){
     for(const step of testCase.browserSteps??[]){
+      BrowserStepSchema.parse(step);
       if(step.selector.length>500)throw new Error("Browser selector 超过 500 字符");
       if((step.action==="fill"||step.action==="text")&&typeof step.value!=="string")throw new Error("Browser Step 缺少 value");
       if(step.action==="count"&&(!Number.isInteger(step.count)||Number(step.count)<0))throw new Error("Browser count 缺少合法数量");
