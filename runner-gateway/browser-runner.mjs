@@ -43,7 +43,8 @@ export function validateBrowserSteps(steps){
    valid=fieldsOnly(step,['value','count'])&&(step.value===undefined||literalValid(step.value))&&(step.count===undefined||(Number.isInteger(step.count)&&step.count>=0));
    if(['fill','text'].includes(step.action))valid=valid&&literalValid(step.value);
    if(step.action==='count')valid=valid&&Number.isInteger(step.count)&&step.count>=0;
-  }else if(step.action==='scroll-into-view')valid=fieldsOnly(step,[]);
+  }else if(step.action==='viewport')valid=fieldsOnly(step,['width','height'])&&step.selector==='html'&&Number.isInteger(step.width)&&Number.isInteger(step.height)&&step.width>=240&&step.width<=2560&&step.height>=240&&step.height<=2560;
+  else if(step.action==='scroll-into-view')valid=fieldsOnly(step,[]);
   else if(step.action==='in-viewport')valid=fieldsOnly(step,['ratio','expected'])&&(step.ratio===undefined||(Number.isFinite(step.ratio)&&step.ratio>=0&&step.ratio<=1))&&(step.expected===undefined||typeof step.expected==='boolean');
   else if(step.action==='attribute')valid=fieldsOnly(step,['name','value','mode'])&&typeof step.name==='string'&&step.name.length<=64&&(attributes.includes(step.name)||/^data-[a-z0-9-]+$/.test(step.name))&&literalValid(step.value)&&(step.mode===undefined||['equals','contains'].includes(step.mode));
   else if(step.action==='checked')valid=fieldsOnly(step,['checked'])&&typeof step.checked==='boolean';
@@ -60,6 +61,24 @@ export function validateBrowserSteps(steps){
  return steps;
 }
 class BrowserCapabilityUnavailable extends Error{}
+async function setActionViewport(page,step){
+ let timer;
+ try{
+  if(typeof page.setViewportSize!=='function')throw new Error('setViewportSize 不可用');
+  // Match Gateway's existing 5s action budget; the unchanged 45s case timer also
+  // bounds this action. Call once, never retry or turn resize into an observation.
+  await Promise.race([
+   Promise.resolve().then(()=>page.setViewportSize({width:step.width,height:step.height})),
+   new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('viewport action deadline')),5000);}),
+  ]);
+  return {width:step.width,height:step.height};
+ }catch(error){
+  // Stop this case immediately. Close the page to prevent a late resize from
+  // changing any later observation; close failures do not reclassify capability.
+  void Promise.resolve().then(()=>page.close()).catch(()=>{});
+  throw new BrowserCapabilityUnavailable('viewport capability UNVERIFIED：无法可靠改变浏览器尺寸',{cause:error});
+ }finally{clearTimeout(timer);}
+}
 async function pollObservation(read,predicate,summary){
  let last;let capability;
  try{await expect.poll(async()=>{
@@ -229,12 +248,12 @@ async function denyDesktopClipboard(context,onBlocked){
 }
 /** Uploaded HTML runs in a fresh browser context; no local files or network resources. */
 export async function executeBrowserTest({testCase,artifact}){
- const started=Date.now();const trace=[];const shots=[];
+ const started=Date.now();const trace=[];const shots=[];const requestedViewports=[];
  const result={testCaseId:String(testCase?.id??'preview'),cost:0,trace,screenshots:shots,verificationStatus:'unverified'};
  if(!artifact?.content || !/\.html?$/i.test(artifact.name??''))return {...result,output:'此执行器需要单个完整 HTML 成果；工程构建需连接工程 Runner。',latencyMs:0};
  const steps=validateBrowserSteps(testCase?.browserSteps??[]);
  const hash=createHash('sha256').update(artifact.content).digest('hex');
- if(steps.some(step=>step.action==='copy-text'))return {...result,artifactHash:hash,latencyMs:Date.now()-started,error:'copy-text capability UNVERIFIED: Gateway cannot use the desktop clipboard',output:JSON.stringify({scope:'copy-text',assertions:0,capability:'unavailable',limitations:['本机 Gateway 禁止访问桌面剪贴板；需隔离 Sandbox 的可信探针。']})};
+ if(steps.some(step=>step.action==='copy-text'))return {...result,artifactHash:hash,latencyMs:Date.now()-started,error:'copy-text capability UNVERIFIED: Gateway cannot use the desktop clipboard',output:JSON.stringify({browserStepProtocol:'v4-typed-isolated-viewport',scope:'copy-text',assertions:0,capability:'unavailable',limitations:['本机 Gateway 禁止访问桌面剪贴板；需隔离 Sandbox 的可信探针。']})};
  const instance=await getBrowser();
  let contextTimer;
  const context=await Promise.race([instance.newContext({serviceWorkers:'block',acceptDownloads:false,viewport:{width:1440,height:960}}),new Promise((_,reject)=>{contextTimer=setTimeout(()=>{void instance.close();reject(new Error('浏览器环境初始化超时'));},15000);})]).finally(()=>clearTimeout(contextTimer));
@@ -272,6 +291,7 @@ export async function executeBrowserTest({testCase,artifact}){
    // Perform each action once. Only observations are retried within 5s; the
    // context's 45s deadline also bounds the complete sequence.
    switch(step.action){
+    case 'viewport':requestedViewports.push(await setActionViewport(page,step));break;
     case 'click':await locator.click();break;
     case 'fill':await locator.fill(step.value);break;
     case 'scroll-into-view':await locator.scrollIntoViewIfNeeded();break;
@@ -301,7 +321,7 @@ export async function executeBrowserTest({testCase,artifact}){
   const assertions=steps.filter(s=>assertionActions.includes(s.action)).length;
   // Rendering alone never proves a business workflow passed.
   result.verificationStatus=failed?'failed':blocked.size||!assertions?'partial':'verified';
-  return {...result,artifactHash:hash,latencyMs:Date.now()-started,output:JSON.stringify({fixedObservationRealm:'chromium-cdp-isolated-v1',scope:assertions?'所列浏览器断言':'浏览器渲染与布局',assertions,errors,blockedResources:[...blocked],limitations:['截图仅覆盖两个视口的当前画面；美观与语义效果需独立评审。','不安装上传代码的依赖，不执行服务器命令，不访问外部网络。','桌面剪贴板始终禁用；copy-text 需隔离 Sandbox。']}),...(failed?{error:'浏览器运行、断言或布局检查存在失败'}:{})};
+  return {...result,artifactHash:hash,latencyMs:Date.now()-started,output:JSON.stringify({browserStepProtocol:'v4-typed-isolated-viewport',requestedViewports,fixedObservationRealm:'chromium-cdp-isolated-v1',scope:assertions?'所列浏览器断言':'浏览器渲染与布局',assertions,errors,blockedResources:[...blocked],limitations:['截图仅覆盖两个视口的当前画面；美观与语义效果需独立评审。','不安装上传代码的依赖，不执行服务器命令，不访问外部网络。','桌面剪贴板始终禁用；copy-text 需隔离 Sandbox。']}),...(failed?{error:'浏览器运行、断言或布局检查存在失败'}:{})};
  }catch(error){return {...result,artifactHash:hash,latencyMs:Date.now()-started,verificationStatus:timedOut||error instanceof BrowserCapabilityUnavailable||clipboardBlocked?'unverified':'failed',error:String(error),output:timedOut?'执行超时，需补充验证。':String(error)};}
  finally{clearTimeout(timer);await observer?.close().catch(()=>{});await context.close().catch(()=>{});}
 }

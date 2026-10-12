@@ -440,3 +440,85 @@ test('clipboard guard uses captured intrinsics despite hostile String RegExp and
  const result=await runSteps(artifact,[{action:'click',selector:'#copy'}]);
  assert.equal(result.verificationStatus,'unverified',result.error);
 });
+
+const mobileMenuArtifact=()=>fixture('<button id="menuBtn" aria-expanded="false">Menu</button><nav id="menu">menu content</nav><script>document.querySelector("#menuBtn").onclick=()=>{document.body.classList.toggle("menu-open");document.querySelector("#menuBtn").setAttribute("aria-expanded",String(document.body.classList.contains("menu-open")))}</script>','#menuBtn{display:none}#menu{display:block}@media(max-width:600px){#menuBtn{display:inline-block}#menu{display:none}body.menu-open #menu{display:block}}');
+async function withViewportHook(hook,run){
+ return withCDPHook(async context=>{const original=context.newPage;context.newPage=async function(...args){const page=await original.apply(this,args);await hook(page);return page;};},run);
+}
+test('viewport action validates closed html selector integer bounds and keeps 24 steps',()=>{
+ for(const [width,height] of [[240,240],[390,844],[2560,2560]])assert.doesNotThrow(()=>validateBrowserSteps([{action:'viewport',selector:'html',width,height}]));
+ for(const step of [
+  {action:'viewport',selector:'body',width:390,height:844},
+  {action:'viewport',selector:'html',width:239,height:844},
+  {action:'viewport',selector:'html',width:2561,height:844},
+  {action:'viewport',selector:'html',width:390,height:239},
+  {action:'viewport',selector:'html',width:390,height:2561},
+  {action:'viewport',selector:'html',width:390.5,height:844},
+  {action:'viewport',selector:'html',width:390,height:Infinity},
+  {action:'viewport',selector:'html',width:'390',height:844},
+  {action:'viewport',selector:'html',width:390,height:844,value:'document.body.remove()'},
+ ])assert.throws(()=>validateBrowserSteps([step]));
+ assert.doesNotThrow(()=>validateBrowserSteps(Array.from({length:24},()=>({action:'viewport',selector:'html',width:390,height:844}))));
+ assert.throws(()=>validateBrowserSteps(Array.from({length:25},()=>({action:'viewport',selector:'html',width:390,height:844}))));
+});
+test('viewport action enables a real 390px phone menu while desktop button stays hidden',async()=>{
+ const calls=[];const result=await withViewportHook(page=>{const original=page.setViewportSize;page.setViewportSize=async function(size){calls.push(size);return original.call(this,size);};},()=>runSteps(mobileMenuArtifact(),[
+  {action:'computed-style',selector:'#menuBtn',property:'display',mode:'literal',value:'none'},
+  {action:'viewport',selector:'html',width:390,height:844},
+  {action:'computed-style',selector:'#menuBtn',property:'display',mode:'literal',value:'inline-block'},
+  {action:'in-viewport',selector:'#menuBtn',ratio:1},
+  {action:'click',selector:'#menuBtn'},
+  {action:'attribute',selector:'#menuBtn',name:'aria-expanded',value:'true'},
+  {action:'attribute',selector:'body',name:'class',mode:'contains',value:'menu-open'},
+  {action:'computed-style',selector:'#menu',property:'display',mode:'literal',value:'block'},
+  {action:'viewport',selector:'html',width:1440,height:960},
+  {action:'computed-style',selector:'#menuBtn',property:'display',mode:'literal',value:'none'},
+  {action:'scroll-position',selector:'html',min:0,max:0},
+ ]));
+ assert.equal(result.verificationStatus,'verified',result.error);
+ assert.equal(result.trace.filter(t=>t.summary==='click #menuBtn').length,1);
+ assert.deepEqual(calls,[{width:390,height:844},{width:1440,height:960},{width:1440,height:960},{width:390,height:960}]);
+ const output=JSON.parse(result.output);assert.equal(output.assertions,8);assert.equal(output.browserStepProtocol,'v4-typed-isolated-viewport');
+ assert.deepEqual(output.requestedViewports,[{width:390,height:844},{width:1440,height:960}]);
+ assert.equal(result.screenshots.length,2);
+});
+test('viewport action alone remains partial and requested dimensions are not observations',async()=>{
+ const result=await runSteps(mobileMenuArtifact(),[{action:'viewport',selector:'html',width:390,height:844}]);
+ assert.equal(result.verificationStatus,'partial');const output=JSON.parse(result.output);assert.equal(output.assertions,0);
+ assert.deepEqual(output.requestedViewports,[{width:390,height:844}]);
+});
+test('viewport action does not repair physical scroll position',async()=>{
+ const result=await runSteps(fixture('<div style="height:2000px">long page</div><script>window.scrollTo(0,800)</script>'),[
+  {action:'scroll-position',selector:'html',min:800,max:800},
+  {action:'viewport',selector:'html',width:390,height:844},
+  {action:'scroll-position',selector:'html',min:800,max:800},
+ ]);assert.equal(result.verificationStatus,'verified',result.error);
+});
+test('viewport action API completion cannot substitute for real responsive evidence',async()=>{
+ const result=await withViewportHook(page=>{const original=page.setViewportSize;page.setViewportSize=function(size){return size.width===390&&size.height===844?Promise.resolve():original.call(this,size)};},()=>runSteps(mobileMenuArtifact(),[
+  {action:'viewport',selector:'html',width:390,height:844},
+  {action:'computed-style',selector:'#menuBtn',property:'display',mode:'literal',value:'inline-block'},
+ ]));assert.equal(result.verificationStatus,'failed','no-op resize must not verify responsive state');
+});
+test('viewport action missing rejected and timed out capability stops the case UNVERIFIED',async()=>{
+ for(const mode of ['missing','rejected','timeout']){
+  let page;let calls=0;let deadlines=0;const originalTimer=globalThis.setTimeout;
+  if(mode==='timeout')globalThis.setTimeout=(callback,delay,...args)=>{if(delay===5000)deadlines++;return originalTimer(callback,delay===5000?150:delay,...args);};
+  try{
+   const result=await withViewportHook(value=>{page=value;if(mode==='missing')page.setViewportSize=undefined;else page.setViewportSize=()=>{calls++;return mode==='rejected'?Promise.reject(new Error('synthetic unsupported resize')):new Promise(()=>{});};},()=>runSteps(mobileMenuArtifact(),[
+    {action:'viewport',selector:'html',width:390,height:844},{action:'click',selector:'#menuBtn'},
+   ]));
+   assert.equal(result.verificationStatus,'unverified',mode+': '+result.error);assert.match(result.error,/viewport capability UNVERIFIED/);
+   assert.equal(calls,mode==='missing'?0:1);assert.equal(result.trace.filter(t=>t.summary==='click #menuBtn').length,0);assert.equal(result.screenshots.length,0);
+   assert.equal(page.isClosed(),true);if(mode==='timeout'){assert.ok(deadlines>=1);assert.ok(result.latencyMs<6000);}
+  }finally{globalThis.setTimeout=originalTimer;}
+ }
+});
+test('viewport action respects copy-text preflight without launch or desktop clipboard',async()=>{
+ await closeBrowser();const original=process.env.BROWSER_CHANNEL;process.env.BROWSER_CHANNEL='__no_launch_for_viewport_copy__';
+ try{
+  const result=await runSteps(mobileMenuArtifact(),[{action:'viewport',selector:'html',width:390,height:844},{action:'copy-text',selector:'#menuBtn',value:'synthetic'}]);
+  assert.equal(result.verificationStatus,'unverified');assert.equal(result.trace.length,0);assert.equal(result.screenshots.length,0);
+  assert.equal(JSON.parse(result.output).browserStepProtocol,'v4-typed-isolated-viewport');
+ }finally{if(original===undefined)delete process.env.BROWSER_CHANNEL;else process.env.BROWSER_CHANNEL=original;}
+});
