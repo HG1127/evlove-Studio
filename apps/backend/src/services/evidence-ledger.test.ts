@@ -149,7 +149,7 @@ describe("immutable evidence ledger",()=>{
       const url=new URL(String(input));
       paths.push(url.pathname+url.search);
       if(url.pathname.endsWith("/rpc/append_evidence_ledger"))return new Response("duplicate",{status:409});
-      return new Response(JSON.stringify([existing]),{status:200});
+      return new Response(JSON.stringify(url.searchParams.get("id")==="eq."+existing.id?[existing]:[]),{status:200});
     }));
     const mirrored=await mirrorEvolutionEventToEvidenceLedger(event);
     expect(mirrored).toMatchObject({
@@ -162,7 +162,7 @@ describe("immutable evidence ledger",()=>{
     expect(verify(event,{...mirrored,chainHash:"f".repeat(64)})).toBe(false);
     expect(verify(event,{...mirrored,signature:"f".repeat(64)})).toBe(false);
     expect(paths).toHaveLength(2);
-    expect(paths[1]).toContain("id=eq.%22event-ledger-evt-retry%22");
+    expect(paths[1]).toContain("id=eq.event-ledger-evt-retry");
   });
 
   it("refuses an Event mirror ID occupied by different Evidence",async()=>{

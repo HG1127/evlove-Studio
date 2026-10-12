@@ -89,7 +89,7 @@ describe("server Mission revision CAS",()=>{
       const url=new URL(String(input));
       paths.push(url);
       expect(url.pathname).toMatch(/\/events$/);
-      expect(url.searchParams.get("mission_id")).toBe('eq."mission/a"');
+      expect(url.searchParams.get("mission_id")).toBe('eq.mission/a');
       const id=ids[paths.length-1];
       return new Response(JSON.stringify(id?[{
         id,mission_id:"mission/a",schema_version:"event-v1",type:"MissionUpdated",
@@ -493,8 +493,8 @@ describe("server Mission revision CAS",()=>{
     vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
       const url=new URL(String(input));
       expect(url.searchParams.get("type")).toBe("eq.parse");
-      expect(url.searchParams.get("updated_at")).toBe('gte."2026-09-17T00:00:00.000Z"');
-      expect(url.searchParams.get("metadata->>sessionId")).toBe('eq."session/1"');
+      expect(url.searchParams.get("updated_at")).toBe('gte.2026-09-17T00:00:00.000Z');
+      expect(url.searchParams.get("metadata->>sessionId")).toBe('eq.session/1');
       expect(url.searchParams.get("order")).toBe("created_at.desc,id.desc");
       return new Response(JSON.stringify(url.searchParams.has("or")?[]:[jobRow(parse)]),{status:200});
     }));

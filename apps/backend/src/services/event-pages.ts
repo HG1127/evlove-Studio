@@ -1,15 +1,13 @@
+import {postgrestLogicValue,postgrestScalarValue} from "./postgrest-filter-values";
+
 type EventRow={id:string;at:string;mission_id?:unknown}&Record<string,unknown>;
 type EventCursor=Pick<EventRow,"at"|"id">;
 
-function filterValue(value:string){
-  return "%22"+encodeURIComponent(value.replace(/\\/g,"\\\\").replace(/"/g,'\\"'))+"%22";
-}
-
 function query(missionId:string|undefined,limit:number,cursor?:EventCursor){
-  const mission=missionId?"&mission_id=eq."+filterValue(missionId):"";
+  const mission=missionId?"&mission_id=eq."+postgrestScalarValue(missionId):"";
   const after=cursor
-    ?"&or=(at.lt."+filterValue(cursor.at)
-      +",and(at.eq."+filterValue(cursor.at)+",id.lt."+filterValue(cursor.id)+"))"
+    ?"&or=(at.lt."+postgrestLogicValue(cursor.at)
+      +",and(at.eq."+postgrestLogicValue(cursor.at)+",id.lt."+postgrestLogicValue(cursor.id)+"))"
     :"";
   return "events?select=*&order=at.desc,id.desc&limit="+limit+mission+after;
 }

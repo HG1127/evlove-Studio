@@ -1,15 +1,13 @@
+import {postgrestLogicValue,postgrestScalarValue} from "./postgrest-filter-values";
+
 type ParseJobCursor={createdAt:string;id:string};
 type ParseJobRow=Record<string,unknown>&{id:string;created_at:string;updated_at:string};
 
-function filterValue(value:string){
-  return "%22"+encodeURIComponent(value.replace(/\\/g,"\\\\").replace(/"/g,'\\"'))+"%22";
-}
-
 function query(since:string,limit:number,sessionId?:string,cursor?:ParseJobCursor){
-  const scope=sessionId?"&metadata->>sessionId=eq."+filterValue(sessionId):"";
-  const after=cursor?"&or=(created_at.lt."+filterValue(cursor.createdAt)
-    +",and(created_at.eq."+filterValue(cursor.createdAt)+",id.lt."+filterValue(cursor.id)+"))":"";
-  return "jobs?select=*&type=eq.parse&updated_at=gte."+filterValue(since)
+  const scope=sessionId?"&metadata->>sessionId=eq."+postgrestScalarValue(sessionId):"";
+  const after=cursor?"&or=(created_at.lt."+postgrestLogicValue(cursor.createdAt)
+    +",and(created_at.eq."+postgrestLogicValue(cursor.createdAt)+",id.lt."+postgrestLogicValue(cursor.id)+"))":"";
+  return "jobs?select=*&type=eq.parse&updated_at=gte."+postgrestScalarValue(since)
     +scope+"&order=created_at.desc,id.desc&limit="+limit+after;
 }
 

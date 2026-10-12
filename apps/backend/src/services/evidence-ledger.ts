@@ -1,3 +1,4 @@
+import {postgrestScalarValue} from "./postgrest-filter-values";
 import {createHash,createHmac,randomUUID,timingSafeEqual} from "node:crypto";
 import {
   EvidenceLedgerArchiveResponseSchema,
@@ -380,13 +381,9 @@ export async function probeEvidenceLedgerPage(){
   return true;
 }
 
-function filterValue(value:string){
-  return "%22"+encodeURIComponent(value.replace(/\\/g,"\\\\").replace(/"/g,'\\"'))+"%22";
-}
-
 export async function getEvidenceLedgerEntryById(id:string){
   const {request}=restClient();
-  const rows=await request("evidence_ledger?select=*&id=eq."+filterValue(id)+"&limit=1");
+  const rows=await request("evidence_ledger?select=*&id=eq."+postgrestScalarValue(id)+"&limit=1");
   if(!Array.isArray(rows)||rows.length>1)throw new Error("Evidence Ledger identity lookup is invalid");
   if(!rows.length)return undefined;
   if(!rows[0]||typeof rows[0]!=="object"||Array.isArray(rows[0])){

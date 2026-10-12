@@ -1,3 +1,4 @@
+import {postgrestScalarValue} from "./postgrest-filter-values";
 import {EvolutionEventSchema,type EvolutionEvent} from "@evolution/contracts";
 import {
   canonicalEvidenceJson,EventEvidenceIdentityConflictError,mirrorEvolutionEventToEvidenceLedger,
@@ -52,13 +53,8 @@ function identity(event:EvolutionEvent){
   return canonicalEvidenceJson({...row,at:normalizedAt});
 }
 
-function filterValue(value:string){
-  // PostgREST reserved characters require a quoted literal, including Event ID colons.
-  return encodeURIComponent(JSON.stringify(value));
-}
-
 export async function readServerEventById(request:(path:string)=>Promise<unknown>,id:string){
-  const rows=await request("events?select=*&id=eq."+filterValue(id)+"&limit=1");
+  const rows=await request("events?select=*&id=eq."+postgrestScalarValue(id)+"&limit=1");
   if(!Array.isArray(rows)||rows.length>1)throw new Error("Event identity readback is invalid");
   if(!rows.length)return undefined;
   if(!rows[0]||typeof rows[0]!=="object"||Array.isArray(rows[0])){

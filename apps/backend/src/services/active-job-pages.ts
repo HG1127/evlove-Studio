@@ -1,18 +1,16 @@
+import {postgrestLogicValue,postgrestScalarValue} from "./postgrest-filter-values";
+
 type JobStatus="queued"|"running"|"waiting";
 type JobKind="parse"|"campaign";
 type JobCursor={updatedAt:string;id:string};
 type JobRow=Record<string,unknown>&{id:string;updated_at:string};
 
-function filterValue(value:string){
-  return "%22"+encodeURIComponent(value.replace(/\\/g,"\\\\").replace(/"/g,'\\"'))+"%22";
-}
-
 function query(status:JobStatus,kind:JobKind,limit:number,missionId?:string,cursor?:JobCursor){
-  const scope=missionId?"&mission_id=eq."+filterValue(missionId):"";
+  const scope=missionId?"&mission_id=eq."+postgrestScalarValue(missionId):"";
   const kindFilter=kind==="parse"?"&type=eq.parse"
     :"&type=eq.campaign&idempotency_key=like.workflow-control*";
-  const after=cursor?"&or=(updated_at.gt."+filterValue(cursor.updatedAt)
-    +",and(updated_at.eq."+filterValue(cursor.updatedAt)+",id.gt."+filterValue(cursor.id)+"))":"";
+  const after=cursor?"&or=(updated_at.gt."+postgrestLogicValue(cursor.updatedAt)
+    +",and(updated_at.eq."+postgrestLogicValue(cursor.updatedAt)+",id.gt."+postgrestLogicValue(cursor.id)+"))":"";
   return "jobs?select=*&order=updated_at.asc,id.asc&limit="+limit
     +scope+"&status=eq."+status+kindFilter+after;
 }

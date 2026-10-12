@@ -20,7 +20,19 @@ describe("Parse Job recovery pages",()=>{
       .rejects.toThrow("does not match");
   });
 
-  it("quotes the session and checks the descending cursor filter",async()=>{
+  it("reads a recent Parse Job using the literal session and timestamp values",async()=>{
+    const sessionId='session:一,()"\\&limit=100#%22';
+    const stored={...row,metadata:{sessionId}};
+    const request=vi.fn(async(path:string)=>{
+      const query=new URL("https://db.test/"+path).searchParams;
+      expect(query.get("updated_at")).toBe("gte."+at);
+      return query.get("metadata->>sessionId")==="eq."+sessionId
+        &&Date.parse(stored.updated_at)>=Date.parse(query.get("updated_at")!.slice(4))?[stored]:[];
+    });
+    expect(await readRecentParseJobRows(request,{since:at,limit:1,sessionId})).toEqual([stored]);
+  });
+
+  it("encodes the scalar session and checks the descending cursor filter",async()=>{
     const paths:string[]=[];
     const request=vi.fn(async(path:string)=>{paths.push(path);return [];});
     await readRecentParseJobRows(request,{
@@ -28,7 +40,7 @@ describe("Parse Job recovery pages",()=>{
       after:{createdAt:at,id:"parse-a"},
     });
     const url=new URL("https://example.supabase.co/rest/v1/"+paths[0]);
-    expect(url.searchParams.get("metadata->>sessionId")).toBe('eq."session/a,b"');
+    expect(url.searchParams.get("metadata->>sessionId")).toBe('eq.session/a,b');
     expect(url.searchParams.get("or")).toContain('id.lt."parse-a"');
     expect(url.searchParams.get("order")).toBe("created_at.desc,id.desc");
   });
