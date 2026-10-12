@@ -1,3 +1,4 @@
+import { htmlProtectionCoverageGap } from "@evolution/core";
 import type { AcceptanceCriterion, Candidate, EvaluationResult, EvolveProject, SupplementalValidationEvidence } from "../schemas";
 import { evidenceFingerprint } from "./evidence-binding";
 
@@ -37,6 +38,16 @@ export function applySupplementalEvidenceToEvaluation(project: EvolveProject, ca
     const record = evidence.get(score.criterionId);
     const criterion = criterionById.get(score.criterionId);
     if (!record || !criterion) return score;
+    const scopeGap = htmlProtectionCoverageGap(criterion, project);
+    if (scopeGap) {
+      // A matching note or screenshot is not the independent complete-scope collector.
+      // Preserve observed rejections and raw ledger entries; never clear their gaps.
+      const observedRejection = score.verificationStatus === "verified" && !score.pass;
+      return { ...score, pass: false,
+        verificationStatus: observedRejection ? "verified" as const : score.verificationStatus === "unverified" ? "unverified" as const : "partial" as const,
+        gaps: [...new Set([...score.gaps, scopeGap])],
+      };
+    }
     touched.push(criterion.title);
     const pass = record.verdict === "pass";
     const nextScore = pass ? Math.max(score.score, criterion.minScore) : Math.min(score.score, Math.max(0, criterion.minScore - 1));
@@ -73,7 +84,7 @@ export function applySupplementalEvidenceToEvaluation(project: EvolveProject, ca
     rubricScore,
     verifiedRubricCoverage,
     unverifiedCriterionIds,
-    notes: [`补充验收证据已应用：${touched.join("、")}`, ...evaluation.notes],
+    notes: touched.length ? [`补充验收证据已应用：${touched.join("、")}`, ...evaluation.notes] : [...evaluation.notes],
   };
 }
 
