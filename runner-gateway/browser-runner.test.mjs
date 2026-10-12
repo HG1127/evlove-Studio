@@ -246,7 +246,7 @@ test('zero relative denominator and unsupported CSS measurements remain UNVERIFI
  ]);assert.equal(zero.verificationStatus,'unverified',zero.error);
  const missing=await runSteps(fixture('<div id="target"></div><script>window.DOMMatrixReadOnly=undefined</script>'),[
   {action:'computed-style',selector:'#target',property:'transform',mode:'identity-transform'},
- ]);assert.equal(missing.verificationStatus,'unverified',missing.error);
+ ]);assert.equal(missing.verificationStatus,'verified','main-world DOMMatrix replacement cannot remove native isolated capability: '+missing.error);
  const nonPx=await runSteps(fixture('<span id="target">inline width auto</span>'),[
   {action:'computed-style',selector:'#target',property:'width',mode:'numeric-range',min:0,max:100},
  ]);assert.equal(nonPx.verificationStatus,'unverified',nonPx.error);
@@ -331,4 +331,112 @@ test('effective opacity follows an assigned slot and its shadow ancestors',async
  assert.equal(falseVisible.verificationStatus,'failed','shadow ancestor opacity must not become a false 1');
  const hidden=await runSteps(artifact,[{action:'computed-style',selector:'#slotted',property:'opacity',mode:'literal',value:'0'}]);
  assert.equal(hidden.verificationStatus,'verified',hidden.error);
+});
+
+test('independent observation rejects forged main-world opacity and CSS getters',async()=>{
+ const artifact=fixture('<div id="target" style="opacity:0">hidden</div><script>window.getComputedStyle=()=>({opacity:"1",getPropertyValue:()=>"1"});Object.defineProperty(Node.prototype,"parentElement",{get:()=>null,configurable:true})</script>');
+ const result=await runSteps(artifact,[{action:'computed-style',selector:'#target',property:'opacity',mode:'numeric-range',min:1,max:1}]);
+ assert.equal(result.verificationStatus,'failed','artifact getter must not forge physical opacity');
+});
+test('independent observation rejects forged main-world scroll position',async()=>{
+ const artifact=fixture('<div style="height:2000px">no navigation</div><script>Object.defineProperty(window,"scrollY",{get:()=>1000,configurable:true})</script>');
+ const result=await runSteps(artifact,[{action:'scroll-position',selector:'html',min:1000,max:1000}]);
+ assert.equal(result.verificationStatus,'failed','artifact getter must not forge physical scroll');
+});
+
+test('independent observation preserves real CSS and shadow ancestry despite hostile prototypes',async()=>{
+ const artifact=fixture('<div style="opacity:.5"><div id="host"></div></div><script>document.querySelector("#host").attachShadow({mode:"open"}).innerHTML="<span id=target style=opacity:.5>target</span>";window.getComputedStyle=()=>{throw new Error("forged CSS")};Document.prototype.querySelectorAll=()=>[];Element.prototype.querySelectorAll=()=>[];Element.prototype.getRootNode=()=>document;Object.defineProperty(Node.prototype,"parentElement",{get:()=>null,configurable:true});Object.defineProperty(Element.prototype,"shadowRoot",{get:()=>null,configurable:true})</script>');
+ const result=await runSteps(artifact,[{action:'computed-style',selector:'#target',property:'opacity',mode:'numeric-range',min:.25,max:.25}]);
+ assert.equal(result.verificationStatus,'verified',result.error);assert.equal(JSON.parse(result.output).fixedObservationRealm,'chromium-cdp-isolated-v1');
+});
+test('independent observation rejects forged geometry and transform constructors',async()=>{
+ const geometry=fixture('<div id="parent" style="width:100px"><div id="target" style="width:20px"></div></div><script>Element.prototype.getBoundingClientRect=()=>({width:100,height:100,x:0,y:0,left:0,top:0,right:100,bottom:100})</script>');
+ const width=await runSteps(geometry,[{action:'computed-style',selector:'#target',property:'width',mode:'parent-relative',relativeTo:'#parent',min:1,max:1}]);
+ assert.equal(width.verificationStatus,'failed',width.error);
+ const transform=fixture('<div id="target" style="transform:translateY(8px)">target</div><script>window.DOMMatrixReadOnly=class {constructor(){Object.assign(this,{m11:1,m12:0,m13:0,m14:0,m21:0,m22:1,m23:0,m24:0,m31:0,m32:0,m33:1,m34:0,m41:0,m42:0,m43:0,m44:1})}}</script>');
+ const matrix=await runSteps(transform,[{action:'computed-style',selector:'#target',property:'transform',mode:'identity-transform'}]);
+ assert.equal(matrix.verificationStatus,'failed',matrix.error);
+});
+test('independent observation preserves native width and matrix when main APIs return fake zero',async()=>{
+ const artifact=fixture('<div id="parent" style="width:100px"><div id="target" style="width:100px;transform:none">target</div></div><script>Element.prototype.getBoundingClientRect=()=>({width:0,height:0});window.DOMMatrixReadOnly=()=>{throw new Error("forged constructor")};window.getComputedStyle=()=>({opacity:"0",getPropertyValue:()=>"0px"})</script>');
+ const result=await runSteps(artifact,[
+  {action:'computed-style',selector:'#target',property:'width',mode:'numeric-range',min:100,max:100},
+  {action:'computed-style',selector:'#target',property:'width',mode:'parent-relative',relativeTo:'#parent',min:1,max:1},
+  {action:'computed-style',selector:'#target',property:'transform',mode:'identity-transform'},
+ ]);assert.equal(result.verificationStatus,'verified',result.error);
+});
+test('independent observation reads physical scroll despite a forged main getter',async()=>{
+ const artifact=fixture('<div style="height:2000px">real navigation</div><script>window.scrollTo(0,1000);Object.defineProperty(window,"scrollY",{get:()=>0,configurable:true})</script>');
+ const result=await runSteps(artifact,[{action:'scroll-position',selector:'html',min:1000,max:1000}]);
+ assert.equal(result.verificationStatus,'verified',result.error);
+});
+test('independent viewport observation rejects forged intersection and geometry without scrolling',async()=>{
+ const artifact=fixture('<div style="height:1600px"></div><div id="target" style="height:100px">below</div><script>Element.prototype.getBoundingClientRect=()=>({width:100,height:100,top:0,left:0,bottom:100,right:100});window.IntersectionObserver=class {constructor(callback){this.callback=callback}observe(){this.callback([{intersectionRatio:1}])}disconnect(){}}</script>');
+ const result=await runSteps(artifact,[{action:'in-viewport',selector:'#target',ratio:1}]);
+ assert.equal(result.verificationStatus,'failed',result.error);assert.equal(result.trace.filter(t=>t.summary==='in-viewport #target').length,0);
+});
+test('independent viewport observes true native intersection through hostile main APIs',async()=>{
+ const artifact=fixture('<div id="target" style="height:100px">inside</div><script>Element.prototype.getBoundingClientRect=()=>({width:100,height:100,top:5000,left:0,bottom:5100,right:100});window.IntersectionObserver=class {constructor(callback){this.callback=callback}observe(){this.callback([{intersectionRatio:0}])}disconnect(){}}</script>');
+ const result=await runSteps(artifact,[{action:'in-viewport',selector:'#target',ratio:1}]);
+ assert.equal(result.verificationStatus,'verified',result.error);
+});
+async function withCDPHook(hook,run){
+ const instance=await getBrowser();const original=instance.newContext;
+ instance.newContext=async function(...args){const context=await original.apply(this,args);await hook(context);return context;};
+ try{return await run();}finally{instance.newContext=original;}
+}
+test('independent CDP capability is mandatory before artifact load and never falls back',async()=>{
+ const artifact=fixture('<script>throw new Error("must not load")</script>');
+ for(const mode of ['missing','create-failed','default-realm']){
+  const result=await withCDPHook(async context=>{
+   if(mode==='missing'){context.newCDPSession=async()=>{throw new Error('CDP unavailable')};return;}
+   const original=context.newCDPSession;
+   context.newCDPSession=async function(...args){
+    const session=await original.apply(this,args);
+    if(mode==='create-failed'){const send=session.send;session.send=function(method,params){if(method==='Page.createIsolatedWorld')return Promise.reject(new Error('No isolated world'));return send.call(this,method,params)};}
+    else{const on=session.on;session.on=function(name,listener){return on.call(this,name,name==='Runtime.executionContextCreated'?event=>listener({...event,context:{...event.context,auxData:{...event.context.auxData,isDefault:true}}}):listener)};}
+    return session;
+   };
+  },()=>runSteps(artifact,[{action:'computed-style',selector:'html',property:'opacity',mode:'literal',value:'1'}]));
+  assert.equal(result.verificationStatus,'unverified',mode+': '+result.error);assert.equal(result.trace.length,0);assert.equal(result.screenshots.length,0);
+ }
+});
+test('independent CDP transport loss is UNVERIFIED; later complete mismatch clears transient absence',async()=>{
+ for(const permanent of [true,false]){
+  const result=await withCDPHook(async context=>{
+   const original=context.newCDPSession;
+   context.newCDPSession=async function(...args){
+    const session=await original.apply(this,args);const send=session.send;let reads=0;
+    session.send=function(method,params){
+     if(method==='Runtime.callFunctionOn'&&params.arguments?.[0]?.value?.action==='computed-style'&&(permanent||reads++===0))return Promise.reject(new Error('Synthetic CDP loss'));
+     return send.call(this,method,params);
+    };
+    return session;
+   };
+  },()=>runSteps(fixture('<div id="target" style="opacity:0">hidden</div>'),[{action:'computed-style',selector:'#target',property:'opacity',mode:'literal',value:'1'}]));
+  assert.equal(result.verificationStatus,permanent?'unverified':'failed',result.error);
+ }
+});
+test('independent CSS queries support css prefix and shadow roots but reject unsupported engines',async()=>{
+ const artifact=fixture('<div id="target" style="opacity:1">target</div>');
+ const css=await runSteps(artifact,[{action:'computed-style',selector:'css=#target',property:'opacity',mode:'literal',value:'1'}]);assert.equal(css.verificationStatus,'verified',css.error);
+ const unsupported=await runSteps(artifact,[{action:'computed-style',selector:'text=target',property:'opacity',mode:'literal',value:'1'}]);assert.equal(unsupported.verificationStatus,'unverified',unsupported.error);
+ const missing=await runSteps(artifact,[{action:'in-viewport',selector:'#missing',expected:false}]);assert.equal(missing.verificationStatus,'failed','missing elements cannot satisfy negative viewport');
+});
+
+test('legacy paste and platform clipboard command aliases reach only the inert guard',async()=>{
+ // Execute only the immutable replacement installed before artifact code. The
+ // delegate is never called for these commands; no native paste/read is invoked.
+ for(const command of ['paste','PasteAndMatchStyle','pasteGlobalSelection','insertFromClipboard']){
+  const result=await runSteps(fixture('<button id="paste">paste</button><script>document.querySelector("#paste").onclick=()=>document.execCommand('+JSON.stringify(command)+')</script>'),[{action:'click',selector:'#paste'}]);
+  assert.equal(result.verificationStatus,'unverified',result.error);
+ }
+});
+
+test('clipboard guard uses captured intrinsics despite hostile String RegExp and Function prototypes',async()=>{
+ // Run only after the hardened guard exists. Do not reproduce the historical
+ // unsafe delegate: this assertion calls its replacement and never a native copy.
+ const artifact=fixture('<button id="copy">copy</button><script>document.querySelector("#copy").onclick=()=>document.execCommand("COPY");RegExp.prototype.test=()=>false;Function.prototype.call=function(){throw new Error("forged call")};window.String=()=>"bold";Reflect.apply=()=>{throw new Error("forged apply")}</script>');
+ const result=await runSteps(artifact,[{action:'click',selector:'#copy'}]);
+ assert.equal(result.verificationStatus,'unverified',result.error);
 });
