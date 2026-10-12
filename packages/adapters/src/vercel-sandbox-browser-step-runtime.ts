@@ -16,7 +16,8 @@ function validateFixedBrowserStep(step) {
     if(step.action==="count"&&step.count===undefined)throw browserCapabilityError("Browser count is absent");
     if(step.value!==undefined&&(typeof step.value!=="string"||step.value.length>65536))
       throw browserCapabilityError("Browser literal is invalid");
-  }else if(step.action==="in-viewport")keys.push("ratio","expected");
+  }else if(step.action==="viewport")keys.push("width","height");
+  else if(step.action==="in-viewport")keys.push("ratio","expected");
   else if(step.action==="attribute")keys.push("name","value","mode");
   else if(step.action==="checked")keys.push("checked");
   else if(step.action==="scroll-position")keys.push("axis","min","max");
@@ -36,7 +37,24 @@ function assertFiniteRange(step,minAllowed,maxAllowed) {
   if(!Number.isFinite(step.min)||!Number.isFinite(step.max)||step.min>step.max
     ||step.min<minAllowed||step.max>maxAllowed)throw browserCapabilityError("Invalid typed observation range");
 }
-async function runFixedTypedBrowserStep({page,context,locator,step,clipboardProbeUrl}) {
+async function setFixedBrowserViewport(page,step) {
+  if(step.selector!=="html"||!Number.isInteger(step.width)||!Number.isInteger(step.height)
+    ||step.width<240||step.width>2560||step.height<240||step.height>2560)
+    throw browserCapabilityError("Invalid bounded viewport control");
+  let timer,expired=false;
+  const deadline=Date.now()+7000;
+  const bounded=new Promise((_,reject)=>{timer=setTimeout(()=>{
+    expired=true;void Promise.resolve().then(()=>page.close?.()).catch(()=>{});
+    reject(browserCapabilityError("Trusted viewport control exceeded its action deadline"));
+  },7000);});
+  try {
+    await Promise.race([page.setViewportSize({width:step.width,height:step.height}),bounded]);
+    if(expired||Date.now()>=deadline)throw browserCapabilityError("Trusted viewport control completed after its action deadline");
+    return {operation:"viewport",width:step.width,height:step.height};
+  }catch(error){throw browserCapabilityError("Trusted viewport control unavailable: "+String(error));}
+  finally{clearTimeout(timer);}
+}async function runFixedTypedBrowserStep({page,context,locator,step,clipboardProbeUrl}) {
+  if(step.action==="viewport")return setFixedBrowserViewport(page,step);
   if(step.action==="scroll-into-view") {await locator.scrollIntoViewIfNeeded({timeout:7000});return {operation:"scroll-into-view"};}
   if(step.action==="in-viewport") {
     const ratio=step.ratio??0,expected=step.expected??true;

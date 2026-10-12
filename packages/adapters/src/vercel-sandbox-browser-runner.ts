@@ -81,7 +81,7 @@ for(const testCase of cases){
         break;
       }
     }
-    for(const viewport of [{name:"desktop",width:1440,height:900},{name:"mobile",width:390,height:844}]){
+    for(const viewport of unavailable?[]:[{name:"desktop",width:1440,height:900},{name:"mobile",width:390,height:844}]){
       await page.setViewportSize({width:viewport.width,height:viewport.height});
       let layout;
       try{layout=await observeFixedBrowserFacts(context,page,{action:"layout",selector:"html"});}

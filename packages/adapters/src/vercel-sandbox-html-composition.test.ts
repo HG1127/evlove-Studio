@@ -34,8 +34,8 @@ describe("standalone HTML through the real Sandbox adapter composition", () => {
   it("uses a new named typed runtime cache instead of an old script snapshot", async () => {
     await validate();
     expect(getOrCreate).toHaveBeenCalledWith(expect.objectContaining({
-      name: "evolution-browser-pw163-v3-typed-isolated",
-      tags: expect.objectContaining({ version: "pw-1.63.0-v3-typed-isolated" }),
+      name: "evolution-browser-pw163-v4-typed-isolated-viewport",
+      tags: expect.objectContaining({ version: "pw-1.63.0-v4-typed-isolated-viewport" }),
     }));
   });
 

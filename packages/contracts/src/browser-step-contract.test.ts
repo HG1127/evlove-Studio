@@ -66,6 +66,33 @@ describe("bounded additive browser operation contract", () => {
     for (const action of ["visible", "text", "count", "in-viewport", "attribute", "checked", "scroll-position", "computed-style", "copy-text"] as const) {
       expect(browserStepHasAssertion({ action })).toBe(true);
     }
-    for (const action of ["click", "fill", "scroll-into-view"] as const) expect(browserStepHasAssertion({ action })).toBe(false);
+    for (const action of ["click", "fill", "scroll-into-view", "viewport"] as const) expect(browserStepHasAssertion({ action })).toBe(false);
+  });
+});
+
+describe("closed responsive viewport control", () => {
+  it.each([{ width: 240, height: 240 }, { width: 390, height: 844 }, { width: 2560, height: 2560 }])("accepts integer viewport $width x $height", dimensions => {
+    const step = { action: "viewport", selector: "html", ...dimensions };
+    expect(BrowserStepSchema.parse(step)).toEqual(step);
+    expect(browserStepHasAssertion({ action: "viewport" })).toBe(false);
+  });
+  it.each([
+    { width: 239, height: 844 }, { width: 390, height: 239 },
+    { width: 2561, height: 844 }, { width: 390, height: 2561 },
+    { width: 390.5, height: 844 }, { width: 390, height: 844.5 },
+    { width: Infinity, height: 844 }, { width: 390, height: NaN },
+    { width: "390", height: 844 }, { width: 390 },
+    { width: 390, height: 844, value: "callback" },
+    { width: 390, height: 844, eval: "arbitrary" },
+  ])("rejects invalid viewport dimensions/fields %#", dimensions => {
+    expect(BrowserStepSchema.safeParse({ action: "viewport", selector: "html", ...dimensions }).success).toBe(false);
+  });
+  it("rejects DOM selectors for viewport control", () => {
+    expect(BrowserStepSchema.safeParse({ action: "viewport", selector: "#menu", width: 390, height: 844 }).success).toBe(false);
+  });
+  it("retains the same 24-step paper limit for control actions", () => {
+    const paper = { id: "responsive", title: "responsive", input: "", expected: [], browserSteps: Array(24).fill({ action: "viewport", selector: "html", width: 390, height: 844 }) };
+    expect(TestCaseSchema.safeParse(paper).success).toBe(true);
+    expect(TestCaseSchema.safeParse({ ...paper, browserSteps: [...paper.browserSteps, paper.browserSteps[0]] }).success).toBe(false);
   });
 });
