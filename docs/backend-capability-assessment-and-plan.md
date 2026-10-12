@@ -2,7 +2,7 @@
 
 ## 2026-10-13 — Independent whole protection settlement scope
 
-[Protection scope handoff](html-protection-scope-handoff.md) closes tag/static/format score upgrades, preserves actual native assertion failures and narrow format-only proof, and versions all affected score/evidence caches. Root28-file /340 tests plus architecture/full lint/production build passed. Acceptance/delivery closure and a new integrated complete gate remain pending. Actual Mission43 and fb3a9b5 production are not upgraded; complete collector, same-Hidden, Gate F and identical accepted download/reopen remain required.
+[Protection scope handoff](html-protection-scope-handoff.md) closes tag/static/format score upgrades, preserves actual native assertion failures and narrow format-only proof, and versions all affected score/evidence caches. Root28-file /340 tests plus architecture/full lint/production build passed. Acceptance/delivery closure, stored HTTP release/rollback authority and supplemental-note protection are integrated; B15-file/225 and Root5-file/59 regressions passed. A new exact integrated complete gate remains pending. Actual Mission43 and fb3a9b5 production are not upgraded; complete collector, same-Hidden, Gate F and identical accepted download/reopen remain required.
 
 
 ## 2026-10-13 — Closed hover control (local validation)
