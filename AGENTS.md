@@ -12,5 +12,6 @@ Before modifying this repository, read and follow `PROJECT_RULES.md`.
 - preserve evidence/artifact identity and the 23-node Evolution closed-loop invariants;
 - migrate legacy root/runtime code incrementally with compatibility shims rather than bulk rewrites;
 - run `pnpm architecture:check`, build, and relevant tests after architecture changes.
+- When GitHub CI is unavailable due to a verified infrastructure/billing/quota failure, automatically run the complete local Quality Gate under PROJECT_RULES.md and docs/local-ci-fallback.md; record the exact commit and full evidence rather than waiting for hosted CI or requesting another fallback exception.
 
 Any intentional exception requires an ADR under `docs/architecture/`.
