@@ -27,6 +27,9 @@ describe("complete HTML protection policy", () => {
   });
   it("does not turn unknown/empty source metadata into a non-HTML exemption", () => {
     expect(hasHtmlProtectionTarget()).toBeUndefined();
+    expect(hasHtmlProtectionTarget({} as never)).toBeUndefined();
+    expect(htmlProtectionAcceptanceBlocker({ acceptanceRubric: [criterion({ id: "PROTECT-ALL" })], evalSuite: [], hiddenEvalSuite: [] } as unknown as EvolveProject)).toContain("scope-pending");
+    expect(htmlProtectionAcceptanceBlocker({} as EvolveProject)).toBeUndefined();
     expect(hasHtmlProtectionTarget({ sourceArtifacts: [] })).toBeUndefined();
     for (const extension of ["", "bin", "unknown"]) {
       const unknown = artifact({ extension, name: "a." + extension, mimeType: "application/octet-stream", textContent: undefined });

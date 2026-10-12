@@ -34,7 +34,7 @@ export function isWholeProtectionCriterion(criterion: AcceptanceCriterion): bool
 /** Unknown scope fails closed; known non-HTML targets retain their existing evidence policy. */
 export function hasHtmlProtectionTarget(scope?: HtmlProtectionEvaluationScope): boolean | undefined {
   if (!scope) return undefined;
-  const targets = scope.sourceArtifacts.filter(artifact => artifact.role === "target");
+  const targets = (scope.sourceArtifacts ?? []).filter(artifact => artifact.role === "target");
   if (!targets.length) return undefined;
   if (targets.some(artifact => /^(html|htm)$/i.test(artifact.extension)
     || /\.html?$/i.test(artifact.name)
@@ -65,5 +65,5 @@ export function htmlProtectionAcceptanceBlocker(project: EvolveProject): string 
   const paperGap = htmlProtectionContractBlocker(project);
   if (paperGap) return paperGap;
   if (hasHtmlProtectionTarget(project) === false) return undefined;
-  return project.acceptanceRubric.some(isWholeProtectionCriterion) ? HTML_PROTECTION_SCOPE_GAP : undefined;
+  return (project.acceptanceRubric ?? []).some(isWholeProtectionCriterion) ? HTML_PROTECTION_SCOPE_GAP : undefined;
 }
