@@ -29,7 +29,9 @@ describe("legacy Gate F cannot preResolve whole HTML protection",()=>{
   expect(result.status).toBe("unverified");expect(result.summary).toContain("html-protection-scope-pending");expect(mocks.ai).not.toHaveBeenCalled();
  });
  it("retains a narrow HTML format roundtrip and bound semantic scores",async()=>{
-  const f=fixture();f.project.acceptanceRubric=f.project.acceptanceRubric.map(c=>c.id==="PROTECT-ALL"?{...c,id:"FORMAT",title:"HTML file format",requirement:"HTML container format",protectedConstraint:false,source:"user-command" as const,validationMethod:"format-roundtrip" as const}:c);
+  const f=fixture();f.project.acceptanceRubric=f.project.acceptanceRubric.map(c=>c.id==="PROTECT-ALL"
+   ?{...c,id:"FORMAT",title:"HTML file format",requirement:"Preserve HTML file format",evidenceExpected:["same file format"],protectedConstraint:true,source:"system-integrity" as const,validationMethod:"format-roundtrip" as const}
+   :{...c,category:"outcome" as const,title:c.id==="SYS-PAIRWISE"?"Improvement":"Content usefulness",requirement:"Improve content usefulness",evidenceExpected:["paired semantic observation"]});
   f.project.validationRun.evaluation!.criterionScores=f.project.validationRun.evaluation!.criterionScores!.map(s=>s.criterionId==="PROTECT-ALL"?{...s,criterionId:"FORMAT"}:s);
   f.project.validationRun.evidenceFingerprint=evidenceFingerprint(f.project,f.current);
   const result=await acceptCandidateArtifacts(f.project,f.current,f.project.acceptanceRubric);
@@ -49,6 +51,13 @@ describe("legacy Gate F cannot preResolve whole HTML protection",()=>{
 it("cannot preResolve canonical SYS-INTEGRITY from static/frozen-file heuristics",async()=>{
  const f=fixture("static");f.project.acceptanceRubric=f.project.acceptanceRubric.map(c=>c.id==="PROTECT-ALL"?{...c,id:"SYS-INTEGRITY",protectedConstraint:false,hardGate:false}:c);
  f.project.validationRun.evaluation!.criterionScores=f.project.validationRun.evaluation!.criterionScores!.map(s=>s.criterionId==="PROTECT-ALL"?{...s,criterionId:"SYS-INTEGRITY"}:s);
+ f.project.validationRun.evidenceFingerprint=evidenceFingerprint(f.project,f.current);
+ const result=await acceptCandidateArtifacts(f.project,f.current,f.project.acceptanceRubric);
+ expect(result.status).toBe("unverified");expect(result.summary).toContain("html-protection-scope-pending");expect(result.hardGatePass).toBe(false);
+ expect(mocks.read).not.toHaveBeenCalled();expect(mocks.ai).not.toHaveBeenCalled();
+});
+it("keeps unknown original target metadata unverified before legacy byte/AI preResolution",async()=>{
+ const f=fixture();Object.assign(f.project.sourceArtifacts[0]!,{name:"opaque.bin",extension:"bin",mimeType:"application/octet-stream",textContent:undefined});
  f.project.validationRun.evidenceFingerprint=evidenceFingerprint(f.project,f.current);
  const result=await acceptCandidateArtifacts(f.project,f.current,f.project.acceptanceRubric);
  expect(result.status).toBe("unverified");expect(result.summary).toContain("html-protection-scope-pending");expect(result.hardGatePass).toBe(false);
