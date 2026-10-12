@@ -15,7 +15,7 @@ Use .github/workflows/quality-gate.yml as the current authoritative checklist. I
 1. Use a clean isolated checkout of the exact full commit SHA. Record parent/tree, source and lockfile hashes, operating system, Node 24 and the packageManager-pinned pnpm version.
 2. Install root dependencies with pnpm install --frozen-lockfile. Installation may reuse a verified local package cache, but must preserve the lockfile.
 3. Run pnpm lint and pnpm architecture:check.
-4. Run the entire Vitest suite with maxWorkers=1. For memory-limited hosts, discover the full test manifest and execute serial batches. Retain every report/exit code, check unique complete manifest coverage, and record explicit skips.
+4. Install the root lockfile-pinned Chromium before the Vitest suite: browser-backed unit tests execute the trusted generated runner against synthetic HTML. Then run the entire Vitest suite with maxWorkers=1. For memory-limited hosts, discover the full test manifest and execute serial batches. Retain every report/exit code, check unique complete manifest coverage, and record explicit skips.
 5. Run pnpm build, including TypeScript and the production bundle. Hash the produced build files before browser checks and verify they remain unchanged afterwards.
 6. Run pnpm runner:setup. Install or verify the pinned Chromium/browser dependencies required by both Playwright and Runner.
 7. Run pnpm runner:test.

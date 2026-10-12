@@ -35,3 +35,9 @@ Raw actual-Mission model-response capture was not executed. Automatic approval r
 Complete independent CI against the exact clean candidate commit is still required. Git/CI owners handle merge/deployment; Root has not pushed main or deployed. After an exact-SHA deployment is verified, use normal checkpoint recovery with new idempotent identity for the approved real Mission; do not manually repair its Job or rewrite failed results.
 
 The separate HTML protection foundation and typed browser branches remain development evidence. Whole-scope authority collection, runtime wiring, semantic coverage, same-Hidden pairing and Gate F must still be proved. Typed browser measurement must use an isolated observer before contributing authoritative proof. No migration, mutating Cron, blob deletion, production secret change or user HTML commit occurred.
+
+## 2026-10-13 — Complete CI prerequisite repair
+
+The first complete local gate for 90d708a stopped at unit-batch-17: the generated browser-runner suite could not launch the root Playwright 1.63.0 Chromium headless shell from the isolated CI browser directory. Its beforeAll setup left17 cases pending; this is a failed required stage, not passing unit coverage. The immutable failed attempt remains in D:/Downloads/evolution-os-smoke-temp/ci-direct-model-json-90d708a.
+
+Quality Gate now installs pinned Chromium before the full Vitest suite. Local fallback uses the same preparation order and a new complete exact-commit attempt. No failed or missing stage is bypassed. The new complete gate and production deployment are still pending; the real Mission remains baseline/paused at revision43.
