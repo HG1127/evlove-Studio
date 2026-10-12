@@ -1,5 +1,11 @@
 # Main flow acceptance
 
+## 2026-10-13 — Closed browser execution and mobile viewport (local integration)
+
+[Browser protection runtime handoff](browser-html-protection-runtime-handoff.md) adds closed typed browser actions/observations and a bounded viewport action, with trusted isolated Chromium observations and a fresh Sandbox cache version. The integrated20-file regression passed308 tests with no failures or skips. Runner, architecture, full lint, build and a new complete gate remain separate checks.
+
+Production read-only at17:41 UTC still servesfb3a9b5. The actual Mission read at17:43 UTC remains revision43, Baseline/paused, SDKcompleted/Jobwaiting after malformed Judge JSON. The whole-protection collector and authoritative proof wiring, fresh Experiment, same-Hidden pairing, Gate F and identical accepted download/reopen remain required. Neither viewport control nor passing synthetic browser fixtures proves those results.
+
 ## 2026-10-13 — Direct-model JSON completion and refusal boundaries
 
 [Direct model JSON handoff](direct-model-json-recovery-handoff.md) adds safe syntax diagnostics, one completed semantic observation correction with pinned evidence/deadline, explicit completion eligibility, and strict Responses refusal rejection.33 unique related files /370 tests, architecture, full lint and TypeScript/production build passed; independent review findings were fixed and rerun. Complete exact-commit CI and deployment are pending.
