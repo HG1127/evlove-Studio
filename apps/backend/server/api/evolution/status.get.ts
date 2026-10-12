@@ -1,5 +1,5 @@
 import { defineEventHandler, getQuery, setResponseStatus } from "nitro/h3";
-import { getRun } from "workflow/api";
+import {readWorkflowRunMetadata} from "../../../src/services/workflow-run-metadata";
 import {EvolutionWorkflowStatusQuerySchema,EvolutionWorkflowStatusResponseSchema} from "@evolution/contracts";
 import { getServerProductionRuntime } from "../../../src/services/production-runtime";
 import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
@@ -18,9 +18,8 @@ export default defineEventHandler(async(event)=>{
   const job=jobId?await runtime.jobs.get(jobId):undefined;
   let workflow:{exists:boolean;status?:unknown}|undefined;
   if(runId){
-    const run=getRun(runId);
-    const exists=await run.exists;
-    workflow=exists?{exists:true,status:await run.status}:{exists:false};
+    try{workflow=await readWorkflowRunMetadata(runId);}
+    catch{setResponseStatus(event,503);return {error:"当前无法核验 Workflow 元数据，请稍后重试"};}
   }
   const events=job?.missionId?await runtime.events.list(job.missionId,25):[];
   return EvolutionWorkflowStatusResponseSchema.parse({workflow,job,events});

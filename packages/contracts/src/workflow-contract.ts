@@ -18,8 +18,18 @@ export const EvolutionWorkflowStartRequestSchema = z.object({
   missionId: z.string().min(1),
   scheduledFor: z.string().optional(),
   idempotencyKey:z.string().min(1).max(200).optional(),
-  intent: z.literal("remeasure-current-input").optional(),
+  intent: z.enum(["remeasure-current-input","retry-failed-control"]).optional(),
+  retryOfControlJobId:z.string().trim().min(1).max(200).optional(),
+  retryOfRunId:z.string().trim().min(1).max(500).optional(),
   expectedMissionUpdatedAt: z.string().min(1).optional(),
+}).superRefine((value,context)=>{
+  if(value.intent==="retry-failed-control"){
+    if(!value.retryOfControlJobId||!value.retryOfRunId||!value.expectedMissionUpdatedAt||!value.idempotencyKey||value.scheduledFor){
+      context.addIssue({code:"custom",message:"Failed control retry requires exact prior Job/Run, Mission version and stable request key without a schedule"});
+    }
+  }else if(value.retryOfControlJobId||value.retryOfRunId){
+    context.addIssue({code:"custom",message:"Prior control identity requires an explicit failed-control retry intent"});
+  }
 });
 export type EvolutionWorkflowStartRequest = z.infer<typeof EvolutionWorkflowStartRequestSchema>;
 
@@ -34,6 +44,10 @@ export const EvolutionWorkflowRunInputSchema = z.object({
   controlJobId: z.string().min(1),
   requestedAt: z.string(),
   freshBaseline: z.object({ sourceUpdatedAt: z.string().min(1), inputFingerprint: z.string().regex(/^[0-9a-f]{64}$/) }).optional(),
+  failedControlRetry:z.object({
+    sourceUpdatedAt:z.string().min(1),inputFingerprint:z.string().regex(/^[0-9a-f]{64}$/),
+    retryOfControlJobId:z.string().min(1),retryOfRunId:z.string().min(1),
+  }).optional(),
   scheduledFor: z.string().optional(),
 });
 export type EvolutionWorkflowRunInput = z.infer<typeof EvolutionWorkflowRunInputSchema>;

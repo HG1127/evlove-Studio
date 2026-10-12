@@ -33,7 +33,7 @@ import { getServerProductionRuntime } from "../../apps/backend/src/services/prod
 import { serverAiScoringRouteFingerprint } from "../../apps/backend/src/services/ai-gateway";
 import { runServerControlAi as runServerAi, ServerControlAiUnavailableError } from "../../apps/backend/src/services/server-control-ai";
 import { restoreServerControlAiWait, requireServerMainFlowRecoveryAi } from "../../apps/backend/src/services/server-control-ai-recovery";
-import { checkpointServerMainFlowWait, clearServerMainFlowWait, hasServerMainFlowRecoveryBinding, prepareServerFreshBaseline } from "../../apps/backend/src/services/server-main-flow-recovery";
+import { checkpointServerMainFlowWait, clearServerMainFlowWait, hasServerMainFlowRecoveryBinding, prepareServerFreshBaseline,serverMainFlowRecoveryDigest } from "../../apps/backend/src/services/server-main-flow-recovery";
 import { runServerMissionBaseline } from "../../apps/backend/src/services/server-baseline";
 import { runServerMissionExperiment } from "../../apps/backend/src/services/server-experiment";
 import { runServerMissionHoldout } from "../../apps/backend/src/services/server-holdout";
@@ -66,6 +66,10 @@ export async function initializeWorkflowControlStep(input:EvolutionWorkflowRunIn
   const runtime=getServerProductionRuntime();
   const mission=await runtime.missions.get(input.missionId);
   if(!mission)throw new FatalError(`Mission 不存在：${input.missionId}`);
+  if(input.failedControlRetry&&(mission.updatedAt!==input.failedControlRetry.sourceUpdatedAt
+    ||serverMainFlowRecoveryDigest(mission)!==input.failedControlRetry.inputFingerprint)){
+    throw new FatalError("后台重试的输入或当前断点已变化；未接管新执行，请刷新并核对状态");
+  }
   const startedAt=new Date().toISOString();
   const initializedJob=await controlJob(input,{
     status:input.scheduledFor?"waiting":"running",

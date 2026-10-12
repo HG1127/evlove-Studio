@@ -10,6 +10,7 @@ import { initializeWorkflowControlStep, executeServerControlStep, planMissionSte
 
 const mocks = vi.hoisted(() => ({ jobs: new Map<string, EvolutionJob>(), events: new Map<string, EvolutionEvent>(), readEvent: vi.fn(), start: vi.fn(), getRun: vi.fn(), create: vi.fn(), bind: vi.fn(), runtime: vi.fn() }));
 vi.mock("workflow/api", () => ({ start: mocks.start, getRun: mocks.getRun }));
+vi.mock("workflow/runtime",()=>({getWorld:()=>({runs:{get:async(runId:string)=>({runId,status:"running"})}})}));
 vi.mock("../../../../workflows/evolution-mission", () => ({ evolutionMissionWorkflow: vi.fn() }));
 vi.mock("./security-policy", () => ({ requireGovernedEvolutionPermission: vi.fn(async () => undefined) }));
 vi.mock("./production-runtime", async (original) => ({ ...await original<typeof import("./production-runtime")>(),

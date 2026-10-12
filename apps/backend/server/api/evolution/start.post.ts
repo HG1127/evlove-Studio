@@ -7,6 +7,8 @@ import {
   EvolutionWorkflowStartRequestSchema,
   PRODUCTION_SCHEMA_VERSIONS,
   type EvolutionWorkflowStartResponse,
+  type EvolutionWorkflowRunInput,
+  type EvolutionJob,
 } from "@evolution/contracts";
 import {
   bindServerJobWorkflowRun,
@@ -19,7 +21,9 @@ import {
 } from "../../../src/services/production-runtime";
 import { evolutionMissionWorkflow } from "../../../../../workflows/evolution-mission";
 import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
-import {cancelWorkflowRunById,workflowRunExists,workflowRunIdForJob} from "../../../src/services/workflow-run-control";
+import {cancelWorkflowRunById,workflowRunIdForJob} from "../../../src/services/workflow-run-control";
+import {prepareServerFailedControlRetry,WorkflowControlRetryError} from "../../../src/services/workflow-failed-control-retry";
+import {readWorkflowRunMetadata} from "../../../src/services/workflow-run-metadata";
 import { canRemeasureLegacyServerPlan } from "@evolution/harness";
 import { serverMainFlowRecoveryDigest } from "../../../src/services/server-main-flow-recovery";
 
@@ -30,7 +34,13 @@ async function cleanupStartedRun(runId:string){
 
 async function workflowReuseFailure(runId:string,controlJobId:string){
   try{
-    if(await workflowRunExists(runId))return undefined;
+    const metadata=await readWorkflowRunMetadata(runId);
+    if(metadata.exists){
+      if(metadata.status==="failed"||metadata.status==="cancelled"){
+        return {statusCode:409,body:{error:"关联 Workflow 已终止；请核对最新运行记录后使用明确的后台重试操作",controlJobId}};
+      }
+      return undefined;
+    }
     return {statusCode:409,body:{error:"关联 Workflow Run 在当前运行环境中不存在，请核对运行环境和已有请求后重试",controlJobId}};
   }catch{
     return {statusCode:503,body:{error:"当前无法核验已保存的 Workflow Run，请稍后使用相同请求键重试",controlJobId}};
@@ -77,8 +87,28 @@ export default defineEventHandler(async(event)=>{
       return {error:"Durable Scheduler 正在绑定当前计划，请勿重复启动"};
     }
   }
+  let failedControlRetry:EvolutionWorkflowRunInput["failedControlRetry"];
+  let retryMetadata:EvolutionJob["metadata"];
+  if(parsed.data.intent==="retry-failed-control"){
+    try{
+      const prepared=await prepareServerFailedControlRetry(runtime,mission,parsed.data);
+      if("reused" in prepared){
+        const prior=prepared.reused,runId=workflowRunIdForJob(prior,mission);
+        if(!runId||["failed","cancelled","partial"].includes(prior.status)){
+          setResponseStatus(event,409);return {error:"此后台重试已终止或尚未绑定，请核对最新运行记录",controlJobId:prior.id};
+        }
+        const failure=await workflowReuseFailure(runId,prior.id);
+        if(failure){setResponseStatus(event,failure.statusCode);return failure.body;}
+        return {missionId:mission.id,controlJobId:prior.id,runId,status:"queued",reused:true} satisfies EvolutionWorkflowStartResponse;
+      }
+      failedControlRetry=prepared.binding;retryMetadata=prepared.metadata;
+    }catch(error){
+      if(error instanceof WorkflowControlRetryError){setResponseStatus(event,error.statusCode);return {error:error.message};}
+      setResponseStatus(event,503);return {error:"当前无法核验后台重试状态，请使用相同请求稍后重试"};
+    }
+  }
   let freshBaseline: {sourceUpdatedAt:string;inputFingerprint:string}|undefined;
-  if(parsed.data.intent){
+  if(parsed.data.intent==="remeasure-current-input"){
     if(scheduledFor || !parsed.data.idempotencyKey || !parsed.data.expectedMissionUpdatedAt){
       setResponseStatus(event,400);return {error:"重新测量需要明确请求键与当前 Mission 版本，不能与计划执行混用"};
     }
@@ -106,6 +136,7 @@ export default defineEventHandler(async(event)=>{
     controlJobId,
     requestedAt,
     ...(freshBaseline?{freshBaseline}:{}),
+    ...(failedControlRetry?{failedControlRetry}:{}),
     ...(scheduledFor?{scheduledFor}:{}),
   });
   let created;
@@ -119,7 +150,7 @@ export default defineEventHandler(async(event)=>{
       label:scheduledFor?"Evolution Durable Scheduler":"Evolution Workflow Control",
       idempotencyKey:`workflow-control:${mission.id}:${operationKey}`,
       generation:1,attempts:0,priority:70,
-      ...(freshBaseline?{metadata:{workflowIntent:"remeasure-current-input",sourceUpdatedAt:freshBaseline.sourceUpdatedAt,inputFingerprint:freshBaseline.inputFingerprint}}:{}),
+      ...(freshBaseline?{metadata:{workflowIntent:"remeasure-current-input",sourceUpdatedAt:freshBaseline.sourceUpdatedAt,inputFingerprint:freshBaseline.inputFingerprint}}:retryMetadata?{metadata:retryMetadata}:{}),
       progress:{percent:0,detail:scheduledFor?`等待 Durable Scheduler 武装至 ${scheduledFor}`:"等待 Durable Workflow 启动"},
       createdAt:requestedAt,updatedAt:requestedAt,
     }));

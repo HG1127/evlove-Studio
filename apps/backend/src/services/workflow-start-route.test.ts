@@ -9,6 +9,7 @@ const mocks=vi.hoisted(()=>({
   workflowStart:vi.fn(),workflowGetRun:vi.fn(),createJob:vi.fn(),bindRun:vi.fn(),runtime:vi.fn(),
 }));
 vi.mock("workflow/api",()=>({start:mocks.workflowStart,getRun:mocks.workflowGetRun}));
+vi.mock("workflow/runtime",()=>({getWorld:()=>({runs:{get:async(runId:string)=>({runId,status:"running"})}})}));
 vi.mock("../../../../workflows/evolution-mission",()=>({evolutionMissionWorkflow:vi.fn()}));
 vi.mock("./security-policy",()=>({requireGovernedEvolutionPermission:vi.fn(async()=>undefined)}));
 vi.mock("./production-runtime",async(importOriginal)=>({
