@@ -8,7 +8,7 @@ codex/baseline-file-evidence starts at exact production/main 645aa1d0df5eccb95db
 
 Normal authenticated reads identify Mission project-1790480873333 revision 33. Run wrun_01M4QZ3GQ3852QPR1CR0REPB0B completed, Job workflow-control-777e7e22-6763-4ac6-b9bb-b7010afbb704 waits, and actual Baseline baseline-server-1791805759667 completed at 11:50:57 UTC with only 42% usable evidence. Experiment, Hidden and Gate F remain idle. Production build-info at 12:38:16 UTC matches 645aa1d0df5eccb95db4f78863f14186f6720770.
 
-Fresh original Blob read returned HTTP200, 264173 bytes and SHA-256 6605429efe92470229601adfb3196bc74ae38855f55d71c8754f8336c52b580a. Local inert parsing of those bytes finds 111 slide cards and 123 indexed sections. The full static document-text context is 31071 characters, not truncated; the complete static report is 42783 characters. The stored parsed Mission text has a different hash and is not used as physical source proof. The first parsed-text probe is retained separately.
+Fresh original Blob read returned HTTP200, 264173 bytes and SHA-256 6605429efe92470229601adfb3196bc74ae38855f55d71c8754f8336c52b580a. Local inert parsing of those bytes finds 111 slide cards and 123 indexed sections. The full static document-text context is 31071 characters, not truncated; the complete static report is 42783 characters. An initial local observation client concatenated raw stdout buffers as separate UTF-8 strings, corrupting split multi-byte characters. After correcting the streaming decoder, the Mission source text matches the original SHA. The initial corrupted diagnostic snapshots are retained and excluded as byte/context proof.
 
 ## Fixes
 
@@ -39,8 +39,16 @@ Initial failures are retained: two regression failures before repair; one cache-
 ## Remaining main-flow work
 
 - Obtain complete independent CI, Git-owned integration/deployment, and exact deployed SHA verification.
-- Actual saved baseline-evidence pause passes readiness but its context fingerprint does not match the read-back Mission; normal resume is not yet recognized. Investigate binding/persistence; do not rewrite the receipt or repair the old Job.
+- Corrected UTF-8 reads confirm the saved baseline-evidence pause has matching context and strong SHA binding, and normal recovery is recognized. No production receipt or Job was rewritten.
 - Full PROTECT-ALL must cover all preserved constraints; narrow search assertions alone remain insufficient. Resolve inferred 83-slide requirements against the exact original 111-card structure without removing original content or silently weakening the contract.
 - Run a fresh changed/frozen Candidate Experiment, same-Hidden paired original/Candidate validation, Gate F, then download and reopen the identical accepted file with SHA-256. These are still unproven.
 
 No production Cron, historical Job repair, blob deletion, migration, main push or production secret change was performed in this increment.
+
+## Independent CI integration correction
+
+Exact934c27c full CI captured one stale backend test assertion expecting raw body offsets and an18k raw-source budget. The regression now asserts the explicit document-text representation and56k bounded budget while retaining physical hash, late-clause retrieval, partial status and missing-file protection. This correction changes tests/documentation only; the runtime implementation remains identical. Updated complete-CI proof is required for its new commit.
+
+Corrected normal production read at13:11:56 UTC and local checks at13:13:29 UTC show matching context a48c4c5d-599067, matching strong digest, recognized machine recovery, and Source UTF8 SHA6605429e…b580a. The earlier mismatch was a local observation decoding error, not a production pause defect.
+
+Integration correction local checks: 19 actual test files /252 passed /0 failed or skipped; architecture, full lint and TypeScript/production build exit0. Parent934c27c independent fullCI is retained as FAILED (349 files,2961 pass/1 fail/1 explicit optional skip; Runner23, E2E5, browser/UI and421 build hashes passed). Those parent results are not labelled as the new commit's completed gate.
