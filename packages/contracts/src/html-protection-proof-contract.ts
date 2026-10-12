@@ -13,6 +13,17 @@ export const HtmlProtectionObligationSchema = z.object({
   evidenceKind: HtmlProtectionEvidenceKindSchema,
   support: z.enum(["supported", "unresolved"]),
 }).strict().superRefine((obligation, ctx) => {
+  const staticKinds = new Set(["html-format", "card-title", "card-structure", "card-attributes", "embedded-css", "embedded-script", "external-reference", "inline-handler"]);
+  if (staticKinds.has(obligation.kind) && obligation.evidenceKind !== "static") {
+    ctx.addIssue({ code: "custom", message: "Literal format, structure, attributes and embedded-source obligations require static evidence" });
+  }
+  if (obligation.kind === "core-method" && obligation.evidenceKind !== "semantic" && obligation.evidenceKind !== "manual") {
+    ctx.addIssue({ code: "custom", message: "Core method protection requires semantic or manual evidence" });
+  }
+  if (obligation.kind === "card-content" && obligation.evidenceKind !== "static" && obligation.evidenceKind !== "semantic") {
+    ctx.addIssue({ code: "custom", message: "Card content requires static or semantic evidence" });
+  }
+
   if (obligation.kind === "unknown-runtime" && (obligation.support !== "unresolved" || obligation.evidenceKind !== "browser")) {
     ctx.addIssue({ code: "custom", message: "Unknown runtime obligations must remain unresolved browser obligations" });
   }

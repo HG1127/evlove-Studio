@@ -62,3 +62,21 @@ describe("TargetRunResult compatibility", () => {
     expect(restored.htmlProtectionProof).toEqual(proof);
   });
 });
+
+describe("normative obligation evidence kinds", () => {
+  it.each(["html-format", "card-title", "card-structure", "card-attributes", "embedded-css", "embedded-script", "external-reference", "inline-handler"] as const)("requires actual static evidence for %s", (kind) => {
+    expect(HtmlProtectionObligationSchema.safeParse({ ...obligation, kind }).success).toBe(true);
+    for (const evidenceKind of ["browser", "semantic", "visual", "manual"]) {
+      expect(HtmlProtectionObligationSchema.safeParse({ ...obligation, kind, evidenceKind }).success).toBe(false);
+    }
+  });
+  it("requires independent semantic/manual evidence for core-method protection", () => {
+    for (const evidenceKind of ["semantic", "manual"]) expect(HtmlProtectionObligationSchema.safeParse({ ...obligation, kind: "core-method", evidenceKind }).success).toBe(true);
+    for (const evidenceKind of ["static", "browser", "visual"]) expect(HtmlProtectionObligationSchema.safeParse({ ...obligation, kind: "core-method", evidenceKind }).success).toBe(false);
+  });
+  it("allows only static or semantic evidence for card content", () => {
+    expect(HtmlProtectionObligationSchema.safeParse(obligation).success).toBe(true);
+    expect(HtmlProtectionObligationSchema.safeParse({ ...obligation, evidenceKind: "semantic" }).success).toBe(true);
+    for (const evidenceKind of ["browser", "visual", "manual"]) expect(HtmlProtectionObligationSchema.safeParse({ ...obligation, evidenceKind }).success).toBe(false);
+  });
+});

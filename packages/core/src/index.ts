@@ -52,3 +52,6 @@ export * from "./html-document-observation";
 
 export * from "./baseline-comparison-phase";
 export * from "./html-protection-proof";
+
+export * from "./html-protection-inventory";
+export * from "./html-protection-file-comparison";
