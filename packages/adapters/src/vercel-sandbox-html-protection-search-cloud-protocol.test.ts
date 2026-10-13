@@ -137,6 +137,18 @@ describe("closed private consecutive search batch input", () => {
       if (kind === "original") batch.registration.original.byteLength++;
       expect(HtmlProtectionSearchCloudInputSchema.safeParse(batch).success).toBe(false);
     });
+  it("rejects wrong state intent with the correct registered ID and frozen literal violations", () => {
+    const wrongIntent = input(); wrongIntent.stateRequests[1].stateKind = "query-negative";
+    expect(HtmlProtectionSearchCloudInputSchema.safeParse(wrongIntent).success).toBe(false);
+    const sameQueries = input(); sameQueries.registration.states[2].value = sameQueries.registration.states[1].value;
+    expect(HtmlProtectionSearchCloudInputSchema.safeParse(sameQueries).success).toBe(false);
+    const wrongClear = input();
+    expect(HtmlProtectionSearchCloudInputSchema.safeParse({ ...wrongClear, registration: { ...wrongClear.registration,
+      states: [...wrongClear.registration.states.slice(0, 3), { ...wrongClear.registration.states[3], value: "residual" }] } }).success).toBe(false);
+    const bootLiteral = input();
+    expect(HtmlProtectionSearchCloudInputSchema.safeParse({ ...bootLiteral, registration: { ...bootLiteral.registration,
+      states: [{ ...bootLiteral.registration.states[0], value: "unexpected" }, ...bootLiteral.registration.states.slice(1)] } }).success).toBe(false);
+  });
   it("rejects registry contents that do not have the independently bound registry digest", () => {
     const batch = input();
     batch.registration.registry.cardSelector = ".replacement";
@@ -149,7 +161,8 @@ describe("closed private consecutive search batch input", () => {
     const query = structuredClone(batch); query.registration.states[1].value = "another-query";
     const freshNonce = structuredClone(batch); freshNonce.nonce = "0".repeat(64);
     const bundle = structuredClone(batch); bundle.ownedRuntime.sha256 = "0".repeat(64);
-    for (const changed of [query, freshNonce, bundle]) {
+    const initial = structuredClone(batch); initial.registration.input.initialValue = "preconfigured";
+    for (const changed of [query, freshNonce, bundle, initial]) {
       expect(canonical(changed.request)).toBe(anchor); expect(htmlProtectionSearchCloudInputSha256(changed)).not.toBe(baseline);
     }
   });
@@ -268,6 +281,32 @@ describe("private consecutive search observation with retained actual prefix", (
       }
       expect(HtmlProtectionSearchCloudObservationSchema.safeParse(result).success).toBe(false);
     });
+  it.each(["case-timeout", "deadline-exceeded", "document-mismatch", "physical-input-mismatch",
+    "aborted", "session-unavailable", "served-material-mismatch", "runtime-integrity"])(
+    "retains all four truthful complete states when terminal guard reports %s", reason => {
+      const complete = observation(), before = structuredClone(complete.steps);
+      const result = HtmlProtectionSearchCloudObservationSchema.parse({ ...complete, availability: "unavailable",
+        phase: "after-startup", reason });
+      expect(result.availability).toBe("unavailable");
+      if (result.availability !== "unavailable" || result.phase !== "after-startup") throw Error("fixture");
+      expect(result.steps).toEqual(before); expect(result.custody.blockedRequests).toBe(0);
+    });
+  it.each(["state-execution-unavailable", "snapshot-unavailable", "missing-trusted-runtime"])(
+    "does not invent a terminal exception for %s with a complete prefix", reason => {
+      expect(HtmlProtectionSearchCloudObservationSchema.safeParse({ ...observation(), availability: "unavailable",
+        phase: "after-startup", reason }).success).toBe(false);
+    });
+  it("terminal failure cannot excuse cropped/foreign snapshots, a resumed prefix or available upgrade", () => {
+    const foreign = observation(); observed(foreign.steps[2]).snapshot.realm!.loaderId = "other";
+    expect(HtmlProtectionSearchCloudObservationSchema.safeParse({ ...foreign, availability: "unavailable",
+      phase: "after-startup", reason: "document-mismatch" }).success).toBe(false);
+    const resumed = interrupted(); resumed.steps[3] = observation().steps[3];
+    expect(HtmlProtectionSearchCloudObservationSchema.safeParse({ ...resumed, reason: "case-timeout" }).success).toBe(false);
+    expect(HtmlProtectionSearchCloudObservationSchema.safeParse({ ...observation(), availability: "available",
+      reason: "case-timeout", phase: "after-startup" }).success).toBe(false);
+    expect(HtmlProtectionSearchCloudObservationSchema.safeParse({ ...observation(), availability: "unavailable",
+      phase: "after-startup", reason: "case-timeout", steps: observation().steps.slice(0, 3) }).success).toBe(false);
+  });
   it("retains actual blocked resource counts only as unavailable, including a completed prefix", () => {
     const complete = observation(); complete.custody.blockedRequests = 1;
     expect(HtmlProtectionSearchCloudObservationSchema.safeParse(complete).success).toBe(false);
@@ -280,7 +319,8 @@ describe("private consecutive search observation with retained actual prefix", (
     step.actionFacts.beforeValue = undefined;
     expect(() => HtmlProtectionSearchCloudObservationSchema.safeParse(result)).not.toThrow();
     expect(HtmlProtectionSearchCloudObservationSchema.safeParse(result).success).toBe(false);
-  });  it("rejects four complete but oversized native bodies instead of truncating targets", () => {
+  });
+  it("rejects four complete but oversized native bodies instead of truncating targets", () => {
     const result = observation();
     for (const record of result.steps) {
       const step = observed(record); if (step.snapshot.body?.projection !== "search-membership-v1") throw Error("fixture");

@@ -101,6 +101,12 @@ const custody = HtmlProtectionCloudObservationSchema.options[0].shape.custody
   .extend({ blockedRequests: z.number().int().nonnegative().max(1_000_000) }).strict();
 export const HtmlProtectionSearchCloudGapSchema = z.union([HtmlProtectionCloudGapSchema, HtmlProtectionSearchStateGapSchema,
   z.enum(["state-execution-unavailable", "snapshot-unavailable", "case-timeout"])]);
+/** Explicit post-sequence owner/custody failures retain the truthful complete prefix. */
+export const HtmlProtectionSearchCloudTerminalFailureReasonSchema = z.enum([
+  "case-timeout", "deadline-exceeded", "document-mismatch", "physical-input-mismatch",
+  "aborted", "session-unavailable", "served-material-mismatch", "runtime-integrity",
+]);
+export type HtmlProtectionSearchCloudTerminalFailureReason = z.infer<typeof HtmlProtectionSearchCloudTerminalFailureReasonSchema>;
 const observationBase = z.object({
   schemaVersion: z.literal("html-protection-private-search-observation-v1"),
   nonce, request: HtmlProtectionSnapshotRequestSchema,
@@ -148,7 +154,8 @@ function validateBatch(observation: BatchObservation, ctx: z.RefinementCtx) {
             issue(ctx, "Native body digest/actual byte count mismatch; DTO consistency is not provenance");
           }
         } catch { issue(ctx, "Native body must be plain JSON"); }
-      }      if (snapshot.realm && (snapshot.realm.frameId !== observation.custody.navigation.frameId
+      }
+      if (snapshot.realm && (snapshot.realm.frameId !== observation.custody.navigation.frameId
         || snapshot.realm.loaderId !== observation.custody.navigation.loaderId)) issue(ctx, "Cross-page/document snapshot cannot join this batch");
       if (snapshot.availability === "available" && (snapshot.body?.projection !== "search-membership-v1"
         || snapshot.body.targetId !== input.registration.registry.targetId)) issue(ctx, "Wrong registered search projection");
@@ -162,8 +169,9 @@ function validateBatch(observation: BatchObservation, ctx: z.RefinementCtx) {
   if (observation.availability === "available" && (interrupted || observation.custody.blockedRequests !== 0)) {
     issue(ctx, "Available batch requires all four complete observed local states and unblocked custody");
   }
-  if (observation.availability === "unavailable" && !interrupted && observation.custody.blockedRequests === 0) {
-    issue(ctx, "Unavailable after startup must retain the interrupted step or actual resource gap");
+  if (observation.availability === "unavailable" && !interrupted && observation.custody.blockedRequests === 0
+    && !HtmlProtectionSearchCloudTerminalFailureReasonSchema.safeParse(observation.reason).success) {
+    issue(ctx, "Unavailable after startup must retain interruption, actual resource gap or an explicit terminal owner/custody failure");
   }
 }
 /**
@@ -172,6 +180,8 @@ function validateBatch(observation: BatchObservation, ctx: z.RefinementCtx) {
  * observation authority nor semantics, whole preservation, signing or acceptance.
  * Available is a complete local state sequence; independent Core Original-ID scope
  * comparison still detects missing/changed native items and is not replaced here.
+ * A complete historical prefix can still be unavailable when the final owner/custody
+ * guard fails. Its closed reason is a controller claim, never guard provenance or PASS.
  */
 export const HtmlProtectionSearchCloudObservationSchema = z.union([available, beforeStartup, afterStartup]).superRefine((observation, ctx) => {
   if (observation.nonce !== observation.input.nonce || !same(observation.request, observation.input.request)
