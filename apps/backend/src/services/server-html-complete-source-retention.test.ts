@@ -63,6 +63,12 @@ describe("metadata-anchored full physical source facts", () => {
     const source = args.project.sourceArtifacts[0]!; source.inputMode = "paste"; source.storageRef = undefined; source.textContent = original;
     await expect(collectServerHtmlCompleteSourceRetention({ ...args, candidate: undefined })).rejects.toThrow("physical Original receipt");
   });
+  it("refuses one Blob ID returning different Original and frozen bytes with only one Original anchor", async () => {
+    const args = fixture(); args.candidate.artifactSnapshots[0]!.frozenArtifact!.blobId = "source-blob";
+    let read = 0;
+    const injected = { ...ports(), getArtifact: async () => new Blob([read++ % 2 ? changed : original]) };
+    await expect(collectServerHtmlCompleteSourceRetention({ ...args, ports: injected })).rejects.toThrow("metadata anchor");
+  });
   it("rejects frozen metadata that conflicts with the exact Candidate receipt", async () => {
     rows.get("frozen-blob")!.sha256 = "a".repeat(64);
     await expect(collectServerHtmlCompleteSourceRetention(fixture())).rejects.toThrow("metadata anchor");
