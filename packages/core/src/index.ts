@@ -63,3 +63,4 @@ export * from "./html-protection-obligation-plan";
 export * from "./html-protection-snapshot-comparison";
 
 export * from "./html-protection-original-runtime-plan";
+export * from "./html-protection-content-scope";

@@ -1,5 +1,6 @@
 import { HtmlProtectionObligationSchema, type HtmlProtectionObligation } from "@evolution/contracts";
 import type { HtmlProtectionInventory } from "./html-protection-inventory";
+import { htmlProtectionContentScope, type HtmlProtectionFrozenContentContract } from "./html-protection-content-scope";
 
 const PROOF_OBLIGATION_LIMIT = 5000;
 type Kind = HtmlProtectionObligation["kind"];
@@ -68,6 +69,7 @@ const hasLiteral = (fact: { range: { start: number; end: number } | null; litera
  * Independent expected scope, derived only from the complete Original's Core inventory.
  * The caller must obtain that inventory from the authoritative Original via htmlProtectionInventory.
  * The retained decoded facts are not byte provenance; accepting an inventory-shaped DTO does not authenticate it.
+ * Frozen content requirements may choose independent semantic refinement evidence; they are not modification authority.
  * No Candidate, proof, observed receipt, AI result or modification authorization is accepted here.
  * Supported describes indexed static scope, never a preservation result. All semantic/visual/runtime
  * scopes remain unresolved. Profiles only add expected children and cannot discharge a parent or residual.
@@ -75,8 +77,9 @@ const hasLiteral = (fact: { range: { start: number; end: number } | null; litera
 export function htmlProtectionObligationPlan(args: {
   originalInventory: HtmlProtectionInventory;
   runtimeProfile?: HtmlProtectionFiniteRuntimeProfile;
+  frozenContentContract?: HtmlProtectionFrozenContentContract;
 }) {
-  if (!args || typeof args !== "object" || Object.keys(args).some((key) => !["originalInventory", "runtimeProfile"].includes(key))) {
+  if (!args || typeof args !== "object" || Object.keys(args).some((key) => !["originalInventory", "runtimeProfile", "frozenContentContract"].includes(key))) {
     throw new Error("HTML protection plan accepts only Original inventory and expected runtime scope");
   }
   const original = structuredClone(args.originalInventory);
@@ -97,6 +100,8 @@ export function htmlProtectionObligationPlan(args: {
       || parent.id.startsWith("plan:")) throw new Error("Invalid Original coarse runtime identity or unresolved scope");
     parentIds.add(parent.id);
   }
+  const contentScope = args.frozenContentContract ? htmlProtectionContentScope({ sourceArtifactId: original.sourceArtifactId, frozenContract: args.frozenContentContract }) : undefined;
+  const semanticContent = contentScope?.mode === "semantic-refinement";
   const profile = refinements(args.runtimeProfile, original);
   const requiredObligations: HtmlProtectionObligation[] = [], gaps: HtmlProtectionPlanGap[] = [];
   function obligation(id: string, kind: Kind, target: string, description: string, evidenceKind: EvidenceKind, supported = false) {
@@ -113,7 +118,8 @@ export function htmlProtectionObligationPlan(args: {
   const attributesIndexed = original.documentElements.every((element) => element.attributes.every((attribute) => attribute.literal !== null));
   const document = {
     format: obligation("document:format", "html-format", "document", "Preserve original complete HTML format, including markup outside indexed cards and blocks", "static"),
-    content: obligation("document:content", "html-format", "document", "Preserve complete original document content, including content outside cards", "static"),
+    content: obligation("document:content", semanticContent ? "core-method" : "html-format", "document",
+      semanticContent ? "Independently establish retention of every Original meaning while evaluating the frozen content refinement requirements, including content outside cards" : "Preserve complete original document content, including content outside cards", semanticContent ? "semantic" : "static"),
     structure: obligation("document:structure", "html-format", "document", "Preserve the full original ordered document element structure, namespaces and inert contexts", "static", documentIndexed),
     attributes: obligation("document:attributes", "html-format", "document", "Preserve every original document element attribute and its owning element", "static", documentIndexed && attributesIndexed),
     sequences: obligation("document:sequences", "html-format", "document", "Preserve complete original card, style, script, reference and handler sequences; additions require independent policy", "static", documentIndexed),
@@ -121,6 +127,7 @@ export function htmlProtectionObligationPlan(args: {
     visual: obligation("document:visual", "visual-layout", "document", "Independently establish original visual, layout and responsive preservation", "visual"),
     runtimeResidual: obligation("document:runtime-residual", "unknown-runtime", "document", "Unenumerated dynamic resources, CSS effects, data consumption, inert activation and other runtime behavior remain unresolved", "browser"),
   };
+  for (const code of contentScope?.gaps ?? []) gap(code, "document", [document.content], "Stored literal retention and content refinement requirements conflict; no permission or evidence result is inferred.");
   gap("complete-document-source-unindexed", "document", [document.format, document.content],
     "The inventory has no whole-document literal or complete non-card text index; those obligations cannot be claimed from indexed fragments.");
   gap("physical-provenance-required", "document", [],
@@ -139,8 +146,11 @@ export function htmlProtectionObligationPlan(args: {
     const identifiable = card.id !== null && card.id.length > 0 && !duplicates.has(card.id);
     const indexed = parsedClean && identifiable && hasLiteral(card, original.sourceCharacters)
       && card.attributes.every((element) => element.attributes.every((attribute) => attribute.literal !== null));
+    const contentObligationId = obligation("card:" + index + ":content", "card-content", target,
+      semanticContent ? "Independently establish retention of all Original card content and method meaning while evaluating the frozen refinement requirements" : "Preserve all original decoded card content and significant whitespace",
+      semanticContent ? "semantic" : "static", !semanticContent && indexed);
     const staticObligationIds = [
-      obligation("card:" + index + ":content", "card-content", target, "Preserve all original decoded card content and significant whitespace", "static", indexed),
+      ...(!semanticContent ? [contentObligationId] : []),
       obligation("card:" + index + ":title", "card-title", target, "Preserve the complete original card title or its original absence", "static", indexed),
       obligation("card:" + index + ":structure", "card-structure", target, "Preserve the complete original card element structure, namespaces and inert contexts", "static", indexed),
       obligation("card:" + index + ":attributes", "card-attributes", target, "Preserve every attribute on every original card element", "static", indexed),
@@ -151,7 +161,7 @@ export function htmlProtectionObligationPlan(args: {
       "Complete original card source locations are unavailable.");
     if (!indexed) gap("card-static-scope-unresolved", target, staticObligationIds,
       "At least one identity, parsing or source-location prerequisite remains unresolved.");
-    return { originalIndex: index, id: card.id, path: card.path, staticObligationIds,
+    return { originalIndex: index, id: card.id, path: card.path, contentObligationId, staticObligationIds,
       semanticObligationId: obligation("card:" + index + ":semantic", "core-method", target, "Independently establish preservation of this original card's method and meaning", "semantic"),
       visualObligationId: obligation("card:" + index + ":visual", "visual-layout", target, "Independently establish preservation of this original card's rendering and layout", "visual") };
   });
@@ -204,7 +214,7 @@ export function htmlProtectionObligationPlan(args: {
   return { schemaVersion: "html-protection-obligation-plan-v1" as const, sourceArtifactId: original.sourceArtifactId,
     originalInventory: original, requiredObligations,
     scope: { document, cards, styles, scripts, references, handlers, runtime },
-    runtimeProfileId: args.runtimeProfile?.id ?? null,
+    runtimeProfileId: args.runtimeProfile?.id ?? null, contentScope: contentScope ?? null,
     expectedCoverage: { obligationCount: requiredObligations.length, byEvidenceKind, unresolvedObligationIds,
       originalFactCounts: { cards: original.cards.length, styles: original.styles.length, scripts: original.scripts.length,
         references: original.references.length, handlers: original.handlers.length, documentElements: original.documentElements.length,
