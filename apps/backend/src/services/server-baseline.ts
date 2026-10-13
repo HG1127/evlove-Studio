@@ -6,6 +6,7 @@ import { runServerBaseline, trustedServerBaselineChampion } from "@evolution/har
 import { runServerAi, serverAiScoringRouteFingerprint } from "./ai-gateway";
 import { getServerArtifactStore } from "./artifact-runtime";
 import { attachServerVisualEvidence } from "./server-visual-evidence";
+import { readServerOriginalHtmlBaselineDiagnosticBinding } from "./server-original-html-baseline-diagnostic";
 import { runServerCurrentStoredEvidence } from "./server-current-stored-evidence";
 import { buildServerCurrentSemanticArtifactContext } from "./server-current-semantic-context";
 import { serverArtifactSha256 } from "./server-experiment-artifacts";
@@ -147,6 +148,7 @@ export async function runServerMissionBaseline(project: EvolveProject) {
       evidenceInstruction: "Inspect the current Baseline artifact only against its listed current criterion IDs. Candidate-only relative improvement/protection comparisons omitted from the listed current criterion IDs are deferred until Candidate comparison. For mixed papers record the current arm content observations; do not claim the future comparison or mark otherwise readable current content unavailable because no Candidate exists. Absent required content in complete readable document text is an observed current-product deficiency; report it concretely for independent judging. UNVERIFIED is for unavailable relevant content or runtime capability only. Never infer future Candidate behavior.",
       variant: null,
     }),
+    readOriginalHtmlDiagnosticBinding: readServerOriginalHtmlBaselineDiagnosticBinding,
     executeStoredEvidence: runServerCurrentStoredEvidence,
     buildCurrentArtifactContext: buildServerCurrentSemanticArtifactContext,
     executeExternalBatch: ({ project: current, testCases }) => executeServerBaselineExternal(current,testCases),

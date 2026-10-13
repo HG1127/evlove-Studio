@@ -574,3 +574,138 @@ it("retains the current hard evidence requirement in a mixed comparison paper",a
  expect(result.capabilityGaps).toContain("criterion:CONTENT");
  expect(result.baseline.result?.criterionScores?.find(c=>c.criterionId==="PROTECT-ALL")).toMatchObject({pass:false,verificationStatus:"unverified"});
 });
+
+function originalHtmlDiagnosticFixture() {
+  const project = fixture(), html = "<!doctype html><html><body><p>Current instructions omit configuration.</p></body></html>";
+  project.sourceArtifacts = [{ ...project.sourceArtifacts[0]!, name: "source.html", extension: "html", mimeType: "text/html",
+    inputMode: "upload", storageRef: "source-blob", size: new TextEncoder().encode(html).length, textContent: html }];
+  project.acceptanceRubric = [{ ...project.acceptanceRubric[0]!, weight: 82 }, {
+    id: "SYS-INTEGRITY", title: "成果完整性", requirement: "最终成果必须完整、无截断、无占位符、无未处理 TODO，且不能因进化丢失未授权内容。",
+    source: "system-integrity", weight: 8, hardGate: true, judgeType: "integrity", validationMethod: "static-structure", minScore: 95,
+    evidenceExpected: ["完整成果", "无 truncation / placeholder / unresolved TODO"], protectedConstraint: true, artifactIds: [], category: "integrity",
+  }];
+  project.acceptanceRubric.push({ ...project.acceptanceRubric[0]!, id: "READABLE", title: "Readable body",
+    requirement: "Current body contains readable instructions", weight: 10, hardGate: false,
+    judgeType: "structural", validationMethod: "static-structure", minScore: 70, evidenceExpected: ["Readable current body"] });
+  project.evalSuite = [project.evalSuite[0]!, { ...project.evalSuite[2]!, id: "I", criterionIds: ["SYS-INTEGRITY", "READABLE"] }];
+  project.hiddenEvalSuite = [project.hiddenEvalSuite[0]!, { ...project.evalSuite[1]!, id: "H-I", hidden: true }];
+  const physical = { sourceArtifactId: "source", sha256: "a".repeat(64), byteLength: project.sourceArtifacts[0]!.size };
+  const binding = { schemaVersion: "original-html-baseline-diagnostic-binding-v1", binding: {
+    missionId: project.id, testCaseId: "I", criterionId: "SYS-INTEGRITY", paperSha256: "b".repeat(64),
+    original: physical, executed: { ...physical }, subject: { kind: "current", versionId: project.version },
+  } };
+  const evaluated = { ...judge(), cases: [...judge().cases, { testCaseId: "I", accuracy: 95, evidence: 95, completeness: 95, reason: "Full file read" }],
+    criteria: [...judge().criteria, { criterionId: "SYS-INTEGRITY", score: 95, pass: true, evidence: ["I: Full current file"], gaps: [], testCaseIds: ["I"] }, { criterionId: "READABLE", score: 95, pass: true, evidence: ["I: Readable body"], gaps: [], testCaseIds: ["I"] }] };
+  let readCalls = 0;
+  const ports = {
+    readOriginalHtmlDiagnosticBinding: async () => { readCalls++; return structuredClone(binding); },
+    buildCurrentArtifactContext: async () => [{ id: "source", content: html, artifactSha256: physical.sha256, truncated: false }],
+    executeStoredEvidence: async ({ testCase }: { testCase: EvolveProject["evalSuite"][number] }) => ({ testCaseId: testCase.id,
+      output: "Complete current physical HTML statically indexed; interaction remains unverified.", artifactHash: physical.sha256,
+      latencyMs: 1, cost: 0, verificationStatus: "verified" as const, trace: [] }),
+    executeSemanticBatch: async ({ testCases }: { testCases: EvolveProject["evalSuite"] }) => ({ results: testCases.map(testCase => ({
+      testCaseId: testCase.id, output: "Complete current instructions inspected; configuration details are absent.", trace: [],
+    })) }),
+    judge: async () => structuredClone(evaluated),
+  };
+  return { project, physical, binding, evaluated, ports, readCalls: () => readCalls };
+}
+describe("fresh physical original HTML Baseline diagnosis without protection promotion", () => {
+  it("continues to current diagnosis with actual-context hash and independent Judge while strict reuse stays false", async () => {
+    const f = originalHtmlDiagnosticFixture(), paper = JSON.stringify([f.project.acceptanceRubric, f.project.evalSuite, f.project.hiddenEvalSuite]);
+    const outcome = await runServerBaseline(f.project, f.ports);
+    expect(outcome.ready).toBe(true); expect(outcome.project.stage).toBe("problem"); expect(f.readCalls()).toBe(2);
+    expect(outcome.diagnosticEligibility?.binding.executed).toEqual(f.physical);
+    expect(outcome.capabilityGaps).toContain("criterion:SYS-INTEGRITY");
+    expect(outcome.baseline.result?.criterionScores?.find(score => score.criterionId === "SYS-INTEGRITY")).toMatchObject({ verificationStatus: "partial", pass: false });
+    expect(outcome.baseline.result?.criterionScores?.find(score => score.criterionId === "CONTENT")).toMatchObject({ verificationStatus: "verified", pass: false });
+    expect(outcome.baseline.runs.find(run => run.testCaseId === "V1")?.artifactHash).toBe(f.physical.sha256);
+    expect(canReuseServerBaseline(outcome.project)).toBe(false);
+    expect(JSON.stringify([outcome.project.acceptanceRubric, outcome.project.evalSuite, outcome.project.hiddenEvalSuite])).toBe(paper);
+    expect(outcome.project.baselineRun).not.toHaveProperty("diagnosticEligibility");
+  });
+  it("cannot derive qualification from a stored score without the internal physical port", async () => {
+    const f = originalHtmlDiagnosticFixture(), { readOriginalHtmlDiagnosticBinding: _read, ...ports } = f.ports; void _read;
+    const outcome = await runServerBaseline(f.project, ports);
+    expect(outcome.ready).toBe(false); expect(outcome.diagnosticEligibility).toBeUndefined();
+    expect(outcome.capabilityGaps).toContain("criterion:SYS-INTEGRITY");
+  });
+  it.each(["context-hash", "readback-drift", "missing-context-hash", "truncated-context", "physical-port-failure"])("keeps %s pending instead of relabeling a later file", async variant => {
+    const f = originalHtmlDiagnosticFixture();
+    const ports = { ...f.ports,
+      buildCurrentArtifactContext: async () => [{ id: "source", content: "Actual content", truncated: variant === "truncated-context",
+        ...(variant === "missing-context-hash" ? {} : { artifactSha256: variant === "context-hash" ? "c".repeat(64) : f.physical.sha256 }) }],
+      readOriginalHtmlDiagnosticBinding: async () => {
+        if (variant === "physical-port-failure") throw Error("Actual file unavailable");
+        const value = await f.ports.readOriginalHtmlDiagnosticBinding();
+        if (variant === "readback-drift" && f.readCalls() > 1) {
+          value.binding.executed.sha256 = "c".repeat(64); value.binding.original.sha256 = "c".repeat(64);
+        }
+        return value;
+      },
+    };
+    const outcome = await runServerBaseline(f.project, ports);
+    expect(outcome.ready).toBe(false); expect(outcome.diagnosticEligibility).toBeUndefined();
+  });
+  it.each(["FAIL", "REVIEW", "missing-integrity", "foreign-case", "duplicate-criterion"])("retains %s independent Judge boundary", async variant => {
+    const f = originalHtmlDiagnosticFixture();
+    if (variant === "FAIL" || variant === "REVIEW") f.evaluated.safety = variant;
+    if (variant === "missing-integrity") f.evaluated.criteria = f.evaluated.criteria.filter(criterion => criterion.criterionId !== "SYS-INTEGRITY");
+    if (variant === "foreign-case") f.evaluated.cases[0]!.testCaseId = "foreign";
+    if (variant === "duplicate-criterion") f.evaluated.criteria.push(f.evaluated.criteria[0]!);
+    const outcome = await runServerBaseline(f.project, f.ports);
+    expect(outcome.ready).toBe(false); expect(outcome.diagnosticEligibility).toBeUndefined();
+  });
+  it.each(["stored", "context", "semantic", "judge"])("isolates the owned generation from %s port request mutation", async phase => {
+    const f = originalHtmlDiagnosticFixture(), before = structuredClone(f.project);
+    const change = (p: EvolveProject) => { p.acceptanceRubric[0]!.requirement += " changed inside port"; p.evalSuite[0]!.expected.push("inside port"); };
+    const ports = { ...f.ports,
+      executeStoredEvidence: async (args: Parameters<typeof f.ports.executeStoredEvidence>[0] & { project: EvolveProject }) => {
+        if (phase === "stored") change(args.project);
+        return f.ports.executeStoredEvidence(args);
+      },
+      buildCurrentArtifactContext: async (args: { project: EvolveProject }) => {
+        if (phase === "context") change(args.project);
+        return f.ports.buildCurrentArtifactContext();
+      },
+      executeSemanticBatch: async (args: Parameters<typeof f.ports.executeSemanticBatch>[0] & { project: EvolveProject }) => {
+        if (phase === "semantic") change(args.project);
+        return f.ports.executeSemanticBatch(args);
+      },
+      judge: async (payload: unknown) => {
+        if (phase === "judge") (payload as { acceptanceRubric: EvolveProject["acceptanceRubric"] }).acceptanceRubric[0]!.requirement += " changed inside port";
+        return f.ports.judge();
+      },
+    };
+    const outcome = await runServerBaseline(f.project, ports);
+    expect(outcome.ready).toBe(true); expect(outcome.diagnosticEligibility).toBeDefined();
+    expect(f.project).toEqual(before); expect(outcome.project.acceptanceRubric).toEqual(before.acceptanceRubric);
+    expect(outcome.project.evalSuite).toEqual(before.evalSuite);
+  });
+  it.each(["visible-input", "visible-expected", "outcome-contract", "hidden-input"])("refuses %s generation changes during final physical readback", async variant => {
+    const f = originalHtmlDiagnosticFixture();
+    const ports = { ...f.ports, readOriginalHtmlDiagnosticBinding: async () => {
+      const value = await f.ports.readOriginalHtmlDiagnosticBinding();
+      if (f.readCalls() === 2) {
+        if (variant === "visible-input") f.project.evalSuite[0]!.input += " changed after Judge";
+        if (variant === "visible-expected") f.project.evalSuite[0]!.expected.push("changed after Judge");
+        if (variant === "outcome-contract") f.project.acceptanceRubric[0]!.requirement += " changed after Judge";
+        if (variant === "hidden-input") f.project.hiddenEvalSuite[0]!.input += " changed after Judge";
+      }
+      return value;
+    } };
+    const outcome = await runServerBaseline(f.project, ports);
+    expect(outcome.ready).toBe(false); expect(outcome.diagnosticEligibility).toBeUndefined();
+    expect(outcome.project.stage).toBe("baseline");
+    expect(outcome.baseline.result?.criterionScores?.find(score => score.criterionId === "SYS-INTEGRITY"))
+      .toMatchObject({ verificationStatus: "partial", pass: false });
+  });
+  it("preserves honest current capability failure and never allows it through the SYS-only ceiling", async () => {
+    const f = originalHtmlDiagnosticFixture();
+    const outcome = await runServerBaseline(f.project, { ...f.ports, executeSemanticBatch: async () => ({ results: [{
+      testCaseId: "V1", output: "UNVERIFIED current content observation unavailable", trace: [],
+    }] }) });
+    expect(outcome.ready).toBe(false); expect(outcome.capabilityGaps).toContain("V1");
+    expect(outcome.diagnosticEligibility).toBeUndefined();
+  });
+});

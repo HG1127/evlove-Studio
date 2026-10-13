@@ -3,10 +3,10 @@ import { fastHash } from "./stable-hash";
 import { HTML_PROTECTION_SETTLEMENT_POLICY } from "./html-protection-scope";
 
 /** Score comparability depends on the user contract and original Target, never on the evolving Champion. */
-export function campaignScoringInputFingerprint(project: EvolveProject): string {
+function campaignScoringInputFingerprintAtPolicy(project: EvolveProject, policy: "current" | "legacy-v1"): string {
   return fastHash({
     version: "campaign-scoring-input-v1",
-    protectionSettlementPolicy: HTML_PROTECTION_SETTLEMENT_POLICY,
+    ...(policy === "current" ? { protectionSettlementPolicy: HTML_PROTECTION_SETTLEMENT_POLICY } : {}),
     goal: project.goal,
     objectType: project.objectType,
     evolutionCommand: project.evolutionCommand,
@@ -52,6 +52,15 @@ export function campaignScoringInputFingerprint(project: EvolveProject): string 
   });
 }
 
+/** Current score comparability always includes the independent whole-protection policy. */
+export function campaignScoringInputFingerprint(project: EvolveProject): string {
+  return campaignScoringInputFingerprintAtPolicy(project, "current");
+}
+
+/** Exact pre-policy v1 identity only; never use this to reuse scores or settle new evidence. */
+export function campaignScoringInputLegacyV1Fingerprint(project: EvolveProject): string {
+  return campaignScoringInputFingerprintAtPolicy(project, "legacy-v1");
+}
 /** A live Target or remote evaluator may change even when the stored input identity has not. */
 export function campaignObservesLiveTarget(project: EvolveProject): boolean {
   return project.targetConnection.adapter === "http"

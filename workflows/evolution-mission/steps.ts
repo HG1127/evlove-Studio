@@ -445,8 +445,13 @@ export async function planMissionStep(input:EvolutionWorkflowRunInput,iteration:
       || !["queued","running","waiting"].includes(currentJob.status)){
       throw new FatalError("控制 Job 不再活动；未恢复模型等待状态。");
     }
-    const recovered=await restoreServerControlAiWait(mission,input.controlJobId);
+    const recovered=await restoreServerControlAiWait(mission,input.controlJobId,{
+      requestedAt:input.requestedAt,append:event=>appendWorkflowControlEvent(runtime.events,event),
+    });
     if(recovered!==mission){
+      // Audit/model awaits may outlive a cancellation without changing the Mission revision.
+      // This independent read rechecks the Job/owner and keeps the original writer CAS.
+      await requireServerWorkflowControlOwner(input);
       await runtime.missions.save(recovered);
       mission=recovered;
     }
@@ -850,6 +855,7 @@ async function executeServerControlAction(
           phase:"baseline",
           serverNative:true,
           ready:baselineOutcome.ready,
+          ...(baselineOutcome.diagnosticEligibility ? { diagnosticEligibility: baselineOutcome.diagnosticEligibility } : {}),
           reason:baselineOutcome.reason,
           capabilityGaps:baselineOutcome.capabilityGaps,
           verified:baselineOutcome.baseline.runs.filter((run)=>run.verificationStatus==="verified").length,
