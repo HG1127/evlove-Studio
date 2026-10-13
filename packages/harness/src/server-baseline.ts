@@ -92,10 +92,13 @@ export type ServerBaselineOutcome = {
  * Missing capabilities remain UNVERIFIED; infrastructure absence is never converted to product failure.
  */
 export async function runServerBaseline(
-  inputProject: EvolveProject,
+  callerProject: EvolveProject,
   ports: ServerBaselinePorts,
   options?: { now?: () => string },
 ): Promise<ServerBaselineOutcome> {
+  // Keep one owned generation across storage, execution and independent Judge awaits.
+  const inputProject = structuredClone(callerProject);
+  const inputGenerationWire = JSON.stringify(inputProject);
   const now = options?.now ?? (() => new Date().toISOString());
   const startedAt = now();
   const scoringBlocker = htmlProtectionContractBlocker(inputProject) ?? campaignScoringInputBlocker(inputProject) ?? serverCampaignScoringRouteBlocker(inputProject, ports.scoringRouteFingerprint);
@@ -162,7 +165,9 @@ export async function runServerBaseline(
       continue;
     }
     const testCase = { ...originalCase, criterionIds: originalCase.criterionIds.filter(id => !deferredCriteria.has(id)) };
-    const stored = await storedBaselineEvidence(project, testCase, ports.executeStoredEvidence);
+    const stored = structuredClone(await storedBaselineEvidence(project, testCase, ports.executeStoredEvidence
+      ? args => ports.executeStoredEvidence!({ project: structuredClone(args.project), testCase: structuredClone(args.testCase) })
+      : undefined));
     if (stored) { ordered.set(testCase.id, stored); continue; }
     const currentViewGap = testCase.executionMode === "artifact-runtime" && ports.buildCurrentArtifactContext
       ? undefined : serverBaselineCurrentViewGap(project, testCase);
@@ -191,7 +196,9 @@ export async function runServerBaseline(
       for (const testCase of externalCases) ordered.set(testCase.id, unavailableBaselineRun(testCase, "Server External Runner / Sandbox 未连接。"));
     } else {
       try {
-        const results = await ports.executeExternalBatch({ project, testCases: externalCases });
+        const results = structuredClone(await ports.executeExternalBatch({
+          project: structuredClone(project), testCases: structuredClone(externalCases),
+        }));
         const { byId, duplicateIds } = indexUniqueBatchResults(results);
         for (const testCase of externalCases) {
           ordered.set(testCase.id, duplicateIds.has(testCase.id)
@@ -208,18 +215,20 @@ export async function runServerBaseline(
   if (semanticCases.length) {
     const semanticStarted = Date.now();
     try {
-      const artifactContext = await currentSemanticArtifactContext(project, ports.buildCurrentArtifactContext, semanticCases);
+      const artifactContext = structuredClone(await currentSemanticArtifactContext(project, ports.buildCurrentArtifactContext
+        ? args => ports.buildCurrentArtifactContext!({ project: structuredClone(args.project),
+          testCases: args.testCases ? structuredClone(args.testCases) : undefined }) : undefined, semanticCases));
       // The App context computed this digest from actual current bytes. It is not inferred from AI output.
       const targets = project.sourceArtifacts.filter(source => source.role === "target");
       const contexts = targets.length === 1 ? artifactContext.filter(item => item.id === targets[0]!.id) : [];
       const currentArtifactHash = ports.readOriginalHtmlDiagnosticBinding && contexts.length === 1
         && !contexts[0]!.truncated && typeof contexts[0]!.artifactSha256 === "string"
         && /^[a-f0-9]{64}$/.test(contexts[0]!.artifactSha256) ? contexts[0]!.artifactSha256 : undefined;
-      const result = await ports.executeSemanticBatch({
-        project,
-        testCases: semanticCases,
-        artifactContext,
-      });
+      const result = structuredClone(await ports.executeSemanticBatch({
+        project: structuredClone(project),
+        testCases: structuredClone(semanticCases),
+        artifactContext: structuredClone(artifactContext),
+      }));
       const { byId, duplicateIds } = indexUniqueBatchResults(result.results);
       const latency = Math.max(1, Math.round((Date.now() - semanticStarted) / Math.max(1, semanticCases.length)));
       for (const testCase of semanticCases) {
@@ -324,7 +333,7 @@ export async function runServerBaseline(
         notes: ["Server Baseline：仅结算已获得的确定性证据；缺失语义评审的标准保持 UNVERIFIED，通用质量维度未测量。"],
       });
     } else {
-      const judged = await ports.judge(judgePayload);
+      const judged = structuredClone(await ports.judge(structuredClone(judgePayload)));
       independentJudge = structuredClone(judged);
       evaluation = settleAiEvaluation({
         criteria: project.acceptanceRubric, scope: project,
@@ -394,8 +403,12 @@ export async function runServerBaseline(
         initialBinding: initialDiagnosticBinding, finalBinding: finalDiagnosticBinding, independentJudge });
     } catch { /* No serialized claim or readback failure grants a diagnosis exception. */ }
   }
-  if (!diagnosticEligibility && (requiredCapabilityGaps.length || hardGateGaps.length || !readiness.ready)) {
+  // A separate caller generation is never paired with the observations of this snapshot.
+  const callerGenerationChanged = JSON.stringify(callerProject) !== inputGenerationWire;
+  if (callerGenerationChanged) diagnosticEligibility = undefined;
+  if (callerGenerationChanged || !diagnosticEligibility && (requiredCapabilityGaps.length || hardGateGaps.length || !readiness.ready)) {
     const details = [
+      ...(callerGenerationChanged ? ["调用方输入在测量等待期间发生变化；旧证据未用于新一代诊断"] : []),
       ...readiness.blockers,
       ...(requiredCapabilityGaps.length ? [`未完成真实执行：${requiredCapabilityGaps.map((item) => item.id).join("、")}`] : []),
       ...(hardGateGaps.length ? [`Hard Gate 未获得 VERIFIED 证据：${hardGateGaps.map((item) => item.id).join("、")}`] : []),
