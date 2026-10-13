@@ -7,3 +7,4 @@ export * from "./vercel-sandbox-html-protection-snapshot";
 export * from "./vercel-sandbox-html-protection-cloud-protocol";
 export * from "./vercel-sandbox-html-protection-cloud-runtime";
 export * from "./vercel-sandbox-html-protection-cloud-transport";
+export * from "./html-protection-search-state";
