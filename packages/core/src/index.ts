@@ -66,3 +66,5 @@ export * from "./html-protection-original-runtime-plan";
 export * from "./html-protection-content-scope";
 
 export * from "./original-html-baseline-diagnostic";
+
+export * from "./html-complete-source-retention";
