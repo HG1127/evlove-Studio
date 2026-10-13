@@ -31,3 +31,9 @@ This gate does not cover the new functional commit. Production read-only00:21:26
 ## Remaining real main flow
 
 The Campaign does not yet invoke this preparation/collector. Stateful cloud execution must wire the native input port and one Page across search steps. Copy/menu/scroll/reveal/checklist/navigation effects, complete source-specific runtime closure, semantic/visual observations and independently attested protection settlement are still incomplete. No old failed result or stored Job/Run label was upgraded. Actual fresh Experiment, same-Hidden Current/Candidate execution, Gate F and exact accepted download/reopen remain required.
+
+## Explicit editing restrictions follow-up
+
+Independent review found that "正文不得修改" and "Do not modify original content" were not classified conservatively. Repair0fa5abc82465a63693c1cb17f5b9734452b124a0 adds body/text/wording scopes and editing/unchanged-text restrictions with four actual negative regression cases. Its23 unique related files/607 tests,architecture,full lint and TypeScript/production build all passed. Independent source1140/build421 hashes and clean checkout matched; related audit SHA2569c758902077dc3202b4b6c738e5543181d39de1d819131b51514da86d657cff2 at D:/Downloads/evolution-os-smoke-temp/html-content-scope-fix-checks-20261013/related-final-audit.json. This does not claim arbitrary natural-language interpretation or grant permission.
+
+The earlier full-CI controller for0e816c0 was absent while its recorded stage was install; no final receipt or surviving child was found. Its INCOMPLETE_CONTROLLER_ABSENT observation is retained. The cause is not established; Root's attempted owned-controller stop never executed because the PID was already absent. No complete gate is claimed for0e816c0. A new exact repaired clean checkout must run the entire gate with a retained tool session.
