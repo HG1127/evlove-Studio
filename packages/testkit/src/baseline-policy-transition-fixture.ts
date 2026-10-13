@@ -7,7 +7,11 @@ export function baselinePolicyTransitionFixture() {
   p.inputUnderstanding = InputUnderstandingSchema.parse({ status: "ready", confidence: .9 });
   p.gates.push({ id: "target-ready", status: "approved", approvedAt: at });
   p.candidates = [{ ...x.current, status: "draft" }];
-  p.acceptanceRubric[0] = { ...p.acceptanceRubric[0]!, requirement: "Current document contains supported content", validationMethod: "semantic-judge" };
+  const current = { ...p.acceptanceRubric[0]!, requirement: "Current document contains supported content", validationMethod: "semantic-judge" as const };
+  p.acceptanceRubric = [current, { ...current, id: "READABLE", title: "Readable current text", requirement: "Current text has readable instructions", weight: 30 },
+    { ...current, id: "COMPLETE", title: "Current completion checks", requirement: "Current instructions describe completion checks", weight: 30 }];
+  p.acceptanceRubric[0]!.weight = 40;
+  p.evalSuite = [TestCaseSchema.parse({ ...p.evalSuite[0]!, criterionIds: p.acceptanceRubric.map(criterion => criterion.id) })];
   p.acceptanceRubricState = { status: "ready", summary: "Synthetic current contract", version: 1, weightTotal: 100,
     uncoveredCriterionIds: [], warnings: [], confirmedAt: at };
   p.hiddenEvalSuite = [TestCaseSchema.parse({ ...p.evalSuite[0]!, id: "H1", hidden: true })];
