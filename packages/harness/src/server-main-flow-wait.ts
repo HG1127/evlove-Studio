@@ -1,7 +1,9 @@
 import { ServerCampaignRecoveryWaitSchema, type EvolveProject } from "@evolution/contracts";
-import { campaignPreflightStopReason, campaignScoringInputFingerprint, evidenceFingerprint, fastHash, goalReadiness } from "@evolution/core";
+import { campaignPreflightStopReason, campaignScoringInputFingerprint, campaignScoringInputLegacyV1Fingerprint, HTML_PROTECTION_SETTLEMENT_POLICY, evidenceFingerprint, fastHash, goalReadiness } from "@evolution/core";
 import { serverControlAiWait } from "./server-control-capability";
 
+export const SERVER_MAIN_FLOW_LEGACY_BINDING_VERSION = "legacy-scoring-input-v1" as const;
+export type ServerMainFlowRecoveryBindingVersion = typeof SERVER_MAIN_FLOW_LEGACY_BINDING_VERSION | typeof HTML_PROTECTION_SETTLEMENT_POLICY;
 /** Exact server markers only. Human approvals, integrity failures and stop reasons are excluded. */
 const stages: Record<string, EvolveProject["stage"] | undefined> = {
   "ai-pending": undefined,
@@ -49,12 +51,13 @@ export function serverMainFlowWaitMarker(project: EvolveProject) {
 }
 
 /** Bind the complete saved generation, including physical references, both papers and exact parent. */
-export function serverMainFlowRecoveryContext(project: EvolveProject) {
+export function serverMainFlowRecoveryContext(project: EvolveProject,
+  bindingVersion: ServerMainFlowRecoveryBindingVersion = HTML_PROTECTION_SETTLEMENT_POLICY) {
   return {
     schemaVersion: "server-main-flow-context-v1", missionId: project.id, objectType: project.objectType, stage: project.stage,
     controlAiAttentionRequestId: serverControlAiWait(project)?.id ?? (project.campaign.serverRecoveryWait?.marker === "control-ai"
       ? project.campaign.serverRecoveryWait.controlAiAttentionRequestId : undefined),
-    contract: campaignScoringInputFingerprint(project),
+    contract: bindingVersion === SERVER_MAIN_FLOW_LEGACY_BINDING_VERSION ? campaignScoringInputLegacyV1Fingerprint(project) : campaignScoringInputFingerprint(project),
     sources: project.sourceArtifacts, target: project.targetConnection, goal: project.goal, command: project.evolutionCommand,
     protectedItems: project.protectedItems, editableItems: project.editableItems,
     clarifications: project.inputClarifications, understanding: project.inputUnderstanding, metrics: project.metrics,
@@ -76,13 +79,27 @@ function ordered(value: unknown): unknown {
   const record = value as Record<string, unknown>;
   return Object.fromEntries(Object.keys(record).sort().map(key => [key, ordered(record[key])]));
 }
-export function serverMainFlowRecoveryWire(project: EvolveProject) {
-  return JSON.stringify(ordered(JSON.parse(JSON.stringify(serverMainFlowRecoveryContext(project)))));
+export function serverMainFlowRecoveryWire(project: EvolveProject,
+  bindingVersion: ServerMainFlowRecoveryBindingVersion = HTML_PROTECTION_SETTLEMENT_POLICY) {
+  return JSON.stringify(ordered(JSON.parse(JSON.stringify(serverMainFlowRecoveryContext(project, bindingVersion)))));
 }
-export function serverMainFlowContextFingerprint(project: EvolveProject) {
-  return fastHash(serverMainFlowRecoveryWire(project));
+export function serverMainFlowContextFingerprint(project: EvolveProject,
+  bindingVersion: ServerMainFlowRecoveryBindingVersion = HTML_PROTECTION_SETTLEMENT_POLICY) {
+  return fastHash(serverMainFlowRecoveryWire(project, bindingVersion));
 }
 
+/** Recognize one exact legacy algorithm; the App must additionally verify its complete SHA wire. */
+export function serverMainFlowRecoveryBindingVersion(project: EvolveProject): ServerMainFlowRecoveryBindingVersion | undefined {
+  const receipt = project.campaign.serverRecoveryWait;
+  if (!receipt) return undefined;
+  if (receipt.contextFingerprint === serverMainFlowContextFingerprint(project)) return HTML_PROTECTION_SETTLEMENT_POLICY;
+  // A policy transition starts with an unscored failed Baseline, never a completed or downstream paper.
+  if (receipt.schemaVersion !== "server-campaign-recovery-v1" || project.stage !== "baseline" || receipt.stage !== "baseline"
+    || project.campaign.currentRound !== 0 || receipt.round !== 1 || project.baselineRun.status !== "failed"
+    || !["baseline-evidence-pending", "baseline-judge-pending"].includes(receipt.marker)) return undefined;
+  return receipt.contextFingerprint === serverMainFlowContextFingerprint(project, SERVER_MAIN_FLOW_LEGACY_BINDING_VERSION)
+    ? SERVER_MAIN_FLOW_LEGACY_BINDING_VERSION : undefined;
+}
 export function serverMainFlowRecoveryReadiness(project: EvolveProject) {
   const evaluation = project.validationRun.evaluation;
   if (evaluation?.safety === "FAIL" || project.experimentRun.candidateResults.some(r => r.experimentStage === "finalist" && r.evaluation.safety === "FAIL")) return false;
@@ -108,7 +125,7 @@ export function serverMainFlowRecoveryWait(project: EvolveProject) {
   if (receipt.status !== "waiting" || project.campaign.status !== "paused" || receipt.missionId !== project.id
     || receipt.round !== project.campaign.currentRound + 1 || receipt.stage !== project.stage
     || receipt.reason !== project.campaign.stopReason || receipt.marker !== serverMainFlowWaitMarker(project)
-    || receipt.contextFingerprint !== serverMainFlowContextFingerprint(project) || !serverMainFlowRecoveryReadiness(project)) return undefined;
+    || !serverMainFlowRecoveryBindingVersion(project) || !serverMainFlowRecoveryReadiness(project)) return undefined;
   if (receipt.marker === "control-ai" && (!receipt.controlAiAttentionRequestId
     || serverControlAiWait(project)?.id !== receipt.controlAiAttentionRequestId
     || project.attentionRequests?.filter(r => r.id === receipt.controlAiAttentionRequestId).length !== 1)) return undefined;
@@ -123,7 +140,7 @@ export function serverMainFlowRecoveryActive(project: EvolveProject) {
   if (receipt.status !== "recovering" || !receipt.resumedByControlJobId || receipt.resumedByControlJobId === receipt.controlJobId
     || project.campaign.status !== "idle" || receipt.missionId !== project.id
     || receipt.stage !== project.stage || receipt.round !== project.campaign.currentRound + 1
-    || receipt.contextFingerprint !== serverMainFlowContextFingerprint(project) || !serverMainFlowRecoveryReadiness(project)) return false;
+    || !serverMainFlowRecoveryBindingVersion(project) || !serverMainFlowRecoveryReadiness(project)) return false;
   const recognitionView = { ...project, campaign: { ...project.campaign, status: "paused" as const, stopReason: receipt.reason } };
   if (receipt.marker === "control-ai") {
     const owned = project.attentionRequests?.filter(r => r.id === receipt.controlAiAttentionRequestId);
@@ -141,7 +158,7 @@ export function serverMainFlowRecoveryActive(project: EvolveProject) {
 export function serverMainFlowRecoveryCheckpoint(project: EvolveProject) {
   const receipt = project.campaign.serverRecoveryWait;
   if (receipt?.status !== "recovering" || receipt.missionId !== project.id || receipt.stage !== project.stage
-    || receipt.round !== project.campaign.currentRound + 1 || receipt.contextFingerprint !== serverMainFlowContextFingerprint(project)) return undefined;
+    || receipt.round !== project.campaign.currentRound + 1 || !serverMainFlowRecoveryBindingVersion(project)) return undefined;
   return project.campaign.checkpoint && ["plan", "experiment", "validation"].includes(project.campaign.checkpoint.completedPhase)
     ? project.campaign.checkpoint : undefined;
 }
