@@ -656,6 +656,24 @@ describe("fresh physical original HTML Baseline diagnosis without protection pro
     const outcome = await runServerBaseline(f.project, f.ports);
     expect(outcome.ready).toBe(false); expect(outcome.diagnosticEligibility).toBeUndefined();
   });
+  it.each(["visible-input", "visible-expected", "outcome-contract", "hidden-input"])("refuses %s generation changes during final physical readback", async variant => {
+    const f = originalHtmlDiagnosticFixture();
+    const ports = { ...f.ports, readOriginalHtmlDiagnosticBinding: async () => {
+      const value = await f.ports.readOriginalHtmlDiagnosticBinding();
+      if (f.readCalls() === 2) {
+        if (variant === "visible-input") f.project.evalSuite[0]!.input += " changed after Judge";
+        if (variant === "visible-expected") f.project.evalSuite[0]!.expected.push("changed after Judge");
+        if (variant === "outcome-contract") f.project.acceptanceRubric[0]!.requirement += " changed after Judge";
+        if (variant === "hidden-input") f.project.hiddenEvalSuite[0]!.input += " changed after Judge";
+      }
+      return value;
+    } };
+    const outcome = await runServerBaseline(f.project, ports);
+    expect(outcome.ready).toBe(false); expect(outcome.diagnosticEligibility).toBeUndefined();
+    expect(outcome.project.stage).toBe("baseline");
+    expect(outcome.baseline.result?.criterionScores?.find(score => score.criterionId === "SYS-INTEGRITY"))
+      .toMatchObject({ verificationStatus: "partial", pass: false });
+  });
   it("preserves honest current capability failure and never allows it through the SYS-only ceiling", async () => {
     const f = originalHtmlDiagnosticFixture();
     const outcome = await runServerBaseline(f.project, { ...f.ports, executeSemanticBatch: async () => ({ results: [{
