@@ -579,12 +579,15 @@ function originalHtmlDiagnosticFixture() {
   const project = fixture(), html = "<!doctype html><html><body><p>Current instructions omit configuration.</p></body></html>";
   project.sourceArtifacts = [{ ...project.sourceArtifacts[0]!, name: "source.html", extension: "html", mimeType: "text/html",
     inputMode: "upload", storageRef: "source-blob", size: new TextEncoder().encode(html).length, textContent: html }];
-  project.acceptanceRubric = [{ ...project.acceptanceRubric[0]!, weight: 92 }, {
+  project.acceptanceRubric = [{ ...project.acceptanceRubric[0]!, weight: 82 }, {
     id: "SYS-INTEGRITY", title: "成果完整性", requirement: "最终成果必须完整、无截断、无占位符、无未处理 TODO，且不能因进化丢失未授权内容。",
     source: "system-integrity", weight: 8, hardGate: true, judgeType: "integrity", validationMethod: "static-structure", minScore: 95,
     evidenceExpected: ["完整成果", "无 truncation / placeholder / unresolved TODO"], protectedConstraint: true, artifactIds: [], category: "integrity",
   }];
-  project.evalSuite = [project.evalSuite[0]!, { ...project.evalSuite[2]!, id: "I", criterionIds: ["SYS-INTEGRITY"] }];
+  project.acceptanceRubric.push({ ...project.acceptanceRubric[0]!, id: "READABLE", title: "Readable body",
+    requirement: "Current body contains readable instructions", weight: 10, hardGate: false,
+    judgeType: "structural", validationMethod: "static-structure", minScore: 70, evidenceExpected: ["Readable current body"] });
+  project.evalSuite = [project.evalSuite[0]!, { ...project.evalSuite[2]!, id: "I", criterionIds: ["SYS-INTEGRITY", "READABLE"] }];
   project.hiddenEvalSuite = [project.hiddenEvalSuite[0]!, { ...project.evalSuite[1]!, id: "H-I", hidden: true }];
   const physical = { sourceArtifactId: "source", sha256: "a".repeat(64), byteLength: project.sourceArtifacts[0]!.size };
   const binding = { schemaVersion: "original-html-baseline-diagnostic-binding-v1", binding: {
@@ -592,7 +595,7 @@ function originalHtmlDiagnosticFixture() {
     original: physical, executed: { ...physical }, subject: { kind: "current", versionId: project.version },
   } };
   const evaluated = { ...judge(), cases: [...judge().cases, { testCaseId: "I", accuracy: 95, evidence: 95, completeness: 95, reason: "Full file read" }],
-    criteria: [...judge().criteria, { criterionId: "SYS-INTEGRITY", score: 95, pass: true, evidence: ["I: Full current file"], gaps: [], testCaseIds: ["I"] }] };
+    criteria: [...judge().criteria, { criterionId: "SYS-INTEGRITY", score: 95, pass: true, evidence: ["I: Full current file"], gaps: [], testCaseIds: ["I"] }, { criterionId: "READABLE", score: 95, pass: true, evidence: ["I: Readable body"], gaps: [], testCaseIds: ["I"] }] };
   let readCalls = 0;
   const ports = {
     readOriginalHtmlDiagnosticBinding: async () => { readCalls++; return structuredClone(binding); },
@@ -647,7 +650,7 @@ describe("fresh physical original HTML Baseline diagnosis without protection pro
   it.each(["FAIL", "REVIEW", "missing-integrity", "foreign-case", "duplicate-criterion"])("retains %s independent Judge boundary", async variant => {
     const f = originalHtmlDiagnosticFixture();
     if (variant === "FAIL" || variant === "REVIEW") f.evaluated.safety = variant;
-    if (variant === "missing-integrity") f.evaluated.criteria.pop();
+    if (variant === "missing-integrity") f.evaluated.criteria = f.evaluated.criteria.filter(criterion => criterion.criterionId !== "SYS-INTEGRITY");
     if (variant === "foreign-case") f.evaluated.cases[0]!.testCaseId = "foreign";
     if (variant === "duplicate-criterion") f.evaluated.criteria.push(f.evaluated.criteria[0]!);
     const outcome = await runServerBaseline(f.project, f.ports);
