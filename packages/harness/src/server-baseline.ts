@@ -103,10 +103,11 @@ export async function runServerBaseline(
   const startedAt = now();
   const scoringBlocker = htmlProtectionContractBlocker(inputProject) ?? campaignScoringInputBlocker(inputProject) ?? serverCampaignScoringRouteBlocker(inputProject, ports.scoringRouteFingerprint);
   if (scoringBlocker) {
+    // No asynchronous measurement has begun: preserve the existing blocked paper identity.
     const paused: EvolveProject = {
-      ...inputProject,
+      ...callerProject,
       campaign: {
-        ...inputProject.campaign,
+        ...callerProject.campaign,
         status: "paused",
         stopReason: scoringBlocker,
         schedule: { ...inputProject.campaign.schedule, enabled: false, nextRunAt: undefined },
