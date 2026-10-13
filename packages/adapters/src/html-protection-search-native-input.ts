@@ -173,20 +173,20 @@ export function createHtmlProtectionSearchNativeInput(options: {
       session = await createSession(page) as unknown as Cdp; sessions.add(session); active();
       const contexts = new Map<number, z.infer<typeof ContextSchema>["context"]>();
       let monitoring = false, mutated = false, realmInvalid = false;
-      let selectedContext: z.infer<typeof ContextSchema>["context"] | undefined;
+      const selected: { context?: z.infer<typeof ContextSchema>["context"] } = {};
       const on = (event: string, listener: (event: unknown) => void) => { listeners.push({ event, listener }); session!.on(event, listener); };
       on("Runtime.executionContextCreated", event => {
         const value = ContextSchema.safeParse(event);
         if (value.success) {
           if (contexts.size >= 128 && !contexts.has(value.data.context.id)) { realmInvalid = true; return; }
           contexts.set(value.data.context.id, value.data.context);
-          if (selectedContext && value.data.context.id === selectedContext.id && value.data.context.uniqueId !== selectedContext.uniqueId) realmInvalid = true;
+          if (selected.context && value.data.context.id === selected.context.id && value.data.context.uniqueId !== selected.context.uniqueId) realmInvalid = true;
         }
       });
       on("Runtime.executionContextsCleared", () => { realmInvalid = true; });
       on("Runtime.executionContextDestroyed", event => {
         const value = z.object({ executionContextId: z.number().int() }).safeParse(event);
-        if (selectedContext && value.success && value.data.executionContextId === selectedContext.id) realmInvalid = true;
+        if (selected.context && value.success && value.data.executionContextId === selected.context.id) realmInvalid = true;
       });
       for (const event of DOM_EVENTS) on(event, () => { if (monitoring) mutated = true; });
       const stable = () => { active(); if (realmInvalid || mutated) throw new ReadGap("document-mismatch"); };
@@ -202,7 +202,8 @@ export function createHtmlProtectionSearchNativeInput(options: {
       const world = z.object({ executionContextId: z.number().int().positive() }).parse(await session.send("Page.createIsolatedWorld", {
         frameId: before.id, worldName, grantUniveralAccess: false,
       })); stable();
-      selectedContext = contexts.get(world.executionContextId);
+      const selectedContext = contexts.get(world.executionContextId);
+      selected.context = selectedContext;
       if (!selectedContext || selectedContext.name !== worldName || selectedContext.auxData.frameId !== before.id) throw new ReadGap("native-unavailable");
       const call = async (mode: "count" | "select" | "facts", objectId?: string) => {
         stable();
