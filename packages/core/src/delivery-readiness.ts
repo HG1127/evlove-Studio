@@ -1,5 +1,5 @@
 import { evidenceFingerprint } from "./evidence-binding";
-import { htmlProtectionContractBlocker } from "./html-protection-browser-steps";
+import { htmlProtectionAcceptanceBlocker } from "./html-protection-scope";
 import { hasExactFrozenArtifactSet } from "./artifact-identity";
 import { hasAuthoritativeHiddenRelease } from "./hidden-validation-evidence";
 import type { EvolveProject } from "@evolution/contracts";
@@ -7,7 +7,7 @@ import type { EvolveProject } from "@evolution/contracts";
 /** One decision for user navigation and release approval. Running a test is not passing it. */
 export function deliveryReadiness(project: EvolveProject) {
   const reasons: string[] = [];
-  const contractBlocker = htmlProtectionContractBlocker(project);
+  const contractBlocker = htmlProtectionAcceptanceBlocker(project);
   if (contractBlocker) reasons.push(contractBlocker);
   const winnerId = project.experimentRun.winnerId;
   if (!hasAuthoritativeHiddenRelease(project.validationRun, winnerId ?? "", project.hiddenEvalSuite)) reasons.push("独立 Hidden Validation 缺少完整非演示评测或未通过");

@@ -26,6 +26,27 @@ describe("standalone HTML Sandbox transport", () => {
     expect(result.results[0]!.verificationStatus).toBe(status);
     expect(result.results[0]!.trace.at(-1)!.detail).toContain("transport ZIP SHA-256");
   });
+  it.each([
+    { action: "viewport", selector: "html", width: 390, height: 844 },
+    { action: "hover", selector: "#actual" },
+    { action: "scroll-into-view", selector: "#actual" },
+    { action: "computed-style", selector: "#actual", property: "opacity", mode: "numeric-range", min: 0.99, max: 1 },
+    { action: "checked", selector: "#actual", checked: true },
+    { action: "copy-text", selector: "#actual", value: "真实完整 HTML" },
+  ])("transports additive typed $action unchanged without relabeling file identity", async step => {
+    const paper = TestCaseSchema.parse({ ...testCase, browserSteps: [step] });
+    execute.mockImplementation(async (args: { archive: Uint8Array; expectedSha256: string; testCases: unknown[] }) => {
+      expect(args.testCases).toEqual([paper]);
+      const zip = await JSZip.loadAsync(args.archive, { checkCRC32: true });
+      expect(await zip.file("dist/index.html")!.async("uint8array")).toEqual(html);
+      return { artifactHash: args.expectedSha256, results: [{ testCaseId: paper.id, output: "typed boundary fixture",
+        latencyMs: 1, cost: 0, artifactHash: args.expectedSha256, verificationStatus: "partial", trace: [] }] };
+    });
+    const result = await runVercelSandboxHtmlValidation({ ...fixture(), testCases: [paper] });
+    expect(result.artifactHash).toBe(hash(html));
+    expect(result.results[0]?.verificationStatus).toBe("partial");
+  });
+
   it("copies mutable input bytes before asynchronous ZIP preparation", async () => {
     execute.mockImplementation(async (args: { archive: Uint8Array; expectedSha256: string }) => {
       const zip = await JSZip.loadAsync(args.archive, { checkCRC32: true });
@@ -46,12 +67,13 @@ describe("standalone HTML Sandbox transport", () => {
     execute.mockResolvedValue({ artifactHash: "a".repeat(64), scriptsRun: [], results: [{ testCaseId: "H1", output: "wrong wrapper", latencyMs: 1, cost: 0, artifactHash: "a".repeat(64), verificationStatus: "verified", trace: [] }] });
     await expect(runVercelSandboxHtmlValidation(fixture())).rejects.toThrow(/receipt/);
   });
-  it.each(["empty", "oversized", "bad-hash", "bad-step"])("validates the %s boundary before external execution", async (kind) => {
+  it.each(["empty", "oversized", "bad-hash", "bad-step", "bad-viewport"])("validates the %s boundary before external execution", async (kind) => {
     const args = fixture();
     if (kind === "empty") args.html = new Uint8Array();
     if (kind === "oversized") args.html = new Uint8Array(20 * 1024 * 1024 + 1);
     if (kind === "bad-hash") args.expectedSha256 = "not-a-hash";
     if (kind === "bad-step") args.testCases[0] = { ...testCase, browserSteps: [{ action: "count", selector: "#actual", count: -1 }] };
+    if (kind === "bad-viewport") args.testCases[0] = { ...testCase, browserSteps: [{ action: "viewport", selector: "html", width: 239, height: 844 }] };
     await expect(runVercelSandboxHtmlValidation(args)).rejects.toThrow();
     expect(execute).not.toHaveBeenCalled();
   });

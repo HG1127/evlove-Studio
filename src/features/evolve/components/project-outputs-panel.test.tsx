@@ -52,3 +52,12 @@ describe("current accepted file download paper guard",()=>{
   expect(mocks.read).toHaveBeenCalledTimes(1);expect(createUrl).toHaveBeenCalledTimes(1);expect(mocks.error).not.toHaveBeenCalled();
  });
 });
+
+describe("hand-authored whole HTML acceptance download guard",()=>{
+ it.each(["search","static","mixed"] as const)("blocks stored accepted %s primary before frozen read/download",async mode=>{
+  const f=acceptedLegacyHtmlPaperFixture(false,mode);f.project.outputArtifacts=f.project.outputArtifacts.filter(a=>a.kind==="primary");
+  await render(f.project);await act(async()=>button("下载").click());
+  expect(mocks.error).toHaveBeenCalledWith(expect.stringContaining("html-protection-scope-pending"));
+  expect(mocks.read).not.toHaveBeenCalled();expect(createUrl).not.toHaveBeenCalled();
+ });
+});

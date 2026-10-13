@@ -67,3 +67,29 @@ describe("supplemental validation evidence",()=>{
     expect(applied.unverifiedCriterionIds).toContain("VISUAL");
   });
 });
+
+describe("whole HTML protection cannot be overwritten by supplemental notes", () => {
+  it.each(["manual-review", "visual-review"] as const)("does not turn an incomplete or failed whole criterion into pass via %s", method => {
+    for (const actualFailure of [false, true]) {
+      const { project, candidate, evaluation } = fixture();
+      const base = project.acceptanceRubric[1]!;
+      project.acceptanceRubric = [{ ...base, id: "PROTECT-ALL", title: "保护所有原有内容", requirement: "保留全部原有内容和行为", protectedConstraint: true, validationMethod: method }];
+      project.sourceArtifacts = [{ ...project.sourceArtifacts[0]!, name: "app.html", extension: "html", mimeType: "text/html" }];
+      evaluation.criterionScores = [{ criterionId: "PROTECT-ALL", score: actualFailure ? 0 : 100, pass: false,
+        verificationStatus: actualFailure ? "verified" : "partial", evidence: actualFailure ? ["native card assertion failed"] : ["search only"],
+        gaps: ["[html-protection-scope-pending] missing complete protection", ...(actualFailure ? ["original card is missing"] : [])], testCaseIds: ["H1"] }];
+      evaluation.verifiedRubricCoverage = actualFailure ? 100 : 0;
+      evaluation.unverifiedCriterionIds = actualFailure ? [] : ["PROTECT-ALL"];
+      project.supplementalValidationEvidence = [{ id: "note", criterionId: "PROTECT-ALL", candidateId: candidate.id,
+        evidenceFingerprint: evidenceFingerprint(project, candidate), method, verdict: "pass", note: "all good",
+        screenshotIds: method === "visual-review" ? ["shot"] : [], artifactHashes: ["hash-1"], createdAt: "2026-10-13T00:00:00Z" }];
+      const applied = applySupplementalEvidenceToEvaluation(project, candidate, evaluation);
+      expect(applied.criterionScores?.[0]).toMatchObject({ score: actualFailure ? 0 : 100, pass: false,
+        verificationStatus: actualFailure ? "verified" : "partial" });
+      expect(applied.criterionScores?.[0].gaps.join(" ")).toContain("scope-pending");
+      if (actualFailure) expect(applied.criterionScores?.[0].evidence).toContain("native card assertion failed");
+      else expect(applied.verifiedRubricCoverage).toBe(0);
+      expect(project.supplementalValidationEvidence[0].note).toBe("all good");
+    }
+  });
+});

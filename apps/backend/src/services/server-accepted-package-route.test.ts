@@ -23,7 +23,7 @@ function setup(withChampion = true) {
 }
 beforeEach(() => vi.resetAllMocks());
 describe("accepted current Candidate server package and physical download", () => {
-  it("requires fresh paired evidence after correcting an SOP contract, then downloads and reopens the frozen HTML", async () => {
+  it("keeps whole HTML acceptance unverified after fresh paired scores while raw frozen evidence remains readable", async () => {
     const args = setup(false), project = args.project, snapshot = args.current.artifactSnapshots[0]!;
     const frozen = snapshot.frozenArtifact!;
     project.evolutionCommand = "补充完整流程与异常处理说明";
@@ -50,9 +50,14 @@ describe("accepted current Candidate server package and physical download", () =
     }
     project.artifactAcceptance = settleArtifactAcceptanceFromValidation({ project, candidate: args.current,
       validation: project.validationRun, frozenArtifacts: [frozen] });
-    expect(project.artifactAcceptance.status).toBe("passed");
+    expect(project.artifactAcceptance.status).toBe("unverified");
+    expect(project.artifactAcceptance.acceptedAt).toBeUndefined();
+    expect(project.artifactAcceptance.summary).toContain("html-protection-scope-pending");
     expect(args.current.artifactSnapshots).toEqual(originalSnapshots);
-    expect((await request(args.current.id)).status).toBe(200);
+    expect((await request(args.current.id)).status).toBe(409);
+    expect(mocks.save).not.toHaveBeenCalled();expect(mocks.append).not.toHaveBeenCalled();expect(mocks.getBlob).not.toHaveBeenCalled();
+    // data.read stays available for collecting exact byte evidence; it cannot
+    // grant accepted materialization or prove all protected obligations.
     const response = await app.fetch(new Request("http://localhost/artifacts/" + encodeURIComponent(frozen.blobId)));
     expect(response.status).toBe(200);
     const bytes = new Uint8Array(await response.arrayBuffer());

@@ -1,5 +1,54 @@
 # Main flow acceptance
 
+## 2026-10-13 — Frozen refinement requirements and Original collection plan
+
+[Content scope handoff](html-protection-content-scope-handoff.md) corrects the evidence allocation for the actual SOP content refinement goal: all Original meaning requires independent semantic observation, while literal/editing conflicts, structure, styles, scripts and full runtime residuals remain protected. Actual physical files and the unchanged stored-paper hash now produce Original-only collection registries; Current/Candidate expected plans match on the same Hidden. Search state intents align with the closed owned-Page action session.23 related files/603 tests, architecture,full lint and TypeScript/production build passed at62c5462; a new exact complete gate is required.
+
+Prior e05ec6d completed an audited58-stage same-source local gate,377 files/3722 tests,Runner76/E2E5/bothUI, with original port-release failure retained and two tail checks actually resumed. Production00:21UTC still servesfb3a9b5. Dedicated Git chat remained inactive-window; automatic review rejected the CI chat handoff as duplicate text. Root made no main push/deployment. Actual Campaign/stateful cloud/full protection, Experiment, same-Hidden,Gate F and exact accepted download/reopen remain unproven.
+
+
+## 2026-10-13 — Private cloud observation composition (local checks)
+
+[Cloud observation handoff](html-protection-cloud-observation-handoff.md) adds the owned browser factory, fixed server-only ESM compilation, bounded private custody/readback and selected DOM comparison.15 actual related files/334 tests, architecture/full lint/TypeScript production build passed with independent dependencies; all failed launcher and shared-cache build attempts remain retained. The Campaign collector, actual state transitions/copy, Original runtime profile, whole semantic/visual/provenance, same-Hidden, Gate F and exact accepted download/reopen remain incomplete. A new exact complete gate is required.
+
+Prior b19f76c passed the independently audited complete local gate (57 stages,3597 tests,Runner76,E2E5); it does not cover this increment. Production23:12 UTC still servedfb3a9b5, with actual Mission43 Baselinefailed/paused, SDKcompleted/Jobwaiting. Dedicated owner dispatch was rejected by inactive-window; Root made no main push, deployment or new real-file execution.
+
+## 2026-10-13 — Original scope and native DOM observation foundations (local integration)
+
+[Collector foundations](html-protection-collector-foundations-handoff.md) add an Original-only complete expected scope, retained runtime residuals and native isolated DOM projections with mutation latching and shallow bounded reads. The integrated9-file/292 regression, architecture, full lint and TypeScript/production build passed; the initial type-build failure is retained. Clipboard/template/unknown runtime, semantic/visual closure, physical Page startup custody and collector/settlement/Gate F wiring remain incomplete. The new exact integrated complete gate is required separately.
+
+Prior acb8190 passed the complete local gate (3504 tests,Runner76,E2E5); this does not cover the new foundation branch. Authenticated production22:26 UTC still servesfb3a9b5 with Mission43 Baselinefailed/paused, SDKcompleted/Jobwaiting; actual Experiment, same-Hidden, Gate F and identical accepted download/reopen remain unproven. The operator session was refreshed with existing authorized credentials and independently verified Production workspace; production secrets were unchanged.
+
+## 2026-10-13 — Independent whole protection settlement scope
+
+[Protection scope handoff](html-protection-scope-handoff.md) closes tag/static/format score upgrades, preserves actual native assertion failures and narrow format-only proof, and versions all affected score/evidence caches. Root28-file /340 tests plus architecture/full lint/production build passed. Acceptance/delivery closure, stored HTTP release/rollback authority and supplemental-note protection are integrated; B15-file/225 and Root5-file/59 regressions passed. A new exact integrated complete gate remains pending. Actual Mission43 and fb3a9b5 production are not upgraded; complete collector, same-Hidden, Gate F and identical accepted download/reopen remain required.
+
+
+## 2026-10-13 — Closed hover control (local validation)
+
+[Hover execution handoff](html-browser-hover-handoff.md) adds a strict selector-only action, zero assertions, one native locator call and an absolute dispatch/completion deadline. The final21-file regression passed335 tests plus architecture/full lint/TypeScript production build. All49 synthetic local Chromium cases matched their positive/negative expected states. Independent review closed expired deferred dispatch; failed attempts are preserved. Runner integration and a new complete exact-commit gate must be recorded independently.
+
+Earlier f1cccf4 passed the complete local gate (3380 tests,Runner65,E2E5), but latest production18:49 UTC remainsfb3a9b5. Actual Mission43 is Baselinefailed/paused, SDKcompleted/Jobwaiting after malformed Judge JSON. The finite snapshot/profile/full collector and fresh actual Experiment, same-Hidden, Gate F and exact accepted download/reopen remain required; this capability does not upgrade unknown obligations.
+
+
+## 2026-10-13 — Closed browser execution and mobile viewport (local integration)
+
+[Browser protection runtime handoff](browser-html-protection-runtime-handoff.md) adds closed typed browser actions/observations and a bounded viewport action, with trusted isolated Chromium observations and a fresh Sandbox cache version. The integrated20-file regression passed308 tests with no failures or skips. Runner, architecture, full lint, build and a new complete gate remain separate checks.
+
+Production read-only at17:41 UTC still servesfb3a9b5. The actual Mission read at17:43 UTC remains revision43, Baseline/paused, SDKcompleted/Jobwaiting after malformed Judge JSON. The whole-protection collector and authoritative proof wiring, fresh Experiment, same-Hidden pairing, Gate F and identical accepted download/reopen remain required. Neither viewport control nor passing synthetic browser fixtures proves those results.
+
+## 2026-10-13 — Direct-model JSON completion and refusal boundaries
+
+[Direct model JSON handoff](direct-model-json-recovery-handoff.md) adds safe syntax diagnostics, one completed semantic observation correction with pinned evidence/deadline, explicit completion eligibility, and strict Responses refusal rejection.33 unique related files /370 tests, architecture, full lint and TypeScript/production build passed; independent review findings were fixed and rerun. Complete exact-commit CI and deployment are pending.
+
+Saved MiniMax direct synthetic large numeric and Chinese-document checks returned HTTP200 with correct identities on production fb3a9b5. Actual RCN is terminal completed/Job waiting, Mission43 baseline/paused after invalid JSON; Experiment, same-Hidden, Gate F and exact accepted download/reopen remain unproven. The synthetic health evidence does not verify the new local branch.
+
+
+## 2026-10-12 — Full protection evidence foundations (development only)
+
+[Protection foundations](html-protection-evidence-foundations.md) add complete original-card/raw-source inventories, exact physical input/paper binding and an internal domain-separated execution attestation. The actual original has111cards; saved C1 retains them and adds3. Runtime coverage, semantic preservation, same-Hidden and Gate F remain unproven. These modules do not yet alter Workflow routes or settlement. Main fb3a9b5 contains the fully local-CI-verified Baseline/model fix and was actually observed serving production at15:42:49 UTC. Normal Run RCN is running on that main; the new protection foundation remains local. Original/current/Candidate execution and acceptance receipts are still required.
+
+
 ## 2026-10-12 — Original Baseline and live direct-model blockers (local increment)
 
 Mainfde3ef3 deployed the independently complete-CI-verified63981aa tree. Actual authorized RunR78 (Job workflow-control-0772c984-20a2-43cd-a769-cf91fe6a040d) measured complete source HTML and passed the exact-byte9-step cloud Chromium search. All3 semantic cases timed out; independent Judge produced malformed JSON. Mission38 is paused, SDK completed and Job waiting; fresh Experiment/Hidden/Gate F/download remain unproven.

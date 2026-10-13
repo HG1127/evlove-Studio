@@ -92,3 +92,66 @@ describe("independent Judge final JSON correction",()=>{
   expect(fetch).toHaveBeenCalledOnce();
  });
 });
+
+describe("semantic observation completed JSON correction",()=>{
+ for(const protocol of ["responses","chat-completions"] as const){
+  it(protocol+" corrects long-text JSON once with identical captured evidence and deadline",async()=>{
+   const payload={project:{sourceArtifacts:[{id:"synthetic",content:'Actual synthetic "quotes"\nline two'}]},testCases:[{id:"V1"}]};
+   const output={results:[{testCaseId:"V1",output:'Observed "quotes"\nline two; no browser proof',trace:[]}]};
+   const captured:Array<{user:string;system:string;signal:AbortSignal;format:unknown}>=[];
+   const fetch=vi.fn(async(_url:unknown,init?:RequestInit)=>{
+    const b=JSON.parse(String(init?.body));captured.push({user:protocol==="responses"?b.input[1].content[0].text:b.messages[1].content,system:protocol==="responses"?b.input[0].content[0].text:b.messages[0].content,signal:init!.signal as AbortSignal,format:protocol==="responses"?b.text.format:b.response_format});
+    if(captured.length===1)return new Response(JSON.stringify(protocol==="responses"?{status:"completed",output_text:'{"results":[{"output":"private failed\ntext"}]}'}:{choices:[{finish_reason:"stop",message:{content:'{"results":[{"output":"private failed\ntext"}]}'}}]}),{status:200});
+    return envelope(protocol,output);
+   });vi.stubGlobal("fetch",fetch);
+   expect(await withExplicitServerAiConnection({...settings,protocol},()=>runServerAi("execute-artifact-batch",payload))).toEqual(output);
+   expect(captured).toHaveLength(2);expect(captured[1].user).toBe(captured[0].user);expect(captured[1].signal).toBe(captured[0].signal);expect(captured[1].format).toEqual(captured[0].format);
+   expect(captured[1].system).toContain("unescaped-control");expect(captured[1].system).not.toContain("private failed");
+  });
+ }
+ it("keeps second malformed semantic output unavailable without a third call",async()=>{
+  const fetch=vi.fn(async()=>new Response(JSON.stringify({choices:[{finish_reason:"stop",message:{content:"{invalid final output"}}]}),{status:200}));vi.stubGlobal("fetch",fetch);
+  const error=await withExplicitServerAiConnection({...settings,protocol:"chat-completions"},()=>runServerAi("execute-artifact-batch",{})).catch(error=>error);
+  expect(error).toMatchObject({code:"AI_OUTPUT_INVALID_JSON"});expect(error.message).not.toContain("invalid final output");expect(fetch).toHaveBeenCalledTimes(2);
+ });
+ it.each(["length","content_filter","tool_calls"])("never corrects semantic nonfinal %s output",async finish=>{
+  const fetch=vi.fn(async()=>new Response(JSON.stringify({choices:[{finish_reason:finish,message:{content:'{"results":[]}'}}]}),{status:200}));vi.stubGlobal("fetch",fetch);
+  await expect(withExplicitServerAiConnection({...settings,protocol:"chat-completions"},()=>runServerAi("execute-artifact-batch",{}))).rejects.toBeInstanceOf(Error);expect(fetch).toHaveBeenCalledOnce();
+ });
+ it.each(["evaluate","execute-artifact-batch"] as const)("does not trust remote INVALID_JSON error code for %s",async operation=>{
+  const fetch=vi.fn(async()=>{throw Object.assign(new Error("private "+settings.apiKey),{code:"AI_OUTPUT_INVALID_JSON"});});vi.stubGlobal("fetch",fetch);
+  const error=await withExplicitServerAiConnection({...settings,protocol:"chat-completions"},()=>runServerAi(operation,{})).catch(error=>error);
+  expect(error).toMatchObject({code:"AI_OUTPUT_INVALID_JSON"});expect(error).toBeInstanceOf(Error);expect((error as Error).message).not.toContain(settings.apiKey);expect(fetch).toHaveBeenCalledOnce();
+ });
+
+ it("does not request correction for duplicate semantic case identity",async()=>{
+  const result={testCaseId:"V1",output:"Observed synthetic evidence",trace:[]},fetch=vi.fn(async()=>envelope("chat-completions",{results:[result,result]}));vi.stubGlobal("fetch",fetch);
+  await expect(withExplicitServerAiConnection({...settings,protocol:"chat-completions"},()=>runServerAi("execute-artifact-batch",{}))).rejects.toMatchObject({code:"AI_OUTPUT_SCHEMA_MISMATCH"});expect(fetch).toHaveBeenCalledOnce();
+ });
+});
+
+describe("positive completion and refusal correction boundary",()=>{
+ for(const operation of ["evaluate","execute-artifact-batch"] as const){
+  it.each(["aggregate-valid","aggregate-invalid","item-refusal","root-refusal"])("rejects Responses "+operation+" %s without correction",async kind=>{
+   const valid=operation==="evaluate"?report:{results:[{testCaseId:"V1",output:"synthetic",trace:[]}]};
+   const body={status:"completed",output_text:kind==="aggregate-invalid"?"{invalid":JSON.stringify(valid),
+    ...(kind==="root-refusal"?{refusal:"private "+settings.apiKey}:kind==="item-refusal"?{output:[{type:"refusal"}]}:{output:[{content:[{type:"output_text",text:"mixed"},{type:"refusal",refusal:"private "+settings.apiKey}]}]})};
+   const fetch=vi.fn(async()=>new Response(JSON.stringify(body),{status:200}));vi.stubGlobal("fetch",fetch);
+   const error=await withExplicitServerAiConnection({...settings,protocol:"responses"},()=>runServerAi(operation,{})).catch(error=>error);
+   expect(error).toBeInstanceOf(Error);expect((error as Error).message).toContain("拒绝");expect((error as Error).message).not.toContain(settings.apiKey);expect((error as Error).message).not.toContain("private");expect(fetch).toHaveBeenCalledOnce();
+  });
+  it.each([undefined,null])("never corrects unknown Responses completion status for "+operation,async status=>{
+   const fetch=vi.fn(async()=>new Response(JSON.stringify({status,output_text:"{invalid"}),{status:200}));vi.stubGlobal("fetch",fetch);
+   await expect(withExplicitServerAiConnection({...settings,protocol:"responses"},()=>runServerAi(operation,{}))).rejects.toMatchObject({code:"AI_OUTPUT_INVALID_JSON"});expect(fetch).toHaveBeenCalledOnce();
+  });
+  it.each([undefined,null,"provider_eos"])("never corrects unknown Chat finish reason for "+operation,async finish_reason=>{
+   const fetch=vi.fn(async()=>new Response(JSON.stringify({choices:[{finish_reason,message:{content:"{invalid"}}]}),{status:200}));vi.stubGlobal("fetch",fetch);
+   await expect(withExplicitServerAiConnection({...settings,protocol:"chat-completions"},()=>runServerAi(operation,{}))).rejects.toMatchObject({code:"AI_OUTPUT_INVALID_JSON"});expect(fetch).toHaveBeenCalledOnce();
+  });
+  it("keeps complete valid compatible JSON usable without assuming correction permission for "+operation,async()=>{
+   const valid=operation==="evaluate"?report:{results:[{testCaseId:"V1",output:"synthetic",trace:[]}]};
+   const fetch=vi.fn(async()=>new Response(JSON.stringify({choices:[{message:{content:JSON.stringify(valid)}}]}),{status:200}));vi.stubGlobal("fetch",fetch);
+   expect(await withExplicitServerAiConnection({...settings,protocol:"chat-completions"},()=>runServerAi(operation,{}))).toEqual(valid);expect(fetch).toHaveBeenCalledOnce();
+  });
+ }
+});

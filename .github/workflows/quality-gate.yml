@@ -55,6 +55,11 @@ jobs:
         id: architecture
         run: pnpm architecture:check 2>&1 | tee artifacts/ci/architecture.log
 
+      # Vitest executes the trusted generated browser runner with synthetic HTML.
+      # Its pinned Chromium must exist before unit tests, as well as later E2E.
+      - name: Install Chromium and system dependencies
+        run: pnpm exec playwright install --with-deps chromium 2>&1 | tee artifacts/ci/browser-install.log
+
       - name: Full test suite
         id: unit
         run: pnpm exec vitest run --maxWorkers 1 2>&1 | tee artifacts/ci/unit.log
@@ -71,9 +76,6 @@ jobs:
 
       - name: Install Runner Gateway dependencies
         run: pnpm runner:setup 2>&1 | tee artifacts/ci/runner-install.log
-
-      - name: Install Chromium and system dependencies
-        run: pnpm exec playwright install --with-deps chromium 2>&1 | tee artifacts/ci/browser-install.log
 
       - name: Runner Gateway tests
         id: runner

@@ -5,7 +5,7 @@ import type {
   OutputArtifact,
 } from "@evolution/contracts";
 import { deliveryReadiness } from "./delivery-readiness";
-import { htmlProtectionContractBlocker } from "./html-protection-browser-steps";
+import { htmlProtectionAcceptanceBlocker } from "./html-protection-scope";
 import { hasExactFrozenArtifactSet } from "./artifact-identity";
 import { evidenceFingerprint } from "./evidence-binding";
 import { hasAuthoritativeHiddenRelease } from "./hidden-validation-evidence";
@@ -21,7 +21,7 @@ export function acceptanceArtifacts(
   const versionLabel=champion?.versionLabel||project.version;
   const validation=champion?.candidate?.id===candidate.id?champion.validation:project.validationRun;
   const binding=evidenceFingerprint(project,candidate);
-  const canDeliver=!htmlProtectionContractBlocker(project) && acceptance.evidenceFingerprint===binding
+  const canDeliver=!htmlProtectionAcceptanceBlocker(project) && acceptance.evidenceFingerprint===binding
     && validation?.evidenceFingerprint===binding
     && acceptance.status==="passed"
     && acceptance.hardGatePass
@@ -148,7 +148,7 @@ export function materializeAcceptedChampionPackage(
   project:EvolveProject,
   createdAt=new Date().toISOString(),
 ):OutputArtifact[]{
-  const contractBlocker=htmlProtectionContractBlocker(project);
+  const contractBlocker=htmlProtectionAcceptanceBlocker(project);
   if(contractBlocker)throw new Error(contractBlocker);
   const champion=project.searchChampion;
   if(!champion?.candidate)throw new Error("还没有 Search Champion，无法生成进化成果物");
@@ -169,6 +169,8 @@ export function materializeAcceptedCandidatePackage(
   acceptance:ArtifactAcceptance,
   createdAt=new Date().toISOString(),
 ):OutputArtifact[]{
+  const acceptanceBlocker=htmlProtectionAcceptanceBlocker(project);
+  if(acceptanceBlocker)throw new Error(acceptanceBlocker);
   if(project.searchChampion?.candidate?.id===candidate.id
     &&project.searchChampion.validation?.evidenceFingerprint===project.validationRun.evidenceFingerprint
     &&project.searchChampion.artifactAcceptance?.id===acceptance.id){
@@ -215,7 +217,7 @@ export function materializeAcceptedCandidatePackage(
 
 /** Prevent a valid primary file from being zipped with metadata for another Candidate. */
 export function assertDeliverablePackageIdentity(project:EvolveProject):string{
-  const contractBlocker=htmlProtectionContractBlocker(project);
+  const contractBlocker=htmlProtectionAcceptanceBlocker(project);
   if(contractBlocker)throw new Error(contractBlocker);
   const artifacts=project.outputArtifacts;
   const primary=artifacts.filter((item)=>item.kind==="primary");

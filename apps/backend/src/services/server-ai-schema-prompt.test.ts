@@ -1,7 +1,8 @@
+import { HTML_PROTECTION_SETTLEMENT_POLICY } from "@evolution/core";
 // @vitest-environment node
 import {createHash} from "node:crypto";
 import {SERVER_SEMANTIC_CONTEXT_VERSION} from "@evolution/harness";
-import {COMPATIBLE_CHAT_OUTPUT_VERSION} from "@evolution/adapters";
+import {COMPATIBLE_CHAT_OUTPUT_VERSION,STRUCTURED_AI_FINAL_OUTPUT_VERSION} from "@evolution/adapters";
 import {afterEach,describe,expect,it,vi} from "vitest";
 import {jsonSchemas,ServerAiConnectionPutSchema} from "@evolution/contracts";
 import {DIRECT_AI_SCHEMA_RECOVERY_VERSION,DIRECT_AI_SCHEMA_INSTRUCTION_VERSION,runServerAi,serverAiScoringRouteFingerprint} from "./ai-gateway";
@@ -52,10 +53,12 @@ describe("environment direct model schema instructions",()=>{
 describe("schema instruction scoring identity and validation",()=>{
   it.each(["json-schema","json-object","prompt-json"] as const)("binds schema prompt and correction policy for %s",async(responseFormat)=>{
     const config={connectionId:"fixture-connection",label:"Synthetic direct model",baseUrl:"https://model.example.test/v1",apiKey:"fixture-key",model:"fixture-model",protocol:"chat-completions" as const,responseFormat};
-    const base={route:["openai-compatible",config.baseUrl,config.model,config.protocol,responseFormat],semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,chatOutputVersion:COMPATIBLE_CHAT_OUTPUT_VERSION};
+    const base={route:["openai-compatible",config.baseUrl,config.model,config.protocol,responseFormat],protectionSettlementPolicy:HTML_PROTECTION_SETTLEMENT_POLICY,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,chatOutputVersion:COMPATIBLE_CHAT_OUTPUT_VERSION};
     const hash=(value:unknown)=>createHash("sha256").update(JSON.stringify(value)).digest("hex");
     const current=await withExplicitServerAiConnection(config,()=>serverAiScoringRouteFingerprint());
-    expect(current).toBe(hash({...base,...(responseFormat==="json-schema"?{directSchemaInstructionVersion:DIRECT_AI_SCHEMA_INSTRUCTION_VERSION}:{}),directSchemaRecoveryVersion:DIRECT_AI_SCHEMA_RECOVERY_VERSION}));
+    const legacyBase:Record<string,unknown>={...base};delete legacyBase.protectionSettlementPolicy;
+    expect(current).not.toBe(hash({...legacyBase,...(responseFormat==="json-schema"?{directSchemaInstructionVersion:DIRECT_AI_SCHEMA_INSTRUCTION_VERSION}:{}),directSchemaRecoveryVersion:DIRECT_AI_SCHEMA_RECOVERY_VERSION,finalOutputVersion:STRUCTURED_AI_FINAL_OUTPUT_VERSION}));
+    expect(current).toBe(hash({...base,...(responseFormat==="json-schema"?{directSchemaInstructionVersion:DIRECT_AI_SCHEMA_INSTRUCTION_VERSION}:{}),directSchemaRecoveryVersion:DIRECT_AI_SCHEMA_RECOVERY_VERSION,finalOutputVersion:STRUCTURED_AI_FINAL_OUTPUT_VERSION}));
     expect(current).not.toBe(hash({...base,...(responseFormat==="json-schema"?{directSchemaInstructionVersion:DIRECT_AI_SCHEMA_INSTRUCTION_VERSION}:{})}));
   });
   it.each(["chat-completions","responses"] as const)("still rejects missing evaluation fields on %s",async(protocol)=>{

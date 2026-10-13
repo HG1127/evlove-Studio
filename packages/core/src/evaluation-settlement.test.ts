@@ -87,7 +87,7 @@ describe("generated HTML protection coverage", () => {
       expect(execution.verificationStatus).toBe("verified");
     }
     const explicit = deriveCriterionScores([c], [{ ...t, tags: [] }], [], [execution], [judgement(c.id, t.id, 100)]);
-    expect(explicit.criterionScores[0]).toMatchObject({ pass: true, verificationStatus: "verified" });
+    expect(explicit.criterionScores[0]).toMatchObject({ pass: false, verificationStatus: "partial" });
   });
 });
 

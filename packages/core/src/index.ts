@@ -51,3 +51,16 @@ export * from "./html-candidate-protection";
 export * from "./html-document-observation";
 
 export * from "./baseline-comparison-phase";
+export * from "./html-protection-proof";
+
+export * from "./html-protection-inventory";
+export * from "./html-protection-file-comparison";
+
+export * from "./html-protection-scope";
+
+export * from "./html-protection-obligation-plan";
+
+export * from "./html-protection-snapshot-comparison";
+
+export * from "./html-protection-original-runtime-plan";
+export * from "./html-protection-content-scope";

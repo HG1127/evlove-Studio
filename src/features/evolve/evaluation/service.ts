@@ -1,5 +1,6 @@
 import { serverEnv } from "../runtime/env";
 import { EvaluateAiResultSchema } from "../ai/schemas";
+import { SourceArtifactSchema } from "@evolution/contracts";
 import { getAiProviderStatus, runEvolveAi, type AiAttemptNotice } from "../ai/service";
 import type { AcceptanceCriterion, EvaluationResult, TargetRunResult, TestCase } from "../schemas";
 import { retrieveTextContext } from "../runtime/context-retrieval";
@@ -25,6 +26,12 @@ function reviewOutput(text: string, query: string, maxChars = 6500) {
 function rubricFromContext(context: Record<string, unknown>): AcceptanceCriterion[] {
   const project = context.project as { acceptanceRubric?: AcceptanceCriterion[] } | undefined;
   return Array.isArray(project?.acceptanceRubric) ? project!.acceptanceRubric! : [];
+}
+
+function evaluationScopeFromContext(context: Record<string, unknown>) {
+  const source = (context.project as { sourceArtifacts?: unknown } | undefined)?.sourceArtifacts;
+  const parsed = SourceArtifactSchema.array().safeParse(source);
+  return parsed.success ? { sourceArtifacts: parsed.data } : undefined;
 }
 
 function demoScore(runs: TargetRunResult[]): Omit<EvaluationResult, "averageCost" | "averageLatencyMs"> {
@@ -160,7 +167,7 @@ export async function evaluateRuns(args: {
       completeness: normalizeEvaluationScore(item.completeness),
       reason: item.reason.slice(0, 200),
     }));
-    const preliminaryRubric = deriveCriterionScores(rubric, args.testCases, preliminaryCaseScores, args.runs, ai.criteria);
+    const preliminaryRubric = deriveCriterionScores(rubric, args.testCases, preliminaryCaseScores, args.runs, ai.criteria, undefined, evaluationScopeFromContext(args.context));
     const unresolved = new Set(preliminaryRubric.unverifiedCriterionIds);
     const missingJudgements = evaluatorRubric.filter((criterion) => {
       if (!unresolved.has(criterion.id)) return false;
@@ -243,7 +250,7 @@ export async function evaluateRuns(args: {
         reason: item.reason.slice(0, 200),
       }));
     if (!caseScores.length) warnings.push(`评审留痕：评阅模型未返回逐题分数，本轮差距归因只能定位到执行失败题`);
-    const rubricResult = deriveCriterionScores(rubric, args.testCases, caseScores, args.runs, ai.criteria);
+    const rubricResult = deriveCriterionScores(rubric, args.testCases, caseScores, args.runs, ai.criteria, undefined, evaluationScopeFromContext(args.context));
     if (rubric.length && rubricResult.criterionScores.some((item) => item.testCaseIds.length === 0)) warnings.push(`评审留痕：部分 Acceptance Criterion 没有对应测试题，Rubric Coverage 不完整`);
     core = {
       accuracy: normalizeEvaluationScore(ai.accuracy), evidence: normalizeEvaluationScore(ai.evidence), riskCoverage: normalizeEvaluationScore(ai.riskCoverage), completeness: normalizeEvaluationScore(ai.completeness), safety: ai.safety, notes: ai.notes, failures: ai.failures, caseScores,
@@ -257,7 +264,7 @@ export async function evaluateRuns(args: {
   if (!core.criterionScores?.length) {
     const rubric = rubricFromContext(args.context);
     const caseScores = core.caseScores ?? [];
-    const rubricResult = deriveCriterionScores(rubric, args.testCases, caseScores, args.runs);
+    const rubricResult = deriveCriterionScores(rubric, args.testCases, caseScores, args.runs, undefined, undefined, evaluationScopeFromContext(args.context));
     core = { ...core, rubricScore: rubricResult.rubricScore, verifiedRubricCoverage: rubricResult.verifiedRubricCoverage, unverifiedCriterionIds: rubricResult.unverifiedCriterionIds, criterionScores: rubricResult.criterionScores };
   }
 

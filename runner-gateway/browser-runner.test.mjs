@@ -1,6 +1,6 @@
 import {test,after} from 'node:test';
 import assert from 'node:assert/strict';
-import {executeBrowserTest,closeBrowser,validateBrowserSteps} from './browser-runner.mjs';
+import {executeBrowserTest,closeBrowser,validateBrowserSteps,getBrowser} from './browser-runner.mjs';
 import {sourceGroundedHtmlProtectionSteps} from '../packages/core/src/html-protection-browser-steps.ts';
 after(closeBrowser);
 const artifact={name:'fixture.html',content:'<!doctype html><html lang="zh"><meta charset="UTF-8"><meta name="viewport" content="width=device-width"><title>验证样例</title><body><button id="save" onclick="document.querySelector(\'#status\').textContent=\'已保存\'">保存</button><p id="status">等待</p></body></html>'};
@@ -120,4 +120,546 @@ test('readiness: text preserves every regex operator as a literal',async()=>{
  const artifact={name:'literal.html',content:'<!doctype html><html><body><pre id="status">prefix '+literal+' suffix</pre></body></html>'};
  const result=await executeBrowserTest({artifact,testCase:{id:'all-literals',browserSteps:[{action:'text',selector:'#status',value:literal}]}});
  assert.equal(result.verificationStatus,'verified',result.error);
+});
+
+function fixture(body,style=''){
+ return {name:'typed.html',content:'<!doctype html><html><head><meta name="viewport" content="width=device-width"><style>'+style+'</style></head><body>'+body+'</body></html>'};
+}
+async function runSteps(artifact,browserSteps){return executeBrowserTest({artifact,testCase:{id:'typed',browserSteps}});}
+test('typed validation accepts the closed protocol without mutating defaults',()=>{
+ const steps=[
+  {action:'scroll-into-view',selector:'#target'},
+  {action:'in-viewport',selector:'#target'},
+  {action:'attribute',selector:'#target',name:'data-mode',value:'A [x]'},
+  {action:'checked',selector:'#toggle',checked:false},
+  {action:'scroll-position',selector:'html',min:-10,max:100,axis:'x'},
+  {action:'computed-style',selector:'#target',property:'opacity',mode:'literal',value:'0.5'},
+  {action:'computed-style',selector:'#target',property:'width',mode:'numeric-range',min:0,max:10000000},
+  {action:'computed-style',selector:'#target',property:'transform',mode:'identity-transform'},
+  {action:'computed-style',selector:'#target',property:'width',mode:'parent-relative',relativeTo:'#parent',min:0,max:1},
+  {action:'copy-text',selector:'#copy',value:'exact'},
+ ];
+ const before=JSON.stringify(steps);assert.equal(validateBrowserSteps(steps),steps);assert.equal(JSON.stringify(steps),before);
+ assert.doesNotThrow(()=>validateBrowserSteps(Array.from({length:24},()=>({action:'visible',selector:'body'}))));
+});
+test('typed validation rejects unsupported fields, nonfinite/range errors and supplied scripts',()=>{
+ const cases=[null,{},[],{action:'evaluate',selector:'body'},
+  {action:'click',selector:'body',script:'alert(1)'},
+  {action:'scroll-into-view',selector:'body',value:'javascript:alert(1)'},
+  {action:'in-viewport',selector:'body',ratio:1.1},{action:'in-viewport',selector:'body',expected:'false'},
+  {action:'attribute',selector:'body',name:'onclick',value:'x'},{action:'attribute',selector:'body',name:'data-X',value:'x'},
+  {action:'attribute',selector:'body',name:'class',value:'x',regex:true},
+  {action:'checked',selector:'input',checked:1},
+  {action:'scroll-position',selector:'body',min:0,max:1},{action:'scroll-position',selector:'html',min:2,max:1},
+  {action:'scroll-position',selector:'html',min:-Infinity,max:1},{action:'scroll-position',selector:'html',min:0,max:10000001},
+  {action:'computed-style',selector:'body',property:'color',mode:'literal',value:'red'},
+  {action:'computed-style',selector:'body',property:'opacity',mode:'literal',value:' 0.5'},
+  {action:'computed-style',selector:'body',property:'opacity',mode:'literal',value:'0x1'},
+  {action:'computed-style',selector:'body',property:'opacity',mode:'numeric-range',min:0,max:1.01},
+  {action:'computed-style',selector:'body',property:'display',mode:'numeric-range',min:0,max:1},
+  {action:'computed-style',selector:'body',property:'width',mode:'identity-transform'},
+  {action:'computed-style',selector:'body',property:'transform',mode:'identity-transform',tolerance:0.11},
+  {action:'computed-style',selector:'body',property:'width',mode:'parent-relative',relativeTo:' ',min:0,max:1},
+  {action:'computed-style',selector:'body',property:'width',mode:'parent-relative',relativeTo:'body',min:0,max:2},
+  {action:'computed-style',selector:'body',property:'width',mode:'literal',value:''},
+  {action:'copy-text',selector:'button',value:'x',readClipboard:true},
+ ];
+ for(const step of cases)assert.throws(()=>validateBrowserSteps([step]),JSON.stringify(step));
+ assert.throws(()=>validateBrowserSteps(Array.from({length:25},()=>({action:'visible',selector:'body'}))));
+ assert.throws(()=>validateBrowserSteps([{action:'attribute',selector:'body',name:'data-'+ 'a'.repeat(60),value:'x'}]));
+ assert.throws(()=>validateBrowserSteps([{action:'copy-text',selector:'button',value:'x'.repeat(65537)}]));
+});
+test('scroll action moves once; viewport and position observe the resulting navigation',async()=>{
+ const result=await runSteps(fixture('<div style="height:1500px"></div><div id="target" style="height:100px">target</div>'),[
+  {action:'in-viewport',selector:'#target',expected:false},
+  {action:'scroll-position',selector:'html',min:0,max:0},
+  {action:'scroll-into-view',selector:'#target'},
+  {action:'in-viewport',selector:'#target',ratio:1},
+  {action:'scroll-position',selector:'html',min:500,max:2000},
+ ]);
+ assert.equal(result.verificationStatus,'verified',result.error);assert.equal(JSON.parse(result.output).assertions,4);
+ assert.equal(result.trace.filter(t=>t.summary==='scroll-into-view #target').length,1);
+});
+test('broken navigation is not repaired by an in-viewport assertion',async()=>{
+ const result=await runSteps(fixture('<button id="nav">Navigate</button><div style="height:1600px"></div><div id="target">target</div>'),[
+  {action:'click',selector:'#nav'},{action:'in-viewport',selector:'#target'},
+ ]);
+ assert.equal(result.verificationStatus,'failed');assert.equal(result.trace.filter(t=>t.summary==='click #nav').length,1);
+ assert.equal(result.trace.filter(t=>t.summary==='in-viewport #target').length,0);
+});
+test('broken navigation is not repaired by a scroll-position assertion',async()=>{
+ const result=await runSteps(fixture('<button id="nav">Navigate</button><div style="height:1600px"></div><div id="target">target</div>'),[
+  {action:'click',selector:'#nav'},{action:'scroll-position',selector:'html',min:1000,max:2000},
+ ]);
+ assert.equal(result.verificationStatus,'failed');assert.equal(result.trace.filter(t=>t.summary==='scroll-position html').length,0);
+});
+test('delayed typed observations settle without replaying a click',async()=>{
+ const result=await runSteps(fixture('<button id="go">Go</button><input id="toggle" type="checkbox"><div id="parent" style="width:100px"><div id="bar" style="width:0;opacity:0;transform:translateY(8px)"></div></div><span id="state" data-state="idle"></span><script>let clicks=0;document.querySelector("#go").onclick=()=>{clicks++;setTimeout(()=>{document.querySelector("#state").setAttribute("data-state","A  B [x]. "+clicks);document.querySelector("#toggle").checked=true;document.querySelector("#bar").style.cssText="width:100px;opacity:1;transform:none"},180)}</script>'),[
+  {action:'click',selector:'#go'},
+  {action:'attribute',selector:'#state',name:'data-state',value:'A  B [x]. 1'},
+  {action:'attribute',selector:'#state',name:'data-state',mode:'contains',value:'B [x].'},
+  {action:'checked',selector:'#toggle',checked:true},
+  {action:'computed-style',selector:'#bar',property:'opacity',mode:'numeric-range',min:1,max:1},
+  {action:'computed-style',selector:'#bar',property:'transform',mode:'identity-transform'},
+  {action:'computed-style',selector:'#bar',property:'width',mode:'numeric-range',min:100,max:100},
+  {action:'computed-style',selector:'#bar',property:'width',mode:'parent-relative',relativeTo:'#parent',min:1,max:1},
+ ]);
+ assert.equal(result.verificationStatus,'verified',result.error);assert.equal(JSON.parse(result.output).assertions,7);
+ assert.equal(result.trace.filter(t=>t.summary==='click #go').length,1);
+});
+test('effective opacity includes ordinary ancestors and ShadowRoot hosts',async()=>{
+ const result=await runSteps(fixture('<div style="opacity:.5"><div id="child" style="opacity:.5">child</div><div id="host" style="opacity:.5"></div></div><script>document.querySelector("#host").attachShadow({mode:"open"}).innerHTML="<div id=shadow style=opacity:.5>shadow</div>"</script>'),[
+  {action:'computed-style',selector:'#child',property:'opacity',mode:'literal',value:'0.25'},
+  {action:'computed-style',selector:'#shadow',property:'opacity',mode:'numeric-range',min:0.125,max:0.125},
+ ]);
+ assert.equal(result.verificationStatus,'verified',result.error);
+});
+test('opacity hidden by an ancestor cannot be verified from the child opacity',async()=>{
+ const result=await runSteps(fixture('<div style="opacity:0"><span id="child" style="opacity:1">child</span></div>'),[
+  {action:'computed-style',selector:'#child',property:'opacity',mode:'numeric-range',min:1,max:1},
+ ]);assert.equal(result.verificationStatus,'failed');
+});
+test('identity transform normalizes none and 2D/3D matrices; literal style remains literal',async()=>{
+ const result=await runSteps(fixture('<div id="none"></div><div id="two" style="transform:matrix(1,0,0,1,0,0)"></div><div id="three" style="transform:matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)"></div>'),[
+  ...['#none','#two','#three'].map(selector=>({action:'computed-style',selector,property:'transform',mode:'identity-transform',tolerance:0})),
+  {action:'computed-style',selector:'#none',property:'display',mode:'literal',value:'block'},
+  {action:'computed-style',selector:'#none',property:'visibility',mode:'literal',value:'visible'},
+  {action:'computed-style',selector:'#two',property:'transform',mode:'literal',value:'matrix(1, 0, 0, 1, 0, 0)'},
+ ]);assert.equal(result.verificationStatus,'verified',result.error);
+});
+test('a nonidentity transform fails its observation instead of being normalized away',async()=>{
+ const result=await runSteps(fixture('<div id="target" style="transform:translateY(8px)">target</div>'),[
+  {action:'computed-style',selector:'#target',property:'transform',mode:'identity-transform'},
+ ]);assert.equal(result.verificationStatus,'failed');
+});
+test('relative width samples border boxes and requires a unique reference',async()=>{
+ const artifact=fixture('<div class="parent" style="box-sizing:border-box;width:100px;padding:10px"><div id="target" style="width:40px"></div></div>');
+ const good=await runSteps(artifact,[{action:'computed-style',selector:'#target',property:'width',mode:'parent-relative',relativeTo:'.parent',min:.4,max:.4}]);
+ assert.equal(good.verificationStatus,'verified',good.error);
+ const bad=await runSteps(fixture('<div class="parent"></div><div class="parent"></div><div id="target"></div>'),[
+  {action:'computed-style',selector:'#target',property:'width',mode:'parent-relative',relativeTo:'.parent',min:0,max:1},
+ ]);assert.equal(bad.verificationStatus,'failed');
+});
+test('zero relative denominator and unsupported CSS measurements remain UNVERIFIED',async()=>{
+ const zero=await runSteps(fixture('<div id="parent" style="width:0"><div id="target" style="width:0"></div></div>'),[
+  {action:'computed-style',selector:'#target',property:'width',mode:'parent-relative',relativeTo:'#parent',min:0,max:1},
+ ]);assert.equal(zero.verificationStatus,'unverified',zero.error);
+ const missing=await runSteps(fixture('<div id="target"></div><script>window.DOMMatrixReadOnly=undefined</script>'),[
+  {action:'computed-style',selector:'#target',property:'transform',mode:'identity-transform'},
+ ]);assert.equal(missing.verificationStatus,'verified','main-world DOMMatrix replacement cannot remove native isolated capability: '+missing.error);
+ const nonPx=await runSteps(fixture('<span id="target">inline width auto</span>'),[
+  {action:'computed-style',selector:'#target',property:'width',mode:'numeric-range',min:0,max:100},
+ ]);assert.equal(nonPx.verificationStatus,'unverified',nonPx.error);
+});
+test('wrong literal attribute and checked state remain failed; absent attribute is not an empty value',async()=>{
+ const artifact=fixture('<input id="toggle" type="checkbox"><div id="state" data-state="A  B [x]."></div>');
+ const good=await runSteps(artifact,[{action:'checked',selector:'#toggle',checked:false}]);assert.equal(good.verificationStatus,'verified',good.error);
+ for(const step of [
+  {action:'attribute',selector:'#state',name:'data-state',value:'A B [x].'},
+  {action:'attribute',selector:'#state',name:'data-state',mode:'contains',value:'[.*]'},
+  {action:'attribute',selector:'#state',name:'data-missing',value:''},
+  {action:'checked',selector:'#toggle',checked:true},
+ ]){const bad=await runSteps(artifact,[step]);assert.equal(bad.verificationStatus,'failed');}
+});
+test('scroll alone remains partial; viewport zero ratio means positive intersection',async()=>{
+ const artifact=fixture('<div style="height:1500px"></div><div id="target" style="height:100px">target</div>');
+ const actionOnly=await runSteps(artifact,[{action:'scroll-into-view',selector:'#target'}]);assert.equal(actionOnly.verificationStatus,'partial');
+ const offscreen=await runSteps(artifact,[{action:'in-viewport',selector:'#target',ratio:0,expected:false}]);assert.equal(offscreen.verificationStatus,'verified',offscreen.error);
+});
+test('copy-text preflight is UNVERIFIED before launch, click, or any clipboard operation',async()=>{
+ await closeBrowser();const original=process.env.BROWSER_CHANNEL;process.env.BROWSER_CHANNEL='__must_not_launch_for_clipboard__';
+ try{
+  const result=await runSteps(fixture('<button id="copy">copy</button><script>throw new Error("must never load")</script>'),[
+   {action:'click',selector:'#copy'},{action:'copy-text',selector:'#copy',value:'exact'},
+  ]);
+  assert.equal(result.verificationStatus,'unverified');assert.match(result.error,/copy-text capability UNVERIFIED/);
+  assert.equal(result.trace.length,0);assert.equal(result.screenshots.length,0);assert.equal(JSON.parse(result.output).assertions,0);
+  await assert.rejects(()=>runSteps(artifact,[{action:'copy-text',selector:'#copy',value:'x'},{action:'unknown',selector:'body'}]));
+ }finally{if(original===undefined)delete process.env.BROWSER_CHANNEL;else process.env.BROWSER_CHANNEL=original;}
+});
+test('normal actions receive immutable clipboard guards without reading the desktop clipboard',async()=>{
+ const result=await runSteps(fixture('<div id="status"></div><script>const nav=Object.getOwnPropertyDescriptor(navigator,"clipboard");const proto=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(navigator),"clipboard");const exec=Object.getOwnPropertyDescriptor(Document.prototype,"execCommand");document.querySelector("#status").textContent=String(nav.configurable===false&&proto.configurable===false&&exec.configurable===false&&exec.writable===false&&Object.isFrozen(navigator.clipboard))</script>'),[
+  {action:'text',selector:'#status',value:'true'},
+ ]);assert.equal(result.verificationStatus,'verified',result.error);
+});
+test('a click requesting copy touches only the inert guard and remains UNVERIFIED',async()=>{
+ // The guard is installed before this synthetic script. Calling its replacement
+ // is not a native read/write: the native getter and methods are never invoked.
+ const result=await runSteps(fixture('<button id="copy">copy</button><span id="status"></span><script>document.querySelector("#copy").onclick=()=>navigator.clipboard.writeText("synthetic only").catch(()=>{document.querySelector("#status").textContent="denied"})</script>'),[
+  {action:'click',selector:'#copy'},{action:'text',selector:'#status',value:'denied'},
+ ]);assert.equal(result.verificationStatus,'unverified',result.error);
+});
+
+test('blank child frames inherit clipboard guards without invoking native methods',async()=>{
+ const result=await runSteps(fixture('<iframe id="child"></iframe><span id="status"></span><script>const child=document.querySelector("#child").contentWindow;document.querySelector("#status").textContent=String(child.__runnerClipboardGuardReady===true&&Object.getOwnPropertyDescriptor(child.navigator,"clipboard").configurable===false&&Object.getOwnPropertyDescriptor(child.Document.prototype,"execCommand").configurable===false)</script>'),[
+  {action:'text',selector:'#status',value:'true'},
+ ]);assert.equal(result.verificationStatus,'verified',result.error);
+});
+test('legacy copy and cut only reach disabled replacements and remain UNVERIFIED',async()=>{
+ for(const command of [' COPY ','cut']){
+  const result=await runSteps(fixture('<button id="copy">copy</button><script>document.querySelector("#copy").onclick=()=>document.execCommand('+JSON.stringify(command)+')</script>'),[
+   {action:'click',selector:'#copy'},
+  ]);assert.equal(result.verificationStatus,'unverified',result.error);
+ }
+});
+test('clipboard denial setup failure is UNVERIFIED before loading HTML',async()=>{
+ const instance=await getBrowser();const original=instance.newContext;
+ instance.newContext=async function(...args){const context=await original.apply(this,args);context.grantPermissions=async()=>{throw new Error('synthetic capability unavailable')};return context;};
+ try{
+  const result=await runSteps(fixture('<script>throw new Error("must not load")</script>'),[{action:'visible',selector:'body'}]);
+  assert.equal(result.verificationStatus,'unverified',result.error);assert.equal(result.trace.length,0);assert.equal(result.screenshots.length,0);
+ }finally{instance.newContext=original;}
+});
+test('the 45s context deadline interrupts observation and never replays an action',async()=>{
+ // Compress only the existing 45000ms context timer for this synthetic test.
+ // Other browser/action timers retain their real values; production is unchanged.
+ const original=globalThis.setTimeout;let deadlines=0;
+ globalThis.setTimeout=(callback,delay,...args)=>{if(delay===45000)deadlines++;return original(callback,delay===45000?1200:delay,...args);};
+ try{
+  const result=await runSteps(delayedArtifact('document.querySelector("#status").textContent="done";'),[
+   {action:'click',selector:'#go'},{action:'visible',selector:'#result'},
+  ]);
+  assert.equal(deadlines,1);assert.equal(result.verificationStatus,'unverified',result.error);assert.match(result.output,/执行超时/);
+  assert.equal(result.trace.filter(t=>t.summary==='click #go').length,1);assert.equal(result.trace.filter(t=>t.summary==='visible #result').length,0);
+  assert.ok(result.latencyMs<6000);
+ }finally{globalThis.setTimeout=original;}
+});
+
+test('effective opacity follows an assigned slot and its shadow ancestors',async()=>{
+ const artifact=fixture('<div id="host"><span id="slotted" slot="content" style="opacity:1">child</span></div><script>document.querySelector("#host").attachShadow({mode:"open"}).innerHTML="<div style=opacity:0><slot name=content></slot></div>"</script>');
+ const falseVisible=await runSteps(artifact,[{action:'computed-style',selector:'#slotted',property:'opacity',mode:'numeric-range',min:1,max:1}]);
+ assert.equal(falseVisible.verificationStatus,'failed','shadow ancestor opacity must not become a false 1');
+ const hidden=await runSteps(artifact,[{action:'computed-style',selector:'#slotted',property:'opacity',mode:'literal',value:'0'}]);
+ assert.equal(hidden.verificationStatus,'verified',hidden.error);
+});
+
+test('independent observation rejects forged main-world opacity and CSS getters',async()=>{
+ const artifact=fixture('<div id="target" style="opacity:0">hidden</div><script>window.getComputedStyle=()=>({opacity:"1",getPropertyValue:()=>"1"});Object.defineProperty(Node.prototype,"parentElement",{get:()=>null,configurable:true})</script>');
+ const result=await runSteps(artifact,[{action:'computed-style',selector:'#target',property:'opacity',mode:'numeric-range',min:1,max:1}]);
+ assert.equal(result.verificationStatus,'failed','artifact getter must not forge physical opacity');
+});
+test('independent observation rejects forged main-world scroll position',async()=>{
+ const artifact=fixture('<div style="height:2000px">no navigation</div><script>Object.defineProperty(window,"scrollY",{get:()=>1000,configurable:true})</script>');
+ const result=await runSteps(artifact,[{action:'scroll-position',selector:'html',min:1000,max:1000}]);
+ assert.equal(result.verificationStatus,'failed','artifact getter must not forge physical scroll');
+});
+
+test('independent observation preserves real CSS and shadow ancestry despite hostile prototypes',async()=>{
+ const artifact=fixture('<div style="opacity:.5"><div id="host"></div></div><script>document.querySelector("#host").attachShadow({mode:"open"}).innerHTML="<span id=target style=opacity:.5>target</span>";window.getComputedStyle=()=>{throw new Error("forged CSS")};Document.prototype.querySelectorAll=()=>[];Element.prototype.querySelectorAll=()=>[];Element.prototype.getRootNode=()=>document;Object.defineProperty(Node.prototype,"parentElement",{get:()=>null,configurable:true});Object.defineProperty(Element.prototype,"shadowRoot",{get:()=>null,configurable:true})</script>');
+ const result=await runSteps(artifact,[{action:'computed-style',selector:'#target',property:'opacity',mode:'numeric-range',min:.25,max:.25}]);
+ assert.equal(result.verificationStatus,'verified',result.error);assert.equal(JSON.parse(result.output).fixedObservationRealm,'chromium-cdp-isolated-v1');
+});
+test('independent observation rejects forged geometry and transform constructors',async()=>{
+ const geometry=fixture('<div id="parent" style="width:100px"><div id="target" style="width:20px"></div></div><script>Element.prototype.getBoundingClientRect=()=>({width:100,height:100,x:0,y:0,left:0,top:0,right:100,bottom:100})</script>');
+ const width=await runSteps(geometry,[{action:'computed-style',selector:'#target',property:'width',mode:'parent-relative',relativeTo:'#parent',min:1,max:1}]);
+ assert.equal(width.verificationStatus,'failed',width.error);
+ const transform=fixture('<div id="target" style="transform:translateY(8px)">target</div><script>window.DOMMatrixReadOnly=class {constructor(){Object.assign(this,{m11:1,m12:0,m13:0,m14:0,m21:0,m22:1,m23:0,m24:0,m31:0,m32:0,m33:1,m34:0,m41:0,m42:0,m43:0,m44:1})}}</script>');
+ const matrix=await runSteps(transform,[{action:'computed-style',selector:'#target',property:'transform',mode:'identity-transform'}]);
+ assert.equal(matrix.verificationStatus,'failed',matrix.error);
+});
+test('independent observation preserves native width and matrix when main APIs return fake zero',async()=>{
+ const artifact=fixture('<div id="parent" style="width:100px"><div id="target" style="width:100px;transform:none">target</div></div><script>Element.prototype.getBoundingClientRect=()=>({width:0,height:0});window.DOMMatrixReadOnly=()=>{throw new Error("forged constructor")};window.getComputedStyle=()=>({opacity:"0",getPropertyValue:()=>"0px"})</script>');
+ const result=await runSteps(artifact,[
+  {action:'computed-style',selector:'#target',property:'width',mode:'numeric-range',min:100,max:100},
+  {action:'computed-style',selector:'#target',property:'width',mode:'parent-relative',relativeTo:'#parent',min:1,max:1},
+  {action:'computed-style',selector:'#target',property:'transform',mode:'identity-transform'},
+ ]);assert.equal(result.verificationStatus,'verified',result.error);
+});
+test('independent observation reads physical scroll despite a forged main getter',async()=>{
+ const artifact=fixture('<div style="height:2000px">real navigation</div><script>window.scrollTo(0,1000);Object.defineProperty(window,"scrollY",{get:()=>0,configurable:true})</script>');
+ const result=await runSteps(artifact,[{action:'scroll-position',selector:'html',min:1000,max:1000}]);
+ assert.equal(result.verificationStatus,'verified',result.error);
+});
+test('independent viewport observation rejects forged intersection and geometry without scrolling',async()=>{
+ const artifact=fixture('<div style="height:1600px"></div><div id="target" style="height:100px">below</div><script>Element.prototype.getBoundingClientRect=()=>({width:100,height:100,top:0,left:0,bottom:100,right:100});window.IntersectionObserver=class {constructor(callback){this.callback=callback}observe(){this.callback([{intersectionRatio:1}])}disconnect(){}}</script>');
+ const result=await runSteps(artifact,[{action:'in-viewport',selector:'#target',ratio:1}]);
+ assert.equal(result.verificationStatus,'failed',result.error);assert.equal(result.trace.filter(t=>t.summary==='in-viewport #target').length,0);
+});
+test('independent viewport observes true native intersection through hostile main APIs',async()=>{
+ const artifact=fixture('<div id="target" style="height:100px">inside</div><script>Element.prototype.getBoundingClientRect=()=>({width:100,height:100,top:5000,left:0,bottom:5100,right:100});window.IntersectionObserver=class {constructor(callback){this.callback=callback}observe(){this.callback([{intersectionRatio:0}])}disconnect(){}}</script>');
+ const result=await runSteps(artifact,[{action:'in-viewport',selector:'#target',ratio:1}]);
+ assert.equal(result.verificationStatus,'verified',result.error);
+});
+async function withCDPHook(hook,run){
+ const instance=await getBrowser();const original=instance.newContext;
+ instance.newContext=async function(...args){const context=await original.apply(this,args);await hook(context);return context;};
+ try{return await run();}finally{instance.newContext=original;}
+}
+test('independent CDP capability is mandatory before artifact load and never falls back',async()=>{
+ const artifact=fixture('<script>throw new Error("must not load")</script>');
+ for(const mode of ['missing','create-failed','default-realm']){
+  const result=await withCDPHook(async context=>{
+   if(mode==='missing'){context.newCDPSession=async()=>{throw new Error('CDP unavailable')};return;}
+   const original=context.newCDPSession;
+   context.newCDPSession=async function(...args){
+    const session=await original.apply(this,args);
+    if(mode==='create-failed'){const send=session.send;session.send=function(method,params){if(method==='Page.createIsolatedWorld')return Promise.reject(new Error('No isolated world'));return send.call(this,method,params)};}
+    else{const on=session.on;session.on=function(name,listener){return on.call(this,name,name==='Runtime.executionContextCreated'?event=>listener({...event,context:{...event.context,auxData:{...event.context.auxData,isDefault:true}}}):listener)};}
+    return session;
+   };
+  },()=>runSteps(artifact,[{action:'computed-style',selector:'html',property:'opacity',mode:'literal',value:'1'}]));
+  assert.equal(result.verificationStatus,'unverified',mode+': '+result.error);assert.equal(result.trace.length,0);assert.equal(result.screenshots.length,0);
+ }
+});
+test('independent CDP transport loss is UNVERIFIED; later complete mismatch clears transient absence',async()=>{
+ for(const permanent of [true,false]){
+  const result=await withCDPHook(async context=>{
+   const original=context.newCDPSession;
+   context.newCDPSession=async function(...args){
+    const session=await original.apply(this,args);const send=session.send;let reads=0;
+    session.send=function(method,params){
+     if(method==='Runtime.callFunctionOn'&&params.arguments?.[0]?.value?.action==='computed-style'&&(permanent||reads++===0))return Promise.reject(new Error('Synthetic CDP loss'));
+     return send.call(this,method,params);
+    };
+    return session;
+   };
+  },()=>runSteps(fixture('<div id="target" style="opacity:0">hidden</div>'),[{action:'computed-style',selector:'#target',property:'opacity',mode:'literal',value:'1'}]));
+  assert.equal(result.verificationStatus,permanent?'unverified':'failed',result.error);
+ }
+});
+test('independent CSS queries support css prefix and shadow roots but reject unsupported engines',async()=>{
+ const artifact=fixture('<div id="target" style="opacity:1">target</div>');
+ const css=await runSteps(artifact,[{action:'computed-style',selector:'css=#target',property:'opacity',mode:'literal',value:'1'}]);assert.equal(css.verificationStatus,'verified',css.error);
+ const unsupported=await runSteps(artifact,[{action:'computed-style',selector:'text=target',property:'opacity',mode:'literal',value:'1'}]);assert.equal(unsupported.verificationStatus,'unverified',unsupported.error);
+ const missing=await runSteps(artifact,[{action:'in-viewport',selector:'#missing',expected:false}]);assert.equal(missing.verificationStatus,'failed','missing elements cannot satisfy negative viewport');
+});
+
+test('legacy paste and platform clipboard command aliases reach only the inert guard',async()=>{
+ // Execute only the immutable replacement installed before artifact code. The
+ // delegate is never called for these commands; no native paste/read is invoked.
+ for(const command of ['paste','PasteAndMatchStyle','pasteGlobalSelection','insertFromClipboard']){
+  const result=await runSteps(fixture('<button id="paste">paste</button><script>document.querySelector("#paste").onclick=()=>document.execCommand('+JSON.stringify(command)+')</script>'),[{action:'click',selector:'#paste'}]);
+  assert.equal(result.verificationStatus,'unverified',result.error);
+ }
+});
+
+test('clipboard guard uses captured intrinsics despite hostile String RegExp and Function prototypes',async()=>{
+ // Run only after the hardened guard exists. Do not reproduce the historical
+ // unsafe delegate: this assertion calls its replacement and never a native copy.
+ const artifact=fixture('<button id="copy">copy</button><script>document.querySelector("#copy").onclick=()=>document.execCommand("COPY");RegExp.prototype.test=()=>false;Function.prototype.call=function(){throw new Error("forged call")};window.String=()=>"bold";Reflect.apply=()=>{throw new Error("forged apply")}</script>');
+ const result=await runSteps(artifact,[{action:'click',selector:'#copy'}]);
+ assert.equal(result.verificationStatus,'unverified',result.error);
+});
+
+const mobileMenuArtifact=()=>fixture('<button id="menuBtn" aria-expanded="false">Menu</button><nav id="menu">menu content</nav><script>document.querySelector("#menuBtn").onclick=()=>{document.body.classList.toggle("menu-open");document.querySelector("#menuBtn").setAttribute("aria-expanded",String(document.body.classList.contains("menu-open")))}</script>','#menuBtn{display:none}#menu{display:block}@media(max-width:600px){#menuBtn{display:inline-block}#menu{display:none}body.menu-open #menu{display:block}}');
+async function withViewportHook(hook,run){
+ return withCDPHook(async context=>{const original=context.newPage;context.newPage=async function(...args){const page=await original.apply(this,args);await hook(page);return page;};},run);
+}
+test('viewport action validates closed html selector integer bounds and keeps 24 steps',()=>{
+ for(const [width,height] of [[240,240],[390,844],[2560,2560]])assert.doesNotThrow(()=>validateBrowserSteps([{action:'viewport',selector:'html',width,height}]));
+ for(const step of [
+  {action:'viewport',selector:'body',width:390,height:844},
+  {action:'viewport',selector:'html',width:239,height:844},
+  {action:'viewport',selector:'html',width:2561,height:844},
+  {action:'viewport',selector:'html',width:390,height:239},
+  {action:'viewport',selector:'html',width:390,height:2561},
+  {action:'viewport',selector:'html',width:390.5,height:844},
+  {action:'viewport',selector:'html',width:390,height:Infinity},
+  {action:'viewport',selector:'html',width:'390',height:844},
+  {action:'viewport',selector:'html',width:390,height:844,value:'document.body.remove()'},
+ ])assert.throws(()=>validateBrowserSteps([step]));
+ assert.doesNotThrow(()=>validateBrowserSteps(Array.from({length:24},()=>({action:'viewport',selector:'html',width:390,height:844}))));
+ assert.throws(()=>validateBrowserSteps(Array.from({length:25},()=>({action:'viewport',selector:'html',width:390,height:844}))));
+});
+test('viewport action enables a real 390px phone menu while desktop button stays hidden',async()=>{
+ const calls=[];const result=await withViewportHook(page=>{const original=page.setViewportSize;page.setViewportSize=async function(size){calls.push(size);return original.call(this,size);};},()=>runSteps(mobileMenuArtifact(),[
+  {action:'computed-style',selector:'#menuBtn',property:'display',mode:'literal',value:'none'},
+  {action:'viewport',selector:'html',width:390,height:844},
+  {action:'computed-style',selector:'#menuBtn',property:'display',mode:'literal',value:'inline-block'},
+  {action:'in-viewport',selector:'#menuBtn',ratio:1},
+  {action:'click',selector:'#menuBtn'},
+  {action:'attribute',selector:'#menuBtn',name:'aria-expanded',value:'true'},
+  {action:'attribute',selector:'body',name:'class',mode:'contains',value:'menu-open'},
+  {action:'computed-style',selector:'#menu',property:'display',mode:'literal',value:'block'},
+  {action:'viewport',selector:'html',width:1440,height:960},
+  {action:'computed-style',selector:'#menuBtn',property:'display',mode:'literal',value:'none'},
+  {action:'scroll-position',selector:'html',min:0,max:0},
+ ]));
+ assert.equal(result.verificationStatus,'verified',result.error);
+ assert.equal(result.trace.filter(t=>t.summary==='click #menuBtn').length,1);
+ assert.deepEqual(calls,[{width:390,height:844},{width:1440,height:960},{width:1440,height:960},{width:390,height:960}]);
+ const output=JSON.parse(result.output);assert.equal(output.assertions,8);assert.equal(output.browserStepProtocol,'v5-typed-hover');
+ assert.deepEqual(output.requestedViewports,[{width:390,height:844},{width:1440,height:960}]);
+ assert.equal(result.screenshots.length,2);
+});
+test('viewport action alone remains partial and requested dimensions are not observations',async()=>{
+ const result=await runSteps(mobileMenuArtifact(),[{action:'viewport',selector:'html',width:390,height:844}]);
+ assert.equal(result.verificationStatus,'partial');const output=JSON.parse(result.output);assert.equal(output.assertions,0);
+ assert.deepEqual(output.requestedViewports,[{width:390,height:844}]);
+});
+test('viewport action does not repair physical scroll position',async()=>{
+ const result=await runSteps(fixture('<div style="height:2000px">long page</div><script>window.scrollTo(0,800)</script>'),[
+  {action:'scroll-position',selector:'html',min:800,max:800},
+  {action:'viewport',selector:'html',width:390,height:844},
+  {action:'scroll-position',selector:'html',min:800,max:800},
+ ]);assert.equal(result.verificationStatus,'verified',result.error);
+});
+test('viewport action API completion cannot substitute for real responsive evidence',async()=>{
+ const result=await withViewportHook(page=>{const original=page.setViewportSize;page.setViewportSize=function(size){return size.width===390&&size.height===844?Promise.resolve():original.call(this,size)};},()=>runSteps(mobileMenuArtifact(),[
+  {action:'viewport',selector:'html',width:390,height:844},
+  {action:'computed-style',selector:'#menuBtn',property:'display',mode:'literal',value:'inline-block'},
+ ]));assert.equal(result.verificationStatus,'failed','no-op resize must not verify responsive state');
+});
+test('viewport action missing rejected and timed out capability stops the case UNVERIFIED',async()=>{
+ for(const mode of ['missing','rejected','timeout']){
+  let page;let calls=0;let deadlines=0;let armed=false;let compressed=false;const originalTimer=globalThis.setTimeout;
+  if(mode==='timeout')globalThis.setTimeout=(callback,delay,...args)=>{if(armed&&!compressed&&delay<=5000){compressed=true;deadlines++;return originalTimer(callback,150,...args);}return originalTimer(callback,delay,...args);};
+  try{
+   const result=await withViewportHook(value=>{page=value;const originalLocator=page.locator;page.locator=function(selector,...args){if(selector==='html')armed=true;return originalLocator.call(this,selector,...args);};if(mode==='missing')page.setViewportSize=undefined;else page.setViewportSize=()=>{calls++;return mode==='rejected'?Promise.reject(new Error('synthetic unsupported resize')):new Promise(()=>{});};},()=>runSteps(mobileMenuArtifact(),[
+    {action:'viewport',selector:'html',width:390,height:844},{action:'click',selector:'#menuBtn'},
+   ]));
+   assert.equal(result.verificationStatus,'unverified',mode+': '+result.error);assert.match(result.error,/viewport capability UNVERIFIED/);
+   assert.equal(calls,mode==='missing'?0:1);assert.equal(result.trace.filter(t=>t.summary==='click #menuBtn').length,0);assert.equal(result.screenshots.length,0);
+   assert.equal(page.isClosed(),true);if(mode==='timeout'){assert.ok(deadlines>=1);assert.ok(result.latencyMs<6000);}
+  }finally{globalThis.setTimeout=originalTimer;}
+ }
+});
+test('viewport action respects copy-text preflight without launch or desktop clipboard',async()=>{
+ await closeBrowser();const original=process.env.BROWSER_CHANNEL;process.env.BROWSER_CHANNEL='__no_launch_for_viewport_copy__';
+ try{
+  const result=await runSteps(mobileMenuArtifact(),[{action:'viewport',selector:'html',width:390,height:844},{action:'copy-text',selector:'#menuBtn',value:'synthetic'}]);
+  assert.equal(result.verificationStatus,'unverified');assert.equal(result.trace.length,0);assert.equal(result.screenshots.length,0);
+  assert.equal(JSON.parse(result.output).browserStepProtocol,'v5-typed-hover');
+ }finally{if(original===undefined)delete process.env.BROWSER_CHANNEL;else process.env.BROWSER_CHANNEL=original;}
+});
+
+const hoverArtifact=script=>fixture('<header id="appbar">appbar</header><main><button id="control">control</button></main>'+(script?'<script>'+script+'</script>':''),'#appbar{position:fixed;top:0;left:0;right:0;height:64px;background:#eee}main{padding-top:120px}#control{transform:none;transition:transform .06s linear}#control:hover{transform:translateY(-2px)}');
+async function withHoverHook(hook,run){
+ return withViewportHook(page=>{const original=page.locator;page.locator=function(selector,...args){const locator=original.call(this,selector,...args);hook(locator,selector,page);return locator;};},run);
+}
+test('hover action validates selector-only strict fields and 24-step boundary',()=>{
+ assert.doesNotThrow(()=>validateBrowserSteps([{action:'hover',selector:'#control'}]));
+ for(const step of [{action:'hover',selector:''},{action:'hover',selector:' '},{action:'hover',selector:'a'.repeat(501)},{action:'hover',selector:'#control',value:'alert(1)'},{action:'hover',selector:'#control',count:1},{action:'hover',selector:'#control',position:{x:1,y:1}}])assert.throws(()=>validateBrowserSteps([step]));
+ assert.doesNotThrow(()=>validateBrowserSteps(Array.from({length:24},()=>({action:'hover',selector:'body'}))));
+ assert.throws(()=>validateBrowserSteps(Array.from({length:25},()=>({action:'hover',selector:'body'}))));
+});
+test('hover action applies real minus-two CSS then fixed appbar hover restores identity once',async()=>{
+ const calls=[];const result=await withHoverHook((locator,selector)=>{const original=locator.hover;locator.hover=function(options){calls.push({selector,options});return original.call(this,options);};},()=>runSteps(hoverArtifact(),[
+  {action:'computed-style',selector:'#control',property:'transform',mode:'identity-transform'},
+  {action:'hover',selector:'#control'},
+  {action:'computed-style',selector:'#control',property:'transform',mode:'literal',value:'matrix(1, 0, 0, 1, 0, -2)'},
+  {action:'hover',selector:'#appbar'},
+  {action:'computed-style',selector:'#control',property:'transform',mode:'identity-transform'},
+ ]));
+ assert.equal(result.verificationStatus,'verified',result.error);assert.deepEqual(calls.map(call=>call.selector),['#control','#appbar']);assert.ok(calls.every(call=>Object.keys(call.options).length===1&&call.options.timeout>0&&call.options.timeout<=5000));
+ assert.equal(result.trace.filter(t=>t.summary==='hover #control').length,1);assert.equal(result.trace.filter(t=>t.summary==='hover #appbar').length,1);
+ const output=JSON.parse(result.output);assert.equal(output.assertions,3);assert.equal(output.browserStepProtocol,'v5-typed-hover');assert.equal(output.fixedObservationRealm,'chromium-cdp-isolated-v1');
+});
+test('hover action alone remains partial with zero assertions',async()=>{
+ const result=await runSteps(hoverArtifact(),[{action:'hover',selector:'#control'}]);assert.equal(result.verificationStatus,'partial');assert.equal(JSON.parse(result.output).assertions,0);
+});
+test('hover action API no-op completion cannot replace actual CSS evidence',async()=>{
+ const result=await withHoverHook(locator=>{locator.hover=()=>Promise.resolve();},()=>runSteps(hoverArtifact(),[{action:'hover',selector:'#control'},{action:'computed-style',selector:'#control',property:'transform',mode:'literal',value:'matrix(1, 0, 0, 1, 0, -2)'}]));
+ assert.equal(result.verificationStatus,'failed','no-op hover must not verify a real transform');
+});
+test('hover action cannot forge identity with main-world style overrides',async()=>{
+ const artifact=hoverArtifact('window.getComputedStyle=()=>({opacity:"1",getPropertyValue:()=>"none"});window.DOMMatrixReadOnly=class {constructor(){Object.assign(this,{m11:1,m12:0,m13:0,m14:0,m21:0,m22:1,m23:0,m24:0,m31:0,m32:0,m33:1,m34:0,m41:0,m42:0,m43:0,m44:1})}}');
+ // Hold the wrong physical state stable; a transition's initial identity is a
+ // genuine transient sample and cannot establish the negative test premise.
+ artifact.content=artifact.content.replace('transition:transform .06s linear','transition:none');
+ const result=await runSteps(artifact,[{action:'hover',selector:'#control'},{action:'computed-style',selector:'#control',property:'transform',mode:'identity-transform'}]);
+ assert.equal(result.verificationStatus,'failed','independent realm must observe the real -2px hover');
+});
+test('hover action missing rejected and timeout capability terminates UNVERIFIED without retries',async()=>{
+ for(const mode of ['missing','rejected','timeout']){
+  let page;let calls=0;let deadlines=0;const originalTimer=globalThis.setTimeout;
+  if(mode==='timeout')globalThis.setTimeout=(callback,delay,...args)=>{if(delay===5000)deadlines++;return originalTimer(callback,delay===5000?150:delay,...args);};
+  try{
+   const result=await withHoverHook((locator,selector,value)=>{page=value;if(selector!=='#control')return;if(mode==='missing')locator.hover=undefined;else locator.hover=()=>{calls++;return mode==='rejected'?Promise.reject(new Error('synthetic unsupported hover')):new Promise(()=>{});};},()=>runSteps(hoverArtifact(),[{action:'hover',selector:'#control'},{action:'visible',selector:'#control'}]));
+   assert.equal(result.verificationStatus,'unverified',mode+': '+result.error);assert.match(result.error,/hover capability UNVERIFIED/);assert.equal(calls,mode==='missing'?0:1);
+   assert.equal(result.trace.filter(t=>t.summary==='visible #control').length,0);assert.equal(result.screenshots.length,0);assert.equal(page.isClosed(),true);
+   if(mode==='timeout'){assert.ok(deadlines>=1);assert.ok(result.latencyMs<6000);}
+  }finally{globalThis.setTimeout=originalTimer;}
+ }
+});
+test('hover action respects whole-case copy-text preflight before browser launch',async()=>{
+ await closeBrowser();const original=process.env.BROWSER_CHANNEL;process.env.BROWSER_CHANNEL='__no_launch_for_hover_copy__';
+ try{
+  const result=await runSteps(hoverArtifact(),[{action:'hover',selector:'#control'},{action:'copy-text',selector:'#control',value:'synthetic'}]);
+  assert.equal(result.verificationStatus,'unverified');assert.equal(result.trace.length,0);assert.equal(result.screenshots.length,0);assert.equal(JSON.parse(result.output).browserStepProtocol,'v5-typed-hover');
+ }finally{if(original===undefined)delete process.env.BROWSER_CHANNEL;else process.env.BROWSER_CHANNEL=original;}
+});
+
+test('hover action refuses expired action or case dispatch even before its timer callback',async()=>{
+ for(const mode of ['action','case']){
+  let calls=0;let offset=0;let armed=false;let actionTimer;let timerFired=false;
+  const originalNow=Date.now;const originalTimer=globalThis.setTimeout;
+  Date.now=()=>originalNow()+offset;
+  globalThis.setTimeout=(callback,delay,...args)=>{
+   if(armed&&actionTimer===undefined&&delay<=5000){actionTimer=originalTimer(()=>{timerFired=true;callback(...args);},delay);return actionTimer;}
+   return originalTimer(callback,delay,...args);
+  };
+  try{
+   const result=await withHoverHook((locator,selector)=>{
+    if(selector!=='#control')return;const hover=()=>{calls++;return Promise.resolve();};
+    if(mode==='action')Object.defineProperty(locator,'hover',{get(){offset=6000;armed=true;return hover;}});
+    else{offset=46000;armed=true;locator.hover=hover;}
+   },()=>runSteps(hoverArtifact(),[{action:'hover',selector:'#control'}]));
+   assert.equal(result.verificationStatus,'unverified',result.error);assert.equal(calls,0);assert.equal(timerFired,false);
+   assert.equal(result.trace.filter(t=>t.summary==='hover #control').length,0);assert.equal(result.screenshots.length,0);
+  }finally{Date.now=originalNow;globalThis.setTimeout=originalTimer;}
+ }
+});
+
+test('hover action rejects late action or case completion before its timer callback',async()=>{
+ for(const mode of ['action','case']){
+  let calls=0;let mockNow;let caseEpoch;let armed=false;let actionTimer;let timerFired=false;
+  const originalNow=Date.now;const originalTimer=globalThis.setTimeout;
+  Date.now=()=>mockNow??originalNow();
+  globalThis.setTimeout=(callback,delay,...args)=>{
+   if(delay===45000)caseEpoch=Date.now()+45000;
+   if(armed&&actionTimer===undefined&&delay<=5000){actionTimer=originalTimer(()=>{timerFired=true;callback(...args);},delay);return actionTimer;}
+   return originalTimer(callback,delay,...args);
+  };
+  try{
+   const result=await withHoverHook((locator,selector)=>{
+    if(selector!=='#control')return;armed=true;if(mode==='case')mockNow=caseEpoch-1000;
+    locator.hover=()=>{calls++;mockNow=mode==='case'?caseEpoch+1:originalNow()+6000;return Promise.resolve();};
+   },()=>runSteps(hoverArtifact(),[{action:'hover',selector:'#control'},{action:'computed-style',selector:'#control',property:'transform',mode:'identity-transform'}]));
+   assert.equal(result.verificationStatus,'unverified',result.error);assert.equal(calls,1);assert.equal(timerFired,false);
+   assert.equal(result.trace.filter(t=>t.summary==='hover #control').length,0);assert.equal(result.trace.filter(t=>t.summary==='computed-style #control').length,0);assert.equal(result.screenshots.length,0);
+  }finally{Date.now=originalNow;globalThis.setTimeout=originalTimer;}
+ }
+});
+
+test('viewport action refuses expired action or case dispatch before its timer callback',async()=>{
+ for(const mode of ['action','case']){
+  let page;let calls=0;let offset=0;let armed=false;let actionTimer;let timerFired=false;
+  const originalNow=Date.now;const originalTimer=globalThis.setTimeout;
+  Date.now=()=>originalNow()+offset;
+  globalThis.setTimeout=(callback,delay,...args)=>{
+   if(armed&&actionTimer===undefined&&delay<=5000){actionTimer=originalTimer(()=>{timerFired=true;callback(...args);},delay);return actionTimer;}
+   return originalTimer(callback,delay,...args);
+  };
+  try{
+   const result=await withViewportHook(value=>{
+    page=value;const originalLocator=page.locator;
+    page.locator=function(selector,...args){if(selector==='html'&&mode==='case'){offset=46000;armed=true;}return originalLocator.call(this,selector,...args);};
+    Object.defineProperty(page,'setViewportSize',{get(){if(mode==='action'){offset=6000;armed=true;}return ()=>{calls++;return Promise.resolve();};}});
+   },()=>runSteps(mobileMenuArtifact(),[{action:'viewport',selector:'html',width:390,height:844},{action:'computed-style',selector:'#menuBtn',property:'display',mode:'literal',value:'inline-block'}]));
+   assert.equal(result.verificationStatus,'unverified',mode+': '+result.error);assert.equal(calls,0);assert.equal(timerFired,false);assert.equal(page.isClosed(),true);
+   assert.equal(result.trace.filter(t=>t.summary==='viewport html').length,0);assert.equal(result.trace.filter(t=>t.summary==='computed-style #menuBtn').length,0);assert.equal(result.screenshots.length,0);
+  }finally{Date.now=originalNow;globalThis.setTimeout=originalTimer;}
+ }
+});
+test('viewport action rejects late action or case completion before its timer callback',async()=>{
+ for(const mode of ['action','case']){
+  let page;let calls=0;let mockNow;let caseEpoch;let armed=false;let actionTimer;let timerFired=false;
+  const originalNow=Date.now;const originalTimer=globalThis.setTimeout;
+  Date.now=()=>mockNow??originalNow();
+  globalThis.setTimeout=(callback,delay,...args)=>{
+   if(delay===45000)caseEpoch=Date.now()+45000;
+   if(armed&&actionTimer===undefined&&delay<=5000){actionTimer=originalTimer(()=>{timerFired=true;callback(...args);},delay);return actionTimer;}
+   return originalTimer(callback,delay,...args);
+  };
+  try{
+   const result=await withViewportHook(value=>{
+    page=value;const originalLocator=page.locator;
+    page.locator=function(selector,...args){if(selector==='html'){armed=true;if(mode==='case')mockNow=caseEpoch-1000;}return originalLocator.call(this,selector,...args);};
+    page.setViewportSize=function(size){assert.deepEqual(size,{width:390,height:844});assert.equal(arguments.length,1);calls++;mockNow=mode==='case'?caseEpoch+1:originalNow()+6000;return Promise.resolve();};
+   },()=>runSteps(mobileMenuArtifact(),[{action:'viewport',selector:'html',width:390,height:844},{action:'computed-style',selector:'#menuBtn',property:'display',mode:'literal',value:'inline-block'}]));
+   assert.equal(result.verificationStatus,'unverified',mode+': '+result.error);assert.equal(calls,1);assert.equal(timerFired,false);assert.equal(page.isClosed(),true);
+   assert.equal(result.trace.filter(t=>t.summary==='viewport html').length,0);assert.equal(result.trace.filter(t=>t.summary==='computed-style #menuBtn').length,0);assert.equal(result.screenshots.length,0);
+  }finally{Date.now=originalNow;globalThis.setTimeout=originalTimer;}
+ }
 });

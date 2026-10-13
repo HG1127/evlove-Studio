@@ -1,7 +1,9 @@
+import { htmlProtectionRuntimePlugin } from './apps/backend/build/html-protection-runtime-plugin'
 import { defineConfig } from "vitest/config";
 import path from "node:path";
 
 export default defineConfig({
+  plugins: [htmlProtectionRuntimePlugin()],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

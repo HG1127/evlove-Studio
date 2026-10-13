@@ -5,13 +5,14 @@ import type {
   TargetRunResult,
   TestCase,
 } from "@evolution/contracts";
+import { isWholeProtectionCriterion } from "./html-protection-scope";
 
 export function hasDeterministicRoundtripProof(
   criterion: AcceptanceCriterion,
   testCases: TestCase[],
   runs: TargetRunResult[],
 ) {
-  if (criterion.validationMethod !== "format-roundtrip") return false;
+  if (criterion.validationMethod !== "format-roundtrip" || isWholeProtectionCriterion(criterion)) return false;
   const mapped = testCases.filter((testCase) => testCase.criterionIds.includes(criterion.id));
   if (!mapped.length || mapped.some((testCase) => testCase.executionMode !== "roundtrip")) return false;
   const mappedCases = mapped.map((testCase) => testCase.id);

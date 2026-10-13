@@ -34,7 +34,7 @@ export type ServerCurrentArtifactPorts = {
 
 function deterministicOnly(project:EvolveProject,testCases:TestCase[],runs:TargetRunResult[]){
   return settleDeterministicEvaluation({
-    criteria:project.acceptanceRubric,testCases,runs,
+    criteria:project.acceptanceRubric,scope:project,testCases,runs,
     notes:["当前同卷 Baseline 仅获得确定性证据；未测量的通用质量维度保持 0，不代表产品失败。"],
   });
 }
@@ -127,7 +127,7 @@ export async function judgeServerCurrentArtifactSuite(
     runs:judgeEvidence.map(item=>item.payload),
   });
   return settleAiEvaluation({
-    criteria:project.acceptanceRubric,testCases,runs:runs.map(run=>judgeEvidence.find(item=>item.run.testCaseId===run.testCaseId)?.run??run),ai,
+    criteria:project.acceptanceRubric,scope:project,testCases,runs:runs.map(run=>judgeEvidence.find(item=>item.run.testCaseId===run.testCaseId)?.run??run),ai,
     notes:["Server Hidden Holdout：当前版本已在隐藏同卷执行并独立 Judge。",...(runs.some((run)=>run.verificationStatus==="unverified")?["部分隐藏题缺真实执行能力；对应 Criterion 保持 UNVERIFIED。"]:[])],
   });
 }

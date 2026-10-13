@@ -31,6 +31,14 @@ beforeEach(() => {
   });
 });
 describe("standalone HTML through the real Sandbox adapter composition", () => {
+  it("uses a new named typed runtime cache instead of an old script snapshot", async () => {
+    await validate();
+    expect(getOrCreate).toHaveBeenCalledWith(expect.objectContaining({
+      name: "evolution-browser-pw163-v5-typed-hover",
+      tags: expect.objectContaining({ version: "pw-1.63.0-v5-typed-hover" }),
+    }));
+  });
+
   it("checks the stored snapshot without resuming or deleting a valid cache", async () => {
     const result = await validate();
     expect(getOrCreate).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ resume: false, persistent: true, networkPolicy: "deny-all" }));

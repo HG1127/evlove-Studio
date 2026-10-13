@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { BrowserStepSchema } from "./browser-step-contract";
+export { BrowserStepSchema } from "./browser-step-contract";
+import { HtmlProtectionProofSchema } from "./html-protection-proof-contract";
 import {ServerWorkflowControlOwnerSchema} from "./workflow-control-owner-contract";
 import { GitRepositoryBindingSchema, GitTargetSnapshotBindingSchema } from "./git-target-contract";
 import {ConnectorCandidateBindingSchema,ConnectorTargetBindingSchema,ConnectorTargetSnapshotBindingSchema} from "./connector-contract";
@@ -479,7 +482,7 @@ export const CandidateSchema = z.object({
 });
 export type Candidate = z.infer<typeof CandidateSchema>;
 
-export const BrowserStepSchema = z.object({action:z.enum(["click","fill","visible","text","count"]),selector:z.string().min(1),value:z.string().optional(),count:z.number().int().nonnegative().optional()});
+
 export const TestCaseSchema = z.object({
   browserSteps:z.array(BrowserStepSchema).max(24).optional(),
   id: z.string(),
@@ -496,6 +499,7 @@ export const TestCaseSchema = z.object({
 export type TestCase = z.infer<typeof TestCaseSchema>;
 
 export const TargetRunResultSchema = z.object({
+  htmlProtectionProof: HtmlProtectionProofSchema.optional(),
   artifactHash:z.string().optional(),
   screenshots:z.array(z.object({name:z.string(),width:z.number(),height:z.number(),dataUrl:z.string(),artifactHash:z.string()})).optional(),
   visualEvidenceRefs:z.array(z.object({name:z.string(),width:z.number(),height:z.number(),artifactHash:z.string(),blobId:z.string()})).optional(),

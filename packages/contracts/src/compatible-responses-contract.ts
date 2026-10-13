@@ -8,11 +8,15 @@ export const CompatibleResponsesEnvelopeSchema=z.object({
     param:z.string().max(256).nullish(),
     code:z.string().max(256).nullish(),
   }).passthrough().nullish(),
+  refusal:z.string().max(8192).nullish(),
   output_text:z.string().max(2_000_000).nullish(),
   output:z.array(z.object({
+    type:z.string().max(128).optional(),
+    refusal:z.string().max(8192).nullish(),
     content:z.array(z.object({
       type:z.string().max(128).optional(),
       text:z.string().max(2_000_000).optional(),
+      refusal:z.string().max(8192).nullish(),
     }).passthrough()).max(1024).nullish(),
   }).passthrough()).max(1024).nullish(),
 }).passthrough();

@@ -6,7 +6,7 @@ import type {
   ValidationRun,
 } from "@evolution/contracts";
 import { evidenceFingerprint } from "./evidence-binding";
-import { htmlProtectionContractBlocker } from "./html-protection-browser-steps";
+import { htmlProtectionAcceptanceBlocker } from "./html-protection-scope";
 import { hasAuthoritativeHiddenRelease, hasFullHiddenMeasurement, hasVerifiedHiddenBaseline } from "./hidden-validation-evidence";
 import { indexScopedAcceptanceResults } from "./acceptance-result-identity";
 import { indexUniqueById } from "./identity-index";
@@ -66,7 +66,7 @@ export function settleArtifactAcceptanceFromValidation(args:{
         && receipt.mimeType===frozen.mimeType
         && (!snapshot.contentHash||snapshot.contentHash===receipt.snapshotHash));
     });
-  const contractBlocker=htmlProtectionContractBlocker(args.project);
+  const contractBlocker=htmlProtectionAcceptanceBlocker(args.project);
   const validationReusable=!contractBlocker && hasFullHiddenMeasurement(args.validation,args.candidate.id,args.project.hiddenEvalSuite)
     && args.validation.evidenceFingerprint===binding;
   const {byId:scoreById,duplicateIds}=indexScopedAcceptanceResults([{

@@ -1,5 +1,5 @@
 import { evidenceFingerprint } from "./evidence-binding";
-import { acceptanceArtifacts as coreAcceptanceArtifacts, indexScopedAcceptanceResults } from "@evolution/core";
+import { acceptanceArtifacts as coreAcceptanceArtifacts, htmlProtectionAcceptanceBlocker, indexScopedAcceptanceResults } from "@evolution/core";
 import { htmlCandidateGuard } from "./html-candidate-guard";
 import {
   ArtifactAcceptanceAiResultSchema,
@@ -336,6 +336,18 @@ export async function buildCandidateArtifacts(project: EvolveProject, candidate:
 
 export async function acceptCandidateArtifacts(project: EvolveProject, candidate: Candidate, criteria: AcceptanceCriterion[]): Promise<ArtifactAcceptance> {
   const binding = evidenceFingerprint({ ...project, acceptanceRubric: criteria }, candidate);
+  // A caller's narrowed rubric cannot erase the original acceptance scope.
+  const blocker = htmlProtectionAcceptanceBlocker(project)
+    ?? htmlProtectionAcceptanceBlocker({ ...project, acceptanceRubric: criteria });
+  if (blocker) return {
+    id: `artifact-acceptance-${Date.now()}`, status: "unverified", candidateId: candidate.id,
+    evidenceFingerprint: binding, overallScore: 0, coverageScore: 0, integrityScore: 0,
+    pairwiseScore: 0, hardGatePass: false,
+    results: criteria.map(criterion => ({ criterionId: criterion.id, score: 0, pass: false,
+      evidence: [], gaps: [blocker], note: "unverified whole HTML protection authority" })),
+    attempts: 0, maxRepairAttempts: project.artifactAcceptance.maxRepairAttempts ?? 3,
+    summary: blocker, lastCheckedAt: now(),
+  };
   const result = await acceptCandidateArtifactsUnbound(project, candidate, criteria);
   return { ...result, evidenceFingerprint: binding };
 }

@@ -1,4 +1,6 @@
-export const STRUCTURED_AI_FINAL_OUTPUT_VERSION="final-json-v1";
+import { classifyStructuredAiJsonFailure, StructuredAiJsonError } from "./ai-json-error";
+
+export const STRUCTURED_AI_FINAL_OUTPUT_VERSION="final-json-v2-safe-syntax-kind";
 
 /** Remove outer transport presentation only, preserving literal artifact content inside JSON. */
 export function readStructuredAiFinalText(text:string):string{
@@ -18,5 +20,5 @@ export function readStructuredAiFinalText(text:string):string{
 export function parseStructuredAiOutput(text:string):unknown{
   const body=readStructuredAiFinalText(text);
   try{return JSON.parse(body) as unknown;}
-  catch{throw Object.assign(new Error("模型最终回复不是完整、有效的 JSON。请检查 JSON 输出方式或切换支持结构化输出的模型。"),{code:"AI_OUTPUT_INVALID_JSON"});}
+  catch{throw new StructuredAiJsonError(classifyStructuredAiJsonFailure(body));}
 }

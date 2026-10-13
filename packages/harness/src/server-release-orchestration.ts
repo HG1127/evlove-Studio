@@ -3,7 +3,7 @@ import {
   applyProductionLearningGovernance,
   applyReleaseResultToProject,
   currentReleaseCandidate,
-  htmlProtectionContractBlocker,
+  htmlProtectionAcceptanceBlocker,
   expectedReleaseArtifactHashes,
   nextDurableReleaseAction,
   projectHasLiveReleaseDecision,
@@ -82,6 +82,11 @@ export async function runServerReleaseOrchestration(
   const action=nextDurableReleaseAction(project);
   if(!action){
     if(projectHasLiveReleaseDecision(project)){
+      if(project.release.status==="promoted"){
+        const blocker=htmlProtectionAcceptanceBlocker(project);
+        if(blocker)return pause(project,"[server-release-contract-pending] "+blocker);
+      }
+      // An observed rollback remains a recovery fact, never new acceptance proof.
       return {control:"continue",project,terminal:true,reason:"线上 Release 已有真实终态证据。"};
     }
     if(project.release.status==="shadow"&&project.release.healthy===false){
@@ -98,7 +103,7 @@ export async function runServerReleaseOrchestration(
     return pause(project,"[server-release-binding-pending] 需要显式绑定当前 Candidate 的 READY Preview Deployment，或当前 Release 状态暂不支持自动推进。");
   }
   if(action!=="rollback"){
-    const contractBlocker=htmlProtectionContractBlocker(project);
+    const contractBlocker=htmlProtectionAcceptanceBlocker(project);
     if(contractBlocker)return pause(project,"[server-release-contract-pending] "+contractBlocker);
     let authorization:{ok:boolean;reason?:string};
     try{

@@ -1,5 +1,5 @@
 import type { EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
-import { BASELINE_COMPARISON_PHASE_VERSION, baselineDeferredComparisonCriterionIds, projectSupportsStaticDocumentText, campaignScoringInputFingerprint, citesHistoricalEvidence, fastHash } from "@evolution/core";
+import { HTML_PROTECTION_SETTLEMENT_POLICY, BASELINE_COMPARISON_PHASE_VERSION, baselineDeferredComparisonCriterionIds, projectSupportsStaticDocumentText, campaignScoringInputFingerprint, citesHistoricalEvidence, fastHash } from "@evolution/core";
 
 import { serverSemanticTextContext, serverSemanticContextQuery, SERVER_SEMANTIC_CONTEXT_VERSION } from "./server-source-context";
 
@@ -285,6 +285,7 @@ export function serverBaselineFingerprint(project: EvolveProject, scoringRouteFi
       : undefined;
   return fastHash({
     version: "server-baseline-v3",
+    protectionSettlementPolicy: HTML_PROTECTION_SETTLEMENT_POLICY,
     semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION,
     baselineComparisonPhaseVersion: BASELINE_COMPARISON_PHASE_VERSION,
     deferredComparisonCriterionIds: [...baselineDeferredComparisonCriterionIds(project)].sort(),

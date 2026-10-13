@@ -1,6 +1,6 @@
 import {CompatibleResponsesEnvelopeSchema,type CompatibleResponsesEnvelope} from "@evolution/contracts";
 
-export const COMPATIBLE_RESPONSES_OUTPUT_VERSION="responses-output-v1";
+export const COMPATIBLE_RESPONSES_OUTPUT_VERSION="responses-output-v2-refusal";
 
 export type CompatibleResponsesFormat="json-schema"|"json-object"|"prompt-json";
 export type CompatibleResponsesOptions={
@@ -46,6 +46,9 @@ export function readCompatibleResponsesOutput(value:unknown,options:{requireComp
   const nonterminal=["failed","cancelled","incomplete","queued","in_progress"].includes(body.status??"");
   if(body.error||nonterminal||(options.requireCompletedStatus&&body.status&&body.status!=="completed")){
     throw new Error(body.error?.message??"Responses 模型未完成最终输出。");
+  }
+  if(body.refusal?.trim() || body.output?.some(item=>item.type==="refusal" || item.refusal?.trim() || item.content?.some(part=>part.type==="refusal" || part.refusal?.trim()))){
+    throw new Error("模型拒绝了请求，未返回可用的最终结果。");
   }
   const text=outputText(body);
   if(!text.trim())throw new Error("Responses API 响应中没有 output_text");

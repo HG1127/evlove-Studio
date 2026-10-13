@@ -4,7 +4,7 @@ import {evidenceFingerprint,hasExactFrozenArtifactSet,settleArtifactAcceptanceFr
 
 function fixture(){
   const project={
-    sourceArtifacts:[{id:"source",role:"target"}],
+    sourceArtifacts:[{id:"source",role:"target",name:"a.md",extension:"md",mimeType:"text/markdown",textContent:"old"}],
     acceptanceRubric:[
       {id:"CONTENT",title:"内容",requirement:"通过",weight:90,hardGate:true,minScore:80,validationMethod:"semantic-judge",artifactIds:[],protectedConstraint:false},
       {id:"FORMAT",title:"格式",requirement:"保持",weight:10,hardGate:true,minScore:90,validationMethod:"format-roundtrip",artifactIds:["source"],protectedConstraint:true},

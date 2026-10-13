@@ -73,3 +73,13 @@ describe("frontend ZIP delivery of explicitly accepted server Candidate", () => 
   });
 
 });
+
+describe("stored whole HTML acceptance cannot deliver an evidence slice",()=>{
+ for(const champion of [false,true])it.each(["search","static","mixed"] as const)("blocks "+(champion?"Champion":"Candidate")+" %s render/ZIP before artifact or storage I/O",async mode=>{
+  const f=acceptedLegacyHtmlPaperFixture(champion,mode);mocks.get.mockResolvedValue(f.project);mocks.getBlob.mockImplementation(async(id:string)=>f.blobs.get(id));
+  const response=await app.fetch(new Request("http://localhost/render-accepted",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({missionId:f.project.id,candidateId:champion?f.prior.id:f.current.id})}));
+  expect(response.status).toBe(409);expect(await response.text()).toContain("html-protection-scope-pending");
+  await expect(buildDeliverableZip(f.project)).rejects.toThrow("html-protection-scope-pending");
+  for(const call of [mocks.getBlob,mocks.putBlob,mocks.deleteBlob,mocks.save,mocks.append])expect(call).not.toHaveBeenCalled();
+ });
+});

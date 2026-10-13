@@ -292,7 +292,7 @@ export async function runServerBaseline(
   try {
     if (!judgeRuns.length || !effectiveCriteria.length) {
       evaluation = settleDeterministicEvaluation({
-        criteria: project.acceptanceRubric,
+        criteria: project.acceptanceRubric, scope: project,
         testCases: baselineCases,
         runs,
         notes: ["Server Baseline：仅结算已获得的确定性证据；缺失语义评审的标准保持 UNVERIFIED，通用质量维度未测量。"],
@@ -300,7 +300,7 @@ export async function runServerBaseline(
     } else {
       const judged = await ports.judge(judgePayload);
       evaluation = settleAiEvaluation({
-        criteria: project.acceptanceRubric,
+        criteria: project.acceptanceRubric, scope: project,
         testCases: baselineCases,
         runs: evaluationRuns,
         ai: judged,

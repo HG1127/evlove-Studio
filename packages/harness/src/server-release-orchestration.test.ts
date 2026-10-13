@@ -8,6 +8,7 @@ function fixture(){
   const candidate={id:"C1",name:"candidate",change:"x",patches:[],artifactSnapshots:[{id:"s",sourceArtifactId:"source",name:"a.txt",mimeType:"text/plain",content:"new",contentHash:"hash-c1",createdAt:"now"}]} as unknown as Candidate;
   const project={
     id:"mission",version:"V12",currentVersionId:"V12",appliedPatches:[],versions:[],
+    sourceArtifacts:[{id:"source",role:"target",name:"a.txt",extension:"txt",mimeType:"text/plain",textContent:"old"}],acceptanceRubric:[],
     targetConnection:{adapter:"artifact"},
     releaseTarget:{provider:"vercel",mode:"preview-promote",status:"connected",label:"Vercel",healthPath:"/"},
     experimentRun:{winnerId:"C1"},candidates:[candidate],searchChampion:{candidate},
