@@ -141,9 +141,9 @@ export function compareHtmlCompleteSourceRetention(raw: { originalHtml: string; 
       for (const item of element.attrs) {
         if (/^on[a-z]+$/i.test(item.name)) hazards.push("additional-event-handler");
         if (["id", "name"].includes(item.name) && (originalNames.has(item.value) || NAMED_PROPERTIES.has(item.value))) hazards.push("additional-named-property-risk");
-        if (["src", "srcset", "poster", "data", "action", "formaction", "xlink:href"].includes(item.name) && item.value.trim()) hazards.push("additional-resource-reference");
+        if (["src", "srcset", "poster", "data", "action", "formaction", "xlink:href", "ping", "background"].includes(item.name) && item.value.trim()) hazards.push("additional-resource-reference");
         if (item.name === "href" && item.value.trim() && !item.value.trim().startsWith("#")) hazards.push("additional-resource-reference");
-        if (item.name === "style" && /url\s*\(|@import/i.test(item.value)) hazards.push("additional-inline-style-resource");
+        if (item.name === "style" && /\b(?:url|image-set|image)\s*\(|@import|\\/i.test(item.value)) hazards.push("additional-inline-style-resource");
       }
     }
     const uniqueHazards = [...new Set(hazards)];

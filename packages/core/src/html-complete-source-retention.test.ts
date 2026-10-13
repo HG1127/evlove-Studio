@@ -123,6 +123,17 @@ describe("complete supplied HTML source retention facts", () => {
     expect(result.additionalCards.some(item => item.hazards.length > 0)).toBe(true);
     expect(result.nodeErasureRanges).toEqual([]);
   });
+  it.each([
+    String.raw`<span style="background-image:u\72l(https://example.invalid/image.png)">new</span>`,
+    `<span style='background-image:image-set("https://example.invalid/image.png" 1x)'>new</span>`,
+    '<a href="#old" ping="https://example.invalid/audit">new</a>',
+    '<table background="https://example.invalid/background.png"><tbody><tr><td>new</td></tr></tbody></table>',
+  ])("refuses additional CSS escapes, image-set and resource attributes", addition => {
+    const result = compare(add(original, card("new", addition)));
+    expect(result.reconstruction.available).toBe(false);
+    expect(result.additionalCards.some(item => item.hazards.some(hazard => hazard.includes("resource")))).toBe(true);
+    expect(result.nodeErasureRanges).toEqual([]);
+  });
   it.each([card("old"), card("search"), card("new") + card("new")])("refuses duplicate or clobbering element identities", addition => {
     const result = compare(add(original, addition));
     expect(result.reconstruction.available).toBe(false);
