@@ -20,7 +20,8 @@ type Target = {
 };
 type Batch = { batchId: string; stateId: string; registry: Registry; registeredScopes: HtmlProtectionSnapshotRegisteredScopes };
 type SearchState = {
-  stateId: string; stateKind: "boot" | "query" | "clear"; predecessorStateId: string | null;
+  stateId: string; stateKind: "boot" | "query" | "clear";
+  stateIntent: "boot" | "query-positive" | "query-negative" | "clear"; predecessorStateId: string | null;
   proposedActions: BrowserStep[]; requiredCapability: "native-boot-observation" | "stateful-browser-actions-unavailable";
   inputValue: string; expectedVisibleCardIds: string[]; expectedVisibleChapterIds: string[];
   registeredScopes: HtmlProtectionSnapshotRegisteredScopes;
@@ -179,11 +180,12 @@ export function htmlProtectionOriginalRuntimePlan(args: { sourceArtifactId: stri
         originalSha256: identity.sha256, projection: "search-membership-v1", targetId: "original-search-catalog",
         cardSelector: ".slide-card", chapterSelector: ".chapter", inputSelector: "#search", countSelector: "#searchCount" });
       const cardIds = cards.map(card => attribute(card, "id")!), chapterIds = chapters.map(chapter => attribute(chapter, "id")!);
-      function state(kind: SearchState["stateKind"], suffix: string, value: string, predecessor: string | null, action: boolean) {
+      function state(kind: SearchState["stateKind"], suffix: "boot" | "positive" | "negative" | "clear", value: string, predecessor: string | null, action: boolean) {
         const visible = cards.filter(card => attribute(card, "data-search")!.includes(value)).map(card => attribute(card, "id")!);
         const visibleChapters = chapterIds.filter(id => cardChapter.some(item => item.chapterId === id && visible.includes(item.cardId!)));
         const stateId = "original-runtime:search:" + suffix;
-        searchStates.push({ stateId, stateKind: kind, predecessorStateId: predecessor,
+        searchStates.push({ stateId, stateKind: kind, stateIntent: kind === "query" ? (suffix === "positive" ? "query-positive" : "query-negative") : kind,
+          predecessorStateId: predecessor,
           proposedActions: action ? [BrowserStepSchema.parse({ action: "fill", selector: "#search", value })] : [],
           requiredCapability: action ? "stateful-browser-actions-unavailable" : "native-boot-observation", inputValue: value,
           expectedVisibleCardIds: visible, expectedVisibleChapterIds: visibleChapters,
@@ -192,8 +194,8 @@ export function htmlProtectionOriginalRuntimePlan(args: { sourceArtifactId: stri
         return stateId;
       }
       const boot = state("boot", "boot", attribute(inputs[0]!, "value") ?? "", null, false);
-      const empty = state("query", "negative", negative, boot, true), matched = state("query", "positive", positive, empty, true);
-      state("clear", "clear", "", matched, true);
+      const matched = state("query", "positive", positive, boot, true), empty = state("query", "negative", negative, matched, true);
+      state("clear", "clear", "", empty, true);
       gap("search-js-causality-unverified", inputs.map(element => element.path), parentsByPath.get(inputs[0]!.path));
       gap("search-state-execution-unavailable", inputs.map(element => element.path), parentsByPath.get(inputs[0]!.path));
     }

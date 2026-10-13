@@ -73,12 +73,14 @@ describe("finite Original-only HTML runtime registry/plan", () => {
   it("derives full membership and chapter ownership from Original, including every positive matching ID", () => {
     const result = plan(catalog()), states = result.search.states;
     expect(states.map(state => state.stateKind)).toEqual(["boot", "query", "query", "clear"]);
-    expect(states[2]!.inputValue).toBe("alpha");
+    expect(states.map(state => state.stateIntent)).toEqual(["boot", "query-positive", "query-negative", "clear"]);
+    expect(states.map(state => state.predecessorStateId)).toEqual([null, states[0]!.stateId, states[1]!.stateId, states[2]!.stateId]);
+    expect(states[1]!.inputValue).toBe("alpha");
     const expected = result.census.cardChapter.filter(item => Number(item.cardId!.split("-")[1]) % 2 === 0).map(item => item.cardId!);
-    expect(states[2]!.expectedVisibleCardIds).toEqual(expected);
-    expect(states[2]!.expectedVisibleCardIds).toHaveLength(56);
-    expect(states[1]!.expectedVisibleCardIds).toEqual([]);
-    expect(states[1]!.expectedVisibleChapterIds).toEqual([]);
+    expect(states[1]!.expectedVisibleCardIds).toEqual(expected);
+    expect(states[1]!.expectedVisibleCardIds).toHaveLength(56);
+    expect(states[2]!.expectedVisibleCardIds).toEqual([]);
+    expect(states[2]!.expectedVisibleChapterIds).toEqual([]);
     expect(states[3]!.expectedVisibleCardIds).toHaveLength(111);
     expect(states[3]!.expectedVisibleChapterIds).toHaveLength(11);
     for (const state of states) {
@@ -133,7 +135,7 @@ describe("finite Original-only HTML runtime registry/plan", () => {
   it("chooses a negative query absent from the entire Original, including script/comment/outside-card text", () => {
     const html = catalog(3, 1).replace("</body>", "<!-- __EVOLUTION_ORIGINAL_NO_MATCH_0__ -->"
       + "<script>const marker='__evolution_original_no_match_1__'</script></body>");
-    const result = plan(html), query = result.search.states[1]!.inputValue;
+    const result = plan(html), query = result.search.states[2]!.inputValue;
     expect(query).toBe("__evolution_original_no_match_2__");
     expect(html.toLowerCase()).not.toContain(query);
   });
