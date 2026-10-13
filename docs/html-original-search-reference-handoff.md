@@ -36,3 +36,13 @@ The last real Mission observation was project-1790480873333 revision 53 at 08:02
 These selected facts are connected to the private collector, not to Campaign settlement or a whole-protection signer. Chapter empty-state policy, other controls, full script/dynamic state closure, semantic and visual preservation, remaining coarse obligations and authoritative provenance are still required. No protection ceiling, safety predicate, frozen paper, Hidden qualification or acceptance guard was relaxed.
 
 The separate direct Judge correction-context branch is held pending the human's explicit full-file/same-model correction-scope answer after automatic approval review rejected the budget change. This search branch neither changes that budget nor resolves the Judge failure. Full local CI, deployment and real Mission acceptance are separate evidence.
+
+## Direct runtime dependency follow-up
+
+The subsequent codex/html-search-parser-runtime-dependency integration retains f1560ae's functional source and adds Core's direct runtime declarations for @babel/parser 7.29.7 and Zod, plus the matching six importer lines in the lockfile and a package-ownership regression. No resolved dependency version was upgraded.
+
+An actual isolated pnpm Core production deployment of the earlier manifest exited zero, but its parser resolved outside that target at D:/node_modules/@babel/parser. The red receipt also records Zod as transitively available but undeclared. This is an undeclared/ambient dependency finding, not a fabricated module-not-found result. After repair, both parser 7.29.7 and Zod 4.4.3 resolved inside the isolated production target and successfully handled only synthetic input; the complete raw TypeScript Core export graph was not executed by that library probe.
+
+The initial frozen offline install retained ERR_PNPM_NO_OFFLINE_META for @ai-sdk/provider-utils. A second frozen install obtained public registry metadata and completed; the final lockfile still contains only the six intended Core importer additions. No user file, model credential or business data was sent by these package operations.
+
+Updated local development evidence: twelve unique related files / 456 passed / zero failures or skips; architecture, full lint, four forced unchanged root TypeScript references and original pnpm build all exited zero, with source/lock hashes rechecked. Receipts: D:/Downloads/evolution-os-smoke-temp/html-parser-runtime-related-checks-20261013.json, html-parser-production-red-probe-20261013.json and html-parser-production-green-probe-20261013.json. This final dependency integration needs its own full exact-commit Quality Gate; earlier source f1560ae is held from delivery. These records do not prove a real Mission or a deployed feature.
