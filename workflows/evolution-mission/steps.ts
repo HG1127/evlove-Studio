@@ -449,6 +449,9 @@ export async function planMissionStep(input:EvolutionWorkflowRunInput,iteration:
       requestedAt:input.requestedAt,append:event=>appendWorkflowControlEvent(runtime.events,event),
     });
     if(recovered!==mission){
+      // Audit/model awaits may outlive a cancellation without changing the Mission revision.
+      // This independent read rechecks the Job/owner and keeps the original writer CAS.
+      await requireServerWorkflowControlOwner(input);
       await runtime.missions.save(recovered);
       mission=recovered;
     }
