@@ -1,5 +1,12 @@
 # Main flow acceptance
 
+## 2026-10-13 — Frozen refinement requirements and Original collection plan
+
+[Content scope handoff](html-protection-content-scope-handoff.md) corrects the evidence allocation for the actual SOP content refinement goal: all Original meaning requires independent semantic observation, while literal/editing conflicts, structure, styles, scripts and full runtime residuals remain protected. Actual physical files and the unchanged stored-paper hash now produce Original-only collection registries; Current/Candidate expected plans match on the same Hidden. Search state intents align with the closed owned-Page action session.23 related files/603 tests, architecture,full lint and TypeScript/production build passed at62c5462; a new exact complete gate is required.
+
+Prior e05ec6d completed an audited58-stage same-source local gate,377 files/3722 tests,Runner76/E2E5/bothUI, with original port-release failure retained and two tail checks actually resumed. Production00:21UTC still servesfb3a9b5. Dedicated Git chat remained inactive-window; automatic review rejected the CI chat handoff as duplicate text. Root made no main push/deployment. Actual Campaign/stateful cloud/full protection, Experiment, same-Hidden,Gate F and exact accepted download/reopen remain unproven.
+
+
 ## 2026-10-13 — Private cloud observation composition (local checks)
 
 [Cloud observation handoff](html-protection-cloud-observation-handoff.md) adds the owned browser factory, fixed server-only ESM compilation, bounded private custody/readback and selected DOM comparison.15 actual related files/334 tests, architecture/full lint/TypeScript production build passed with independent dependencies; all failed launcher and shared-cache build attempts remain retained. The Campaign collector, actual state transitions/copy, Original runtime profile, whole semantic/visual/provenance, same-Hidden, Gate F and exact accepted download/reopen remain incomplete. A new exact complete gate is required.
