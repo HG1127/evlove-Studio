@@ -52,13 +52,19 @@ export async function collectServerHtmlCompleteSourceRetention(args: {
     }
     return row;
   }
+  function sharedAnchor(row: ArtifactMetadata, expected: { sha256: string; byteLength: number }) {
+    if (row.sha256 !== expected.sha256 || row.sizeBytes !== expected.byteLength) {
+      throw Error("Complete-source shared Blob metadata anchor differs between arms");
+    }
+    return row;
+  }
   const originalBefore = await metadata(originalId, first.binding.original);
-  const executedBefore = executedId === originalId ? originalBefore : await metadata(executedId, first.binding.executed);
+  const executedBefore = executedId === originalId ? sharedAnchor(originalBefore, first.binding.executed) : await metadata(executedId, first.binding.executed);
   // Re-read bytes between independent stored metadata observations. A computed hash
   // alone cannot replace the stored anchor or certify an earlier uploaded file.
   const second = await readServerHtmlProtectionInputs({ project, testCase, criterionId, candidate, ports });
   const originalAfter = await metadata(originalId, second.binding.original);
-  const executedAfter = executedId === originalId ? originalAfter : await metadata(executedId, second.binding.executed);
+  const executedAfter = executedId === originalId ? sharedAnchor(originalAfter, second.binding.executed) : await metadata(executedId, second.binding.executed);
   if (digest(first.binding) !== digest(second.binding) || first.originalHtml !== second.originalHtml
     || first.executedHtml !== second.executedHtml || digest(originalBefore) !== digest(originalAfter)
     || digest(executedBefore) !== digest(executedAfter) || callerState(args) !== captured) {
