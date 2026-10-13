@@ -8,6 +8,11 @@ import type {
 } from "@evolution/contracts";
 import {
   baselineReadiness,
+  originalHtmlBaselineDiagnosticCase,
+  originalHtmlBaselineDiagnosticEligibility,
+  OriginalHtmlBaselineDiagnosticBindingSchema,
+  type OriginalHtmlBaselineDiagnosticBinding,
+  type OriginalHtmlBaselineDiagnosticEligibility,
   baselineDeferredComparisonCriterionIds,
   htmlProtectionContractBlocker,
   campaignLiveObservationFresh,
@@ -61,6 +66,8 @@ export type ServerBaselinePorts = {
     testCases: TestCase[];
     artifactContext: Array<Record<string, unknown>>;
   }): Promise<ExecuteArtifactBatchAiResult>;
+  /** Server-owned physical read port; no public/AI field can provide diagnosis eligibility. */
+  readOriginalHtmlDiagnosticBinding?(args: { project: EvolveProject; testCase: TestCase }): Promise<unknown>;
   executeStoredEvidence?(args: { project: EvolveProject; testCase: TestCase }): Promise<TargetRunResult>;
   buildCurrentArtifactContext?(args: { project: EvolveProject; testCases?: TestCase[] }): Promise<Array<Record<string, unknown>>>;
   executeExternalBatch?(args: {
@@ -76,6 +83,8 @@ export type ServerBaselineOutcome = {
   ready: boolean;
   reason: string;
   capabilityGaps: string[];
+  /** Fresh diagnosis-only qualification; never stored as acceptance or reused by canReuseServerBaseline. */
+  diagnosticEligibility?: OriginalHtmlBaselineDiagnosticEligibility;
 };
 
 /**
@@ -133,6 +142,15 @@ export async function runServerBaseline(
     updatedAt: startedAt,
   };
 
+  const diagnosticCase = ports.readOriginalHtmlDiagnosticBinding ? originalHtmlBaselineDiagnosticCase(project) : undefined;
+  let initialDiagnosticBinding: OriginalHtmlBaselineDiagnosticBinding | undefined;
+  if (diagnosticCase && ports.readOriginalHtmlDiagnosticBinding) {
+    try {
+      initialDiagnosticBinding = OriginalHtmlBaselineDiagnosticBindingSchema.parse(await ports.readOriginalHtmlDiagnosticBinding({
+        project: structuredClone(project), testCase: structuredClone(diagnosticCase),
+      }));
+    } catch { /* Missing/changed physical inputs retain the original evidence pause. */ }
+  }
   const ordered = new Map<string, TargetRunResult>();
   const semanticCases: TestCase[] = [];
   const externalCases: TestCase[] = [];
@@ -191,6 +209,12 @@ export async function runServerBaseline(
     const semanticStarted = Date.now();
     try {
       const artifactContext = await currentSemanticArtifactContext(project, ports.buildCurrentArtifactContext, semanticCases);
+      // The App context computed this digest from actual current bytes. It is not inferred from AI output.
+      const targets = project.sourceArtifacts.filter(source => source.role === "target");
+      const contexts = targets.length === 1 ? artifactContext.filter(item => item.id === targets[0]!.id) : [];
+      const currentArtifactHash = ports.readOriginalHtmlDiagnosticBinding && contexts.length === 1
+        && !contexts[0]!.truncated && typeof contexts[0]!.artifactSha256 === "string"
+        && /^[a-f0-9]{64}$/.test(contexts[0]!.artifactSha256) ? contexts[0]!.artifactSha256 : undefined;
       const result = await ports.executeSemanticBatch({
         project,
         testCases: semanticCases,
@@ -207,6 +231,7 @@ export async function runServerBaseline(
           output: item.output,
           latencyMs: latency,
           cost: 0,
+          ...(currentArtifactHash ? { artifactHash: currentArtifactHash } : {}),
           verificationStatus: artifactContext.some((artifact) => artifact.truncated) && semanticEvidenceStatus(item.output) === "verified" ? "partial" : semanticEvidenceStatus(item.output),
           trace: [{
             id: `server-semantic-${testCase.id}`,
@@ -289,6 +314,7 @@ export async function runServerBaseline(
   };
 
   let evaluation;
+  let independentJudge: EvaluateAiResult | undefined;
   try {
     if (!judgeRuns.length || !effectiveCriteria.length) {
       evaluation = settleDeterministicEvaluation({
@@ -299,6 +325,7 @@ export async function runServerBaseline(
       });
     } else {
       const judged = await ports.judge(judgePayload);
+      independentJudge = structuredClone(judged);
       evaluation = settleAiEvaluation({
         criteria: project.acceptanceRubric, scope: project,
         testCases: baselineCases,
@@ -355,7 +382,19 @@ export async function runServerBaseline(
     updatedAt: now(),
   };
   const readiness = baselineReadiness(measured);
-  if (requiredCapabilityGaps.length || hardGateGaps.length || !readiness.ready) {
+  let diagnosticEligibility: OriginalHtmlBaselineDiagnosticEligibility | undefined;
+  if (!requiredCapabilityGaps.length && readiness.ready && hardGateGaps.length === 1
+    && hardGateGaps[0]?.id === "SYS-INTEGRITY" && diagnosticCase && initialDiagnosticBinding
+    && independentJudge && ports.readOriginalHtmlDiagnosticBinding) {
+    try {
+      const finalDiagnosticBinding = await ports.readOriginalHtmlDiagnosticBinding({
+        project: structuredClone(measured), testCase: structuredClone(diagnosticCase),
+      });
+      diagnosticEligibility = originalHtmlBaselineDiagnosticEligibility({ project: measured,
+        initialBinding: initialDiagnosticBinding, finalBinding: finalDiagnosticBinding, independentJudge });
+    } catch { /* No serialized claim or readback failure grants a diagnosis exception. */ }
+  }
+  if (!diagnosticEligibility && (requiredCapabilityGaps.length || hardGateGaps.length || !readiness.ready)) {
     const details = [
       ...readiness.blockers,
       ...(requiredCapabilityGaps.length ? [`未完成真实执行：${requiredCapabilityGaps.map((item) => item.id).join("、")}`] : []),
@@ -410,8 +449,10 @@ export async function runServerBaseline(
     project: readyProject,
     baseline,
     ready: true,
-    reason: `Server Baseline 已完成：${readiness.verified} verified / ${readiness.partial} partial，证据覆盖 ${readiness.evidenceCoverage}%`,
-    capabilityGaps: [],
+    reason: `Server Baseline 已完成：${readiness.verified} verified / ${readiness.partial} partial，证据覆盖 ${readiness.evidenceCoverage}%`
+      + (diagnosticEligibility ? "；当次原始 HTML 文件测量可用于诊断，完整保护仍未验收。" : ""),
+    capabilityGaps: diagnosticEligibility ? diagnosticEligibility.pendingCriterionIds.map(id => `criterion:${id}`) : [],
+    ...(diagnosticEligibility ? { diagnosticEligibility } : {}),
   };
 }
 

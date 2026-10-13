@@ -855,6 +855,7 @@ async function executeServerControlAction(
           phase:"baseline",
           serverNative:true,
           ready:baselineOutcome.ready,
+          ...(baselineOutcome.diagnosticEligibility ? { diagnosticEligibility: baselineOutcome.diagnosticEligibility } : {}),
           reason:baselineOutcome.reason,
           capabilityGaps:baselineOutcome.capabilityGaps,
           verified:baselineOutcome.baseline.runs.filter((run)=>run.verificationStatus==="verified").length,
