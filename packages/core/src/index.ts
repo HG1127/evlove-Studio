@@ -68,3 +68,5 @@ export * from "./html-protection-content-scope";
 export * from "./original-html-baseline-diagnostic";
 
 export * from "./html-complete-source-retention";
+export * from "./html-protection-original-search-reference";
+export * from "./html-protection-original-search-count-format";

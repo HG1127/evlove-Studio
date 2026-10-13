@@ -119,7 +119,15 @@ Runtime f76c41c passed 55 relevant files / 824 tests, architecture, full lint an
 Public readonly UI and before/after build-info at 01:11 UTC both identify main/production e3482e75f1ae6b88d7756e5ee35cecb0cbfa80f9. PR #6 remains frozen at c24608a, draft/open, hosted jobs blocked before any step by account billing/allowance; the existing human local-CI exception answer remains pending. No new source is production verified. The real Mission's fresh Baseline, changed frozen Candidate, paired execution, Gate F and exact accepted download/reopen remain unproven.
 
 
-## Current verified status (2026-10-09)
+## Latest main-flow observation (2026-10-13)
+
+The last real Mission read at 08:02:01 UTC identified project-1790480873333 revision 53 on production 16ac971c61158a5297f5a5028170d8632161e89a. Five fresh current observations bound the complete unchanged Original, but the independent Baseline Judge failed with invalid JSON. The SDK run completed and its stored Job is waiting; no execution is currently proven live. Candidate cand-P1-001 remains frozen. Experiment, paired same-Hidden, Gate F and identical accepted download/reopen remain required.
+
+The isolated codex/html-original-search-reference increment connects full Original-ID comparisons to the private selected-search collector, preserving every strict raw change and unapproved addition. Its eleven related files passed 454 assertions; architecture, full lint, all unchanged TypeScript references and the original production build passed. Full exact-commit CI and deployment remain pending. This is selected native comparison infrastructure, not a whole-protection/semantic/visual attestation or a completed Mission. Details and retained failures: docs/html-original-search-reference-handoff.md.
+
+The separate direct Judge correction-context branch remains held for the explicit complete-file/same-connection correction-scope answer. Prior production/cloud permissions remain recorded; the rejected budget change has not been applied.
+
+## Prior verified status (2026-10-09)
 
 Latest public readonly check at 2026-10-09 10:05 UTC identifies production `e3482e75f1ae6b88d7756e5ee35cecb0cbfa80f9`, main/production. Readonly UI passed five routes, mobile 390px and denied-storage recovery with zero page errors or attempted writes. Main hosted Quality Gate remains blocked before execution by GitHub Actions account billing/allowance; dependent Smoke was skipped. Local final-JSON/first-construction/BOM/original-text-format branches and draft PR #6 have not been exact-SHA production verified.
 
