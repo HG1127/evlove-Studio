@@ -70,11 +70,24 @@ const actionFacts = z.object({
   executionRecorded: z.boolean(), gaps: z.array(HtmlProtectionSearchStateGapSchema).max(64),
 }).strict();
 const linkFacts = z.object({ linked: z.boolean(), gaps: z.array(HtmlProtectionSearchStateGapSchema).max(64) }).strict();
+/**
+ * Identity of the complete rejected canonical native DTO, never selected content or
+ * an available native observation. Its size can exceed the output packet budget;
+ * the small receipt itself still obeys that budget. The producer must measure it.
+ */
+export const HtmlProtectionSearchCloudRejectedSnapshotSchema = z.object({
+  sha256: digest, byteLength: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  reason: z.enum(["aggregate-private-file-limit", "document-binding-mismatch"]),
+}).strict();
+export type HtmlProtectionSearchCloudRejectedSnapshot = z.infer<typeof HtmlProtectionSearchCloudRejectedSnapshotSchema>;
 export const HtmlProtectionSearchCloudStepSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("observed"), stateRequest: HtmlProtectionSearchStateRequestSchema,
     actionFacts, snapshot: HtmlProtectionSnapshotResultSchema, linkFacts }).strict(),
   z.object({ status: z.literal("action-failed"), stateRequest: HtmlProtectionSearchStateRequestSchema,
     actionFacts: actionFacts.extend({ executionRecorded: z.literal(false) }) }).strict(),
+  z.object({ status: z.literal("observation-rejected"), stateRequest: HtmlProtectionSearchStateRequestSchema,
+    actionFacts: actionFacts.extend({ executionRecorded: z.literal(true) }),
+    rejectedSnapshot: HtmlProtectionSearchCloudRejectedSnapshotSchema }).strict(),
   z.object({ status: z.literal("not-executed"), stateRequest: HtmlProtectionSearchStateRequestSchema,
     reason: z.literal("prior-step-unavailable") }).strict(),
 ]).superRefine((step, ctx) => {
@@ -182,6 +195,8 @@ function validateBatch(observation: BatchObservation, ctx: z.RefinementCtx) {
  * comparison still detects missing/changed native items and is not replaced here.
  * A complete historical prefix can still be unavailable when the final owner/custody
  * guard fails. Its closed reason is a controller claim, never guard provenance or PASS.
+ * observation-rejected retains a real completed action plus the full rejected DTO
+ * identity, then stops. Its digest cannot replace native content or its provenance.
  */
 export const HtmlProtectionSearchCloudObservationSchema = z.union([available, beforeStartup, afterStartup]).superRefine((observation, ctx) => {
   if (observation.nonce !== observation.input.nonce || !same(observation.request, observation.input.request)

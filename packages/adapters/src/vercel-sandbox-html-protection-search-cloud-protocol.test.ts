@@ -11,7 +11,7 @@ import {
 import {
   HtmlProtectionSearchCloudInputSchema, HtmlProtectionSearchCloudStepSchema,
   HtmlProtectionSearchCloudObservationSchema, HtmlProtectionSearchCloudManifestSchema, htmlProtectionSearchCloudInputSha256,
-  type HtmlProtectionSearchCloudInput, type HtmlProtectionSearchCloudStep,
+  type HtmlProtectionSearchCloudInput, type HtmlProtectionSearchCloudStep, type HtmlProtectionSearchCloudRejectedSnapshot,
 } from "./vercel-sandbox-html-protection-search-cloud-protocol";
 
 function input(): HtmlProtectionSearchCloudInput {
@@ -96,6 +96,17 @@ function interrupted(index = 1) {
     reason: "state-execution-unavailable" as const, steps: states };
 }
 
+function rejected(index = 1, reason: HtmlProtectionSearchCloudRejectedSnapshot["reason"] = "aggregate-private-file-limit") {
+  const complete = observation(), source = observed(complete.steps[index]), encoded = canonical(source.snapshot);
+  const receipt = HtmlProtectionSearchCloudStepSchema.parse({
+    status: "observation-rejected", stateRequest: source.stateRequest, actionFacts: source.actionFacts,
+    rejectedSnapshot: { sha256: sha(encoded), byteLength: Buffer.byteLength(encoded), reason },
+  });
+  const records = complete.steps.map((step, position): HtmlProtectionSearchCloudStep => position < index ? step : position === index ? receipt
+    : { status: "not-executed", stateRequest: step.stateRequest, reason: "prior-step-unavailable" });
+  return { ...complete, availability: "unavailable" as const, phase: "after-startup" as const,
+    reason: reason === "aggregate-private-file-limit" ? "private-file-limit" as const : "served-material-mismatch" as const, steps: records };
+}
 describe("closed private consecutive search batch input", () => {
   it("binds all four native states with a boot anchor but no general action/proof interface", () => {
     const batch = HtmlProtectionSearchCloudInputSchema.parse(input());
@@ -210,6 +221,75 @@ describe("private consecutive search observation with retained actual prefix", (
     if (result.availability !== "unavailable" || result.phase !== "after-startup") throw Error("fixture");
     expect(result.steps.map(step => step.status)).toEqual(["observed", "action-failed", "not-executed", "not-executed"]);
     expect(result.steps[2]).not.toHaveProperty("snapshot");
+  });
+  it.each(["aggregate-private-file-limit", "document-binding-mismatch"] as const)(
+    "retains real completed action and full rejected DTO identity for %s", reason => {
+      const source = observation(), result = HtmlProtectionSearchCloudObservationSchema.parse(rejected(1, reason));
+      expect(result.availability).toBe("unavailable");
+      if (result.availability !== "unavailable" || result.phase !== "after-startup") throw Error("fixture");
+      expect(result.steps.map(step => step.status)).toEqual(["observed", "observation-rejected", "not-executed", "not-executed"]);
+      expect(result.steps[0]).toEqual(source.steps[0]);
+      const rejectedStep = result.steps[1];
+      if (rejectedStep.status !== "observation-rejected") throw Error("fixture");
+      const native = observed(source.steps[1]).snapshot, full = canonical(native);
+      expect(rejectedStep.actionFacts).toEqual(observed(source.steps[1]).actionFacts);
+      expect(rejectedStep.actionFacts).toMatchObject({ fillCalls: 1, fillSettled: true, executionRecorded: true });
+      expect(rejectedStep.rejectedSnapshot).toEqual({ sha256: sha(full), byteLength: Buffer.byteLength(full), reason });
+      expect(rejectedStep.rejectedSnapshot.sha256).not.toBe(native.bodySha256);
+      for (const key of ["snapshot", "body", "realm", "linkFacts", "passed", "wholeProtectionPassed"]) expect(rejectedStep).not.toHaveProperty(key);
+    });
+  it("retains boot zero-fill and a final rejected clear without pretending earlier native material failed", () => {
+    const boot = HtmlProtectionSearchCloudObservationSchema.parse(rejected(0));
+    if (boot.availability !== "unavailable" || boot.phase !== "after-startup") throw Error("fixture");
+    expect(boot.steps.map(step => step.status)).toEqual(["observation-rejected", "not-executed", "not-executed", "not-executed"]);
+    const first = boot.steps[0]; if (first.status !== "observation-rejected") throw Error("fixture");
+    expect(first.actionFacts).toMatchObject({ fillCalls: 0, fillSettled: false, executionRecorded: true });
+    const clear = HtmlProtectionSearchCloudObservationSchema.parse(rejected(3));
+    if (clear.availability !== "unavailable" || clear.phase !== "after-startup") throw Error("fixture");
+    expect(clear.steps.map(step => step.status)).toEqual(["observed", "observed", "observed", "observation-rejected"]);
+  });
+  it.each(["failed-action", "zero-fill", "unsettled", "gap", "before", "after", "foreign-request"])(
+    "rejected observation cannot excuse %s action facts", kind => {
+      const result = rejected(), step = result.steps[1]; if (step.status !== "observation-rejected") throw Error("fixture");
+      if (kind === "failed-action") expect(HtmlProtectionSearchCloudObservationSchema.safeParse({ ...result, steps: [
+        result.steps[0], { ...step, actionFacts: { ...step.actionFacts, executionRecorded: false } }, ...result.steps.slice(2)] }).success).toBe(false);
+      if (kind === "zero-fill") step.actionFacts.fillCalls = 0;
+      if (kind === "unsettled") step.actionFacts.fillSettled = false;
+      if (kind === "gap") step.actionFacts.gaps = ["native-unavailable"];
+      if (kind === "before") step.actionFacts.beforeValue = "foreign";
+      if (kind === "after") step.actionFacts.afterValue = "foreign";
+      if (kind === "foreign-request") step.stateRequest = { ...step.stateRequest, sourceRole: "original" };
+      if (kind !== "failed-action") expect(HtmlProtectionSearchCloudObservationSchema.safeParse(result).success).toBe(false);
+    });
+  it.each(["snapshot", "body", "realm", "linkFacts", "available", "proof", "wholeProtectionPassed"])(
+    "rejected DTO identity cannot carry %s authority/material", key => {
+      const result = rejected(), step = result.steps[1];
+      expect(HtmlProtectionSearchCloudObservationSchema.safeParse({ ...result, steps: [
+        result.steps[0], { ...step, [key]: true }, ...result.steps.slice(2)] }).success).toBe(false);
+      if (step.status !== "observation-rejected") throw Error("fixture");
+      expect(HtmlProtectionSearchCloudObservationSchema.safeParse({ ...result, steps: [
+        result.steps[0], { ...step, rejectedSnapshot: { ...step.rejectedSnapshot, [key]: true } }, ...result.steps.slice(2)] }).success).toBe(false);
+    });
+  it("requires complete safe-byte rejection identity but does not constrain rejected material to the packet budget", () => {
+    const result = rejected(), step = result.steps[1]; if (step.status !== "observation-rejected") throw Error("fixture");
+    for (const rejectedSnapshot of [
+      { ...step.rejectedSnapshot, sha256: "not-a-digest" }, { ...step.rejectedSnapshot, byteLength: 0 },
+      { ...step.rejectedSnapshot, byteLength: 1.5 }, { ...step.rejectedSnapshot, byteLength: Number.MAX_SAFE_INTEGER + 1 },
+      { ...step.rejectedSnapshot, reason: "arbitrary" },
+    ]) expect(HtmlProtectionSearchCloudObservationSchema.safeParse({ ...result, steps: [
+      result.steps[0], { ...step, rejectedSnapshot }, ...result.steps.slice(2)] }).success).toBe(false);
+    step.rejectedSnapshot.byteLength = 8 * 1024 * 1024;
+    expect(HtmlProtectionSearchCloudObservationSchema.safeParse(result).success).toBe(true); // Identity only; not evidence of 8MiB authority.
+  });
+  it("rejected observation always interrupts, never upgrades availability or hides scope/order", () => {
+    const result = rejected(), resumed = { ...result, steps: [...result.steps.slice(0, 3), observation().steps[3]] };
+    expect(HtmlProtectionSearchCloudObservationSchema.safeParse(resumed).success).toBe(false);
+    expect(HtmlProtectionSearchCloudObservationSchema.safeParse({ ...result, availability: "available", phase: undefined, reason: undefined }).success).toBe(false);
+    expect(HtmlProtectionSearchCloudObservationSchema.safeParse({ ...result, steps: result.steps.slice(0, 3) }).success).toBe(false);
+    expect(HtmlProtectionSearchCloudObservationSchema.safeParse({ ...result, steps: [result.steps[1], result.steps[0], ...result.steps.slice(2)] }).success).toBe(false);
+    expect(HtmlProtectionSearchCloudObservationSchema.safeParse({ ...result, steps: [result.steps[0], result.steps[1], result.steps[1], result.steps[3]] }).success).toBe(false);
+    const interruptedFirst = interrupted(); interruptedFirst.steps[3] = result.steps[1];
+    expect(HtmlProtectionSearchCloudObservationSchema.safeParse(interruptedFirst).success).toBe(false);
   });
   it("retains a partial native snapshot and cannot continue or upgrade it", () => {
     const result = interrupted(), step = observed(observation().steps[1]);
