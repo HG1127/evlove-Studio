@@ -53,7 +53,7 @@ describe("frozen content refinement evidence scope", () => {
     if (kind === "static-route") changed.validationMethod = "static-structure";
     expect(scope([protect, changed]).mode).toBe("literal-retention");
   });
-  it.each(["正文逐字保持不变", "不得修改原文", "Preserve the content verbatim", "每章原有配置参数与命令必须保持原样，禁止更改其字符；只可在原章末尾新增解释", "正文不得有任何删改"])("retains conflict instead of relaxing explicit literal protection: %s", requirement => {
+  it.each(["正文逐字保持不变", "不得修改原文", "Preserve the content verbatim", "每章原有配置参数与命令必须保持原样，禁止更改其字符；只可在原章末尾新增解释", "正文不得有任何删改", "Keep original text unmodified"])("retains conflict instead of relaxing explicit literal protection: %s", requirement => {
     const result = scope([{ ...protect, requirement }, details]);
     expect(result.mode).toBe("literal-retention");
     expect(result.gaps).toEqual(["conflicting-literal-and-refinement-contract"]);
@@ -70,8 +70,8 @@ describe("frozen content refinement evidence scope", () => {
     if (kind === "duplicate-scope") rubric[0]!.artifactIds = ["S1", "S1"];
     expect(() => scope(rubric)).toThrow();
   });
-  it("keeps unfamiliar protected editing restrictions unresolved instead of treating them as permission", () => {
-    const result = scope([{ ...protect, requirement: "禁止调整原有配置参数" }, details]);
+  it.each(["禁止调整原有配置参数", "Do not modify original content", "正文不得修改", "must not change original text"])("keeps protected editing restriction unresolved: %s", requirement => {
+    const result = scope([{ ...protect, requirement }, details]);
     expect(result.mode).toBe("literal-retention");
     expect(result.gaps).toContain("content-restriction-needs-independent-interpretation");
   });
