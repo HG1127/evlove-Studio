@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { Sandbox } from "@vercel/sandbox";
 import { z } from "zod";
-import { HtmlProtectionSnapshotRequestSchema, type HtmlProtectionSnapshotRequest } from "@evolution/contracts";
+import { HtmlProtectionSnapshotRequestSchema, type HtmlProtectionSnapshotRequest, type HtmlProtectionSnapshotResult } from "@evolution/contracts";
 import {
   HTML_PROTECTION_CLOUD_PATHS as paths, HTML_PROTECTION_CLOUD_URL as documentUrl,
   HTML_PROTECTION_CLOUD_LIMITS as limits, HTML_PROTECTION_CLOUD_RUNNER_SCRIPT as runner,
@@ -74,10 +74,14 @@ function validateObservation(observation: HtmlProtectionCloudObservation, expect
   if (observation.availability !== "available") return;
   for (const seen of [observation.custody.staged, observation.custody.nodeResponse, observation.custody.browserResponse])
     if (!equal(seen, material)) throw new Error("PRIVATE_INTEGRITY");
-  const snapshot = observation.snapshot;
+  validateHtmlProtectionSnapshotMaterial(observation.snapshot, expected, material, observation.custody.navigation);
+}
+/** Full selected native material consistency only; no observation provenance or protection verdict. */
+export function validateHtmlProtectionSnapshotMaterial(snapshot: HtmlProtectionSnapshotResult, expected: HtmlProtectionSnapshotRequest,
+  material: { sha256: string; byteLength: number }, navigation: { frameId: string; loaderId: string }) {
   if (!equal(snapshot.request, expected) || !equal(snapshot.physicalInput, material)) throw new Error("REQUEST_BINDING");
-  if (snapshot.realm && (snapshot.realm.frameId !== observation.custody.navigation.frameId
-    || snapshot.realm.loaderId !== observation.custody.navigation.loaderId)) throw new Error("PRIVATE_INTEGRITY");
+  if (snapshot.realm && (snapshot.realm.frameId !== navigation.frameId
+    || snapshot.realm.loaderId !== navigation.loaderId)) throw new Error("PRIVATE_INTEGRITY");
   if (snapshot.body) {
     const body = snapshot.body, encoded = canonical(body);
     if (sha(encoded) !== snapshot.bodySha256 || Buffer.byteLength(encoded, "utf8") !== snapshot.bodyUtf8Bytes) throw new Error("PRIVATE_INTEGRITY");
@@ -138,7 +142,7 @@ export async function runVercelSandboxHtmlProtectionCloudObservation(
   const physical = { sha256: sha(physicalHtml), byteLength: physicalHtml.byteLength };
   if (!physical.byteLength || physical.byteLength > limits.htmlBytes || !equal(physical, { sha256: expected.sha256, byteLength: expected.byteLength })) return unavailable("physical-input-mismatch");
   const nonce = randomBytes(32).toString("hex"), name = "evo-protection-" + nonce.slice(0, 24);
-  const controller = new AbortController(); let closed = false, sandbox: OwnedSandbox | undefined;
+  const controller = new AbortController(), absoluteDeadline = Date.now() + limits.deadlineMs; let closed = false, sandbox: OwnedSandbox | undefined;
   const stopped = new Set<OwnedSandbox>();
   const stopOwned = async (value: OwnedSandbox) => {
     if (value.name !== name || value.persistent !== false || stopped.has(value)) return;
@@ -147,10 +151,10 @@ export async function runVercelSandboxHtmlProtectionCloudObservation(
       cleanup.signal.addEventListener("abort", () => resolve(), { once: true });
     })]); } catch { /* Only this named disposable VM is ours. */ } finally { clearTimeout(timer); }
   };
-  const active = () => { if (closed || controller.signal.aborted) throw new ReadGap("private-file-timeout"); };
+  const active = () => { if (closed || controller.signal.aborted || Date.now() >= absoluteDeadline) throw new ReadGap("private-file-timeout"); };
   const operation = (async (): Promise<HtmlProtectionCloudObservationResult> => {
     const created = await factory({ name, persistent: false, networkPolicy: "deny-all", timeout: limits.deadlineMs, signal: controller.signal });
-    if (closed || controller.signal.aborted) { await stopOwned(created); throw new ReadGap("private-file-timeout"); }
+    if (closed || controller.signal.aborted || Date.now() >= absoluteDeadline) { await stopOwned(created); throw new ReadGap("private-file-timeout"); }
     sandbox = created;
     if (created.name !== name || created.persistent !== false || created.cwd !== "/vercel/sandbox"
       || created.currentSession().networkPolicy !== "deny-all") return unavailable("sandbox-policy-unavailable");
@@ -185,7 +189,7 @@ export async function runVercelSandboxHtmlProtectionCloudObservation(
     const observation = HtmlProtectionCloudObservationSchema.parse(parsePrivateJson(bytes));
     if (observation.nonce !== nonce || !equal(observation.ownedRuntime, binding.data)) return unavailable("request-binding-mismatch");
     validateObservation(observation, request, physical);
-    return { availability: "available", observation, resultSha256: sha(bytes), resultByteLength: bytes.byteLength };
+    active(); return { availability: "available", observation, resultSha256: sha(bytes), resultByteLength: bytes.byteLength };
   })();
   let deadline: ReturnType<typeof setTimeout> | undefined;
   try {

@@ -26,7 +26,7 @@ export async function buildOwnedHtmlProtectionRuntime(projectRoot:string):Promis
   }
   const chunk=output.output[0];
   if(!chunk||chunk.type!=="chunk"||chunk.dynamicImports.length||chunk.imports.some(id=>!isBuiltin(id))
-    ||!chunk.exports.includes("runPrivateHtmlProtectionCloudRuntime")){
+    ||!chunk.exports.includes("runPrivateHtmlProtectionCloudRuntime")||!chunk.exports.includes("runPrivateHtmlProtectionSearchCloudRuntime")){
     throw new Error("Owned HTML runtime contains unsupported external code");
   }
   const bytes=Buffer.from(chunk.code,"utf8");
