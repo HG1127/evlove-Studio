@@ -62,6 +62,22 @@ describe("normal durable control legacy Baseline transition composition", () => 
     expect(persisted).toEqual(before); expect(m.save).not.toHaveBeenCalled(); expect(m.baseline).not.toHaveBeenCalled();
     expect(m.put).not.toHaveBeenCalled();
   });
+  it.each(["cancelled", "completed", "partial", "failed", "missing", "generation", "operation", "run"])("does not save recovery when control %s changes during the durable audit", async kind => {
+    const before = structuredClone(persisted);
+    m.append.mockImplementationOnce(async (event: EvolutionEvent) => {
+      expect(event.payload.action).toBe("baseline-policy-transition");
+      events.set(event.id, structuredClone(event));
+      if (kind === "missing") m.job.mockResolvedValue(undefined);
+      else if (kind === "generation") m.job.mockResolvedValue({ ...job, generation: 2 });
+      else if (kind === "operation") m.job.mockResolvedValue({ ...job, idempotencyKey: "other-operation" });
+      else if (kind === "run") m.job.mockResolvedValue({ ...job, metadata: { runId: "other-run" }, outputRef: "other-run" });
+      else m.job.mockResolvedValue({ ...job, status: kind });
+    });
+    await expect(planMissionStep(input, 0)).rejects.toThrow("控制 Job");
+    expect(events.get("evt-new-control-baseline-policy-transition-v1")?.payload.priorBaselineRun).toEqual(before.baselineRun);
+    expect(persisted).toEqual(before); expect(m.save).not.toHaveBeenCalled();
+    expect(m.baseline).not.toHaveBeenCalled(); expect(m.put).not.toHaveBeenCalled();
+  });
   it("re-enters the normal Baseline runner under current policy rather than accepting old observations", async () => {
     const plan = await planMissionStep(input, 0), oldId = persisted.baselineRun.id;
     m.baseline.mockImplementation(async (p: EvolveProject) => {
