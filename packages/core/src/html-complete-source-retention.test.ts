@@ -146,6 +146,29 @@ describe("complete supplied HTML source retention facts", () => {
     expect(overlap.reconstruction.available).toBe(false);
     expect(overlap.gaps.some(gap => gap.code === "overlapping-additional-cards")).toBe(true);
   });
+  it("never hides removed Original content inside an additional wrapper", () => {
+    const old = card("old", "Original method &amp; exact wording");
+    const current = original.replace(old, card("new", old));
+    const result = compare(current);
+    expect(result.reconstruction.available).toBe(false);
+    expect(result.nodeErasureRanges).toEqual([]);
+  });
+  it("refuses changed Original content even when the removed wording is copied into a new card", () => {
+    const current = add(original.replace("Original method &amp; exact wording", "Changed method"), card("new", "Original method &amp; exact wording"));
+    expect(compare(current).reconstruction.available).toBe(false);
+  });
+  it("maps Original CRLF distributed around an additional whole node without normalization", () => {
+    const current = original.replace('\r\n<template', '\r' + card("new") + '\n<template');
+    const result = compare(current);
+    expect(result.reconstruction.utf8Equal).toBe(true);
+    checkCompleteMap(current, result);
+  });
+  it("retains an invalid surrogate appearing only in current as an unavailable comparison", () => {
+    const current = add(original, card("new", '\uD800'));
+    const result = compare(current);
+    expect(result.reconstruction.available).toBe(false);
+    expect(result.gaps).toContainEqual({ code: "non-scalar-utf16", role: "current" });
+  });
   it("does not erase unclosed or inert new cards", () => {
     for (const current of [add(original, '<article class="slide-card" id="new"><p>not explicitly closed</p>'), original.replace('</template>', card("new") + '</template>')]) {
       const result = compare(current);
