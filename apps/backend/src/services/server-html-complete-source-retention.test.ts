@@ -90,6 +90,31 @@ describe("metadata-anchored full physical source facts", () => {
     args.project.protectedItems.push("new frozen condition"); release();
     await expect(pending).rejects.toThrow("changed during collection");
   });
+  it("pins Current Champion to its actual frozen bytes while retaining the separate Original anchor", async () => {
+    const args = fixture(); args.project.searchChampion = { candidate: args.candidate, validation: { status: "completed", recommendation: "release" }, artifactAcceptance: { status: "passed", candidateId: args.candidate.id } } as EvolveProject["searchChampion"];
+    const result = await collectServerHtmlCompleteSourceRetention({ ...args, candidate: undefined });
+    expect(result.binding.subject).toEqual({ kind: "current", versionId: args.candidate.id });
+    expect(result.storedAnchors.original.blobId).toBe("source-blob");
+    expect(result.storedAnchors.executed.blobId).toBe("frozen-blob");
+    expect(result.binding.original.sha256).toBe(sha(original)); expect(result.binding.executed.sha256).toBe(sha(changed));
+  });
+  it("rejects a frozen metadata row bound to a foreign Mission", async () => {
+    rows.get("frozen-blob")!.missionId = "foreign-mission";
+    await expect(collectServerHtmlCompleteSourceRetention(fixture())).rejects.toThrow("metadata anchor");
+  });
+  it.each(["criterion", "candidate", "paper"])("checks caller %s after the final metadata await", async kind => {
+    let reads = 0;
+    const input = { ...fixture(), ports: ports() };
+    input.ports.getMetadata = async id => {
+      if (++reads === 4) {
+        if (kind === "criterion") input.criterionId = "another";
+        if (kind === "candidate") input.candidate = { ...input.candidate, name: "changed at final read" };
+        if (kind === "paper") input.project.hiddenEvalSuite[0]!.expected.push("new expected outcome");
+      }
+      return rows.get(id);
+    };
+    await expect(collectServerHtmlCompleteSourceRetention(input)).rejects.toThrow("changed during collection");
+  });
   it("reports actual source changes as differences without a product failure verdict", async () => {
     const args = fixture(), snapshot = args.candidate.artifactSnapshots[0]!, frozen = snapshot.frozenArtifact!;
     const actual = changed.replace("Outside content", "Actual modified footer");
