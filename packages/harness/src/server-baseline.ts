@@ -9,7 +9,7 @@ import type {
 import {
   baselineReadiness,
   originalHtmlBaselineDiagnosticCase,
-  originalHtmlBaselineDiagnosticEligibility,
+  assessOriginalHtmlBaselineDiagnosticEligibility,
   OriginalHtmlBaselineDiagnosticBindingSchema,
   type OriginalHtmlBaselineDiagnosticBinding,
   type OriginalHtmlBaselineDiagnosticEligibility,
@@ -85,6 +85,8 @@ export type ServerBaselineOutcome = {
   capabilityGaps: string[];
   /** Fresh diagnosis-only qualification; never stored as acceptance or reused by canReuseServerBaseline. */
   diagnosticEligibility?: OriginalHtmlBaselineDiagnosticEligibility;
+  /** Stable code only; private storage/model exception text is never retained here. */
+  diagnosticDenialReason?: string;
 };
 
 /**
@@ -148,12 +150,13 @@ export async function runServerBaseline(
 
   const diagnosticCase = ports.readOriginalHtmlDiagnosticBinding ? originalHtmlBaselineDiagnosticCase(project) : undefined;
   let initialDiagnosticBinding: OriginalHtmlBaselineDiagnosticBinding | undefined;
+  let diagnosticDenialReason: string | undefined;
   if (diagnosticCase && ports.readOriginalHtmlDiagnosticBinding) {
     try {
       initialDiagnosticBinding = OriginalHtmlBaselineDiagnosticBindingSchema.parse(await ports.readOriginalHtmlDiagnosticBinding({
         project: structuredClone(project), testCase: structuredClone(diagnosticCase),
       }));
-    } catch { /* Missing/changed physical inputs retain the original evidence pause. */ }
+    } catch { diagnosticDenialReason = "initial-physical-binding-unavailable"; }
   }
   const ordered = new Map<string, TargetRunResult>();
   const semanticCases: TestCase[] = [];
@@ -400,16 +403,19 @@ export async function runServerBaseline(
       const finalDiagnosticBinding = await ports.readOriginalHtmlDiagnosticBinding({
         project: structuredClone(measured), testCase: structuredClone(diagnosticCase),
       });
-      diagnosticEligibility = originalHtmlBaselineDiagnosticEligibility({ project: measured,
+      const assessed = assessOriginalHtmlBaselineDiagnosticEligibility({ project: measured,
         initialBinding: initialDiagnosticBinding, finalBinding: finalDiagnosticBinding, independentJudge });
-    } catch { /* No serialized claim or readback failure grants a diagnosis exception. */ }
+      if (assessed.status === "eligible") diagnosticEligibility = assessed.eligibility;
+      else diagnosticDenialReason = assessed.reason;
+    } catch { diagnosticDenialReason = "final-physical-binding-unavailable"; }
   }
   // A separate caller generation is never paired with the observations of this snapshot.
   const callerGenerationChanged = JSON.stringify(callerProject) !== inputGenerationWire;
-  if (callerGenerationChanged) diagnosticEligibility = undefined;
+  if (callerGenerationChanged) { diagnosticEligibility = undefined; diagnosticDenialReason = "caller-generation-changed"; }
   if (callerGenerationChanged || !diagnosticEligibility && (requiredCapabilityGaps.length || hardGateGaps.length || !readiness.ready)) {
     const details = [
       ...(callerGenerationChanged ? ["调用方输入在测量等待期间发生变化；旧证据未用于新一代诊断"] : []),
+      ...(diagnosticDenialReason ? [`[original-html-baseline-diagnostic-pending:${diagnosticDenialReason}]`] : []),
       ...readiness.blockers,
       ...(requiredCapabilityGaps.length ? [`未完成真实执行：${requiredCapabilityGaps.map((item) => item.id).join("、")}`] : []),
       ...(hardGateGaps.length ? [`Hard Gate 未获得 VERIFIED 证据：${hardGateGaps.map((item) => item.id).join("、")}`] : []),
@@ -431,6 +437,7 @@ export async function runServerBaseline(
       baseline,
       ready: false,
       reason,
+      ...(diagnosticDenialReason ? { diagnosticDenialReason } : {}),
       capabilityGaps: [...new Set([
         ...requiredCapabilityGaps.map((testCase) => testCase.id),
         ...hardGateGaps.map((criterion) => `criterion:${criterion.id}`),

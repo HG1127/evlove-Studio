@@ -709,3 +709,32 @@ describe("fresh physical original HTML Baseline diagnosis without protection pro
     expect(outcome.diagnosticEligibility).toBeUndefined();
   });
 });
+
+
+describe("persisted fresh Baseline diagnostic refusal codes", () => {
+  it.each(["initial", "final"])("preserves %s physical read failure without private exception text", async phase => {
+    const f = originalHtmlDiagnosticFixture();
+    const ports = { ...f.ports, readOriginalHtmlDiagnosticBinding: async () => {
+      const value = await f.ports.readOriginalHtmlDiagnosticBinding();
+      if (phase === "initial" || f.readCalls() > 1) throw Error("do-not-retain-private-storage-detail");
+      return value;
+    } };
+    const outcome = await runServerBaseline(f.project, ports);
+    expect(outcome.ready).toBe(false);
+    expect(outcome.diagnosticEligibility).toBeUndefined();
+    expect(outcome.diagnosticDenialReason).toBe(phase + "-physical-binding-unavailable");
+    expect(outcome.project.campaign.stopReason).toContain("[original-html-baseline-diagnostic-pending:" + outcome.diagnosticDenialReason + "]");
+    expect(outcome.project.campaign.stopReason).not.toContain("do-not-retain-private-storage-detail");
+    expect(outcome.baseline.result?.criterionScores?.find(row => row.criterionId === "SYS-INTEGRITY")).toMatchObject({ pass: false, verificationStatus: "partial" });
+  });
+  it("keeps exact raw Judge criterion/case binding refusal visible after score settlement", async () => {
+    const f = originalHtmlDiagnosticFixture(); f.evaluated.criteria[0]!.testCaseIds.push("I");
+    const outcome = await runServerBaseline(f.project, f.ports);
+    expect(outcome.ready).toBe(false);
+    expect(outcome.diagnosticEligibility).toBeUndefined();
+    expect(outcome.diagnosticDenialReason).toBe("judge-criterion-case-coverage-mismatch");
+    expect(outcome.project.campaign.stopReason).toContain(outcome.diagnosticDenialReason);
+    expect(outcome.baseline.result?.criterionScores?.find(row => row.criterionId === "CONTENT")).toMatchObject({ verificationStatus: "verified" });
+    expect(outcome.baseline.result?.criterionScores?.find(row => row.criterionId === "SYS-INTEGRITY")).toMatchObject({ pass: false, verificationStatus: "partial" });
+  });
+});

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { AcceptanceCriterion, EvaluateAiResult, EvolveProject } from "@evolution/contracts";
 import { settleAiEvaluation } from "./evaluation-settlement";
 import { HTML_PROTECTION_SCOPE_GAP, htmlProtectionAcceptanceBlocker } from "./html-protection-scope";
-import { originalHtmlBaselineDiagnosticCase, originalHtmlBaselineDiagnosticEligibility,
+import { assessOriginalHtmlBaselineDiagnosticEligibility, originalHtmlBaselineDiagnosticCase, originalHtmlBaselineDiagnosticEligibility,
   type OriginalHtmlBaselineDiagnosticBinding } from "./original-html-baseline-diagnostic";
 const digest = "a".repeat(64);
 function fixture() {
@@ -105,5 +105,39 @@ describe("fresh original HTML diagnosis qualification is not protection acceptan
     if (variant === "deterministic-safety") args.project.baselineRun.result!.safety = "REVIEW";
     if (variant === "other-hard-gap") args.project.baselineRun.result!.criterionScores![0]!.verificationStatus = "unverified";
     expect(originalHtmlBaselineDiagnosticEligibility(args)).toBeUndefined();
+  });
+});
+
+
+describe("traceable original Baseline diagnosis refusals", () => {
+  it("returns the unchanged qualification through both entry points", () => {
+    const args = fixture(), before = JSON.stringify(args);
+    const assessed = assessOriginalHtmlBaselineDiagnosticEligibility(args);
+    expect(assessed.status).toBe("eligible");
+    if (assessed.status === "eligible") expect(assessed.eligibility).toEqual(originalHtmlBaselineDiagnosticEligibility(args));
+    expect(JSON.stringify(args)).toBe(before);
+  });
+  it.each(["criterion", "case", "criterion-case"])("preserves a settled score but rejects raw Judge %s coverage mismatch", variant => {
+    const args = fixture();
+    if (variant === "criterion") args.independentJudge.criteria[0]!.criterionId = "foreign";
+    if (variant === "case") args.independentJudge.cases[0]!.testCaseId = "foreign";
+    if (variant === "criterion-case") args.independentJudge.criteria[0]!.testCaseIds.push("I");
+    const before = JSON.stringify(args.project.baselineRun.result);
+    const assessed = assessOriginalHtmlBaselineDiagnosticEligibility(args);
+    expect(assessed).toEqual({ status: "pending", reason: "judge-" + variant + "-coverage-mismatch" });
+    expect(originalHtmlBaselineDiagnosticEligibility(args)).toBeUndefined();
+    expect(JSON.stringify(args.project.baselineRun.result)).toBe(before);
+  });
+  it("reports changed physical binding without emitting supplied values", () => {
+    const args = fixture(); args.finalBinding.binding.paperSha256 = "c".repeat(64);
+    const assessed = assessOriginalHtmlBaselineDiagnosticEligibility(args);
+    expect(assessed).toEqual({ status: "pending", reason: "physical-binding-changed" });
+    expect(JSON.stringify(assessed)).not.toContain("c".repeat(64));
+  });
+  it("reports invalid material without retaining private text", () => {
+    const args = fixture();
+    const assessed = assessOriginalHtmlBaselineDiagnosticEligibility({ ...args, initialBinding: { privateError: "do-not-retain-private-data" } });
+    expect(assessed).toEqual({ status: "pending", reason: "binding-or-judge-boundary-invalid" });
+    expect(JSON.stringify(assessed)).not.toContain("do-not-retain-private-data");
   });
 });
