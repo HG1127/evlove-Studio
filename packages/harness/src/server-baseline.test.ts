@@ -656,6 +656,32 @@ describe("fresh physical original HTML Baseline diagnosis without protection pro
     const outcome = await runServerBaseline(f.project, f.ports);
     expect(outcome.ready).toBe(false); expect(outcome.diagnosticEligibility).toBeUndefined();
   });
+  it.each(["stored", "context", "semantic", "judge"])("isolates the owned generation from %s port request mutation", async phase => {
+    const f = originalHtmlDiagnosticFixture(), before = structuredClone(f.project);
+    const change = (p: EvolveProject) => { p.acceptanceRubric[0]!.requirement += " changed inside port"; p.evalSuite[0]!.expected.push("inside port"); };
+    const ports = { ...f.ports,
+      executeStoredEvidence: async (args: Parameters<typeof f.ports.executeStoredEvidence>[0] & { project: EvolveProject }) => {
+        if (phase === "stored") change(args.project);
+        return f.ports.executeStoredEvidence(args);
+      },
+      buildCurrentArtifactContext: async (args: { project: EvolveProject }) => {
+        if (phase === "context") change(args.project);
+        return f.ports.buildCurrentArtifactContext();
+      },
+      executeSemanticBatch: async (args: Parameters<typeof f.ports.executeSemanticBatch>[0] & { project: EvolveProject }) => {
+        if (phase === "semantic") change(args.project);
+        return f.ports.executeSemanticBatch(args);
+      },
+      judge: async (payload: unknown) => {
+        if (phase === "judge") (payload as { acceptanceRubric: EvolveProject["acceptanceRubric"] }).acceptanceRubric[0]!.requirement += " changed inside port";
+        return f.ports.judge();
+      },
+    };
+    const outcome = await runServerBaseline(f.project, ports);
+    expect(outcome.ready).toBe(true); expect(outcome.diagnosticEligibility).toBeDefined();
+    expect(f.project).toEqual(before); expect(outcome.project.acceptanceRubric).toEqual(before.acceptanceRubric);
+    expect(outcome.project.evalSuite).toEqual(before.evalSuite);
+  });
   it.each(["visible-input", "visible-expected", "outcome-contract", "hidden-input"])("refuses %s generation changes during final physical readback", async variant => {
     const f = originalHtmlDiagnosticFixture();
     const ports = { ...f.ports, readOriginalHtmlDiagnosticBinding: async () => {
