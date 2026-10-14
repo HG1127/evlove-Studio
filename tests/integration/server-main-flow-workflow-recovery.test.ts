@@ -18,7 +18,7 @@ vi.mock("../../apps/backend/src/services/server-html-artifact-execution", () => 
 vi.mock("../../apps/backend/src/services/connector-target-source", () => ({ serverConnectorTargetEnabled: () => false }));
 vi.mock("../../apps/backend/src/services/server-http-target-execution", () => ({ serverHttpTargetEnabled: () => false }));
 vi.mock("../../apps/backend/src/services/production-runtime", async original => ({ ...await original<typeof import("../../apps/backend/src/services/production-runtime")>(), createServerJobIdempotentReceipt: m.create, getServerJobByIdempotencyKey: m.lookup, bindServerJobWorkflowRun: m.bind, getServerMissionEnvelope:m.readEnvelope,compareAndSwapServerMissionEnvelope:m.cas, getServerProductionRuntime: () => ({ missions: { get: m.mission, save: m.save }, jobs: { get: m.job, put: m.jobPut,list:m.list }, events: { append: m.append } }) }));
-vi.mock("../../apps/backend/src/server-env", async (original) => ({ ...await original<typeof import("../../apps/backend/src/server-env")>(), serverAiConfigured: () => true }));
+vi.mock("../../apps/backend/src/server-env", async (original) => ({ ...await original<typeof import("../../apps/backend/src/server-env")>(), serverAiConfigured: () => true, getServerAiConfig:()=>({mode:"openai-compatible",apiKey:"synthetic-never-used",model:"synthetic-recovery-model",baseUrl:"https://synthetic.invalid/v1",timeoutMs:1000}) }));
 vi.mock("workflow/runtime",()=>({getWorld:()=>({runs:{get:m.readRun}})}));
 vi.mock("workflow/api", () => ({ start: m.start, getRun: m.getRun }));
 vi.mock("../../workflows/evolution-mission", () => ({ evolutionMissionWorkflow: vi.fn() }));
