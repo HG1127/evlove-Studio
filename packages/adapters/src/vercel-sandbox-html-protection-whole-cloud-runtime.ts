@@ -4,8 +4,8 @@ import { join, dirname } from "node:path";
 import type { BrowserType, Browser } from "@playwright/test";
 import { z } from "zod";
 import { HTML_PROTECTION_WHOLE_RUNTIME_LIMITS as limits, HtmlProtectionWholeRuntimeRegistrationSchema,
-  HtmlProtectionWholeRuntimeActionFactSchema, type HtmlProtectionWholeRuntimeAction, type HtmlProtectionWholeRuntimeRegistration } from "@evolution/contracts";
-import { htmlProtectionWholeRuntimeActions, htmlProtectionWholeSubjectScriptLocations } from "@evolution/core";
+  HtmlProtectionWholeRuntimeActionFactSchema, type HtmlProtectionWholeRuntimeRequest, type HtmlProtectionWholeRuntimeAction, type HtmlProtectionWholeRuntimeRegistration } from "@evolution/contracts";
+import { selectHtmlProtectionWholeSearchPredicate, evaluateHtmlProtectionWholeSearchPredicate, htmlProtectionWholeRuntimeActions, htmlProtectionWholeSubjectScriptLocations } from "@evolution/core";
 import { createOwnedHtmlProtectionScriptCoverage, type HtmlProtectionOwnedScriptCoverage } from "./html-protection-whole-script-coverage";
 import { collectOwnedHtmlProtectionVisualTiles } from "./html-protection-whole-visual-tiles";
 import { withOwnedHtmlProtectionDocument, type HtmlProtectionOwnedDocument } from "./html-protection-owned-document";
@@ -30,10 +30,10 @@ function validateTarget(material: unknown, control: HtmlProtectionWholeRuntimeRe
     && !(actual.get("class") ?? "").split(/\s+/).includes(name)) throw new HtmlProtectionWholeNativeGap("registered-control-identity-mismatch");
 }
 async function executeAction(owned: HtmlProtectionOwnedDocument, native: HtmlProtectionWholeNativeObserver,
-  action: HtmlProtectionWholeRuntimeAction, registration: HtmlProtectionWholeRuntimeRegistration) {
+  action: HtmlProtectionWholeRuntimeAction, registration: HtmlProtectionWholeRuntimeRegistration, request: HtmlProtectionWholeRuntimeRequest, sourceCoverage: HtmlProtectionOwnedScriptCoverage | undefined) {
   const startedAt = new Date().toISOString(), control = registration.controls.find(item => item.targetId === action.targetId);
   let dispatched = 0, settled = false, beforeBackendNodeId: number | null = null, afterBackendNodeId: number | null = null;
-  const partial: { before?: unknown; after?: unknown; clipboard?: unknown; navigation?: unknown; events?: unknown; dispatchTrace?: unknown[] } = {};
+  const partial: { before?: unknown; after?: unknown; clipboard?: unknown; navigation?: unknown; events?: unknown; dispatchTrace?: unknown[]; behaviorClaims?: unknown } = {};
   const actualDispatch = () => { dispatched = 1; };
   const active = async () => { if (owned.signal.aborted || Date.now() >= owned.deadline) throw new HtmlProtectionWholeNativeGap("action-deadline"); await owned.assertCurrent(); };
   try {
@@ -86,15 +86,17 @@ async function executeAction(owned: HtmlProtectionOwnedDocument, native: HtmlPro
     afterBackendNodeId = await native.backendNodeId(action.selector);
     if (beforeBackendNodeId !== afterBackendNodeId) throw new HtmlProtectionWholeNativeGap("registered-control-replaced");
     if (control) validateTarget(after.value, control);
-    validateActualState(action, after.value);
+    if (action.operation === "fill" && Target.parse(after.value).target.value !== action.value) throw new HtmlProtectionWholeNativeGap("actual-input-value-mismatch");
+    const validation = await validateActualState(action, after.value, request, partial.events, sourceCoverage, owned); const behaviorClaims = validation.behaviorClaims; partial.behaviorClaims = behaviorClaims;
+    if (validation.failure) throw new HtmlProtectionWholeNativeGap(validation.failure);
     if (navigation) {
       navigation.afterBackendNodeId = await native.backendNodeId(navigation.selector); navigation.after = await native.target(navigation.selector);
       if (navigation.beforeBackendNodeId !== navigation.afterBackendNodeId) throw new HtmlProtectionWholeNativeGap("actual-anchor-target-replaced");
       validateActualNavigation(navigation.fragment, (navigation.after as Awaited<ReturnType<typeof native.target>>).value);
     }
-    if (action.operation === "fill" && Target.parse(after.value).target.value !== action.value) throw new HtmlProtectionWholeNativeGap("actual-input-value-mismatch");
+
     await active();
-    const nativeObservation = { before, after, dispatchTrace, ...(partial.events ? { events: partial.events } : {}), ...(clipboard ? { clipboard } : {}), ...(navigation ? { navigation } : {}) }, bytes = Buffer.from(canonical(nativeObservation));
+    const nativeObservation = { before, after, dispatchTrace, behaviorClaims, ...(partial.events ? { events: partial.events } : {}), ...(clipboard ? { clipboard } : {}), ...(navigation ? { navigation } : {}) }, bytes = Buffer.from(canonical(nativeObservation));
     return HtmlProtectionWholeRuntimeActionFactSchema.parse({ action, status: "observed", dispatched, settled, startedAt,
       completedAt: new Date().toISOString(), beforeBackendNodeId, afterBackendNodeId, nativeObservation,
       nativeObservationSha256: sha(bytes), nativeObservationByteLength: bytes.byteLength, gaps: [] });
@@ -175,7 +177,7 @@ export async function observeOwnedHtmlProtectionWholeRuntime(args: {
           if (expectedActions.length > limits.states) throw new HtmlProtectionWholeNativeGap("action-plan-capacity-unavailable");
           for (const action of expectedActions) {
             await owned.assertCurrent();
-            const fact = await executeAction(owned, native, action, registration);
+            const fact = await executeAction(owned, native, action, registration, input.request, scriptCoverage);
             await write("action", action.stateId, fact);
             actualActionCount++;
             if (fact.status !== "observed") { custody = owned.readCustody(); await closeCoverage(owned); return finish(fact.gaps[0] ?? "action-unavailable"); }
@@ -226,7 +228,7 @@ export async function runPrivateHtmlProtectionWholeCloudRuntime(args: { chromium
   await write(join(root, wholePaths.manifest), bytes);
 }
 
-function validateActualState(action: HtmlProtectionWholeRuntimeAction, value: unknown) {
+async function validateActualState(action: HtmlProtectionWholeRuntimeAction, value: unknown, request: HtmlProtectionWholeRuntimeRequest, nativeEvents: unknown, sourceCoverage: HtmlProtectionOwnedScriptCoverage | undefined, owned: HtmlProtectionOwnedDocument): Promise<{behaviorClaims: unknown; failure?: string}> {
   const state = value as { target?: { hovered?: boolean; attributes?: Array<[string,string]>; parentAttributes?: Array<[string,string]> | null }; globals?: Array<{tag:string;id:string|null;attributes:Array<[string,string]>}>; documentUrl?:string; scroll?:{y:number} };
   const attributes = new Map(state.target?.attributes ?? []), classes = (attributes.get("class") ?? "").split(/\s+/);
   if (["hover-enter", "hover-leave"].includes(action.intent) && state.target?.hovered !== (action.intent === "hover-enter")) throw new HtmlProtectionWholeNativeGap("actual-hover-transition-mismatch");
@@ -239,10 +241,18 @@ function validateActualState(action: HtmlProtectionWholeRuntimeAction, value: un
   if (action.intent === "top" && (!state.scroll || Math.abs(state.scroll.y) > 1)) throw new HtmlProtectionWholeNativeGap("actual-top-navigation-mismatch");
   if (action.intent === "reveal" && !classes.includes("in-view")) throw new HtmlProtectionWholeNativeGap("actual-reveal-transition-unobserved");
   if (action.operation === "fill") {
-    const needle = (action.value ?? "").toLowerCase().trim();
+    const selected = selectHtmlProtectionWholeSearchPredicate({ sourcePlan: request.sourcePlan, subjectScriptLocations: request.subjectScriptLocations, nativeEvents });
     const cards = (state.globals ?? []).filter(item => (new Map(item.attributes).get("class") ?? "").split(/\s+/).includes("slide-card"));
-    if (!cards.length || cards.some(item => {const map=new Map(item.attributes), search=map.get("data-search");return search===undefined || (map.get("class")??"").split(/\s+/).includes("search-hidden") === search.includes(needle);})) throw new HtmlProtectionWholeNativeGap("actual-search-membership-transition-mismatch");
+    if (selected.availability !== "available") return { behaviorClaims: { search: selected } };
+    const source = selected.profile.nativeFrameId === owned.custody.navigation.frameId && sourceCoverage ? await sourceCoverage.verifySource({ sourcePlan: request.sourcePlan, subjectScriptLocations: request.subjectScriptLocations, frameId: owned.custody.navigation.frameId, documentUrl: owned.custody.documentUrl, parentId: selected.profile.parentId, scriptId: selected.profile.nativeScriptId, contextUniqueId: selected.profile.nativeContextUniqueId }) : { availability: "unavailable" as const, gaps: ["actual-search-script-source-binding-unavailable"] };
+    await owned.assertCurrent();
+    if (source.availability !== "available") return { behaviorClaims: { search: source } };
+    if (!cards.length || cards.some(item => new Map(item.attributes).get("data-search") === undefined)) return { behaviorClaims: { search: { availability: "unavailable", gaps: ["actual-search-source-catalog-unavailable"] } } };
+    if (cards.some(item => { const map = new Map(item.attributes); return (map.get("class") ?? "").split(/\s+/).includes("search-hidden") === evaluateHtmlProtectionWholeSearchPredicate(selected.profile, map.get("data-search")!, action.value ?? ""); })) return { behaviorClaims: { search: { availability: "failed", profile: selected.profile, source: source.source } }, failure: "actual-search-membership-transition-mismatch" };
+    return { behaviorClaims: { search: { availability: "observed", profile: selected.profile, source: source.source } } };
   }
+  return { behaviorClaims: {} };
+
 }
 function validateActualNavigation(fragment: string, value: unknown) {
   const state = z.object({ documentUrl: z.string(), viewport: z.object({ height: z.number().positive() }), scroll: z.object({ y: z.number().finite() }),

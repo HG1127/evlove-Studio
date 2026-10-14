@@ -83,3 +83,5 @@ export * from "./html-protection-whole-script-locations";
 export * from "./html-protection-whole-source-continuity";
 
 export * from "./html-protection-whole-source-dependencies";
+
+export * from "./html-protection-whole-search-profile";

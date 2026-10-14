@@ -69,6 +69,15 @@ export async function createOwnedHtmlProtectionScriptCoverage(args: { page: Page
     await cdp.send("Profiler.startPreciseCoverage", { callCount: true, detailed: true, allowTriggeredUpdates: false }); active();
   } catch (error) { await cdp.detach().catch(() => {}); throw error; }
   return {
+    async verifySource(args: { sourcePlan: HtmlProtectionWholeRuntimeSourcePlan; subjectScriptLocations: HtmlProtectionWholeRuntimeRequest["subjectScriptLocations"]; frameId: string; documentUrl: string; parentId: string; scriptId: string; contextUniqueId: string }) {
+      active();
+      const parsed = scripts.get(args.scriptId), context = parsed && contexts.get(parsed.executionContextId), expected = args.sourcePlan.scriptShape.find(script => script.id === args.parentId), location = args.subjectScriptLocations.find(item => item.parentId === args.parentId), body = expected?.literal?.replace(/\r\n?/g, "\n");
+      const unavailable = () => ({ availability: "unavailable" as const, gaps: ["actual-search-script-source-binding-unavailable"] });
+      if (!parsed || !context || !context.auxData.isDefault || context.auxData.frameId !== args.frameId || context.uniqueId !== args.contextUniqueId || parsed.url !== args.documentUrl || body === undefined || !location || location.line !== parsed.startLine || location.column !== parsed.startColumn) return unavailable();
+      const physical = z.object({ scriptSource: z.string().max(2 * 1024 * 1024) }).strict().parse(await cdp.send("Debugger.getScriptSource", { scriptId: args.scriptId })); active();
+      if (scripts.get(args.scriptId) !== parsed || contexts.get(parsed.executionContextId) !== context || physical.scriptSource.length !== body.length || hash(physical.scriptSource) !== hash(body)) return unavailable();
+      return { availability: "available" as const, source: { parentId: args.parentId, scriptId: args.scriptId, sourceSha256: hash(physical.scriptSource), sourceCharacters: physical.scriptSource.length, frameId: args.frameId, contextUniqueId: context.uniqueId, url: parsed.url, nativeSourceLocation: { line: parsed.startLine, column: parsed.startColumn } } };
+    },
     async collect(args: { sourcePlan: HtmlProtectionWholeRuntimeSourcePlan; subjectScriptLocations: HtmlProtectionWholeRuntimeRequest["subjectScriptLocations"]; frameId: string; documentUrl: string }) {
       active();
       const result = Coverage.parse(await cdp.send("Profiler.takePreciseCoverage"));

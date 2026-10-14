@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { validateHtmlProtectionWholeSearchReadback } from "./html-protection-whole-search-readback";
 import { HTML_PROTECTION_WHOLE_RUNTIME_LIMITS as limits, HtmlProtectionWholeRuntimeRequestSchema,
   HtmlProtectionWholeRuntimeActionFactSchema, HtmlProtectionWholeRuntimeRegistrationSchema, type HtmlProtectionWholeRuntimeRequest } from "@evolution/contracts";
 import { validateHtmlProtectionWholeNativeDocument, HtmlProtectionWholeNativeStyleTableSchema } from "./html-protection-whole-native-material";
@@ -23,6 +24,7 @@ export function validateHtmlProtectionWholeReadback(args: HtmlProtectionWholeRea
   if (manifest.custody) for (const seen of [manifest.custody.staged, manifest.custody.nodeResponse, manifest.custody.browserResponse]) if (!equal(seen, input.material)) throw Error("Whole readback physical custody mismatch");
   const realms = new Set<string>(), documents = new Set<string>(), visuals = new Map<string, Array<ReturnType<typeof validateVisual>>>();
   let actions = 0, boot = false, scripts = 0;
+  const actionFacts: Array<z.infer<typeof HtmlProtectionWholeRuntimeActionFactSchema>> = []; let sourceMaterial: unknown;
   const expected = manifest.registration ? htmlProtectionWholeRuntimeActions(request.sourcePlan, manifest.registration) : [];
   if (!equal(manifest.expectedActions, expected)) throw Error("Whole readback independently derived action plan mismatch");
   for (const [index, { record, material }] of args.records.entries()) {
@@ -48,12 +50,12 @@ export function validateHtmlProtectionWholeReadback(args: HtmlProtectionWholeRea
         if (!equal(registration, manifest.registration)) throw Error("Whole readback Original boot registration independently differs");
       } else if (!equal(request.registration, manifest.registration)) throw Error("Whole readback executed registry cannot expand Original");
     } else if (record.kind === "action") {
-      const fact = HtmlProtectionWholeRuntimeActionFactSchema.parse(material);
+      const fact = HtmlProtectionWholeRuntimeActionFactSchema.parse(material); actionFacts.push(fact);
       if (!boot || !equal(fact.action, expected[actions++]) || fact.action.stateId !== record.stateId) throw Error("Whole readback foreign/reordered actual action");
       if (fact.nativeObservation !== undefined) {
         const body = Buffer.from(canonical(fact.nativeObservation));
         if (sha(body) !== fact.nativeObservationSha256 || body.byteLength !== fact.nativeObservationByteLength) throw Error("Whole readback native action body mismatch");
-        const observation = z.object({ before: z.unknown().optional(), after: z.unknown().optional(), events: z.unknown().optional(), clipboard: z.unknown().optional(), dispatchTrace: z.array(z.object({ method: z.string().min(1), parameters: z.record(z.string(), z.unknown()) }).strict()).optional(), navigation: z.unknown().optional() }).strict().parse(fact.nativeObservation);
+        const observation = z.object({ before: z.unknown().optional(), after: z.unknown().optional(), events: z.unknown().optional(), behaviorClaims: z.unknown().optional(), clipboard: z.unknown().optional(), dispatchTrace: z.array(z.object({ method: z.string().min(1), parameters: z.record(z.string(), z.unknown()) }).strict()).optional(), navigation: z.unknown().optional() }).strict().parse(fact.nativeObservation);
         for (const window of [observation.before, observation.after].filter(item => item !== undefined)) validateNative(window, manifest, realms);
         if (fact.status === "observed" && (!observation.before || !observation.after || !fact.settled || fact.dispatched !== (fact.action.operation === "boot" ? 0 : 1)
           || fact.beforeBackendNodeId === null || fact.beforeBackendNodeId !== fact.afterBackendNodeId)) throw Error("Whole readback observed action lacks actual execution");
@@ -75,9 +77,10 @@ export function validateHtmlProtectionWholeReadback(args: HtmlProtectionWholeRea
       const rows = visuals.get(match[1]!) ?? [];
       if (Number(match[2]) !== rows.length) throw Error("Whole readback visual tile sequence incomplete"); rows.push(value); visuals.set(match[1]!, rows);
     } else if (record.kind === "script-coverage") {
-      if (++scripts !== 1 || record.stateId !== "source-program-coverage") throw Error("Whole readback script coverage count/order mismatch"); validateScript(material, manifest);
+      if (++scripts !== 1 || record.stateId !== "source-program-coverage") throw Error("Whole readback script coverage count/order mismatch"); validateScript(material, manifest); sourceMaterial = material;
     }
   }
+  validateHtmlProtectionWholeSearchReadback({ request, facts: actionFacts, sourceMaterial });
   if (actions !== manifest.actualActionCount || (manifest.registration && !boot) || (realms.size > 1)) throw Error("Whole readback actual observation sequence/realm mismatch");
   if (manifest.availability === "available") {
     if (realms.size !== 1 || scripts !== 1 || expected.some(action => ["boot", "viewport"].includes(action.operation) && !documents.has(action.stateId))) throw Error("Whole readback actual native state set incomplete");
