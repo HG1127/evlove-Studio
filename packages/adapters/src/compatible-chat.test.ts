@@ -24,3 +24,18 @@ it.each(["tool_calls","function_call"])("never echoes unknown provider finish me
  const error=(()=>{try{readCompatibleChatOutput({choices:[{finish_reason,message:{content:"final",[field]:field==="tool_calls"?[{id:"private"}]:{name:"private"}}}]});}catch(error){return error;}})();
  expect(error).toBeInstanceOf(Error);expect((error as Error).message).not.toContain("private");expect((error as Error).message).not.toContain("fictional");
 });
+describe("bounded native output budget diagnostics",()=>{
+ it.each([0,24000,1_000_000_000])("preserves actual safe completion token count %s",completion_tokens=>{
+  const error=(()=>{try{readCompatibleChatOutput({choices:[{finish_reason:"length",message:{content:""}}],usage:{completion_tokens}});}catch(error){return error;}})();
+  expect(error).toMatchObject({code:"AI_OUTPUT_INCOMPLETE"});expect((error as Error).message).toContain("tokens="+completion_tokens);
+ });
+ it("uses a safe output_tokens fallback without inventing absent usage",()=>{
+  expect(()=>readCompatibleChatOutput({choices:[{finish_reason:"length",message:{content:""}}],usage:{output_tokens:24000}})).toThrow(/finish_reason=length.*24000/);
+  const error=(()=>{try{readCompatibleChatOutput({choices:[{finish_reason:"length",message:{content:""}}]});}catch(error){return error;}})();
+  expect((error as Error).message).not.toContain("tokens=");
+ });
+ it.each([1_000_000_001,Number.MAX_SAFE_INTEGER+1,"private-source fictional\\u002dkey"])("rejects or omits invalid public token count %s",completion_tokens=>{
+  const error=(()=>{try{readCompatibleChatOutput({choices:[{finish_reason:"length",message:{content:""}}],usage:{completion_tokens}});}catch(error){return error;}})();
+  expect(error).toBeInstanceOf(Error);expect((error as Error).message).not.toContain(String(completion_tokens));expect((error as Error).message).not.toContain("tokens=");
+ });
+});

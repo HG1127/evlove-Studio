@@ -1,7 +1,7 @@
 import {CompatibleChatEnvelopeSchema} from "@evolution/contracts";
 import {readCompatibleResponsesOutput} from "./compatible-responses";
 
-export const COMPATIBLE_CHAT_OUTPUT_VERSION="chat-output-v1";
+export const COMPATIBLE_CHAT_OUTPUT_VERSION="chat-output-v2-bounded-diagnostics";
 export type CompatibleChatOutputOptions={allowResponsesShape?:boolean;apiKey?:string};
 
 /** Decode the external envelope. JSON and task schemas remain the caller's responsibility. */
@@ -15,7 +15,9 @@ export function readCompatibleChatOutput(value:unknown,options:CompatibleChatOut
     const choice=body.choices?.[0];
     const message=choice?.message;
     if(choice?.finish_reason==="length"){
-      throw Object.assign(new Error("模型输出被截断（finish_reason=length）。请缩小构造范围或切换模型。"),{code:"AI_OUTPUT_INCOMPLETE"});
+      const rawTokens=body.usage?.completion_tokens??body.usage?.output_tokens;
+      const tokens=typeof rawTokens==="number"&&Number.isSafeInteger(rawTokens)&&rawTokens>=0&&rawTokens<=1_000_000_000?rawTokens:undefined;
+      throw Object.assign(new Error("模型输出被截断（finish_reason=length"+(tokens===undefined?"":"，已用输出 tokens="+tokens)+"）。请缩小构造范围或切换模型。"),{code:"AI_OUTPUT_INCOMPLETE"});
     }
     if(["content_filter","tool_calls","function_call"].includes(choice?.finish_reason??"")||message?.tool_calls?.length||message?.function_call){
       throw new Error("模型未返回完整最终文本（工具调用或过滤结果）。");
