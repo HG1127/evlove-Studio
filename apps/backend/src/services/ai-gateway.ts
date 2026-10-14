@@ -1,3 +1,7 @@
+import { HtmlProtectionVisualObservationsSchema, type HtmlProtectionVisualObservations } from "@evolution/contracts";
+import { HTML_PROTECTION_VISUAL_OBSERVATION_VERSION, HTML_PROTECTION_VISUAL_OBSERVATION_INSTRUCTION, htmlProtectionVisualObservationJsonSchema } from "./html-protection-visual-instruction";
+import { HtmlProtectionSemanticObservationsSchema, type HtmlProtectionSemanticObservations } from "@evolution/contracts";
+import { HTML_PROTECTION_SEMANTIC_OBSERVATION_VERSION, HTML_PROTECTION_SEMANTIC_OBSERVATION_INSTRUCTION, htmlProtectionSemanticObservationJsonSchema } from "./html-protection-semantic-instruction";
 import type { ZodType } from "zod";
 import { createHash } from "node:crypto";
 import {
@@ -66,7 +70,7 @@ import {directAiSchemaDiagnostics,directAiCorrectionDiagnosticSuffix,type Direct
 import {retainDirectAiCompletionDiagnostic,readDirectAiCompletionDiagnostic} from "./direct-ai-completion-diagnostics";
 import {buildDirectAiCorrectionContext,assertDirectAiCorrectionRequestBudget,type DirectAiCorrectionFailureKind} from "./direct-ai-correction-context";
 
-export type ServerAiOperation=AiOperation;
+export type ServerAiOperation=AiOperation|"html-protection-observe"|"html-protection-visual-observe";
 export const DIRECT_AI_SCHEMA_INSTRUCTION_VERSION="exact-schema-instructions-v1";
 export const DIRECT_AI_SCHEMA_RECOVERY_VERSION="schema-feedback-once-v6-completion-diagnostics";
 /** Public scoring-route identity; API keys and timeout settings are deliberately excluded. */
@@ -90,7 +94,7 @@ export function serverAiPublicScoringRouteFingerprint(raw:ServerAiPublicScoringR
   const directSchemaInstructionVersion=config.mode==="openai-compatible"&&(!config.responseFormat||config.responseFormat==="json-schema")
     ?DIRECT_AI_SCHEMA_INSTRUCTION_VERSION:undefined;
   const directSchemaRecoveryVersion=config.mode==="openai-compatible"?DIRECT_AI_SCHEMA_RECOVERY_VERSION:undefined;
-  return createHash("sha256").update(JSON.stringify({ route, protectionSettlementPolicy: HTML_PROTECTION_SETTLEMENT_POLICY, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION, evaluationSafetyInstructionVersion: INDEPENDENT_EVALUATION_SAFETY_INSTRUCTION_VERSION, responsesOutputVersion, chatOutputVersion, directSchemaInstructionVersion, directSchemaRecoveryVersion, finalOutputVersion: config.mode==="openai-compatible"?STRUCTURED_AI_FINAL_OUTPUT_VERSION:undefined })).digest("hex");
+  return createHash("sha256").update(JSON.stringify({ route, protectionSettlementPolicy: HTML_PROTECTION_SETTLEMENT_POLICY, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION, evaluationSafetyInstructionVersion: INDEPENDENT_EVALUATION_SAFETY_INSTRUCTION_VERSION, htmlProtectionSemanticObservationVersion: HTML_PROTECTION_SEMANTIC_OBSERVATION_VERSION, htmlProtectionVisualObservationVersion: HTML_PROTECTION_VISUAL_OBSERVATION_VERSION, responsesOutputVersion, chatOutputVersion, directSchemaInstructionVersion, directSchemaRecoveryVersion, finalOutputVersion: config.mode==="openai-compatible"?STRUCTURED_AI_FINAL_OUTPUT_VERSION:undefined })).digest("hex");
 }
 
 /** Fresh default boundary for private evidence owners; the execution route stays pinned. */
@@ -133,6 +137,8 @@ const SYSTEM=[
 ].join("\n");
 
 function contract(operation:ServerAiOperation):Contract<unknown>{
+  if(operation==="html-protection-visual-observe")return {schema:htmlProtectionVisualObservationJsonSchema,parser:HtmlProtectionVisualObservationsSchema,allowCompletedJsonCorrection:true,instruction:HTML_PROTECTION_VISUAL_OBSERVATION_INSTRUCTION};
+  if(operation==="html-protection-observe")return {schema:htmlProtectionSemanticObservationJsonSchema,parser:HtmlProtectionSemanticObservationsSchema,allowCompletedJsonCorrection:true,instruction:HTML_PROTECTION_SEMANTIC_OBSERVATION_INSTRUCTION};
   if(operation==="intake")return{schema:jsonSchemas.intake,parser:IntakeAiResultSchema,instruction:"Understand the user command and parsed artifact evidence. Infer the semantic business object, exactly six workflow stages, a compact acceptance rubric, goals, metrics, protected/editable scope, risks and artifact summaries. Parsing/runtime limitations are not product defects; never claim unseen evidence."};
   if(operation==="understand")return{schema:jsonSchemas.understand,parser:UnderstandAiResultSchema,instruction:"Deeply understand supplied command and artifact evidence. Restate intent, implicit requirements, assumptions, material clarifications, acceptance focus and confidence. Do not ask about parser/runtime capability."};
   if(operation==="command")return{schema:jsonSchemas.command,parser:CommandAiResultSchema,instruction:"Interpret the new command against current mission and artifact evidence. Preserve prior intent unless explicitly changed and return the consolidated command, scope additions and safe next action."};
@@ -389,8 +395,11 @@ export function runServerAi(operation:"gap-cluster",payload:unknown):Promise<Gap
 export function runServerAi(operation:"gap-advice",payload:unknown):Promise<GapAdviceAiResult>;
 export function runServerAi(operation:"visual-judge",payload:unknown,media?:ServerAiMedia):Promise<VisualJudgeAiResult>;
 export function runServerAi(operation:AiOperation,payload:unknown,media?:ServerAiMedia):Promise<unknown>;
+export function runServerAi(operation:"html-protection-observe",payload:unknown):Promise<HtmlProtectionSemanticObservations>;
+export function runServerAi(operation:"html-protection-visual-observe",payload:unknown,media:ServerAiMedia):Promise<HtmlProtectionVisualObservations>;
+export function runServerAi(operation:ServerAiOperation,payload:unknown,media?:ServerAiMedia):Promise<unknown>;
 export function runServerAi(operation:ServerAiOperation,payload:unknown,media?:ServerAiMedia){
-  AiOperationSchema.parse(operation);
+  if(operation!=="html-protection-observe"&&operation!=="html-protection-visual-observe")AiOperationSchema.parse(operation);
   return structured(payload,contract(operation),media);
 }
 

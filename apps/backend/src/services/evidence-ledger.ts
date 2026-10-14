@@ -45,7 +45,7 @@ export class EventEvidenceIdentityConflictError extends Error{
   }
 }
 
-async function resolveEvidenceSigningConfig():Promise<ResolvedSigningConfig|undefined>{
+export async function resolveEvidenceSigningConfig():Promise<ResolvedSigningConfig|undefined>{
   const env=getEvidenceLedgerSigningConfig();
   const verificationKeys:Record<string,string>={...(env?.verificationKeys??{})};
   const vaultVerificationIds=getEvidenceLedgerVerifyVaultIds();

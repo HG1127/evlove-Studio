@@ -85,3 +85,6 @@ export * from "./html-protection-whole-source-continuity";
 export * from "./html-protection-whole-source-dependencies";
 
 export * from "./html-protection-whole-search-profile";
+export * from "./html-protection-authority";
+export * from "./html-protection-proof-assembly";
+export * from "./html-protection-static-observations";

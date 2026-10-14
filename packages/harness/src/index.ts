@@ -27,3 +27,6 @@ export * from "./server-artifact-readback-recovery";
 export { serverHoldoutExecutionEvidenceFingerprint } from "./server-holdout-recovery";
 
 export * from "./server-failed-control-retry";
+export * from "./server-html-protection-authority";
+
+export { serverJudgeEvidence } from "./server-judge-evidence";
