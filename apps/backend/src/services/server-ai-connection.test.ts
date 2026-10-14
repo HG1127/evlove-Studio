@@ -9,6 +9,11 @@ vi.mock("../server-env",async(original)=>({
 }));
 vi.mock("./server-vault",()=>({
   getVaultSecretMetadata:vault.metadata,putVaultSecret:vault.put,resolveVaultSecret:vault.resolve,
+  resolveVaultSecretWithMetadata:async(id:string,scope?:string)=>({value:await vault.resolve(id,scope),
+    metadata:{id:"server-ai-default-connection-v1",workspaceId:"workspace-test",name:"Backend default",purpose:"Synthetic selection",
+      scopes:["ai:default-connection"],version:1,keyId:"test-key",algorithm:"aes-256-gcm",createdBy:"admin",
+      createdAt:"2026-10-14T00:00:00.000Z",updatedAt:"2026-10-14T00:00:00.000Z"},sealedRecordSha256:"a".repeat(64)}),
+  getVaultSecretRecordIdentity:vi.fn(),
 }));
 import {
   getServerAiConnectionStatus,resolveServerAiConfig,saveServerAiConnection,serverAiConnectionConfigured,

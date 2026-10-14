@@ -3,12 +3,15 @@ import {
   ServerAiConnectionPutSchema,ServerAiConnectionSettingsSchema,ServerAiConnectionStatusSchema,
   ServerAiStoredConnectionSchema,type EvolutionActor,type ServerAiConnectionPut,
 } from "@evolution/contracts";
-import {getServerAiConfig,serverAiTimeoutMs,serverAiConfigured,vaultEncryptionConfigured,type ServerAiConfig} from "../server-env";
-import {getVaultSecretMetadata,putVaultSecret,resolveVaultSecret} from "./server-vault";
+import {getEvolutionWorkspaceId,getServerAiConfig,serverAiTimeoutMs,serverAiConfigured,vaultEncryptionConfigured,type ServerAiConfig} from "../server-env";
+import {getVaultSecretMetadata,getVaultSecretRecordIdentity,putVaultSecret,resolveVaultSecret,resolveVaultSecretWithMetadata} from "./server-vault";
+import {
+  SERVER_AI_CONNECTION_VAULT_ID as VAULT_ID,SERVER_AI_CONNECTION_VAULT_SCOPE as VAULT_SCOPE,
+  readCurrentServerAiPublicSelection,serverAiPublicSelectionFromResolvedRecord,
+  type ServerAiPublicSelection,type ServerAiPublicSelectionResult,
+} from "./server-ai-public-selection";
 
-const VAULT_ID="server-ai-default-connection-v1";
-const VAULT_SCOPE="ai:default-connection";
-const activeConfig=new AsyncLocalStorage<{config:ServerAiConfig|undefined}>();
+const activeConfig=new AsyncLocalStorage<{config:ServerAiConfig|undefined;selection?:ServerAiPublicSelection}>();
 
 function parseStoredConnection(raw:string){
   try{return ServerAiStoredConnectionSchema.parse(JSON.parse(raw));}
@@ -92,8 +95,38 @@ export async function serverAiConnectionConfigured(){
 /** Pins one route across scoring fingerprints and paired current/Candidate evaluation. */
 export async function withServerAiConnection<T>(work:()=>Promise<T>):Promise<T>{
   if(activeConfig.getStore())return work();
-  const config=await resolveServerAiConfig();
+  let selected:{config:ServerAiConfig;selection:ServerAiPublicSelection}|undefined;
+  if(vaultEncryptionConfigured()){
+    try{
+      const record=await resolveVaultSecretWithMetadata(VAULT_ID,VAULT_SCOPE);
+      const stored=parseStoredConnection(record.value);
+      const config=directConfig(stored);
+      const selection=serverAiPublicSelectionFromResolvedRecord(
+        ServerAiConnectionSettingsSchema.parse({...stored,baseUrl:config.mode==="openai-compatible"?config.baseUrl:stored.baseUrl}),
+        record,
+      );
+      selected={config,selection};
+    }catch(error){
+      if((error as {code?:string}).code!=="VAULT_SECRET_NOT_FOUND")throw error;
+    }
+  }
+  if(selected)return activeConfig.run(selected,work);
+  const config=getServerAiConfig();
   return activeConfig.run({config},work);
+}
+
+/** Public selection captured by the actual stored execution resolve, then independently rechecked. */
+export async function readCurrentPinnedServerAiPublicSelection():Promise<ServerAiPublicSelectionResult>{
+  const active=activeConfig.getStore();
+  if(!active)return {availability:"unavailable",reason:"public-selection-unbound"};
+  if(!active.selection)return {availability:"unavailable",reason:active.config
+    ?"environment-credential-epoch-unavailable":"current-route-unconfigured"};
+  return readCurrentStoredServerAiPublicSelection(active.selection);
+}
+
+/** For authenticated restoration; this check alone never grants evidence authority. */
+export function readCurrentStoredServerAiPublicSelection(selection:unknown):Promise<ServerAiPublicSelectionResult>{
+  return readCurrentServerAiPublicSelection(selection,{workspaceId:getEvolutionWorkspaceId,readRecordIdentity:getVaultSecretRecordIdentity});
 }
 
 export function withExplicitServerAiConnection<T>(input:ServerAiConnectionPut,work:()=>Promise<T>):Promise<T>{

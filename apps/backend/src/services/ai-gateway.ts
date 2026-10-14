@@ -59,7 +59,8 @@ import { SERVER_SEMANTIC_CONTEXT_VERSION } from "@evolution/harness";
 import { HTML_PROTECTION_SETTLEMENT_POLICY } from "@evolution/core";
 import {COMPATIBLE_RESPONSES_OUTPUT_VERSION,COMPATIBLE_CHAT_OUTPUT_VERSION,readCompatibleResponsesOutput,readCompatibleChatOutput,parseStructuredAiOutput,StructuredAiJsonError,STRUCTURED_AI_FINAL_OUTPUT_VERSION,type StructuredAiJsonFailureKind,requestCompatibleAiJson} from "@evolution/adapters";
 import type { ServerAiConfig } from "../server-env";
-import {resolveServerAiConfig} from "./server-ai-connection";
+import {readCurrentPinnedServerAiPublicSelection,resolveServerAiConfig} from "./server-ai-connection";
+import {ServerAiPublicScoringRouteSchema,serverAiPublicSelectionRoute,type ServerAiPublicScoringRoute} from "./server-ai-public-selection";
 import {INDEPENDENT_EVALUATION_SAFETY_INSTRUCTION,INDEPENDENT_EVALUATION_SAFETY_INSTRUCTION_VERSION} from "./independent-evaluation-safety";
 import {directAiSchemaDiagnostics,directAiCorrectionDiagnosticSuffix,type DirectAiSchemaDiagnostic} from "./direct-ai-schema-diagnostics";
 import {retainDirectAiCompletionDiagnostic,readDirectAiCompletionDiagnostic} from "./direct-ai-completion-diagnostics";
@@ -72,6 +73,14 @@ export const DIRECT_AI_SCHEMA_RECOVERY_VERSION="schema-feedback-once-v6-completi
 export async function serverAiScoringRouteFingerprint(): Promise<string | undefined> {
   const config = await resolveServerAiConfig();
   if (!config) return undefined;
+  return serverAiPublicScoringRouteFingerprint(config.mode==="openai-compatible"
+    ?{mode:config.mode,baseUrl:config.baseUrl,model:config.model,protocol:config.protocol,responseFormat:config.responseFormat}
+    :{mode:config.mode,model:config.model});
+}
+
+/** Same scoring policy and material as the legacy pinned getter, without resolving a key. */
+export function serverAiPublicScoringRouteFingerprint(raw:ServerAiPublicScoringRoute):string{
+  const config=ServerAiPublicScoringRouteSchema.parse(raw);
   const route = config.mode === "openai-compatible"
     ? [config.mode, config.baseUrl, config.model, ...(config.protocol || config.responseFormat ? [config.protocol,config.responseFormat] : [])]
     : [config.mode, config.model];
@@ -82,6 +91,13 @@ export async function serverAiScoringRouteFingerprint(): Promise<string | undefi
     ?DIRECT_AI_SCHEMA_INSTRUCTION_VERSION:undefined;
   const directSchemaRecoveryVersion=config.mode==="openai-compatible"?DIRECT_AI_SCHEMA_RECOVERY_VERSION:undefined;
   return createHash("sha256").update(JSON.stringify({ route, protectionSettlementPolicy: HTML_PROTECTION_SETTLEMENT_POLICY, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION, evaluationSafetyInstructionVersion: INDEPENDENT_EVALUATION_SAFETY_INSTRUCTION_VERSION, responsesOutputVersion, chatOutputVersion, directSchemaInstructionVersion, directSchemaRecoveryVersion, finalOutputVersion: config.mode==="openai-compatible"?STRUCTURED_AI_FINAL_OUTPUT_VERSION:undefined })).digest("hex");
+}
+
+/** Fresh default boundary for private evidence owners; the execution route stays pinned. */
+export async function readCurrentServerAiScoringSelection(){
+  const result=await readCurrentPinnedServerAiPublicSelection();
+  if(result.availability==="unavailable")return result;
+  return {...result,scoringRouteFingerprint:serverAiPublicScoringRouteFingerprint(serverAiPublicSelectionRoute(result.selection))};
 }
 
 type StructuredSchema={name:string;schema:Record<string,unknown>};
