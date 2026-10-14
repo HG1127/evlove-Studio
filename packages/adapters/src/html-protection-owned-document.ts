@@ -7,7 +7,8 @@ import { HTML_PROTECTION_CLOUD_URL as documentUrl, HTML_PROTECTION_CLOUD_CSP as 
 
 export class OwnedHtmlProtectionDocumentGap extends Error {
   readonly code: "served-material-mismatch" | "blocked-resource" | "observation-unavailable";
-  constructor(code: OwnedHtmlProtectionDocumentGap["code"], readonly inspectorCause?: string) { super(code); this.code = code; }
+  readonly inspectorCause?: string;
+  constructor(code: OwnedHtmlProtectionDocumentGap["code"], inspectorCause?: string) { super(code); this.inspectorCause = inspectorCause; this.code = code; }
 }
 export type HtmlProtectionOwnedDocument = {
   page: Page;

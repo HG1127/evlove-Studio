@@ -8,7 +8,7 @@ vi.mock("@vercel/sandbox",async original=>({
 }));
 const name="evo-protection-0123456789abcdef01234567";
 function spec(signal=new AbortController().signal){return {name,persistent:false as const,networkPolicy:"deny-all" as const,timeout:limits.deadlineMs,signal};}
-async function create(raw=spec()){
+async function create(raw:Parameters<typeof import("./vercel-sandbox-adapter").createVercelSandboxHtmlProtectionBrowser>[0]=spec()){
   const {createVercelSandboxHtmlProtectionBrowser}=await import("./vercel-sandbox-adapter");
   return await createVercelSandboxHtmlProtectionBrowser(raw);
 }

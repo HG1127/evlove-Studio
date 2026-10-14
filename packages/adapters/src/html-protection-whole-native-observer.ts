@@ -19,7 +19,8 @@ const mutations = ["DOM.attributeModified", "DOM.attributeRemoved", "DOM.charact
   "DOM.documentUpdated", "DOM.shadowRootPushed", "DOM.shadowRootPopped", "DOM.adoptedStyleSheetsModified"] as const;
 export class HtmlProtectionWholeNativeGap extends Error {
   readonly code: string;
-  constructor(code: string, readonly diagnostic?: { mutationObserved?: boolean; mirrorChanged?: boolean; stylesChanged?: boolean; activeAnimations?: number }) { super(code); this.code = code; }
+  readonly diagnostic?: { mutationObserved?: boolean; mirrorChanged?: boolean; stylesChanged?: boolean; activeAnimations?: number };
+  constructor(code: string, diagnostic?: HtmlProtectionWholeNativeGap["diagnostic"]) { super(code); this.diagnostic = diagnostic; this.code = code; }
 }
 /** Native realm/document/window ownership. No page-provided JSON or main-world fallback is accepted. */
 export async function createHtmlProtectionWholeNativeObserver(args: {

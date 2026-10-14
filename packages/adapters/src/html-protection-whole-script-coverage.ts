@@ -71,7 +71,11 @@ export async function createOwnedHtmlProtectionScriptCoverage(args: { page: Page
   return {
     async collect(args: { sourcePlan: HtmlProtectionWholeRuntimeSourcePlan; subjectScriptLocations: HtmlProtectionWholeRuntimeRequest["subjectScriptLocations"]; frameId: string; documentUrl: string }) {
       active();
-      const result = Coverage.parse(await cdp.send("Profiler.takePreciseCoverage")), captured = [], controllerScripts: Array<{ sourceSha256: string; sourceCharacters: number; contextUniqueId: string; frameId: string; scriptId: string }> = [];
+      const result = Coverage.parse(await cdp.send("Profiler.takePreciseCoverage"));
+      const captured: Array<{ parentId: string; sourceSha256: string; sourceCharacters: number; sourcePath: string;
+        scriptId: string; url: string; contextUniqueId: string; frameId: string; nativeSourceLocation: { line: number; column: number };
+        functions: z.infer<typeof FunctionCoverage>[]; coveragePresent: boolean; nativeRangeCount: number }> = [];
+      const controllerScripts: Array<{ sourceSha256: string; sourceCharacters: number; contextUniqueId: string; frameId: string; scriptId: string }> = [];
       const expected = args.sourcePlan.scriptShape.map(script => ({ parentId: script.id, sourceSha256: hash((script.literal ?? "").replace(/\r\n?/g,"\n")), sourceCharacters: (script.literal ?? "").replace(/\r\n?/g,"\n").length, sourcePath: script.sourcePath }));
       const unmatched: Array<{ sourceSha256: string; sourceCharacters: number; url: string; nativeSourceLocation: { line: number; column: number }; sourceMatchedParents: string[]; contextName: string; contextUniqueId: string; scriptAuxData: unknown }> = [];
       for (const [scriptId, parsed] of scripts) {
