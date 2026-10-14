@@ -98,15 +98,18 @@ export async function runVercelSandboxHtmlProtectionWholeObservation(args: {
         if (documentStates.has(record.stateId) || !manifest.expectedActions.some(action => action.stateId === record.stateId && ["boot", "viewport"].includes(action.operation))) return unavailable("unregistered-document-state");
         documentStates.add(record.stateId);
       }
-      if (record.kind === "visual-tile") validateVisualTile(material, manifest);
-      if (record.kind === "script-coverage") validateScriptCoverage(material, manifest);
-      const saved = z.object({ artifactId: z.string().min(1).max(512), sha256: z.string().regex(/^[a-f0-9]{64}$/), byteLength: z.number().int().positive() }).strict().parse(await consumeRecord(structuredClone(record), Buffer.from(bytes))); active();
-      if (saved.sha256 !== record.sha256 || saved.byteLength !== record.byteLength) return unavailable("private-artifact-readback-mismatch");
-      records.push({ ...record, artifactId: saved.artifactId });
+      readbacks.push({ record: structuredClone(record), material });
     }
     if (actualCount !== manifest.actualActionCount || (manifest.registration && !bootSeen)
       || (manifest.availability === "available" && manifest.expectedActions.filter(action => ["boot", "viewport"].includes(action.operation)).some(action => !documentStates.has(action.stateId)))) return unavailable("complete-native-record-set-missing");
     validateHtmlProtectionWholeReadback({ manifest, records: readbacks, expectedRequest: request, trustedRuntimeBinding: binding.data });
+    // Persist only after the complete physical set and native producer relations have been independently checked.
+    for (const { record, material } of readbacks) {
+      active(); const bytes = Buffer.from(canonical(material));
+      const saved = z.object({ artifactId: z.string().min(1).max(512), sha256: z.string().regex(/^[a-f0-9]{64}$/), byteLength: z.number().int().positive() }).strict().parse(await consumeRecord(structuredClone(record), Buffer.from(bytes))); active();
+      if (saved.sha256 !== record.sha256 || saved.byteLength !== record.byteLength) return unavailable("private-artifact-readback-mismatch");
+      records.push({ ...record, artifactId: saved.artifactId });
+    }
     active(); return { availability: "available", manifest, manifestSha256: sha(manifestBytes), manifestByteLength: manifestBytes.byteLength, records };
   })();
   try { return await Promise.race([operation, new Promise<HtmlProtectionWholeObservationResult>(resolve => {
