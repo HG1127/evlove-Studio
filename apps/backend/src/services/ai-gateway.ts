@@ -62,11 +62,12 @@ import type { ServerAiConfig } from "../server-env";
 import {resolveServerAiConfig} from "./server-ai-connection";
 import {INDEPENDENT_EVALUATION_SAFETY_INSTRUCTION,INDEPENDENT_EVALUATION_SAFETY_INSTRUCTION_VERSION} from "./independent-evaluation-safety";
 import {directAiSchemaDiagnostics,directAiCorrectionDiagnosticSuffix,type DirectAiSchemaDiagnostic} from "./direct-ai-schema-diagnostics";
+import {retainDirectAiCompletionDiagnostic,readDirectAiCompletionDiagnostic} from "./direct-ai-completion-diagnostics";
 import {buildDirectAiCorrectionContext,assertDirectAiCorrectionRequestBudget,type DirectAiCorrectionFailureKind} from "./direct-ai-correction-context";
 
 export type ServerAiOperation=AiOperation;
 export const DIRECT_AI_SCHEMA_INSTRUCTION_VERSION="exact-schema-instructions-v1";
-export const DIRECT_AI_SCHEMA_RECOVERY_VERSION="schema-feedback-once-v5-complete-final-context";
+export const DIRECT_AI_SCHEMA_RECOVERY_VERSION="schema-feedback-once-v6-completion-diagnostics";
 /** Public scoring-route identity; API keys and timeout settings are deliberately excluded. */
 export async function serverAiScoringRouteFingerprint(): Promise<string | undefined> {
   const config = await resolveServerAiConfig();
@@ -166,8 +167,8 @@ function parseStructuredResult<T>(text:string,contract:Contract<T>,explicitlyCom
 }
 
 /** A provider may echo the private second request in any HTTP/body/transport error. */
-function privateDirectCorrectionFailure(error:unknown){
-  if(error instanceof StructuredAiJsonError)return error;
+function privateDirectCorrectionFailure(error:unknown,initialDiagnostic:string){
+  if(error instanceof StructuredAiJsonError){error.message+=initialDiagnostic;return error;}
   const original=error&&typeof error==="object"?error as {httpStatus?:unknown;code?:unknown}:{};
   const safeCodes=new Set([
     "AI_REQUEST_TIMEOUT","AI_REQUEST_NETWORK_ERROR","AI_OUTPUT_INCOMPLETE","AI_OUTPUT_MISSING_FINAL",
@@ -183,7 +184,7 @@ function privateDirectCorrectionFailure(error:unknown){
   const message=reason?serverAiUnavailableMessage(reason)
     :"模型纠正未返回可用的完整结果，请检查模型服务或结构化输出能力后重试。";
   const suffix=directAiCorrectionDiagnosticSuffix({code,httpStatus,schemaIssues:error instanceof DirectAiSchemaMismatchError?error.schemaIssues:undefined});
-  return Object.assign(new Error(message+suffix),{code,...(httpStatus===undefined?{}:{httpStatus})});
+  return Object.assign(new Error(message+initialDiagnostic+suffix+readDirectAiCompletionDiagnostic(error)),{code,...(httpStatus===undefined?{}:{httpStatus})});
 }
 async function callVercelGateway<T>(args:{
   config:Extract<ServerAiConfig,{mode:"vercel-gateway"}>;
@@ -251,12 +252,17 @@ async function callResponses<T>(args:DirectRequest<T>){
     headers:{Authorization:"Bearer "+args.config.apiKey,"Content-Type":"application/json"},body,
   });
   if(!response.ok){
-    const parsed=CompatibleResponsesEnvelopeSchema.safeParse(json);
-    const detail=parsed.success?parsed.data.error?.message:undefined;
-    throw Object.assign(new Error(detail||("Server AI Responses HTTP "+response.status)),{httpStatus:response.status});
+    throw retainDirectAiCompletionDiagnostic(Object.assign(new Error("Server AI Responses HTTP "+response.status),{httpStatus:response.status}),
+      {protocol:"responses",phase:args.correcting?"correction":"initial",envelope:json});
   }
-  return parseStructuredResult(readCompatibleResponsesOutput(json,{requireCompletedStatus:true}),args.contract,
-    CompatibleResponsesEnvelopeSchema.parse(json).status==="completed",args.captureRejected);
+  try{
+    const envelope=CompatibleResponsesEnvelopeSchema.safeParse(json);
+    if(envelope.success&&envelope.data.error)throw Object.assign(new Error("模型接口返回错误正文，未取得可用最终结果。"),{code:"AI_PROVIDER_RESPONSE_ERROR",httpStatus:response.status});
+    return parseStructuredResult(readCompatibleResponsesOutput(json,{requireCompletedStatus:true}),args.contract,
+      CompatibleResponsesEnvelopeSchema.parse(json).status==="completed",args.captureRejected);
+  }catch(error){
+    throw retainDirectAiCompletionDiagnostic(error,{protocol:"responses",phase:args.correcting?"correction":"initial",envelope:json});
+  }
 }
 async function callChat<T>(args:DirectRequest<T>){
   const body=JSON.stringify({
@@ -276,12 +282,17 @@ async function callChat<T>(args:DirectRequest<T>){
     headers:{Authorization:"Bearer "+args.config.apiKey,"Content-Type":"application/json"},body,
   });
   if(!response.ok){
-    const parsed=CompatibleChatEnvelopeSchema.safeParse(json);
-    const detail=parsed.success?parsed.data.error?.message:undefined;
-    throw Object.assign(new Error(detail||("Server AI Chat HTTP "+response.status)),{httpStatus:response.status});
+    throw retainDirectAiCompletionDiagnostic(Object.assign(new Error("Server AI Chat HTTP "+response.status),{httpStatus:response.status}),
+      {protocol:"chat-completions",phase:args.correcting?"correction":"initial",envelope:json});
   }
-  return parseStructuredResult(readCompatibleChatOutput(json),args.contract,
-    CompatibleChatEnvelopeSchema.parse(json).choices?.[0]?.finish_reason==="stop",args.captureRejected);
+  try{
+    const envelope=CompatibleChatEnvelopeSchema.safeParse(json);
+    if(envelope.success&&(envelope.data.error||envelope.data.message?.trim()))throw Object.assign(new Error("模型接口返回错误正文，未取得可用最终结果。"),{code:"AI_PROVIDER_RESPONSE_ERROR",httpStatus:response.status});
+    return parseStructuredResult(readCompatibleChatOutput(json),args.contract,
+      CompatibleChatEnvelopeSchema.parse(json).choices?.[0]?.finish_reason==="stop",args.captureRejected);
+  }catch(error){
+    throw retainDirectAiCompletionDiagnostic(error,{protocol:"chat-completions",phase:args.correcting?"correction":"initial",envelope:json});
+  }
 }
 
 async function structured<T>(payload:unknown,schema:Contract<T>,media?:ServerAiMedia):Promise<T>{
@@ -325,9 +336,10 @@ async function structured<T>(payload:unknown,schema:Contract<T>,media?:ServerAiM
         && error instanceof StructuredAiJsonError;
       const invalidShape = error instanceof DirectAiSchemaMismatchError && error.correctableShape;
       if(!invalidShape && !invalidObservationJson)throw error;
-      if(signal.aborted)throw Object.assign(new Error("模型结构纠正前请求已超时。"),{code:"AI_REQUEST_TIMEOUT"});
+      const initialDiagnostic=readDirectAiCompletionDiagnostic(error);
+      if(signal.aborted)throw Object.assign(new Error("模型结构纠正前请求已超时。"+initialDiagnostic),{code:"AI_REQUEST_TIMEOUT"});
       try{return await invoke(true,error instanceof StructuredAiJsonError?error.kind:undefined);}
-      catch(correctionError){throw privateDirectCorrectionFailure(correctionError);}
+      catch(correctionError){throw privateDirectCorrectionFailure(correctionError,initialDiagnostic);}
     }
   }catch(error){
     const original=error as {message?:string;httpStatus?:number;code?:string};

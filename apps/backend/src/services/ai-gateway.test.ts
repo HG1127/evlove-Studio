@@ -165,7 +165,9 @@ describe("custom provider protocols and JSON output",()=>{
       error:{message:"Provider rejected "+input.apiKey},
     }),{status:403})));
     const error=await withExplicitServerAiConnection(input,()=>runServerAi("visual-judge",{})).catch((value:unknown)=>value);
-    expect((error as Error).message).toContain("[REDACTED]");
+    expect((error as Error).message).toContain("Server AI Chat HTTP 403");
+    expect((error as Error).message).toContain("completionPhase=initial");
+    expect((error as Error).message).not.toContain("Provider rejected");
     expect((error as Error).message).not.toContain(input.apiKey);
     expect((error as Error).stack).not.toContain(input.apiKey);
     expect(serverAiUnavailableReason(error)).toBe("provider-auth-or-billing");
