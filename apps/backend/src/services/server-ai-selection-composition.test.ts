@@ -113,6 +113,20 @@ describe("actual default Vault selection independently of pinned execution",()=>
     });
   });
 
+  it("keeps the exposed pinned execution config immutable and bound to its public selection",async()=>{
+    await seed();
+    await withServerAiConnection(async()=>{
+      const config=await resolveServerAiConfig();
+      const before=await readCurrentServerAiScoringSelection();
+      if(!config||before.availability!=="available")throw new Error("Expected pinned selection");
+      expect(Object.isFrozen(config)).toBe(true);
+      expect(()=>Object.assign(config,{model:"mutated-model"})).toThrow(TypeError);
+      expect((await resolveServerAiConfig())?.model).toBe(input.model);
+      expect(await serverAiScoringRouteFingerprint()).toBe(before.scoringRouteFingerprint);
+      expect(await readCurrentServerAiScoringSelection()).toMatchObject({availability:"available",selectionIdentitySha256:before.selectionIdentitySha256});
+    });
+  });
+
   it("does not run a synchronous callback twice when it throws a missing-secret error",async()=>{
     await seed();
     process.env.EVOLUTION_AI_API_KEY="synthetic-environment-key";process.env.EVOLUTION_AI_MODEL="another-model";

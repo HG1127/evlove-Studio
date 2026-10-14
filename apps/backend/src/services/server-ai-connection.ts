@@ -13,6 +13,11 @@ import {
 
 const activeConfig=new AsyncLocalStorage<{config:ServerAiConfig|undefined;selection?:ServerAiPublicSelection}>();
 
+function pinServerAiConnection<T>(config:ServerAiConfig|undefined,work:()=>Promise<T>,selection?:ServerAiPublicSelection){
+  // A returned execution config must not mutate the route away from its captured public selection.
+  return activeConfig.run({config:config?Object.freeze(config):undefined,selection},work);
+}
+
 function parseStoredConnection(raw:string){
   try{return ServerAiStoredConnectionSchema.parse(JSON.parse(raw));}
   catch{
@@ -110,9 +115,9 @@ export async function withServerAiConnection<T>(work:()=>Promise<T>):Promise<T>{
       if((error as {code?:string}).code!=="VAULT_SECRET_NOT_FOUND")throw error;
     }
   }
-  if(selected)return activeConfig.run(selected,work);
+  if(selected)return pinServerAiConnection(selected.config,work,selected.selection);
   const config=getServerAiConfig();
-  return activeConfig.run({config},work);
+  return pinServerAiConnection(config,work);
 }
 
 /** Public selection captured by the actual stored execution resolve, then independently rechecked. */
@@ -131,5 +136,5 @@ export function readCurrentStoredServerAiPublicSelection(selection:unknown):Prom
 
 export function withExplicitServerAiConnection<T>(input:ServerAiConnectionPut,work:()=>Promise<T>):Promise<T>{
   const parsed=ServerAiConnectionPutSchema.parse(input);
-  return activeConfig.run({config:directConfig(parsed)},work);
+  return pinServerAiConnection(directConfig(parsed),work);
 }
