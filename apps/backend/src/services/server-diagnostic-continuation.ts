@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { EvolveProjectSchema, type EvolveProject, type EvolutionWorkflowRunInput } from "@evolution/contracts";
 import { LIVE_TARGET_OBSERVATION_MAX_AGE_MS, ORIGINAL_HTML_BASELINE_DIAGNOSTIC_POLICY,
-  OriginalHtmlBaselineDiagnosticBindingSchema, originalHtmlBaselineDiagnosticCase, campaignPreflightStopReason, goalReadiness } from "@evolution/core";
+  OriginalHtmlBaselineDiagnosticBindingSchema, originalHtmlBaselineDiagnosticCase, originalHtmlBaselineDiagnosticUsesFixedArtifact, campaignPreflightStopReason, goalReadiness } from "@evolution/core";
 import type { ServerBaselineOutcome } from "@evolution/harness";
 import { getServerMissionEnvelope } from "./production-runtime";
 import { readServerOriginalHtmlBaselineDiagnosticBinding } from "./server-original-html-baseline-diagnostic";
@@ -10,7 +10,7 @@ import { readServerOriginalHtmlBaselineDiagnosticBinding } from "./server-origin
 const digestSchema = z.string().regex(/^[0-9a-f]{64}$/);
 /** Internal Workflow result/argument only. Schema validation alone never grants qualification. */
 const ContinuationSchema = z.object({
-  schemaVersion: z.literal("server-diagnostic-continuation-v1"),
+  schemaVersion: z.literal("server-diagnostic-continuation-v2"),
   missionId: z.string().min(1), controlJobId: z.string().min(1), runId: z.string().min(1), operationKey: z.string().min(1),
   round: z.literal(1), baselineId: z.string().min(1), baselineSha256: digestSchema,
   inputSha256: digestSchema, generationSha256: digestSchema, scoringRouteFingerprint: z.string().min(1),
@@ -45,9 +45,13 @@ function ownerMatches(project: EvolveProject, input: EvolutionWorkflowRunInput, 
     && owner.runId === context.runId && owner.operationKey === context.operationKey && input.controlOwnerKey === context.operationKey
     && project.id === input.missionId && project.id === context.missionId;
 }
-function observationFresh(context: ServerDiagnosticContinuation, nowMs: number) {
+function observationFresh(context: ServerDiagnosticContinuation, project: EvolveProject, nowMs: number) {
   const observed = Date.parse(context.observedAt);
-  return Number.isFinite(nowMs) && nowMs >= observed && nowMs - observed < LIVE_TARGET_OBSERVATION_MAX_AGE_MS;
+  if (!Number.isFinite(nowMs) || !Number.isFinite(observed) || nowMs < observed) return false;
+  // Same-Run fixed file diagnosis remains bound by fresh physical reads below.
+  // This does not refresh cached/live scores or any paired Hidden/Gate F evidence.
+  return originalHtmlBaselineDiagnosticUsesFixedArtifact(project)
+    || nowMs - observed < LIVE_TARGET_OBSERVATION_MAX_AGE_MS;
 }
 function fixedBindingsMatch(context: ServerDiagnosticContinuation, project: EvolveProject) {
   return project.campaign.currentRound === context.round - 1 && !project.searchChampion
@@ -65,7 +69,7 @@ export function createServerDiagnosticContinuation(outcome: ServerBaselineOutcom
     || !originalHtmlBaselineDiagnosticCase(project) || project.campaign.status !== "running" || !project.baselineRun.completedAt
     || owner?.phase !== "bound" || !owner.runId || owner.controlJobId !== input.controlJobId
     || owner.operationKey !== input.controlOwnerKey || project.id !== input.missionId) return undefined;
-  const context = ContinuationSchema.parse({ schemaVersion: "server-diagnostic-continuation-v1", missionId: project.id,
+  const context = ContinuationSchema.parse({ schemaVersion: "server-diagnostic-continuation-v2", missionId: project.id,
     controlJobId: owner.controlJobId, runId: owner.runId, operationKey: owner.operationKey, round: 1,
     baselineId: project.baselineRun.id, baselineSha256: sha(project.baselineRun), inputSha256: staticInput(project),
     generationSha256: generation(project), scoringRouteFingerprint, observedAt: project.baselineRun.completedAt,
@@ -73,7 +77,7 @@ export function createServerDiagnosticContinuation(outcome: ServerBaselineOutcom
   return fixedBindingsMatch(context, project) ? context : undefined;
 }
 
-/** Rebind only after an owned phase output; the original observation deadline never moves. */
+/** Rebind only after an owned phase output; the original observation time never moves; live sources retain their fixed TTL. */
 export function renewServerDiagnosticContinuation(context: ServerDiagnosticContinuation | undefined,
   project: EvolveProject): ServerDiagnosticContinuation | undefined {
   if (!context || project.campaign.status !== "running" || !fixedBindingsMatch(context, project)) return undefined;
@@ -91,7 +95,7 @@ export function serverDiagnosticContinuationGenerationMatches(project:EvolveProj
 export function serverDiagnosticContinuationBoundaryReason(project: EvolveProject, input: EvolutionWorkflowRunInput,
   context: ServerDiagnosticContinuation, route: string | undefined, nowMs=Date.now()): string | undefined {
   if (!ownerMatches(project,input,context)) return "control-owner-changed";
-  if (!observationFresh(context,nowMs)) return "observation-expired";
+  if (!observationFresh(context,project,nowMs)) return "observation-expired";
   if (route!==context.scoringRouteFingerprint) return "scoring-route-changed";
   if (project.campaign.status!=="running" || campaignPreflightStopReason(project) || !goalReadiness(project).ready
     || project.gates.find(gate=>gate.id==="target-ready")?.status!=="approved"

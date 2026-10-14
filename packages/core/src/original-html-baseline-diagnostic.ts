@@ -56,6 +56,21 @@ export function originalHtmlBaselineDiagnosticCase(project: EvolveProject): Test
   return testCase;
 }
 
+/** Classification only: never qualification, score freshness, or acceptance authority.
+ * Future comparison cases/Hidden do not turn a fixed uploaded file reference into
+ * a live current observation. Explicit browser/live current observations and remote sources retain live TTL.
+ */
+export function originalHtmlBaselineDiagnosticUsesFixedArtifact(project: EvolveProject): boolean {
+  if (project.targetConnection.adapter !== "artifact" || !originalHtmlBaselineDiagnosticCase(project)) return false;
+  const source = project.sourceArtifacts.find(item => item.role === "target");
+  if (source?.inputMode !== "upload" || !source.storageRef?.trim()) return false;
+  const deferred = baselineDeferredComparisonCriterionIds(project);
+  const currentCases = project.evalSuite.filter(item => item.criterionIds.length === 0
+    || item.criterionIds.some(id => !deferred.has(id)));
+  return currentCases.length > 0 && currentCases.every(item =>
+    (item.executionMode === "artifact-runtime" || item.executionMode === "static-evidence")
+    && !item.browserSteps?.length);
+}
 /**
  * Pure diagnosis qualification over THIS fresh measurement and trusted internal App reads.
  * It never authenticates serialized evidence, changes criterion scores, closes runtime
