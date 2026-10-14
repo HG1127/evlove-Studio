@@ -90,3 +90,5 @@ export * from "./html-protection-proof-assembly";
 export * from "./html-protection-static-observations";
 export * from "./html-protection-whole-handler-source";
 export * from "./html-protection-whole-clipboard-profile";
+
+export * from "./html-protection-whole-target-dependencies";
