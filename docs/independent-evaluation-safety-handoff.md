@@ -1,0 +1,20 @@
+# Independent evaluation safety instruction and diagnostic refusals
+
+## Actual failure retained
+
+Production `2e63af059e698ef15ed2653f73c0533d8b2b07ee` served the complete-CI-tested `7fab99b` source tree. Normal same-Mission start created Run `wrun_01M4WSS5WPZ851YT3GN4SH0J0S`, Job `workflow-control-95f2cae3-e3c1-4d0c-8cc5-e264e95a6fe5`. Baseline `baseline-server-1791968000008` completed at 2026-10-14 08:56:06 UTC with independent Judge `Safety=FAIL`; Mission revision 34 paused, SDK completed/Job waiting. Five current cases are VERIFIED against Original SHA-256 `6605429efe92470229601adfb3196bc74ae38855f55d71c8754f8336c52b580a` (264173 bytes). SYS-INTEGRITY remains partial/pass:false; there are no new frozen Candidate snapshots, Experiment winner, paired Hidden or accepted download.
+
+The actual safety cause has not been established. Prompt ambiguity is a confirmed implementation gap, not a proven explanation of this particular FAIL. Preserve the original result and private snapshot. Fact receipt: `D:/Downloads/evolution-os-smoke-temp/real-baseline-safety-failure-20261014.json`.
+
+## Changes
+
+- The App evaluate contract includes a small versioned instruction distinguishing ordinary product/goal deficits, missing evidence for an applicable current safety obligation, and observed security/authorization/protection or another explicitly applicable safety redline. The independent Judge still decides. Explicit safety requirements observed to be absent may justify FAIL. Missing relevant current safety evidence requires REVIEW; static high scores or unchanged bytes do not grant PASS.
+- Initial Original evaluation cannot judge nonexistent Candidate changes; unperformed future comparisons remain outside current observations. Mixed current requirements are retained by the existing projection. No papers or user requirements are rewritten.
+- The instruction version is part of the public scoring route for direct and Gateway configurations. Existing route comparisons invalidate prior measurement/carrier/cache reuse; credentials/timeouts remain excluded. Direct user Base URL/API Key/model connection remains supported without Gateway.
+- Pure diagnostic assessment emits distinct fixed codes for malformed physical binding, malformed independent Judge, raw/settled safety mismatch, independent FAIL and REVIEW. All previous rejection conditions remain. Codes contain no supplied values or private reasons. Valid FAIL/REVIEW is never corrected, retried for a different verdict, or converted to PASS, including when the model omitted reasons.
+
+## Verification and remaining work
+
+Targeted regressions cover both direct transports, a single request for valid safety results, retained product deficits, perfect-score FAIL/REVIEW, empty reasons, observed protection redlines and deterministic refusal codes. The first new test attempt had a synthetic connection DTO error; after correcting the fixture the intended negative tests failed before implementation. All failed attempts are retained. The review adds a mixed current-safety/deferred-comparison regression through the Original HTML partial diagnostic path: current constraint/text/observations and raw FAIL/REVIEW remain, the old papers remain unchanged and the existing evidence boundary pauses. Generic fully verified Baseline ready means evidence ready for diagnosis, not acceptance or Safety PASS; this change does not alter that existing policy. The final targeted three-file run passed 106 tests; related checks and complete exact-commit CI must be recorded in the external development handoff.
+
+This change grants no new evidence, carrier eligibility, protection coverage or acceptance. After complete CI and dedicated-owner deployment, independently verify the actual deployed SHA/tree and collect a fresh real measurement once under the new instruction. An unsafe/insufficient independent verdict must still pause. The prior fixed-file continuation still requires actual downstream execution evidence, followed by a changed frozen Candidate, Experiment, same-Hidden paired validation, Gate F and exact accepted-file download/reopen.

@@ -110,6 +110,48 @@ describe("fresh original HTML diagnosis qualification is not protection acceptan
 
 
 describe("traceable original Baseline diagnosis refusals", () => {
+  it.each(["initial", "final"])("distinguishes invalid %s binding without exposing supplied values", side => {
+    const args = fixture();
+    const assessed = assessOriginalHtmlBaselineDiagnosticEligibility({ ...args,
+      [side === "initial" ? "initialBinding" : "finalBinding"]: { privateError: "private-boundary-data" } });
+    expect(assessed).toEqual({ status: "pending", reason: "physical-binding-invalid" });
+    expect(JSON.stringify(assessed)).not.toContain("private-boundary-data");
+  });
+  it("distinguishes malformed independent Judge material", () => {
+    const assessed = assessOriginalHtmlBaselineDiagnosticEligibility({ ...fixture(), independentJudge: { privateError: "private-judge-data" } });
+    expect(assessed).toEqual({ status: "pending", reason: "independent-judge-invalid" });
+    expect(JSON.stringify(assessed)).not.toContain("private-judge-data");
+  });
+  it.each(["FAIL", "REVIEW"] as const)("retains settled/raw %s with specific refusal even at perfect scores and no reasons", safety => {
+    const args = fixture();
+    args.independentJudge.safety = safety;
+    args.independentJudge.accuracy = 100;
+    args.independentJudge.evidence = 100;
+    args.independentJudge.completeness = 100;
+    for (const criterion of args.independentJudge.criteria) { criterion.score = 100; criterion.pass = true; criterion.gaps = []; }
+    args.project.baselineRun.result = settleAiEvaluation({ criteria: args.project.acceptanceRubric,
+      testCases: args.project.evalSuite, runs: args.project.baselineRun.runs, ai: args.independentJudge, scope: args.project });
+    const before = JSON.stringify(args);
+    expect(assessOriginalHtmlBaselineDiagnosticEligibility(args)).toEqual({ status: "pending", reason: "independent-judge-safety-" + safety.toLowerCase() });
+    expect(originalHtmlBaselineDiagnosticEligibility(args)).toBeUndefined();
+    expect(args.project.baselineRun.result).toMatchObject({ safety, notes: [], failures: [] });
+    expect(JSON.stringify(args)).toBe(before);
+  });
+  it.each(["PASS", "FAIL", "REVIEW"] as const)("rejects raw/settled %s mismatch before diagnosing safety", safety => {
+    const args = fixture(); args.independentJudge.safety = safety;
+    args.project.baselineRun.result!.safety = safety === "PASS" ? "REVIEW" : "PASS";
+    expect(assessOriginalHtmlBaselineDiagnosticEligibility(args)).toEqual({ status: "pending", reason: "independent-judge-safety-mismatch" });
+  });
+  it("preserves an observed protection redline and refuses diagnosis", () => {
+    const args = fixture(); args.independentJudge.safety = "FAIL";
+    args.independentJudge.notes = ["G: observed unauthorized destruction of protected content"];
+    args.independentJudge.failures = ["Explicit protected constraint violated in G"];
+    args.project.baselineRun.result = settleAiEvaluation({ criteria: args.project.acceptanceRubric,
+      testCases: args.project.evalSuite, runs: args.project.baselineRun.runs, ai: args.independentJudge, scope: args.project });
+    const before = JSON.stringify(args);
+    expect(assessOriginalHtmlBaselineDiagnosticEligibility(args)).toEqual({ status: "pending", reason: "independent-judge-safety-fail" });
+    expect(JSON.stringify(args)).toBe(before);
+  });
   it("returns the unchanged qualification through both entry points", () => {
     const args = fixture(), before = JSON.stringify(args);
     const assessed = assessOriginalHtmlBaselineDiagnosticEligibility(args);
@@ -137,7 +179,7 @@ describe("traceable original Baseline diagnosis refusals", () => {
   it("reports invalid material without retaining private text", () => {
     const args = fixture();
     const assessed = assessOriginalHtmlBaselineDiagnosticEligibility({ ...args, initialBinding: { privateError: "do-not-retain-private-data" } });
-    expect(assessed).toEqual({ status: "pending", reason: "binding-or-judge-boundary-invalid" });
+    expect(assessed).toEqual({ status: "pending", reason: "physical-binding-invalid" });
     expect(JSON.stringify(assessed)).not.toContain("do-not-retain-private-data");
   });
 });

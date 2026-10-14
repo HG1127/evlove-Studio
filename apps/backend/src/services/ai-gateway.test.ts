@@ -4,6 +4,7 @@ import {createHash} from "node:crypto";
 import {SERVER_SEMANTIC_CONTEXT_VERSION} from "@evolution/harness";
 import {COMPATIBLE_RESPONSES_OUTPUT_VERSION,COMPATIBLE_CHAT_OUTPUT_VERSION,STRUCTURED_AI_FINAL_OUTPUT_VERSION} from "@evolution/adapters";
 import {withExplicitServerAiConnection} from "./server-ai-connection";
+import {INDEPENDENT_EVALUATION_SAFETY_INSTRUCTION_VERSION} from "./independent-evaluation-safety";
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
 import {DIRECT_AI_SCHEMA_RECOVERY_VERSION,DIRECT_AI_SCHEMA_INSTRUCTION_VERSION,isServerAiUnavailable,runServerAi,serverAiScoringRouteFingerprint,serverAiUnavailableReason} from "./ai-gateway";
 
@@ -51,9 +52,11 @@ describe("server AI scoring route identity",()=> {
     process.env.EVOLUTION_AI_BASE_URL="https://ai.example.test/v1";
     const route=["openai-compatible","https://ai.example.test/v1","model-a"];
     const legacy=createHash("sha256").update(JSON.stringify(route)).digest("hex");
-    const expected=createHash("sha256").update(JSON.stringify({route,protectionSettlementPolicy:HTML_PROTECTION_SETTLEMENT_POLICY,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,responsesOutputVersion:COMPATIBLE_RESPONSES_OUTPUT_VERSION,chatOutputVersion:COMPATIBLE_CHAT_OUTPUT_VERSION,directSchemaInstructionVersion:DIRECT_AI_SCHEMA_INSTRUCTION_VERSION,directSchemaRecoveryVersion:DIRECT_AI_SCHEMA_RECOVERY_VERSION,finalOutputVersion:STRUCTURED_AI_FINAL_OUTPUT_VERSION})).digest("hex");
+    const expected=createHash("sha256").update(JSON.stringify({route,protectionSettlementPolicy:HTML_PROTECTION_SETTLEMENT_POLICY,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,evaluationSafetyInstructionVersion:INDEPENDENT_EVALUATION_SAFETY_INSTRUCTION_VERSION,responsesOutputVersion:COMPATIBLE_RESPONSES_OUTPUT_VERSION,chatOutputVersion:COMPATIBLE_CHAT_OUTPUT_VERSION,directSchemaInstructionVersion:DIRECT_AI_SCHEMA_INSTRUCTION_VERSION,directSchemaRecoveryVersion:DIRECT_AI_SCHEMA_RECOVERY_VERSION,finalOutputVersion:STRUCTURED_AI_FINAL_OUTPUT_VERSION})).digest("hex");
     expect(await serverAiScoringRouteFingerprint()).toBe(expected);
     expect(await serverAiScoringRouteFingerprint()).not.toBe(legacy);
+    const previousEvaluationPolicy=createHash("sha256").update(JSON.stringify({route,protectionSettlementPolicy:HTML_PROTECTION_SETTLEMENT_POLICY,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,responsesOutputVersion:COMPATIBLE_RESPONSES_OUTPUT_VERSION,chatOutputVersion:COMPATIBLE_CHAT_OUTPUT_VERSION,directSchemaInstructionVersion:DIRECT_AI_SCHEMA_INSTRUCTION_VERSION,directSchemaRecoveryVersion:DIRECT_AI_SCHEMA_RECOVERY_VERSION,finalOutputVersion:STRUCTURED_AI_FINAL_OUTPUT_VERSION})).digest("hex");
+    expect(await serverAiScoringRouteFingerprint()).not.toBe(previousEvaluationPolicy);
   });
 
   it("changes with provider/model but excludes credentials and timeout",async()=> {
