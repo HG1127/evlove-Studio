@@ -60,6 +60,7 @@ import { HTML_PROTECTION_SETTLEMENT_POLICY } from "@evolution/core";
 import {COMPATIBLE_RESPONSES_OUTPUT_VERSION,COMPATIBLE_CHAT_OUTPUT_VERSION,readCompatibleResponsesOutput,readCompatibleChatOutput,parseStructuredAiOutput,StructuredAiJsonError,STRUCTURED_AI_FINAL_OUTPUT_VERSION,type StructuredAiJsonFailureKind,requestCompatibleAiJson} from "@evolution/adapters";
 import type { ServerAiConfig } from "../server-env";
 import {resolveServerAiConfig} from "./server-ai-connection";
+import {directAiSchemaDiagnostics,directAiCorrectionDiagnosticSuffix,type DirectAiSchemaDiagnostic} from "./direct-ai-schema-diagnostics";
 import {buildDirectAiCorrectionContext,assertDirectAiCorrectionRequestBudget,type DirectAiCorrectionFailureKind} from "./direct-ai-correction-context";
 
 export type ServerAiOperation=AiOperation;
@@ -144,7 +145,7 @@ function contract(operation:ServerAiOperation):Contract<unknown>{
 
 class DirectAiSchemaMismatchError extends Error{
   readonly code="AI_OUTPUT_SCHEMA_MISMATCH";
-  constructor(message:string,readonly correctableShape:boolean){super(message);}
+  constructor(message:string,readonly correctableShape:boolean,readonly schemaIssues:DirectAiSchemaDiagnostic[]){super(message);}
 }
 
 function parseStructuredResult<T>(text:string,contract:Contract<T>,explicitlyCompleted:boolean,captureRejected?:(text:string,kind:DirectAiCorrectionFailureKind)=>void):T{
@@ -156,10 +157,11 @@ function parseStructuredResult<T>(text:string,contract:Contract<T>,explicitlyCom
   }
   const result=contract.parser.safeParse(output);
   if(result.success)return result.data;
-  const fields=[...new Set(result.error.issues.map(issue=>issue.path.join(".")||"结果"))].slice(0,4).join("、");
+  const schemaIssues=directAiSchemaDiagnostics(contract.schema.schema,result.error.issues);
+  const fields=[...new Set(schemaIssues.map(issue=>issue.path))].join("、");
   const correctableShape=explicitlyCompleted&&result.error.issues.every(issue=>issue.code!=="custom");
   if(correctableShape)captureRejected?.(text,"schema-shape");
-  throw new DirectAiSchemaMismatchError("模型返回的 JSON 不符合任务结构（"+fields+"）。请检查模型的结构化输出能力或切换模型。",correctableShape);
+  throw new DirectAiSchemaMismatchError("模型返回的 JSON 不符合任务结构（"+fields+"）。请检查模型的结构化输出能力或切换模型。",correctableShape,schemaIssues);
 }
 
 /** A provider may echo the private second request in any HTTP/body/transport error. */
@@ -179,7 +181,8 @@ function privateDirectCorrectionFailure(error:unknown){
   const reason=serverAiUnavailableReason({code,httpStatus});
   const message=reason?serverAiUnavailableMessage(reason)
     :"模型纠正未返回可用的完整结果，请检查模型服务或结构化输出能力后重试。";
-  return Object.assign(new Error(message),{code,...(httpStatus===undefined?{}:{httpStatus})});
+  const suffix=directAiCorrectionDiagnosticSuffix({code,httpStatus,schemaIssues:error instanceof DirectAiSchemaMismatchError?error.schemaIssues:undefined});
+  return Object.assign(new Error(message+suffix),{code,...(httpStatus===undefined?{}:{httpStatus})});
 }
 async function callVercelGateway<T>(args:{
   config:Extract<ServerAiConfig,{mode:"vercel-gateway"}>;
@@ -405,3 +408,4 @@ export function serverAiUnavailableMessage(reasonCode:string){
 export function isServerAiUnavailable(error:unknown){
   return Boolean(serverAiUnavailableReason(error));
 }
+
