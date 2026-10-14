@@ -10,6 +10,8 @@ import {
   settleScheduledManualRoundStep,
 } from "./evolution-mission/steps";
 
+import type { ServerDiagnosticContinuation } from "../apps/backend/src/services/server-diagnostic-continuation";
+
 const MAX_CONTROL_STEPS=32;
 
 export async function evolutionMissionWorkflow(rawInput:unknown):Promise<EvolutionWorkflowResult>{
@@ -32,11 +34,14 @@ export async function evolutionMissionWorkflow(rawInput:unknown):Promise<Evoluti
       targetRound=trigger.targetRound;
     }
 
+    // Internal SDK step output only: never initialized from public Workflow input or Mission events.
+    let diagnosticContinuation:ServerDiagnosticContinuation|undefined;
     let rearmed=false;
     for(let localIteration=0;localIteration<MAX_CONTROL_STEPS;localIteration+=1){
       const iteration=cycle*MAX_CONTROL_STEPS+localIteration;
       const plan=await planMissionStep(input,iteration);
-      const execution=await executeServerControlStep(input,plan,iteration);
+      const execution=await executeServerControlStep(input,plan,iteration,diagnosticContinuation);
+      diagnosticContinuation=execution.control==="continue" ? execution.diagnosticContinuation : undefined;
       if(execution.control==="stop"&&execution.result)return execution.result;
 
       if(targetRound!==undefined){
