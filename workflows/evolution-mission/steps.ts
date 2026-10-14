@@ -1,4 +1,5 @@
 import { FatalError } from "workflow";
+import { createServerDiagnosticContinuation, renewServerDiagnosticContinuation, validateServerDiagnosticContinuation, serverDiagnosticContinuationBoundaryReason, serverDiagnosticContinuationGenerationMatches, type ServerDiagnosticContinuation, type ServerControlExecution } from "../../apps/backend/src/services/server-diagnostic-continuation";
 import { campaignLiveObservationFresh, campaignPreflightStopReason, campaignScoringInputBlocker } from "@evolution/core";
 import {
   EvolutionJobSchema,
@@ -29,7 +30,7 @@ import {
   reconcileAttentionRequest,
   type ServerHarnessPlan,
 } from "@evolution/harness";
-import { getServerProductionRuntime } from "../../apps/backend/src/services/production-runtime";
+import { getServerMissionEnvelope, getServerProductionRuntime } from "../../apps/backend/src/services/production-runtime";
 import { serverAiScoringRouteFingerprint } from "../../apps/backend/src/services/ai-gateway";
 import { runServerControlAi as runServerAi, ServerControlAiUnavailableError } from "../../apps/backend/src/services/server-control-ai";
 import { restoreServerControlAiWait, requireServerMainFlowRecoveryAi } from "../../apps/backend/src/services/server-control-ai-recovery";
@@ -47,7 +48,7 @@ import { publishAcceptedChampionToConfiguredGit } from "../../apps/backend/src/s
 import { renderAcceptedProjectArtifacts } from "../../apps/backend/src/services/server-artifact-renderer";
 import { lockGitTargetSnapshot,materializeLockedGitTargetSource } from "../../apps/backend/src/services/git-target-source";
 import { lockConnectorTargetSnapshot,materializeLockedConnectorTargetSource } from "../../apps/backend/src/services/connector-target-source";
-import {serverAiConnectionConfigured as serverAiConfigured} from "../../apps/backend/src/services/server-ai-connection";
+import {withServerAiConnection,serverAiConnectionConfigured as serverAiConfigured} from "../../apps/backend/src/services/server-ai-connection";
 import {appendWorkflowControlEvent} from "../../apps/backend/src/services/workflow-control-events";
 import {getServerWorkflowControlRuntime,requireServerWorkflowControlOwner} from "../../apps/backend/src/services/workflow-control-runtime";
 import {planWorkflowResultFinalization} from "../../apps/backend/src/services/workflow-result-finalization";
@@ -500,11 +501,13 @@ export async function executeServerControlStep(
   input:EvolutionWorkflowRunInput,
   plan:ServerHarnessPlan,
   iteration:number,
-):Promise<{control:"continue"|"stop";result?:EvolutionWorkflowResult;sleepMs?:number}>{
+  diagnosticContinuation?:ServerDiagnosticContinuation,
+):Promise<ServerControlExecution>{
   "use step";
   await requireServerWorkflowControlOwner(input);
   try {
-    return await executeServerControlAction(input,plan,iteration);
+    const execute=()=>executeServerControlAction(input,plan,iteration,diagnosticContinuation);
+    return await (plan.decision.action==="run-campaign" ? withServerAiConnection(execute) : execute());
   } catch (error) {
     if (!(error instanceof ServerControlAiUnavailableError)) throw error;
     const runtime=getServerWorkflowControlRuntime(input);
@@ -530,7 +533,8 @@ async function executeServerControlAction(
   input:EvolutionWorkflowRunInput,
   plan:ServerHarnessPlan,
   iteration:number,
-):Promise<{control:"continue"|"stop";result?:EvolutionWorkflowResult;sleepMs?:number}>{
+  diagnosticContinuation?:ServerDiagnosticContinuation,
+):Promise<ServerControlExecution>{
   const runtime=getServerWorkflowControlRuntime(input);
   const mission=await runtime.missions.get(input.missionId);
   if(!mission)throw new FatalError(`Mission 不存在：${input.missionId}`);
@@ -840,10 +844,37 @@ async function executeServerControlAction(
       && (!campaignLiveObservationFresh(mission,Number.isFinite(new Date(mission.validationRun.baselineObservedAt ?? NaN).getTime())
         ? new Date(mission.validationRun.baselineObservedAt!).toISOString() : undefined,measurementNowMs)
         || mission.baselineRun.measurementFingerprint!==serverBaselineFingerprint(mission,scoringRouteFingerprint));
+    const pauseDiagnosticContinuation=async(denial:string,campaignMission:typeof mission):Promise<ServerControlExecution>=>{
+        const reason=`[server-campaign-baseline-evidence-pending] 当次阶段续接已停止（${denial}）；保留原 Baseline 与下游断点，未复用或升级验收证据。`;
+        const paused=checkpointServerMainFlowWait({...campaignMission,stage:"baseline",
+          campaign:{...campaignMission.campaign,status:"paused",stopReason:reason,
+            schedule:{...campaignMission.campaign.schedule,enabled:false,nextRunAt:undefined}},updatedAt:now},input.controlJobId);
+        await runtime.missions.save(paused);
+        await runtime.events.append(createEvolutionEvent({id:`evt-${input.controlJobId}-diagnostic-continuation-${iteration}`,
+          missionId:input.missionId,jobId:input.controlJobId,checkpointId:plan.checkpoint.id,type:"JobProgress",source:"vercel-workflow-control",
+          payload:{action,phase:"diagnostic-continuation",reason,baselineId:campaignMission.baselineRun.id,serverNative:true}}));
+        await runtime.jobs.put(await controlJob(input,{status:"waiting",startedAt:input.requestedAt,progress:{percent:28,detail:reason.slice(0,240)}}));
+        return {control:"stop",result:result(input,{status:"waiting-action",iterations:iteration+1,nextAction:action,
+          checkpointId:plan.checkpoint.id,reason})};
+    };
     let campaignMission=mission;
-    if(!canReuseServerBaseline(campaignMission,scoringRouteFingerprint,measurementNowMs)){
+    if(diagnosticContinuation){
+      let continuation=await validateServerDiagnosticContinuation(campaignMission,input,diagnosticContinuation,scoringRouteFingerprint,
+        {readRoute:serverAiScoringRouteFingerprint});
+      await requireServerWorkflowControlOwner(input);
+      if(continuation.ready){
+        const boundary=serverDiagnosticContinuationBoundaryReason(campaignMission,input,continuation.continuation,scoringRouteFingerprint);
+        if(boundary)continuation={ready:false,reason:boundary};
+      }
+      if(!continuation.ready){
+        return pauseDiagnosticContinuation(continuation.reason,campaignMission);
+      }
+      diagnosticContinuation=continuation.continuation;
+    }
+    if(!diagnosticContinuation && !canReuseServerBaseline(campaignMission,scoringRouteFingerprint,measurementNowMs)){
       const baselineOutcome=await runServerMissionBaseline(campaignMission);
       campaignMission=!baselineOutcome.ready ? checkpointServerMainFlowWait(baselineOutcome.project,input.controlJobId) : baselineOutcome.project;
+      diagnosticContinuation=createServerDiagnosticContinuation(baselineOutcome,input,scoringRouteFingerprint);
       await runtime.missions.save(campaignMission);
       await runtime.events.append(createEvolutionEvent({
         id:`evt-${input.controlJobId}-campaign-baseline-${iteration}`,
@@ -882,6 +913,15 @@ async function executeServerControlAction(
       }));
     }
 
+    if(diagnosticContinuation){
+      // The fresh path also crosses persistence awaits. Recheck the independent stored generation last.
+      await requireServerWorkflowControlOwner(input);
+      const current=(await getServerMissionEnvelope(input.missionId))?.payload;
+      if(!current || !serverDiagnosticContinuationGenerationMatches(current,diagnosticContinuation))
+        throw new FatalError("后台阶段续接的完整输入或断点在等待期间已变化；未执行旧一代动作。");
+      const boundary=serverDiagnosticContinuationBoundaryReason(campaignMission,input,diagnosticContinuation,scoringRouteFingerprint);
+      if(boundary)return pauseDiagnosticContinuation(boundary,campaignMission);
+    }
     const round=campaignMission.campaign.currentRound+1;
     const campaignCheckpoint=campaignMission.campaign.checkpoint;
     if(campaignCheckpoint?.round===round
@@ -920,7 +960,7 @@ async function executeServerControlAction(
         startedAt:input.requestedAt,
         progress:{percent:72,detail:holdoutOutcome.reason.slice(0,240)},
       }));
-      return {control:"continue"};
+      return {control:"continue",diagnosticContinuation:renewServerDiagnosticContinuation(diagnosticContinuation,campaignMission)};
     }
 
     if(campaignCheckpoint?.round===round
@@ -985,7 +1025,7 @@ async function executeServerControlAction(
         startedAt:input.requestedAt,
         progress:{percent:acceptanceOutcome.accepted?86:80,detail:acceptanceOutcome.reason.slice(0,240)},
       }));
-      return {control:"continue"};
+      return {control:"continue",diagnosticContinuation:renewServerDiagnosticContinuation(diagnosticContinuation,campaignMission)};
     }
 
     if(campaignCheckpoint?.round===round&&campaignCheckpoint.completedPhase==="plan"){
@@ -1028,14 +1068,15 @@ async function executeServerControlAction(
           detail:experimentOutcome.reason.slice(0,240),
         },
       }));
-      return {control:"continue"};
+      return {control:"continue",diagnosticContinuation:renewServerDiagnosticContinuation(diagnosticContinuation,campaignMission)};
     }
     const outcome=await advanceServerCampaignPreparation(campaignMission,{
       problemAnalysis:(payload)=>runServerAi("problem-analysis",payload),
       diagnose:(payload)=>runServerAi("diagnose",payload),
       plan:(payload)=>runServerAi("plan",payload),
     });
-    await runtime.missions.save(outcome.control==="stop" ? checkpointServerMainFlowWait(outcome.project,input.controlJobId) : clearServerMainFlowWait(outcome.project));
+    campaignMission=outcome.control==="stop" ? checkpointServerMainFlowWait(outcome.project,input.controlJobId) : clearServerMainFlowWait(outcome.project);
+    await runtime.missions.save(campaignMission);
     const phasePercent=outcome.phase==="problem"?32:outcome.phase==="diagnose"?42:outcome.phase==="plan"?52:outcome.phase==="experiment"?60:outcome.phase==="settled"?80:24;
     await runtime.events.append(createEvolutionEvent({
       id:`evt-${input.controlJobId}-campaign-${iteration}-${outcome.phase}`,
@@ -1060,7 +1101,7 @@ async function executeServerControlAction(
         startedAt:input.requestedAt,
         progress:{percent:phasePercent,detail:"Campaign 已满足停止条件；继续进入成果打包/学习闭环"},
       }));
-      return {control:"continue"};
+      return {control:"continue",diagnosticContinuation:renewServerDiagnosticContinuation(diagnosticContinuation,campaignMission)};
     }
     if(outcome.control==="continue"){
       await runtime.jobs.put(await controlJob(input,{
@@ -1068,7 +1109,7 @@ async function executeServerControlAction(
         startedAt:input.requestedAt,
         progress:{percent:phasePercent,detail:`Server Campaign · ${outcome.phase} 已完成，继续下一阶段`},
       }));
-      return {control:"continue"};
+      return {control:"continue",diagnosticContinuation:renewServerDiagnosticContinuation(diagnosticContinuation,campaignMission)};
     }
     await runtime.jobs.put(await controlJob(input,{
       status:"waiting",

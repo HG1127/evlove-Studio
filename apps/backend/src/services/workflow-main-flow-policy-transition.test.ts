@@ -13,7 +13,7 @@ vi.mock("./production-runtime", () => ({ getServerProductionRuntime: () => ({
 vi.mock("./server-control-ai", () => ({ requireServerControlAi: m.requireAi, runServerControlAi: m.ai, ServerControlAiUnavailableError: m.unavailable }));
 vi.mock("./ai-gateway", async original => ({ ...await original<typeof import("./ai-gateway")>(), serverAiScoringRouteFingerprint: m.route }));
 vi.mock("./server-baseline", () => ({ runServerMissionBaseline: m.baseline }));
-vi.mock("../server-env", async original => ({ ...await original<typeof import("../server-env")>(), serverAiConfigured: () => true }));
+vi.mock("../server-env", async original => ({ ...await original<typeof import("../server-env")>(), serverAiConfigured: () => true, getServerAiConfig:()=>({mode:"openai-compatible",apiKey:"synthetic-never-used",model:"synthetic-policy-model",baseUrl:"https://synthetic.invalid/v1",timeoutMs:1000}) }));
 const input = { missionId: "mission", controlJobId: "new-control", requestedAt: at, controlOwnerKey: "workflow-control:mission:normal-recovery" };
 const job = EvolutionJobSchema.parse({ schemaVersion: "job-v1", id: input.controlJobId, missionId: input.missionId, type: "campaign", status: "running",
   label: "New normal control", idempotencyKey: input.controlOwnerKey, generation: 1, metadata: { runId: "new-run" }, outputRef: "new-run", createdAt: at, updatedAt: at });
