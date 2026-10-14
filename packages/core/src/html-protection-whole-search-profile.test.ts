@@ -32,4 +32,6 @@ describe('Original-bound search predicate normalization facts',()=>{
   code('card.dataset.search','e.target.value').replace('const ok=', '{const e={target:{value:"other"}};const ok=').replace('card.classList.toggle("search-hidden",!ok);', 'card.classList.toggle("search-hidden",!ok);}'),
  ])('rejects nearer lexical shadows, extra class effects and intrinsic alias mutation: %s',source=>{expect(compile(plan(source)).profiles).toEqual([]);});
 
+ it('supports only the exact Original unconditional toggle followed by its numeric handler-local counter tail',()=>{const source=code('card.dataset.search','e.target.value').replace('document.querySelectorAll(".slide-card").forEach','let shown=0;document.querySelectorAll(".slide-card").forEach').replace('card.classList.toggle("search-hidden",!ok);','card.classList.toggle("search-hidden",!ok);if(ok)shown++;');expect(compile(plan(source)).profiles).toHaveLength(1);for(const invalid of [source.replace('let shown=0','let shown=object'),source.replace('if(ok)shown++','if(ok)card.classList.remove("search-hidden")'),source.replace('if(ok)shown++','if(ok)shown++;else shown=0'),source.replace('if(ok)shown++','if(ok)shown++;shown="later"'),source.replace('if(ok)shown++','if(other)shown++')])expect(compile(plan(invalid)).profiles).toEqual([]);});
+
 });
