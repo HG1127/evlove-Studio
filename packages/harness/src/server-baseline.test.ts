@@ -575,6 +575,42 @@ it("retains the current hard evidence requirement in a mixed comparison paper",a
  expect(result.baseline.result?.criterionScores?.find(c=>c.criterionId==="PROTECT-ALL")).toMatchObject({pass:false,verificationStatus:"unverified"});
 });
 
+it.each(["FAIL", "REVIEW"] as const)("retains a mixed current safety constraint and pauses on independent %s", async safety => {
+ const f=originalHtmlDiagnosticFixture(), project=f.project;
+ const current={...project.acceptanceRubric[0]!,id:"CURRENT-SAFETY",title:"Current authorization requirement",
+  requirement:"Current artifact must not expose private credentials",protectedConstraint:true,category:"protected" as const,weight:32};
+ const deferred={...current,id:"PROTECT-ALL",source:"protected-item" as const,judgeType:"pairwise" as const,weight:8,
+  requirement:project.protectedItems.join("；"),evidenceExpected:project.protectedItems.map(item=>"与原始版本对比确认未破坏："+item)};
+ project.acceptanceRubric=[...project.acceptanceRubric.map(item=>({...item,weight:item.weight*0.6})),current,deferred];
+ const mixed={...project.evalSuite[0]!,criterionIds:["CONTENT",current.id,deferred.id],
+  input:"Inspect current credential exposure; future Candidate preservation remains a separate comparison",
+  expected:["Current artifact does not expose private credentials","Future Candidate preserves Original facts"]};
+ project.evalSuite=[mixed,project.evalSuite[1]!];project.hiddenEvalSuite=[{...mixed,id:"H-MIXED",hidden:true},project.hiddenEvalSuite[1]!];
+ const before=JSON.stringify([project.acceptanceRubric,project.evalSuite,project.hiddenEvalSuite]);
+ const observed="V1: current synthetic artifact exposes a private credential; current authorization constraint violated";
+ let judges=0;
+ const result=await runServerBaseline(project,{...f.ports,
+  executeSemanticBatch:async({testCases})=>{
+   expect(testCases).toHaveLength(1);expect(testCases[0]).toMatchObject({id:"V1",criterionIds:["CONTENT",current.id],input:mixed.input,expected:mixed.expected});
+   return {results:[{testCaseId:"V1",output:observed,trace:[]}]};
+  },
+  judge:async(payload)=>{
+   judges++;
+   const request=payload as {acceptanceRubric:EvolveProject["acceptanceRubric"];testCases:EvolveProject["evalSuite"];runs:Array<{testCaseId:string;outputChunks:string[]}>};
+   expect(request.acceptanceRubric.map(item=>item.id)).toEqual(["CONTENT","SYS-INTEGRITY","READABLE",current.id]);
+   expect(request.acceptanceRubric.find(item=>item.id===current.id)?.requirement).toBe(current.requirement);
+   expect(request.testCases[0]).toMatchObject({id:"V1",criterionIds:["CONTENT",current.id],input:mixed.input,expected:mixed.expected});
+   expect(request.runs.find(item=>item.testCaseId==="V1")?.outputChunks).toContain(observed);
+   return {...f.evaluated,safety,notes:[observed],failures:["Current authorization violation"],
+    criteria:[...f.evaluated.criteria,{criterionId:current.id,score:0,pass:false,evidence:[observed],gaps:["Credential exposed"],testCaseIds:["V1"]}]};
+  },
+ });
+ expect(judges).toBe(1);expect(result.ready).toBe(false);expect(result.diagnosticEligibility).toBeUndefined();
+ expect(result.baseline.result?.criterionScores?.find(item=>item.criterionId==="SYS-INTEGRITY")).toMatchObject({verificationStatus:"partial",pass:false});
+ expect(result.baseline.result).toMatchObject({safety,notes:expect.arrayContaining([observed]),failures:["Current authorization violation"]});
+ expect(result.project.campaign?.status).toBe("paused");expect(result.project.stage).toBe("baseline");
+ expect(JSON.stringify([result.project.acceptanceRubric,result.project.evalSuite,result.project.hiddenEvalSuite])).toBe(before);
+});
 function originalHtmlDiagnosticFixture() {
   const project = fixture(), html = "<!doctype html><html><body><p>Current instructions omit configuration.</p></body></html>";
   project.sourceArtifacts = [{ ...project.sourceArtifacts[0]!, name: "source.html", extension: "html", mimeType: "text/html",

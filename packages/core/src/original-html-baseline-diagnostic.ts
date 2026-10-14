@@ -90,8 +90,12 @@ export function assessOriginalHtmlBaselineDiagnosticEligibility(args: {
   const initial = OriginalHtmlBaselineDiagnosticBindingSchema.safeParse(args.initialBinding);
   const final = OriginalHtmlBaselineDiagnosticBindingSchema.safeParse(args.finalBinding);
   const judged = EvaluateAiResultSchema.safeParse(args.independentJudge);
-  if (!initial.success || !final.success || !judged.success || judged.data.safety !== "PASS"
-    || project.baselineRun.result.safety !== judged.data.safety) return pending("binding-or-judge-boundary-invalid");
+  // Stable boundary codes only: never copy private input/Judge text or change a verdict.
+  if (!initial.success || !final.success) return pending("physical-binding-invalid");
+  if (!judged.success) return pending("independent-judge-invalid");
+  if (project.baselineRun.result.safety !== judged.data.safety) return pending("independent-judge-safety-mismatch");
+  if (judged.data.safety === "FAIL") return pending("independent-judge-safety-fail");
+  if (judged.data.safety === "REVIEW") return pending("independent-judge-safety-review");
   // Bind both independently performed reads, including original paper identity. No SHA label alone admits a case.
   if (JSON.stringify(initial.data) !== JSON.stringify(final.data)) return pending("physical-binding-changed");
   const binding = final.data.binding, source = project.sourceArtifacts.find(item => item.role === "target")!;

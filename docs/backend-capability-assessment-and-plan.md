@@ -1,5 +1,11 @@
 # Backend Capability Assessment and Delivery Plan
 
+## 2026-10-14 — Actual independent Safety refusal and versioned Judge instruction
+
+Normal Run `wrun_01M4WSS5WPZ851YT3GN4SH0J0S` on independently verified production `2e63af059e698ef15ed2653f73c0533d8b2b07ee` completed Baseline `baseline-server-1791968000008` with Safety FAIL. The same physical Original has five verified current cases; SYS-INTEGRITY remains partial/pass:false. Revision 34 is paused, SDK completed/Job waiting; five old draft Candidates have no snapshots. No new Candidate freeze, Experiment, same-Hidden, Gate F or accepted download/reopen is proved. The actual safety cause is not established; prompt ambiguity must not be reported as its cause.
+
+[Independent safety instruction handoff](independent-evaluation-safety-handoff.md) clarifies current safety evidence/redlines versus ordinary product deficits and versions the scoring route. Distinct private-safe refusal codes preserve all rejection conditions. Valid FAIL/REVIEW, including a result without reasons, remains unchanged and blocks diagnosis; no verdict retry or acceptance upgrade is added. Targeted three-file regressions passed 106 tests, with the first fixture failure and intended negative attempt retained. Related checks, complete exact-commit CI, dedicated delivery and a fresh real measurement remain required.
+
 ## 2026-10-14 — Resumed real main flow and complete Judge context
 
 The human explicitly approved complete task files/model outputs through the chosen AI connection and one same-connection correction. The isolated codex/main-flow-judge-recovery branch integrates complete private final context over 28ade67 with 2 MiB final / 4 MiB encoded limits, unchanged 32 MiB request limit, strict parsing and a new scoring fingerprint. The three unique direct regressions passed 85 assertions; architecture/lint/build and exact-commit full CI are still required. No live model call or Gate F result is inferred.
