@@ -70,3 +70,16 @@ export * from "./original-html-baseline-diagnostic";
 export * from "./html-complete-source-retention";
 export * from "./html-protection-original-search-reference";
 export * from "./html-protection-original-search-count-format";
+
+export * from "./html-protection-whole-runtime-plan";
+
+export * from './html-protection-whole-runtime-coverage';
+
+export * from './html-protection-script-effect-profile';
+
+export * from './html-protection-script-effect-execution';
+export * from "./html-protection-whole-script-locations";
+
+export * from "./html-protection-whole-source-continuity";
+
+export * from "./html-protection-whole-source-dependencies";

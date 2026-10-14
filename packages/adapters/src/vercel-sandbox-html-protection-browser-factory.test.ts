@@ -85,3 +85,21 @@ describe("private protection browser composition",()=>{
     await create(input);expect(mocks.create.mock.calls[0]?.[0].name).toBe(name);
   });
 });
+
+describe("separately bounded complete protection factory",()=>{
+  it("accepts only the fixed whole-runtime name and 600-second resource lifetime",async()=>{
+    const {createVercelSandboxHtmlProtectionWholeBrowser}=await import("./vercel-sandbox-adapter");
+    const wholeName="evo-protection-whole-0123456789abcdef01234567";
+    mocks.create.mockResolvedValue({name:wholeName,cwd:"/vercel/sandbox",persistent:false,stop:mocks.stop});
+    await createVercelSandboxHtmlProtectionWholeBrowser({...spec(),name:wholeName,timeout:600_000});
+    expect(mocks.create).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({name:wholeName,timeout:600_000,persistent:false,networkPolicy:"deny-all"}));
+  });
+  it("legacy runtime cannot acquire the long complete-sequence deadline",async()=>{
+    await expect(create({...spec(),timeout:600_000})).rejects.toThrow();expect(mocks.create).not.toHaveBeenCalled();
+  });
+  it("the existing fixed search protocol name now matches its browser factory",async()=>{
+    const searchName="evo-protection-search-0123456789abcdef01234567";
+    mocks.create.mockResolvedValue({name:searchName,cwd:"/vercel/sandbox",persistent:false,stop:mocks.stop});
+    await create({...spec(),name:searchName});expect(mocks.create).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({name:searchName,timeout:90_000}));
+  });
+});

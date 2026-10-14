@@ -34,7 +34,7 @@ class ReadGap extends Error {
 export async function readBoundedHtmlProtectionPrivateFile(
   sandbox: Pick<OwnedSandbox, "readFile">, path: string, maximum: number, signal: AbortSignal,
 ) {
-  if (!Object.values(paths).includes(path as typeof paths[keyof typeof paths])
+  if ((!Object.values(paths).includes(path as typeof paths[keyof typeof paths]) && !/^\.evolution\/runtime\/whole-observations\/[0-9]{5}-[0-9]{3}\.part$/.test(path) && ![".evolution/runtime/html-protection-whole-manifest.json"].includes(path))
     || !Number.isSafeInteger(maximum) || maximum <= 0 || maximum > limits.runtimeBytes) throw new ReadGap("private-file-limit");
   if (signal.aborted) throw new ReadGap("private-file-timeout");
   const stream = await sandbox.readFile({ path, cwd: "/vercel/sandbox" }, { signal });
