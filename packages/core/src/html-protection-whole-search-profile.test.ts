@@ -17,4 +17,19 @@ describe('Original-bound search predicate normalization facts',()=>{
  ])('does not infer a native search expectation when source changes the search environment: %s',prefix=>{expect(compile(plan(prefix+code('card.dataset.search','e.target.value'))).profiles).toEqual([]);});
  it('retains unknown actual input handlers as unavailable instead of assuming the one recognized handler controls membership',()=>{const source=plan(code('card.dataset.search','e.target.value')),profile=compile(source).profiles[0]!;const listener={type:'input',scriptId:'native-script',lineNumber:0,columnNumber:profile.handlerRange.start};const locations=[{parentId:profile.parentId,sourcePath:source.scriptShape[0]!.sourcePath,subjectSourcePath:source.scriptShape[0]!.sourcePath,line:0,column:0,sourceCharacters:source.scriptShape[0]!.literal!.length}];expect(select({sourcePlan:source,subjectScriptLocations:locations,nativeEvents:{value:{handlerRealm:{frameId:"owned-frame",uniqueContextId:"owned-realm"},receivers:[{listeners:[listener,{...listener,columnNumber:0}]}]}}})).toMatchObject({availability:'unavailable',gaps:['Original-search-extra-input-handler-unresolved']});});
 
+ it.each([
+  code('card.dataset.search','e.target.value').replace('const ok=', 'if(card.id==="always-visible")return;const ok='),
+  code('card.dataset.search','e.target.value').replace('card.classList.toggle("search-hidden",!ok);', 'if(card.id!=="always-visible")card.classList.toggle("search-hidden",!ok);'),
+  code('card.dataset.search','e.target.value').replace('card.classList.toggle("search-hidden",!ok);', '(()=>card.classList.toggle("search-hidden",!ok))();'),
+  code('card.dataset.search','e.target.value').replace('document.querySelectorAll(".slide-card").forEach', 'if(e.target.value==="keep")return;document.querySelectorAll(".slide-card").forEach'),
+ ])('keeps conditional/early-exit/nested per-card control flow unavailable: %s',source=>{expect(compile(plan(source)).profiles).toEqual([]);});
+
+ it.each([
+  code('card.dataset.search','q').replace('document.querySelectorAll(".slide-card").forEach', 'const q=e.target.value.toLowerCase();document.querySelectorAll(".slide-card").forEach').replace('const ok=', 'let q=e.target.value;const ok='),
+  code('card.dataset.search','e.target.value').replace('card.classList.toggle("search-hidden",!ok);', 'card.classList.toggle("search-hidden",!ok);card.classList.remove("search-hidden");'),
+  'const p=String.prototype;p.includes=()=>true;'+code('card.dataset.search','e.target.value'),
+  'const s=document.querySelector("#search");s.addEventListener("input",s=>{document.querySelectorAll(".slide-card").forEach(card=>{const ok=card.dataset.search.includes(s.value);card.classList.toggle("search-hidden",!ok);});});',
+  code('card.dataset.search','e.target.value').replace('const ok=', '{const e={target:{value:"other"}};const ok=').replace('card.classList.toggle("search-hidden",!ok);', 'card.classList.toggle("search-hidden",!ok);}'),
+ ])('rejects nearer lexical shadows, extra class effects and intrinsic alias mutation: %s',source=>{expect(compile(plan(source)).profiles).toEqual([]);});
+
 });
