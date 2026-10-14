@@ -15,11 +15,10 @@ export function readCompatibleChatOutput(value:unknown,options:CompatibleChatOut
     const choice=body.choices?.[0];
     const message=choice?.message;
     if(choice?.finish_reason==="length"){
-      const tokens=body.usage?.completion_tokens??body.usage?.output_tokens;
-      throw Object.assign(new Error("模型输出被截断（finish_reason=length"+(tokens===undefined?"":"，已用输出 tokens="+tokens)+"）。请缩小构造范围或切换模型。"),{code:"AI_OUTPUT_INCOMPLETE"});
+      throw Object.assign(new Error("模型输出被截断（finish_reason=length）。请缩小构造范围或切换模型。"),{code:"AI_OUTPUT_INCOMPLETE"});
     }
     if(["content_filter","tool_calls","function_call"].includes(choice?.finish_reason??"")||message?.tool_calls?.length||message?.function_call){
-      throw new Error("模型未返回完整最终文本（finish_reason="+(choice?.finish_reason??"tool_calls")+"）。");
+      throw new Error("模型未返回完整最终文本（工具调用或过滤结果）。");
     }
     const content=message?.content;
     if(message?.refusal?.trim()||(Array.isArray(content)&&content.some(part=>part.type==="refusal"||part.refusal?.trim()))){

@@ -18,3 +18,9 @@ describe("compatible Chat envelope decoder",()=>{
   expect(()=>readCompatibleChatOutput({choices:[{finish_reason:"length",message:{content:"partial"}},{finish_reason:"stop",message:{content:"final"}}]})).toThrow(/length/);
  });
 });
+
+it.each(["tool_calls","function_call"])("never echoes unknown provider finish metadata with %s",field=>{
+ const finish_reason='private-source fictional\\u002dkey';
+ const error=(()=>{try{readCompatibleChatOutput({choices:[{finish_reason,message:{content:"final",[field]:field==="tool_calls"?[{id:"private"}]:{name:"private"}}}]});}catch(error){return error;}})();
+ expect(error).toBeInstanceOf(Error);expect((error as Error).message).not.toContain("private");expect((error as Error).message).not.toContain("fictional");
+});

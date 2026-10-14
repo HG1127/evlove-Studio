@@ -62,6 +62,7 @@ describe("schema instruction scoring identity and validation",()=>{
     const legacyBase:Record<string,unknown>={...base};delete legacyBase.protectionSettlementPolicy;delete legacyBase.evaluationSafetyInstructionVersion;
     expect(current).not.toBe(hash({...legacyBase,...(responseFormat==="json-schema"?{directSchemaInstructionVersion:DIRECT_AI_SCHEMA_INSTRUCTION_VERSION}:{}),directSchemaRecoveryVersion:DIRECT_AI_SCHEMA_RECOVERY_VERSION,finalOutputVersion:STRUCTURED_AI_FINAL_OUTPUT_VERSION}));
     expect(current).toBe(hash({...base,...(responseFormat==="json-schema"?{directSchemaInstructionVersion:DIRECT_AI_SCHEMA_INSTRUCTION_VERSION}:{}),directSchemaRecoveryVersion:DIRECT_AI_SCHEMA_RECOVERY_VERSION,finalOutputVersion:STRUCTURED_AI_FINAL_OUTPUT_VERSION}));
+    expect(current).not.toBe(hash({...base,...(responseFormat==="json-schema"?{directSchemaInstructionVersion:DIRECT_AI_SCHEMA_INSTRUCTION_VERSION}:{}),directSchemaRecoveryVersion:"schema-feedback-once-v5-complete-final-context",finalOutputVersion:STRUCTURED_AI_FINAL_OUTPUT_VERSION}));
     expect(current).not.toBe(hash({...base,...(responseFormat==="json-schema"?{directSchemaInstructionVersion:DIRECT_AI_SCHEMA_INSTRUCTION_VERSION}:{})}));
   });
   it.each(["chat-completions","responses"] as const)("still rejects missing evaluation fields on %s",async(protocol)=>{
