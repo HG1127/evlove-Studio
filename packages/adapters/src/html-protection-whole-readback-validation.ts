@@ -1,3 +1,4 @@
+import { validateHtmlProtectionWholeClipboardReadback } from "./html-protection-whole-clipboard-readback";
 import { z } from "zod";
 import { validateHtmlProtectionWholeSearchReadback } from "./html-protection-whole-search-readback";
 import { HTML_PROTECTION_WHOLE_RUNTIME_LIMITS as limits, HtmlProtectionWholeRuntimeRequestSchema,
@@ -55,12 +56,12 @@ export function validateHtmlProtectionWholeReadback(args: HtmlProtectionWholeRea
       if (fact.nativeObservation !== undefined) {
         const body = Buffer.from(canonical(fact.nativeObservation));
         if (sha(body) !== fact.nativeObservationSha256 || body.byteLength !== fact.nativeObservationByteLength) throw Error("Whole readback native action body mismatch");
-        const observation = z.object({ before: z.unknown().optional(), after: z.unknown().optional(), events: z.unknown().optional(), behaviorClaims: z.unknown().optional(), clipboard: z.unknown().optional(), dispatchTrace: z.array(z.object({ method: z.string().min(1), parameters: z.record(z.string(), z.unknown()) }).strict()).optional(), navigation: z.unknown().optional() }).strict().parse(fact.nativeObservation);
+        const observation = z.object({ before: z.unknown().optional(), after: z.unknown().optional(), events: z.unknown().optional(), behaviorClaims: z.unknown().optional(), clipboard: z.unknown().optional(), clipboardExpectation: z.unknown().optional(), dispatchTrace: z.array(z.object({ method: z.string().min(1), parameters: z.record(z.string(), z.unknown()) }).strict()).optional(), navigation: z.unknown().optional() }).strict().parse(fact.nativeObservation);
         for (const window of [observation.before, observation.after].filter(item => item !== undefined)) validateNative(window, manifest, realms);
         if (fact.status === "observed" && (!observation.before || !observation.after || !fact.settled || fact.dispatched !== (fact.action.operation === "boot" ? 0 : 1)
           || fact.beforeBackendNodeId === null || fact.beforeBackendNodeId !== fact.afterBackendNodeId)) throw Error("Whole readback observed action lacks actual execution");
         if (observation.events !== undefined) validateNative(observation.events, manifest, realms);
-        if (fact.status === "observed" && fact.action.operation === "copy") z.object({ text: z.string().min(1), sentinelSha256: digest }).strict().parse(observation.clipboard);
+        if (fact.status === "observed" && fact.action.operation === "copy") z.object({ text: z.string(), sentinelSha256: digest }).strict().parse(observation.clipboard);
         if (fact.status === "observed" && fact.action.intent === "navigate") {
           const navigation = z.object({ selector: z.string(), fragment: z.string(), beforeBackendNodeId: z.number().int().positive(), afterBackendNodeId: z.number().int().positive(), before: z.unknown(), after: z.unknown() }).strict().parse(observation.navigation);
           if (navigation.beforeBackendNodeId !== navigation.afterBackendNodeId) throw Error("Whole readback navigation target drift");
@@ -81,6 +82,7 @@ export function validateHtmlProtectionWholeReadback(args: HtmlProtectionWholeRea
     }
   }
   validateHtmlProtectionWholeSearchReadback({ request, facts: actionFacts, sourceMaterial });
+  validateHtmlProtectionWholeClipboardReadback({ request, facts: actionFacts, sourceMaterial, custody: manifest.custody?.navigation });
   if (actions !== manifest.actualActionCount || (manifest.registration && !boot) || (realms.size > 1)) throw Error("Whole readback actual observation sequence/realm mismatch");
   if (manifest.availability === "available") {
     if (realms.size !== 1 || scripts !== 1 || expected.some(action => ["boot", "viewport"].includes(action.operation) && !documents.has(action.stateId))) throw Error("Whole readback actual native state set incomplete");

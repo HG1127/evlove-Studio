@@ -49,6 +49,18 @@ function observeOwnedWholeRuntime(args) {
     const clip=apply(desc(Navigator.prototype,"clipboard").get,navigator,[]);return apply(Promise.prototype.then,apply(Clipboard.prototype.readText,clip,[]),[value=>bounded({text:value})]);
   }
   const selected=Array.from(apply(query,document,[args.selector]));if(selected.length!==1)throw Error("target-not-unique");const e=selected[0],r=apply(rect,e,[]),tag=nodeName(e);
+  if(args.mode==="clipboard-value"){
+    const program=args.program;if(program.kind==="literal")return bounded({text:program.text,sourceElement:null});
+    const key="data-"+program.datasetProperty.replace(/[A-Z]/g,value=>"-"+value.toLowerCase()),id=attribute(e,key);
+    if(typeof id!=="string"||!id)throw Error("copy-value-target-unavailable");
+    const source=apply(Document.prototype.getElementById,document,[id]);if(!source||ns(source)!=="http://www.w3.org/1999/xhtml")throw Error("copy-value-target-unavailable");
+    const same=all.filter(n=>attribute(n,"id")===id);if(same.length!==1)throw Error("copy-value-target-ambiguous");
+    let value=source,removed=0;if(program.clone)value=apply(Node.prototype.cloneNode,source,[true]);
+    for(const selector of program.removeSelectors){if(!program.clone)throw Error("copy-value-live-write-forbidden");for(const node of Array.from(apply(elQuery,value,[selector]))){apply(Element.prototype.remove,node,[]);if(++removed>args.maximumNodes)throw Error("native-limit");}}
+    let actual=program.getter==="innerText"?getter(HTMLElement.prototype,"innerText")(value):text(value);
+    if(typeof actual!=="string")throw Error("copy-value-native-text-unavailable");if(program.trim)actual=apply(String.prototype.trim,actual,[]);
+    return bounded({text:actual,sourceElement:{id,sourcePath:path(source),tag:nodeName(source),removedFromDetachedClone:removed}});
+  }
   const globals=Array.from(apply(query,document,["html,body,#progress,#toast,#searchCount,.sidebar,.sidebar a,.checklist-progress,.check-progress,.chapter,.slide-card"]))
     .map(n=>({tag:nodeName(n),id:attribute(n,"id"),attributes:attributeList(n),...(apply(matches,n,["#toast,#searchCount,.checklist-progress,.check-progress"])?{text:text(n)}:{})}));
   return bounded({elementCount:all.length,target:{tag,namespace:ns(e),hovered:apply(matches,e,[":hover"]),attributes:attributeList(e),text:text(e),outerHtml:outer(e),

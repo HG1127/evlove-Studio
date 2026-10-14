@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { prepareOwnedHtmlProtectionClipboardExpectation, finishOwnedHtmlProtectionClipboardExpectation } from "./html-protection-whole-clipboard-expectation";
 import { mkdir } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import type { BrowserType, Browser } from "@playwright/test";
@@ -33,7 +34,7 @@ async function executeAction(owned: HtmlProtectionOwnedDocument, native: HtmlPro
   action: HtmlProtectionWholeRuntimeAction, registration: HtmlProtectionWholeRuntimeRegistration, request: HtmlProtectionWholeRuntimeRequest, sourceCoverage: HtmlProtectionOwnedScriptCoverage | undefined) {
   const startedAt = new Date().toISOString(), control = registration.controls.find(item => item.targetId === action.targetId);
   let dispatched = 0, settled = false, beforeBackendNodeId: number | null = null, afterBackendNodeId: number | null = null;
-  const partial: { before?: unknown; after?: unknown; clipboard?: unknown; navigation?: unknown; events?: unknown; dispatchTrace?: unknown[]; behaviorClaims?: unknown } = {};
+  const partial: { before?: unknown; after?: unknown; clipboard?: unknown; navigation?: unknown; events?: unknown; dispatchTrace?: unknown[]; clipboardExpectation?: unknown; behaviorClaims?: unknown } = {};
   const actualDispatch = () => { dispatched = 1; };
   const active = async () => { if (owned.signal.aborted || Date.now() >= owned.deadline) throw new HtmlProtectionWholeNativeGap("action-deadline"); await owned.assertCurrent(); };
   try {
@@ -51,15 +52,17 @@ async function executeAction(owned: HtmlProtectionOwnedDocument, native: HtmlPro
     let clipboard: { text: string; sentinelSha256: string } | undefined;
     let dispatchTrace: unknown[] = [];
     if (action.operation === "copy") {
+      const preparedExpectation = await prepareOwnedHtmlProtectionClipboardExpectation({ request, nativeEvents: partial.events, owned, sourceCoverage, native, selector: action.selector }); partial.clipboardExpectation = preparedExpectation;
       await owned.context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: new URL(owned.custody.documentUrl).origin });
       const sentinel = "evolution-native-whole-" + randomUUID(); await native.clipboardWrite(sentinel);
       if ((await native.clipboardRead()).text !== sentinel) throw new HtmlProtectionWholeNativeGap("clipboard-native-preflight-mismatch");
-      await active(); dispatchTrace = await native.input(action.selector, "click", undefined, actualDispatch); await active();
+      await active(); dispatchTrace = await native.input(action.selector, "click", undefined, actualDispatch); partial.dispatchTrace = dispatchTrace; await active();
       const deadline = Math.min(owned.deadline, Date.now() + limits.actionTimeoutMs);
       let text = sentinel;
       while (Date.now() < deadline && text === sentinel) { text = (await native.clipboardRead()).text; if (text === sentinel) await delay(25); }
       if (text === sentinel) throw new HtmlProtectionWholeNativeGap("clipboard-no-native-write-observed");
       clipboard = { text, sentinelSha256: sha(sentinel) }; partial.clipboard = clipboard; settled = true;
+      const expectation = await finishOwnedHtmlProtectionClipboardExpectation({ prepared: preparedExpectation, native, owned, selector: action.selector, actualText: text }); partial.clipboardExpectation = expectation;
     } else if (action.operation === "viewport") {
       if (!action.viewport) throw new HtmlProtectionWholeNativeGap("viewport-unregistered");
       await owned.page.setViewportSize(action.viewport); dispatched = 1; settled = true;
@@ -96,7 +99,7 @@ async function executeAction(owned: HtmlProtectionOwnedDocument, native: HtmlPro
     }
 
     await active();
-    const nativeObservation = { before, after, dispatchTrace, behaviorClaims, ...(partial.events ? { events: partial.events } : {}), ...(clipboard ? { clipboard } : {}), ...(navigation ? { navigation } : {}) }, bytes = Buffer.from(canonical(nativeObservation));
+    const nativeObservation = { before, after, dispatchTrace, behaviorClaims, ...(partial.events ? { events: partial.events } : {}), ...(partial.clipboardExpectation ? { clipboardExpectation: partial.clipboardExpectation } : {}), ...(clipboard ? { clipboard } : {}), ...(navigation ? { navigation } : {}) }, bytes = Buffer.from(canonical(nativeObservation));
     return HtmlProtectionWholeRuntimeActionFactSchema.parse({ action, status: "observed", dispatched, settled, startedAt,
       completedAt: new Date().toISOString(), beforeBackendNodeId, afterBackendNodeId, nativeObservation,
       nativeObservationSha256: sha(bytes), nativeObservationByteLength: bytes.byteLength, gaps: [] });

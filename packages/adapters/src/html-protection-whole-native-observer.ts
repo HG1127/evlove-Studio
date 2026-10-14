@@ -2,8 +2,9 @@ import { OwnedHtmlProtectionDocumentGap } from "./html-protection-owned-document
 import { boundHtmlProtectionWholeNativeSession } from "./html-protection-whole-native-deadline";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { readHtmlProtectionWholeNativeLexicalString } from "./html-protection-whole-native-lexical-value";
 import type { Page, BrowserContext, CDPSession } from "@playwright/test";
-import { HTML_PROTECTION_WHOLE_RUNTIME_LIMITS as limits } from "@evolution/contracts";
+import { HtmlProtectionWholeClipboardValueProgramSchema, type HtmlProtectionWholeClipboardValueProgram, HTML_PROTECTION_WHOLE_RUNTIME_LIMITS as limits } from "@evolution/contracts";
 import { validateHtmlProtectionWholeNativeDocument } from "./html-protection-whole-native-material";
 import { collectHtmlProtectionWholeNativeEventListeners } from "./html-protection-whole-native-events";
 import { HTML_PROTECTION_WHOLE_NATIVE_PROGRAM as program } from "./html-protection-whole-native-program";
@@ -177,6 +178,15 @@ export async function createHtmlProtectionWholeNativeObserver(args: {
     scrollDistance: nativeScroll,
     target: (selector: string) => windowRead(() => call("target", { selector })),
     backendNodeId: async (selector: string) => await call("select", { selector }, true) as number,
+    clipboardValue: (selector: string, program: HtmlProtectionWholeClipboardValueProgram, handler?: {scriptId: string; lineNumber: number; columnNumber: number}) => windowRead(async () => {
+      const compiled = HtmlProtectionWholeClipboardValueProgramSchema.parse(program);
+      if (compiled.kind === "native-lexical-string") {
+        if (!handler) throw new HtmlProtectionWholeNativeGap("native-clipboard-lexical-handler-unavailable");
+        const backendNodeId = await call("select", { selector }, true) as number;
+        return readHtmlProtectionWholeNativeLexicalString({ cdp, backendNodeId, defaultContext: { id: defaultContext!.id, uniqueId: defaultContext!.uniqueId, frameId: defaultContext!.auxData.frameId }, objectGroup: name + ":event-leases", handler, bindingName: compiled.bindingName, active });
+      }
+      return z.object({ text: z.string().max(2 * 1024 * 1024), sourceElement: z.object({ id: z.string(), sourcePath: z.string(), tag: z.string(), removedFromDetachedClone: z.number().int().nonnegative() }).strict().nullable() }).strict().parse(await call("clipboard-value", { selector, program: compiled }));
+    }),
     clipboardWrite: async (sentinel: string) => { await call("clipboard-write", { sentinel }); },
     clipboardRead: async () => z.object({ text: z.string().max(limits.observationBytes) }).strict().parse(await call("clipboard-read")),
     document: () => windowRead(async () => {

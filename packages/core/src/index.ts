@@ -88,3 +88,5 @@ export * from "./html-protection-whole-search-profile";
 export * from "./html-protection-authority";
 export * from "./html-protection-proof-assembly";
 export * from "./html-protection-static-observations";
+export * from "./html-protection-whole-handler-source";
+export * from "./html-protection-whole-clipboard-profile";
