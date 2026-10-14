@@ -6,6 +6,7 @@ import {
 } from "@evolution/adapters/sandbox";
 import { HtmlProtectionSnapshotRequestSchema, HtmlProtectionSearchStateRegistrationSchema, HtmlProtectionSearchStateRequestSchema } from "@evolution/contracts";
 import { prepareServerHtmlProtectionCollectionPlan } from "./server-html-protection-collection-plan";
+import { compareCollectedServerHtmlProtectionSearchPair } from "./server-html-protection-search-comparison";
 
 const Module = HtmlProtectionOwnedRuntimeBindingSchema.extend({ text: z.string().max(HTML_PROTECTION_CLOUD_LIMITS.runtimeBytes) }).strict();
 type Ports = {
@@ -36,7 +37,10 @@ export async function collectServerHtmlProtectionSearchPair(
   args: Parameters<typeof prepareServerHtmlProtectionCollectionPlan>[0],
   observe = collectServerHtmlProtectionSearchObservation,
 ) {
-  const plan = await prepareServerHtmlProtectionCollectionPlan(args);
+  const prepared = await prepareServerHtmlProtectionCollectionPlan(args);
+  // Own the entire expected plan before either asynchronous observer receives its isolated views.
+  const plan = structuredClone(prepared);
+  plan.physicalInputs = { original: Buffer.from(prepared.physicalInputs.original), executed: Buffer.from(prepared.physicalInputs.executed) };
   if (!plan.searchRegistration) return { availability: "unavailable" as const, reason: "original-search-scope-unavailable" as const,
     planSha256: plan.planSha256, binding: plan.binding };
   const registration = plan.searchRegistration;
@@ -47,11 +51,12 @@ export async function collectServerHtmlProtectionSearchPair(
       return HtmlProtectionSnapshotRequestSchema.parse({ ...anchor, schemaVersion: "html-protection-snapshot-request-v1",
         documentUrl: HTML_PROTECTION_CLOUD_URL, registry: registration.registry });
     });
-    return { registration, stateRequests, snapshotRequests, physicalHtml: plan.physicalInputs[sourceRole] };
+    return { ...structuredClone({ registration, stateRequests, snapshotRequests }), physicalHtml: Buffer.from(plan.physicalInputs[sourceRole]) };
   };
-  const original = await observe(role("original"));
-  const executed = await observe(role("executed"));
-  return { availability: "collected" as const, binding: plan.binding, planSha256: plan.planSha256, original, executed,
+  const original = structuredClone(await observe(role("original")));
+  const executed = structuredClone(await observe(role("executed")));
+  const comparison = compareCollectedServerHtmlProtectionSearchPair({ plan, original, executed });
+  return { availability: "collected" as const, binding: plan.binding, planSha256: plan.planSha256, original, executed, comparison,
     limitations: ["Selected native search sequence only; inspect each observation and unavailable prefix.",
       "Not whole protection, semantic/visual proof, Hidden settlement, signing or Gate F acceptance."] };
 }

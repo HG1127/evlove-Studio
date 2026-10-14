@@ -261,12 +261,18 @@ importers:
 
   packages/core:
     dependencies:
+      '@babel/parser':
+        specifier: 7.29.7
+        version: 7.29.7
       '@evolution/contracts':
         specifier: workspace:*
         version: link:../contracts
       parse5:
         specifier: 8.0.1
         version: 8.0.1
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
 
   packages/harness:
     dependencies:

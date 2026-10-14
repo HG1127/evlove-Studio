@@ -1,1 +1,15 @@
-{"name":"@evolution/core","private":true,"version":"0.1.0","type":"module","exports":{".":"./src/index.ts"},"dependencies":{"@evolution/contracts":"workspace:*","parse5":"8.0.1"}}
+{
+  "name": "@evolution/core",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@babel/parser": "7.29.7",
+    "@evolution/contracts": "workspace:*",
+    "parse5": "8.0.1",
+    "zod": "^4.4.3"
+  }
+}
