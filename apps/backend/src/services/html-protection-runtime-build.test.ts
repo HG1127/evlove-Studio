@@ -4,8 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const compile=vi.hoisted(()=>vi.fn());
 vi.mock("vite",()=>({build:compile}));
 import { buildOwnedHtmlProtectionRuntime, htmlProtectionRuntimePlugin, HTML_PROTECTION_RUNTIME_MODULE } from "../../build/html-protection-runtime-plugin";
-const code='export async function runPrivateHtmlProtectionCloudRuntime(){throw new Error("synthetic-only")} export async function runPrivateHtmlProtectionSearchCloudRuntime(){throw new Error("synthetic-only")}';
-function output(){return {output:[{type:"chunk",code,exports:["runPrivateHtmlProtectionCloudRuntime","runPrivateHtmlProtectionSearchCloudRuntime"],imports:["node:http","node:crypto"],dynamicImports:[]}]};}
+const code='export async function runPrivateHtmlProtectionCloudRuntime(){throw new Error("synthetic-only")} export async function runPrivateHtmlProtectionSearchCloudRuntime(){throw new Error("synthetic-only")} export async function runPrivateHtmlProtectionWholeCloudRuntime(){throw new Error("synthetic-only")}';
+function output(){return {output:[{type:"chunk",code,exports:["runPrivateHtmlProtectionCloudRuntime","runPrivateHtmlProtectionSearchCloudRuntime","runPrivateHtmlProtectionWholeCloudRuntime"],imports:["node:http","node:crypto"],dynamicImports:[]}]};}
 beforeEach(()=>compile.mockReset().mockResolvedValue(output()));
 describe("deployment-owned private runtime compilation",()=>{
   it("binds the entire exact UTF8 chunk and compiles only repository runtime without env or config loading",async()=>{

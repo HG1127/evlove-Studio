@@ -1,8 +1,9 @@
-import type { AcceptanceCriterion, EvolveProject } from "@evolution/contracts";
+import type { AcceptanceCriterion, EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
+import { hasHtmlProtectionAcceptanceAuthority, htmlProtectionCriterionAuthority } from "./html-protection-authority";
 import { htmlProtectionContractBlocker } from "./html-protection-browser-steps";
 
 export type HtmlProtectionEvaluationScope = Pick<EvolveProject, "sourceArtifacts">;
-export const HTML_PROTECTION_SETTLEMENT_POLICY = "html-whole-scope-required-v1";
+export const HTML_PROTECTION_SETTLEMENT_POLICY = "html-whole-scope-independent-authority-v4-frozen-semantic-scope";
 export const HTML_PROTECTION_SCOPE_GAP =
   "[html-protection-scope-pending] 完整 HTML 保护标准尚缺独立、绑定原始文件与当前快照及考卷的全量执行证据；搜索断言、静态索引、格式往返或模型声明不能替代完整保护。";
 
@@ -47,17 +48,15 @@ export function hasHtmlProtectionTarget(scope?: HtmlProtectionEvaluationScope): 
   return false;
 }
 
-/**
- * No production collector currently supplies independent complete-scope authority.
- * Never derive authority from TargetRunResult.htmlProtectionProof, AI prose or tags.
- * Future authority wiring must independently validate original bytes, the full
- * obligation set, paper/subject identity and attested observations before changing this ceiling.
- */
+/** Missing authority remains a ceiling. A proof DTO never supplies its own observations. */
 export function htmlProtectionCoverageGap(
   criterion: AcceptanceCriterion, scope?: HtmlProtectionEvaluationScope,
+  measurement?: { testCases: readonly TestCase[]; runs: readonly TargetRunResult[]; measurementPhase?: "current-baseline" },
 ): string | undefined {
-  return isWholeProtectionCriterion(criterion) && hasHtmlProtectionTarget(scope) !== false
-    ? HTML_PROTECTION_SCOPE_GAP : undefined;
+  if (!isWholeProtectionCriterion(criterion) || hasHtmlProtectionTarget(scope) === false) return undefined;
+  if (scope && measurement && htmlProtectionCriterionAuthority({ project: scope as EvolveProject,
+    criterion, ...measurement }).passed) return undefined;
+  return HTML_PROTECTION_SCOPE_GAP;
 }
 
 /** Acceptance/delivery guard, separate from execution preflight so evidence can still be collected. */
@@ -65,5 +64,6 @@ export function htmlProtectionAcceptanceBlocker(project: EvolveProject): string 
   const paperGap = htmlProtectionContractBlocker(project);
   if (paperGap) return paperGap;
   if (hasHtmlProtectionTarget(project) === false) return undefined;
-  return (project.acceptanceRubric ?? []).some(isWholeProtectionCriterion) ? HTML_PROTECTION_SCOPE_GAP : undefined;
+  const criteria = (project.acceptanceRubric ?? []).filter(isWholeProtectionCriterion);
+  return criteria.length && !hasHtmlProtectionAcceptanceAuthority(project, criteria) ? HTML_PROTECTION_SCOPE_GAP : undefined;
 }

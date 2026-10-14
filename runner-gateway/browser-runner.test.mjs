@@ -484,7 +484,7 @@ test('viewport action enables a real 390px phone menu while desktop button stays
 });
 test('viewport action alone remains partial and requested dimensions are not observations',async()=>{
  const result=await runSteps(mobileMenuArtifact(),[{action:'viewport',selector:'html',width:390,height:844}]);
- assert.equal(result.verificationStatus,'partial');const output=JSON.parse(result.output);assert.equal(output.assertions,0);
+ assert.equal(result.verificationStatus,'partial',JSON.stringify({error:result.error,output:result.output,trace:result.trace}));const output=JSON.parse(result.output);assert.equal(output.assertions,0);
  assert.deepEqual(output.requestedViewports,[{width:390,height:844}]);
 });
 test('viewport action does not repair physical scroll position',async()=>{
@@ -562,14 +562,28 @@ test('hover action cannot forge identity with main-world style overrides',async(
 });
 test('hover action missing rejected and timeout capability terminates UNVERIFIED without retries',async()=>{
  for(const mode of ['missing','rejected','timeout']){
-  let page;let calls=0;let deadlines=0;const originalTimer=globalThis.setTimeout;
-  if(mode==='timeout')globalThis.setTimeout=(callback,delay,...args)=>{if(delay===5000)deadlines++;return originalTimer(callback,delay===5000?150:delay,...args);};
+  let page;let calls=0;let deadlines=0;let mockNow;let armed=false;let deadlineBudget;let hoverBudget;let timerFired=false;
+  const originalNow=Date.now;const originalTimer=globalThis.setTimeout;const started=originalNow();
+  if(mode==='timeout')Date.now=()=>mockNow??originalNow();
+  if(mode==='timeout')globalThis.setTimeout=(callback,delay,...args)=>{
+   if(armed&&deadlineBudget===undefined&&delay>0&&delay<=5000){armed=false;deadlineBudget=delay;deadlines++;return originalTimer(()=>{timerFired=true;callback(...args);},150);}
+   return originalTimer(callback,delay,...args);
+  };
   try{
-   const result=await withHoverHook((locator,selector,value)=>{page=value;if(selector!=='#control')return;if(mode==='missing')locator.hover=undefined;else locator.hover=()=>{calls++;return mode==='rejected'?Promise.reject(new Error('synthetic unsupported hover')):new Promise(()=>{});};},()=>runSteps(hoverArtifact(),[{action:'hover',selector:'#control'},{action:'visible',selector:'#control'}]));
+   const result=await withHoverHook((locator,selector,value)=>{
+    page=value;if(selector!=='#control')return;
+    if(mode==='missing')locator.hover=undefined;
+    else{
+     const hover=options=>{calls++;hoverBudget=options.timeout;return mode==='rejected'?Promise.reject(new Error('synthetic unsupported hover')):new Promise(()=>{});};
+     // Consume time after the runtime captures its deadline, before it arms the timer.
+     if(mode==='timeout')Object.defineProperty(locator,'hover',{get(){mockNow=originalNow()+1;armed=true;return hover;}});
+     else locator.hover=hover;
+    }
+   },()=>runSteps(hoverArtifact(),[{action:'hover',selector:'#control'},{action:'visible',selector:'#control'}]));
    assert.equal(result.verificationStatus,'unverified',mode+': '+result.error);assert.match(result.error,/hover capability UNVERIFIED/);assert.equal(calls,mode==='missing'?0:1);
    assert.equal(result.trace.filter(t=>t.summary==='visible #control').length,0);assert.equal(result.screenshots.length,0);assert.equal(page.isClosed(),true);
-   if(mode==='timeout'){assert.ok(deadlines>=1);assert.ok(result.latencyMs<6000);}
-  }finally{globalThis.setTimeout=originalTimer;}
+   if(mode==='timeout'){assert.equal(deadlines,1);assert.ok(deadlineBudget>0&&deadlineBudget<5000);assert.equal(hoverBudget,deadlineBudget);assert.equal(timerFired,true);assert.ok(result.latencyMs<6000);assert.ok(originalNow()-started<6000);}
+  }finally{Date.now=originalNow;globalThis.setTimeout=originalTimer;}
  }
 });
 test('hover action respects whole-case copy-text preflight before browser launch',async()=>{

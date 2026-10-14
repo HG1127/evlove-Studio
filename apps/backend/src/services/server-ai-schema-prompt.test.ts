@@ -8,6 +8,8 @@ import {jsonSchemas,ServerAiConnectionPutSchema} from "@evolution/contracts";
 import {DIRECT_AI_SCHEMA_RECOVERY_VERSION,DIRECT_AI_SCHEMA_INSTRUCTION_VERSION,runServerAi,serverAiScoringRouteFingerprint} from "./ai-gateway";
 import {withExplicitServerAiConnection} from "./server-ai-connection";
 import {INDEPENDENT_EVALUATION_SAFETY_INSTRUCTION_VERSION} from "./independent-evaluation-safety";
+import {HTML_PROTECTION_SEMANTIC_OBSERVATION_VERSION} from "./html-protection-semantic-instruction";
+import {HTML_PROTECTION_VISUAL_OBSERVATION_VERSION} from "./html-protection-visual-instruction";
 import * as vault from "./server-vault";
 
 const report={accuracy:100,evidence:100,riskCoverage:100,completeness:100,safety:"PASS",notes:[],failures:[],cases:[{testCaseId:"V1",accuracy:100,evidence:100,completeness:100,reason:"observed"}],criteria:[{criterionId:"C1",score:100,pass:true,evidence:["measured"],gaps:[],testCaseIds:["V1"]}]};
@@ -54,9 +56,11 @@ describe("environment direct model schema instructions",()=>{
 describe("schema instruction scoring identity and validation",()=>{
   it.each(["json-schema","json-object","prompt-json"] as const)("binds schema prompt and correction policy for %s",async(responseFormat)=>{
     const config={connectionId:"fixture-connection",label:"Synthetic direct model",baseUrl:"https://model.example.test/v1",apiKey:"fixture-key",model:"fixture-model",protocol:"chat-completions" as const,responseFormat};
-    const base={route:["openai-compatible",config.baseUrl,config.model,config.protocol,responseFormat],protectionSettlementPolicy:HTML_PROTECTION_SETTLEMENT_POLICY,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,evaluationSafetyInstructionVersion:INDEPENDENT_EVALUATION_SAFETY_INSTRUCTION_VERSION,chatOutputVersion:COMPATIBLE_CHAT_OUTPUT_VERSION};
+    const base={route:["openai-compatible",config.baseUrl,config.model,config.protocol,responseFormat],protectionSettlementPolicy:HTML_PROTECTION_SETTLEMENT_POLICY,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,evaluationSafetyInstructionVersion:INDEPENDENT_EVALUATION_SAFETY_INSTRUCTION_VERSION,htmlProtectionSemanticObservationVersion:HTML_PROTECTION_SEMANTIC_OBSERVATION_VERSION,htmlProtectionVisualObservationVersion:HTML_PROTECTION_VISUAL_OBSERVATION_VERSION,chatOutputVersion:COMPATIBLE_CHAT_OUTPUT_VERSION};
     const hash=(value:unknown)=>createHash("sha256").update(JSON.stringify(value)).digest("hex");
     const current=await withExplicitServerAiConnection(config,()=>serverAiScoringRouteFingerprint());
+    const priorObservationPolicy:Record<string,unknown>={...base};delete priorObservationPolicy.htmlProtectionSemanticObservationVersion;delete priorObservationPolicy.htmlProtectionVisualObservationVersion;
+    expect(current).not.toBe(hash({...priorObservationPolicy,...(responseFormat==="json-schema"?{directSchemaInstructionVersion:DIRECT_AI_SCHEMA_INSTRUCTION_VERSION}:{}),directSchemaRecoveryVersion:DIRECT_AI_SCHEMA_RECOVERY_VERSION,finalOutputVersion:STRUCTURED_AI_FINAL_OUTPUT_VERSION}));
     const priorSafetyPolicy:Record<string,unknown>={...base};delete priorSafetyPolicy.evaluationSafetyInstructionVersion;
     expect(current).not.toBe(hash({...priorSafetyPolicy,...(responseFormat==="json-schema"?{directSchemaInstructionVersion:DIRECT_AI_SCHEMA_INSTRUCTION_VERSION}:{}),directSchemaRecoveryVersion:DIRECT_AI_SCHEMA_RECOVERY_VERSION,finalOutputVersion:STRUCTURED_AI_FINAL_OUTPUT_VERSION}));
     const legacyBase:Record<string,unknown>={...base};delete legacyBase.protectionSettlementPolicy;delete legacyBase.evaluationSafetyInstructionVersion;

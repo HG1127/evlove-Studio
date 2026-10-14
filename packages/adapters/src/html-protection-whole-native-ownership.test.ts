@@ -1,0 +1,12 @@
+// @vitest-environment node
+import { createHash } from "node:crypto";
+import { chromium } from "@playwright/test";
+import { describe, expect, it } from "vitest";
+import { withOwnedHtmlProtectionDocument } from "./html-protection-owned-document";
+import { createHtmlProtectionWholeNativeObserver } from "./html-protection-whole-native-observer";
+const html=Buffer.from('<!doctype html><html><head></head><body><article class="slide-card" id="one">Synthetic</article></body></html>');
+const identity={sha256:createHash('sha256').update(html).digest('hex'),byteLength:html.length};
+describe('continuous native target/frame/loader/realm ownership',()=>{
+ it('refuses observations after an actual second navigation',async()=>{await expect(withOwnedHtmlProtectionDocument({chromium,physicalHtml:html,expectedMaterial:identity,consume:async owned=>{const native=await createHtmlProtectionWholeNativeObserver({...owned,frameId:owned.custody.navigation.frameId,loaderId:owned.custody.navigation.loaderId,documentUrl:owned.custody.documentUrl});try{await native.viewport();await owned.page.goto('about:blank');return await native.viewport();}finally{await native.dispose();}}})).rejects.toThrow();},30000);
+ it('rejects a late response after its owned native read physically navigates before return',async()=>{const driver=Object.create(chromium) as typeof chromium;driver.launch=async options=>{const browser=await chromium.launch(options),newContext=browser.newContext.bind(browser);browser.newContext=async options=>{const context=await newContext(options),newSession=context.newCDPSession.bind(context);context.newCDPSession=async page=>{const session=await newSession(page),send=session.send.bind(session);let armed=true;session.send=(async(method:string,parameters:unknown)=>{const response=await Reflect.apply(send,session,[method,parameters]);if(armed&&method==='Runtime.callFunctionOn'){armed=false;await page.goto('about:blank');}return response;}) as typeof session.send;return session;};return context;};return browser;};await expect(withOwnedHtmlProtectionDocument({chromium:driver,physicalHtml:html,expectedMaterial:identity,consume:async owned=>{const native=await createHtmlProtectionWholeNativeObserver({...owned,frameId:owned.custody.navigation.frameId,loaderId:owned.custody.navigation.loaderId,documentUrl:owned.custody.documentUrl});try{return await native.viewport();}finally{await native.dispose();}}})).rejects.toThrow();},30000);
+});

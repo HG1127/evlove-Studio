@@ -1,0 +1,36 @@
+import { parse } from "@babel/parser";
+import { z } from "zod";
+import { HtmlProtectionWholeClipboardValueProgramSchema, type HtmlProtectionWholeClipboardValueProgram, type HtmlProtectionWholeRuntimeSourcePlan } from "@evolution/contracts";
+import { clipboardValueProgramFromSource, hasKnownClipboardSourceEnvironment, clipboardNodeMember as member, visitClipboardSource as visit, type ClipboardSourceNode as Node } from "./html-protection-whole-clipboard-source";
+const fn=new Set(['ArrowFunctionExpression','FunctionExpression','FunctionDeclaration']);
+const NativeEvents=z.object({value:z.object({handlerRealm:z.object({frameId:z.string().min(1),uniqueContextId:z.string().min(1)}).strict(),receivers:z.array(z.object({index:z.number().int().nonnegative(),kind:z.enum(['node','window']),backendNodeId:z.number().int().positive().nullable(),listeners:z.array(z.object({type:z.string(),scriptId:z.string().min(1),backendNodeId:z.number().int().positive().optional(),lineNumber:z.number().int().nonnegative(),columnNumber:z.number().int().nonnegative()}).passthrough()).max(5000)}).passthrough()).max(129)}).passthrough()}).passthrough();
+/** Compile the complete clipboard value expression from Original callbacks. Residual callbacks/effects remain explicit and unsupported. */
+export function htmlProtectionWholeClipboardValueProfiles(plan:HtmlProtectionWholeRuntimeSourcePlan){
+ const profiles:Array<{parentId:string;writeRange:{start:number;end:number};handlerRange:{start:number;end:number};eventType:'click';program:HtmlProtectionWholeClipboardValueProgram}>=[],unresolved:Array<{parentId:string;writeRange:{start:number;end:number};gap:string}>=[];
+
+ const parsedSources=plan.scriptShape.map(source=>{try{return{source,ast:source.literal===null?undefined:parse(source.literal.replace(/\r\n?/g,'\n'),{sourceType:'unambiguous'}) as unknown as Node};}catch{return{source,ast:undefined};}}),knownEnvironment=parsedSources.every(item=>item.ast!==undefined)&&hasKnownClipboardSourceEnvironment(parsedSources.flatMap(item=>item.ast?[item.ast]:[]));
+ for(const{source,ast}of parsedSources){const literal=source.literal?.replace(/\r\n?/g,'\n');if(!ast||literal===undefined||literal===null){unresolved.push({parentId:source.id,writeRange:{start:0,end:literal?.length??0},gap:'complete-clipboard-source-profile-unavailable'});continue;}
+  visit(ast,(node,ancestors)=>{if(node.type!=='CallExpression'||!isWriteText(node.callee as Node))return;
+   const writeRange={start:Number(node.start),end:Number(node.end)},registration=[...ancestors].reverse().find(parent=>parent.type==='CallExpression'&&member(parent.callee as Node)==='addEventListener'),handler=registration&&(registration.arguments as Node[])[1],event=registration&&(registration.arguments as Node[])[0],nearest=[...ancestors].reverse().find(parent=>fn.has(String(parent.type))),base={parentId:source.id,writeRange};
+   if(!knownEnvironment||event?.type!=='StringLiteral'||event.value!=='click'||!handler||!fn.has(String(handler.type))||nearest!==handler){unresolved.push({...base,gap:'clipboard-exact-Original-handler-binding-unresolved'});return;}
+   const program=clipboardValueProgramFromSource({write:node,handler,registration:registration!,ancestors,ast}),parsed=HtmlProtectionWholeClipboardValueProgramSchema.safeParse(program);
+   if(!parsed.success)unresolved.push({...base,gap:'complete-clipboard-value-dependencies-unresolved'});else profiles.push({...base,handlerRange:{start:Number(handler.start),end:Number(handler.end)},eventType:'click',program:parsed.data});
+  });
+ }
+
+ return{policyVersion:'Original-complete-clipboard-value-expression-v1',profiles,unresolved,supportedParentIds:[] as string[],limitations:['These profiles derive the clipboard value expression, not every callback effect or successful source-parent closure.','Values must be read through owned native primitives on the same current arm. Candidate allowed body refinements never require equality with old Original body characters.','Lexical boot closure values and unknown helper/receiver changes retain residual gaps until their complete dataflow is independently bound.']};
+}
+/** Source-position selection only; the App must also match the actual script IDs through strict native source readback. */
+export function selectHtmlProtectionWholeClipboardValueProfile(args:{sourcePlan:HtmlProtectionWholeRuntimeSourcePlan;subjectScriptLocations:Array<{parentId:string;line:number;column:number}>;nativeEvents:unknown}){
+ const profile=htmlProtectionWholeClipboardValueProfiles(args.sourcePlan),events=NativeEvents.safeParse(args.nativeEvents);
+ if(!events.success)return{availability:'unavailable' as const,gaps:['complete-clipboard-native-handler-registry-unavailable']};
+ const matches:Array<typeof profile.profiles[number]&{nativeScriptId:string;nativeLineNumber:number;nativeColumnNumber:number;nativeContextUniqueId:string;nativeFrameId:string;nativeBackendNodeId:number}>=[];let unresolved=false;
+ for(const receiver of events.data.value.receivers)for(const listener of receiver.listeners){if(listener.type!=='click')continue;let matched=false;if(receiver.index!==0||receiver.kind!=='node'||receiver.backendNodeId===null||(listener.backendNodeId!==undefined&&listener.backendNodeId!==receiver.backendNodeId)){unresolved=true;continue;}
+  for(const item of profile.profiles){const source=args.sourcePlan.scriptShape.find(source=>source.id===item.parentId),location=args.subjectScriptLocations.find(location=>location.parentId===item.parentId),literal=source?.literal?.replace(/\r\n?/g,'\n');if(!location||literal===undefined||literal===null)continue;const localLine=Number(listener.lineNumber)-location.line,lines=literal.split('\n'),column=Number(listener.columnNumber)-(localLine===0?location.column:0);if(localLine<0||localLine>=lines.length||column<0||column>lines[localLine]!.length)continue;const offset=lines.slice(0,localLine).reduce((sum,line)=>sum+line.length+1,0)+column;if(offset>=item.handlerRange.start&&offset<item.handlerRange.end){matches.push({...item,nativeScriptId:listener.scriptId,nativeLineNumber:listener.lineNumber,nativeColumnNumber:listener.columnNumber,nativeContextUniqueId:events.data.value.handlerRealm.uniqueContextId,nativeFrameId:events.data.value.handlerRealm.frameId,nativeBackendNodeId:receiver.backendNodeId});matched=true;}
+  }if(!matched)unresolved=true;
+ }
+ const unique=[...new Map(matches.map(profile=>[profile.parentId+':'+profile.handlerRange.start+':'+profile.writeRange.start+':'+profile.writeRange.end+':'+profile.nativeScriptId,profile])).values()];
+ if(unique.some(item=>profile.unresolved.some(gap=>gap.parentId===item.parentId&&gap.writeRange.start>=item.handlerRange.start&&gap.writeRange.end<=item.handlerRange.end)))unresolved=true;
+ return !unresolved&&unique.length===1?{availability:'available' as const,profile:unique[0]!,limitations:profile.limitations}:{availability:'unavailable' as const,gaps:['complete-clipboard-value-handler-contract-unresolved'],unresolved:profile.unresolved};
+}
+function isWriteText(node:Node){const clip=node.object as Node|undefined;return member(node)==='writeText'&&clip&&member(clip)==='clipboard'&&(clip.object as Node)?.type==='Identifier'&&(clip.object as Node).name==='navigator';}
