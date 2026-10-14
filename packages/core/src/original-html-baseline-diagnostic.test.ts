@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { AcceptanceCriterion, EvaluateAiResult, EvolveProject } from "@evolution/contracts";
 import { settleAiEvaluation } from "./evaluation-settlement";
 import { HTML_PROTECTION_SCOPE_GAP, htmlProtectionAcceptanceBlocker } from "./html-protection-scope";
-import { assessOriginalHtmlBaselineDiagnosticEligibility, originalHtmlBaselineDiagnosticCase, originalHtmlBaselineDiagnosticEligibility,
+import { assessOriginalHtmlBaselineDiagnosticEligibility, originalHtmlBaselineDiagnosticCase, originalHtmlBaselineDiagnosticEligibility, originalHtmlBaselineDiagnosticUsesFixedArtifact,
   type OriginalHtmlBaselineDiagnosticBinding } from "./original-html-baseline-diagnostic";
 const digest = "a".repeat(64);
 function fixture() {
@@ -139,5 +139,60 @@ describe("traceable original Baseline diagnosis refusals", () => {
     const assessed = assessOriginalHtmlBaselineDiagnosticEligibility({ ...args, initialBinding: { privateError: "do-not-retain-private-data" } });
     expect(assessed).toEqual({ status: "pending", reason: "binding-or-judge-boundary-invalid" });
     expect(JSON.stringify(assessed)).not.toContain("do-not-retain-private-data");
+  });
+});
+
+describe("fixed uploaded original diagnostic reference classification", () => {
+  function uploaded() {
+    const project = fixture().project;
+    project.sourceArtifacts[0]!.storageRef = "synthetic-full-original";
+    project.protectedItems = ["original facts"];
+    project.acceptanceRubric.push({ id: "PROTECT-ALL", title: "Original facts", requirement: "Preserve original facts",
+      source: "protected-item", weight: 0, hardGate: true, judgeType: "pairwise", validationMethod: "semantic-judge", minScore: 95,
+      evidenceExpected: ["与原始版本对比确认未破坏：original facts"], protectedConstraint: true, artifactIds: [], category: "protected" });
+    project.evalSuite.push({ ...project.evalSuite[0]!, id: "FUTURE", criterionIds: ["PROTECT-ALL"], executionMode: "external-runner",
+      browserSteps: [{ action: "click", selector: "#synthetic" }] });
+    project.hiddenEvalSuite = [{ ...project.evalSuite[0]!, id: "HIDDEN", hidden: true, executionMode: "visual-review" }];
+    return project;
+  }
+  it("classifies only the fixed current reference, leaving both papers and scores unchanged", () => {
+    const project = uploaded(), before = JSON.stringify(project);
+    expect(originalHtmlBaselineDiagnosticUsesFixedArtifact(project)).toBe(true);
+    expect(JSON.stringify(project)).toBe(before);
+    expect(project.baselineRun.result?.criterionScores?.find(row => row.criterionId === "SYS-INTEGRITY"))
+      .toMatchObject({ verificationStatus: "partial", pass: false });
+    expect(htmlProtectionAcceptanceBlocker(project)).toBeTruthy();
+  });
+  it.each(["external-runner", "visual-review"] as const)("retains live time for current %s", mode => {
+    const project = uploaded(); project.evalSuite[0]!.executionMode = mode;
+    expect(originalHtmlBaselineDiagnosticUsesFixedArtifact(project)).toBe(false);
+  });
+  it.each(["artifact-runtime", "static-evidence"] as const)("rejects browser steps mislabeled %s", mode => {
+    const project = uploaded(); project.evalSuite[0]!.executionMode = mode;
+    project.evalSuite[0]!.browserSteps = [{ action: "click", selector: "#synthetic" }];
+    expect(originalHtmlBaselineDiagnosticUsesFixedArtifact(project)).toBe(false);
+  });
+  it.each(["mixed", "empty", "noncanonical", "unknown-criterion"])("keeps %s external cases in the current scope", kind => {
+    const project = uploaded(), future = project.evalSuite[2]!;
+    if (kind === "mixed") future.criterionIds.push("DETAIL");
+    if (kind === "empty") future.criterionIds = [];
+    if (kind === "noncanonical") project.acceptanceRubric[2]!.source = "user-command";
+    if (kind === "unknown-criterion") future.criterionIds = ["unknown"];
+    expect(originalHtmlBaselineDiagnosticUsesFixedArtifact(project)).toBe(false);
+  });
+  it.each(["http", "connector", "remote", "missing-blob", "whitespace-blob", "later-round", "champion", "non-html", "multi-target", "paste", "duplicate-case", "duplicate-rubric"])("does not classify %s as a fixed original reference", kind => {
+    const project = uploaded(), source = project.sourceArtifacts[0]!;
+    if (kind === "http" || kind === "connector") project.targetConnection.adapter = kind;
+    if (kind === "remote") source.inputMode = "remote";
+    if (kind === "missing-blob") source.storageRef = undefined;
+    if (kind === "whitespace-blob") source.storageRef = "  ";
+    if (kind === "later-round") project.campaign.currentRound = 1;
+    if (kind === "champion") project.searchChampion = {} as NonNullable<EvolveProject["searchChampion"]>;
+    if (kind === "non-html") source.extension = "md";
+    if (kind === "multi-target") project.sourceArtifacts.push({ ...source, id: "extra" });
+    if (kind === "paste") source.inputMode = "paste";
+    if (kind === "duplicate-case") project.evalSuite.push(project.evalSuite[0]!);
+    if (kind === "duplicate-rubric") project.acceptanceRubric.push(project.acceptanceRubric[0]!);
+    expect(originalHtmlBaselineDiagnosticUsesFixedArtifact(project)).toBe(false);
   });
 });

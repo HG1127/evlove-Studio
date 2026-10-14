@@ -7,7 +7,7 @@ import {
 } from "@evolution/contracts";
 import { LIVE_TARGET_OBSERVATION_MAX_AGE_MS, type OriginalHtmlBaselineDiagnosticBinding } from "@evolution/core";
 import { buildServerHarnessPlan, canReuseServerBaseline, runServerBaseline, type ServerBaselineOutcome } from "@evolution/harness";
-import type { ServerDiagnosticContinuation } from "./server-diagnostic-continuation";
+import { serverDiagnosticContinuationBoundaryReason, type ServerDiagnosticContinuation } from "./server-diagnostic-continuation";
 import { executeServerControlStep } from "../../../../workflows/evolution-mission/steps";
 
 // Synthetic local regression only. Real Harness Baseline/preparation run here; all external
@@ -88,7 +88,7 @@ function fixture(): EvolveProject {
 function binding(): OriginalHtmlBaselineDiagnosticBinding {
   return { schemaVersion: "original-html-baseline-diagnostic-binding-v1", binding: {
     missionId: input.missionId, testCaseId: "I", criterionId: "SYS-INTEGRITY", paperSha256: "b".repeat(64),
-    original: physical, executed: { ...physical }, subject: { kind: "current", versionId: "V1" },
+    original: { ...physical }, executed: { ...physical }, subject: { kind: "current", versionId: "V1" },
   } };
 }
 const judged: EvaluateAiResult = {
@@ -152,6 +152,9 @@ beforeEach(() => {
       buildCurrentArtifactContext: async () => [{ id: "source", content: html, artifactSha256: physical.sha256, truncated: false }],
       executeStoredEvidence: async ({ testCase }) => ({ testCaseId: testCase.id, artifactHash: physical.sha256,
         output: "Complete synthetic current HTML statically indexed; runtime remains unverified", latencyMs: 1, cost: 0, verificationStatus: "verified", trace: [] }),
+      executeExternalBatch: async ({ testCases }) => testCases.map(testCase => ({ testCaseId: testCase.id,
+        artifactHash: physical.sha256, output: "Synthetic current external observation: configuration omitted",
+        verificationStatus: "verified" as const, trace: [], latencyMs: 1, cost: 0 })),
       executeSemanticBatch: async ({ testCases }) => ({ results: testCases.map(testCase => ({ testCaseId: testCase.id,
         output: "Current instructions omit configuration", trace: [] })) }),
       judge: async () => structuredClone(judged),
@@ -208,6 +211,66 @@ describe("internal fresh original diagnostic continuation through durable Campai
     expect(m.experiment).toHaveBeenCalledOnce(); expect(m.holdout).toHaveBeenCalledOnce(); expect(m.acceptance).toHaveBeenCalledOnce();
     expect(generations.size).toBe(5); assertUnpromotedBaseline(baseline);
   });
+  it("continues fixed uploaded file diagnostics after live TTL without changing the Baseline", async () => {
+    let context: ServerDiagnosticContinuation | undefined = await firstContinuation();
+    const baseline = structuredClone(persisted.baselineRun), observedAt = context.observedAt;
+    for (let iteration = 1; iteration <= 4; iteration++) {
+      vi.setSystemTime(Date.parse(observedAt) + LIVE_TARGET_OBSERVATION_MAX_AGE_MS * (iteration + 1));
+      const outcome = await executeServerControlStep(input, campaignPlan(), iteration, context);
+      expect(outcome.control).toBe("continue"); context = outcome.diagnosticContinuation;
+      expect(context?.observedAt).toBe(observedAt); assertUnpromotedBaseline(baseline);
+    }
+    const final = await executeServerControlStep(input, campaignPlan(), 5, context);
+    expect(final.control).toBe("stop"); expect(m.baseline).toHaveBeenCalledOnce();
+    expect(m.experiment).toHaveBeenCalledOnce(); expect(m.holdout).toHaveBeenCalledOnce();
+    expect(m.acceptance).toHaveBeenCalledOnce(); assertUnpromotedBaseline(baseline);
+  });
+  it("rechecks physical identity after a slow fixed-file read without renewing measurement time", async () => {
+    const context = await firstContinuation(), baseline = structuredClone(persisted.baselineRun);
+    m.binding.mockImplementation(async () => {
+      vi.setSystemTime(Date.parse(context.observedAt) + LIVE_TARGET_OBSERVATION_MAX_AGE_MS * 2);
+      return binding();
+    });
+    const outcome = await executeServerControlStep(input, campaignPlan(), 1, context);
+    expect(outcome.control).toBe("continue"); expect(outcome.diagnosticContinuation?.observedAt).toBe(context.observedAt);
+    expect(m.ai).toHaveBeenCalledOnce(); assertUnpromotedBaseline(baseline);
+  });
+  it.each(["physical-drift", "read-failure", "route", "budget", "approval"])("retains %s checks after the live TTL for fixed files", async kind => {
+    const context = await firstContinuation(), plan = campaignPlan(), baseline = structuredClone(persisted.baselineRun);
+    vi.setSystemTime(Date.parse(context.observedAt) + LIVE_TARGET_OBSERVATION_MAX_AGE_MS * 2);
+    if (kind === "physical-drift") m.binding.mockImplementation(async () => { const b = binding(); b.binding.original.sha256 = "c".repeat(64); return b; });
+    if (kind === "read-failure") m.binding.mockRejectedValue(new Error("Synthetic unavailable private read"));
+    if (kind === "route") m.route.mockResolvedValue("changed-after-live-TTL");
+    if (kind === "budget") { persisted.campaign.stopCriteria.maxWallMinutes = 1; persisted.campaign.startedAt = at; }
+    if (kind === "approval") persisted.gates.find(gate => gate.id === "target-ready")!.status = "blocked";
+    const outcome = await executeServerControlStep(input, plan, 1, context);
+    expect(outcome.control).toBe("stop"); assertNoLaterPorts(); assertUnpromotedBaseline(baseline);
+  });
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])("refuses invalid fixed-file decision time %s", async now => {
+    const context = await firstContinuation();
+    expect(serverDiagnosticContinuationBoundaryReason(persisted, input, context, route, now)).toBe("observation-expired");
+  });
+  it("retains live TTL for an actual current external observation", async () => {
+    persisted.evalSuite[0]!.executionMode = "external-runner";
+    const context = await firstContinuation(), baseline = structuredClone(persisted.baselineRun);
+    vi.setSystemTime(Date.parse(context.observedAt) + LIVE_TARGET_OBSERVATION_MAX_AGE_MS);
+    const outcome = await executeServerControlStep(input, campaignPlan(), 1, context);
+    expect(outcome.control).toBe("stop"); expect(outcome.result?.reason).toContain("observation-expired");
+    assertNoLaterPorts(); assertUnpromotedBaseline(baseline);
+  });
+  it.each(["candidate", "owner"])("refuses late %s changes after live TTL during final awaits", async kind => {
+    const context = await firstContinuation(), plan = campaignPlan(), beforeSaves = m.save.mock.calls.length;
+    vi.setSystemTime(Date.parse(context.observedAt) + LIVE_TARGET_OBSERVATION_MAX_AGE_MS * 2);
+    if (kind === "candidate") {
+      let reads = 0;
+      m.route.mockImplementation(async () => { if (++reads === 2) persisted.candidates = [structuredClone(plannedCandidate)]; return route; });
+    } else {
+      let reads = 0;
+      m.getJob.mockImplementation(async () => { if (++reads === 2) persisted.campaign.serverControlOwner!.controlJobId = "late-foreign-owner"; return structuredClone(job); });
+    }
+    await expect(executeServerControlStep(input, plan, 1, context)).rejects.toThrow();
+    expect(m.save).toHaveBeenCalledTimes(beforeSaves); assertNoLaterPorts(); assertUnpromotedBaseline();
+  });
   it("does not reconstruct authority from a saved partial Baseline when the private SDK context is absent", async () => {
     await firstContinuation(); const prior = persisted.baselineRun.id;
     vi.setSystemTime(Date.parse(at) + 1000);
@@ -237,9 +300,12 @@ describe("internal fresh original diagnostic continuation through durable Campai
     expect(persisted.baselineRun).toEqual(snapshot); if (kind !== "baseline") expect(snapshot).toEqual(baseline);
     expect(persisted.campaign.status).toBe("paused"); assertNoLaterPorts(); assertUnpromotedBaseline();
   });
-  it.each(["route", "expired", "context-run", "context-operation", "physical", "read-deadline", "read-route"])("refuses %s without extending the original observation", async kind => {
+  it.each(["route", "expired", "context-run", "context-operation", "physical", "read-deadline", "read-route", "legacy-context", "future-time"])("refuses %s without extending the original observation", async kind => {
+    if (["expired", "read-deadline"].includes(kind)) persisted.sourceArtifacts[0]!.inputMode = "remote";
     const context = await firstContinuation(), plan = campaignPlan(), baseline = structuredClone(persisted.baselineRun);
     if (kind === "route") m.route.mockResolvedValue("other-route");
+    if (kind === "legacy-context") Object.assign(context, { schemaVersion: "server-diagnostic-continuation-v1" });
+    if (kind === "future-time") vi.setSystemTime(Date.parse(context.observedAt) - 1);
     if (kind === "expired") vi.setSystemTime(Date.parse(context.observedAt) + LIVE_TARGET_OBSERVATION_MAX_AGE_MS);
     if (kind === "context-run") context.runId = "foreign-run";
     if (kind === "context-operation") context.operationKey = "foreign-operation";
@@ -269,7 +335,8 @@ describe("internal fresh original diagnostic continuation through durable Campai
     expect(persisted.campaign.status).toBe("paused"); assertNoLaterPorts(); assertUnpromotedBaseline(baseline);
   });
 
-  it("rechecks fixed TTL after the final asynchronous owner Job read",async()=>{
+  it("rechecks live-source TTL after the final asynchronous owner Job read",async()=>{
+    persisted.sourceArtifacts[0]!.inputMode = "remote";
     const context=await firstContinuation(), baseline=structuredClone(persisted.baselineRun);
     vi.setSystemTime(Date.parse(context.observedAt)+LIVE_TARGET_OBSERVATION_MAX_AGE_MS-1);
     let reads=0;
@@ -295,7 +362,8 @@ describe("internal fresh original diagnostic continuation through durable Campai
     expect(m.save).toHaveBeenCalledTimes(beforeSaves);expect(persisted.candidates.map(candidate=>candidate.id)).toEqual(["C1"]);
     assertNoLaterPorts();assertUnpromotedBaseline();
   });
-  it("rechecks a newly minted carrier after slow baseline persistence before Problem",async()=>{
+  it("rechecks a newly minted live-source carrier after slow baseline persistence before Problem",async()=>{
+    persisted.sourceArtifacts[0]!.inputMode = "remote";
     m.putJob.mockImplementation(async(next:typeof initialJob)=>{job=structuredClone(next);
       if(next.progress?.percent===30)vi.setSystemTime(Date.parse(persisted.baselineRun.completedAt!)+LIVE_TARGET_OBSERVATION_MAX_AGE_MS);});
     const outcome=await executeServerControlStep(input,campaignPlan(),0);
