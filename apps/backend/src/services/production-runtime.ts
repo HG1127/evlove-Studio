@@ -495,6 +495,7 @@ export function getServerProductionRuntime():ServerControlRuntime{
     },
     artifacts:getServerArtifactStore(),
     events:{
+      get:async(id)=>readServerEventById(request,id),
       append:async(event)=>appendServerEvent(request,event),
       list:async(missionId,limit=200)=>{
         const rows=await readServerEventRows(request,missionId,limit);

@@ -29,6 +29,8 @@ export function createEvolutionEvent(input: Omit<EvolutionEvent,"schemaVersion"|
 }
 
 export interface EventStorePort {
+  /** Exact immutable identity readback; optional for legacy adapters. */
+  get?(id: string): Promise<EvolutionEvent | undefined>;
   append(event: EvolutionEvent): Promise<void>;
   list(missionId?: string, limit?: number): Promise<EvolutionEvent[]>;
 }
