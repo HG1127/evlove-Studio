@@ -60,6 +60,7 @@ import { HTML_PROTECTION_SETTLEMENT_POLICY } from "@evolution/core";
 import {COMPATIBLE_RESPONSES_OUTPUT_VERSION,COMPATIBLE_CHAT_OUTPUT_VERSION,readCompatibleResponsesOutput,readCompatibleChatOutput,parseStructuredAiOutput,StructuredAiJsonError,STRUCTURED_AI_FINAL_OUTPUT_VERSION,type StructuredAiJsonFailureKind,requestCompatibleAiJson} from "@evolution/adapters";
 import type { ServerAiConfig } from "../server-env";
 import {resolveServerAiConfig} from "./server-ai-connection";
+import {minimaxChatFinalOptions,MINIMAX_CHAT_FINAL_CHANNEL_VERSION} from "./minimax-chat-final-channel";
 import {INDEPENDENT_EVALUATION_SAFETY_INSTRUCTION,INDEPENDENT_EVALUATION_SAFETY_INSTRUCTION_VERSION} from "./independent-evaluation-safety";
 import {directAiSchemaDiagnostics,directAiCorrectionDiagnosticSuffix,type DirectAiSchemaDiagnostic} from "./direct-ai-schema-diagnostics";
 import {retainDirectAiCompletionDiagnostic,readDirectAiCompletionDiagnostic} from "./direct-ai-completion-diagnostics";
@@ -81,7 +82,9 @@ export async function serverAiScoringRouteFingerprint(): Promise<string | undefi
   const directSchemaInstructionVersion=config.mode==="openai-compatible"&&(!config.responseFormat||config.responseFormat==="json-schema")
     ?DIRECT_AI_SCHEMA_INSTRUCTION_VERSION:undefined;
   const directSchemaRecoveryVersion=config.mode==="openai-compatible"?DIRECT_AI_SCHEMA_RECOVERY_VERSION:undefined;
-  return createHash("sha256").update(JSON.stringify({ route, protectionSettlementPolicy: HTML_PROTECTION_SETTLEMENT_POLICY, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION, evaluationSafetyInstructionVersion: INDEPENDENT_EVALUATION_SAFETY_INSTRUCTION_VERSION, responsesOutputVersion, chatOutputVersion, directSchemaInstructionVersion, directSchemaRecoveryVersion, finalOutputVersion: config.mode==="openai-compatible"?STRUCTURED_AI_FINAL_OUTPUT_VERSION:undefined })).digest("hex");
+  const minimaxFinalChannelVersion=config.mode==="openai-compatible"&&config.protocol!=="responses"&&minimaxChatFinalOptions(config).reasoning_split
+    ?MINIMAX_CHAT_FINAL_CHANNEL_VERSION:undefined;
+  return createHash("sha256").update(JSON.stringify({ route, protectionSettlementPolicy: HTML_PROTECTION_SETTLEMENT_POLICY, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION, evaluationSafetyInstructionVersion: INDEPENDENT_EVALUATION_SAFETY_INSTRUCTION_VERSION, responsesOutputVersion, chatOutputVersion, directSchemaInstructionVersion, directSchemaRecoveryVersion, minimaxFinalChannelVersion, finalOutputVersion: config.mode==="openai-compatible"?STRUCTURED_AI_FINAL_OUTPUT_VERSION:undefined })).digest("hex");
 }
 
 type StructuredSchema={name:string;schema:Record<string,unknown>};
@@ -267,6 +270,7 @@ async function callResponses<T>(args:DirectRequest<T>){
 async function callChat<T>(args:DirectRequest<T>){
   const body=JSON.stringify({
     model:args.config.model,
+    ...minimaxChatFinalOptions(args.config),
     messages:[
       {role:"system",content:directSystem(args.contract,args.correcting,args.jsonFailureKind)},
       {role:"user",content:args.images.length?[{type:"text" as const,text:args.payloadText},
