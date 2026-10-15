@@ -12,7 +12,11 @@ import {
 
 import type { ServerDiagnosticContinuation } from "../apps/backend/src/services/server-diagnostic-continuation";
 
+import type { ServerExperimentContinuation } from "@evolution/harness";
+
 const MAX_CONTROL_STEPS=32;
+// At most eight selected Candidates, each build / execute / judge once per bounded experiment phase.
+const MAX_EXPERIMENT_OPERATIONS=24;
 
 export async function evolutionMissionWorkflow(rawInput:unknown):Promise<EvolutionWorkflowResult>{
   "use workflow";
@@ -24,6 +28,7 @@ export async function evolutionMissionWorkflow(rawInput:unknown):Promise<Evoluti
     ?Math.max(0,Date.parse(scheduledFor)-Date.parse(input.requestedAt))
     :0;
   let cycle=0;
+  let iteration=0;
 
   while(true){
     let targetRound:number|undefined;
@@ -36,16 +41,25 @@ export async function evolutionMissionWorkflow(rawInput:unknown):Promise<Evoluti
 
     // Internal SDK step output only: never initialized from public Workflow input or Mission events.
     let diagnosticContinuation:ServerDiagnosticContinuation|undefined;
+    let experimentContinuation:ServerExperimentContinuation|undefined;
     let rearmed=false;
     for(let localIteration=0;localIteration<MAX_CONTROL_STEPS;localIteration+=1){
-      const iteration=cycle*MAX_CONTROL_STEPS+localIteration;
-      const plan=await planMissionStep(input,iteration);
-      const execution=await executeServerControlStep(input,plan,iteration,diagnosticContinuation);
-      diagnosticContinuation=execution.control==="continue" ? execution.diagnosticContinuation : undefined;
-      if(execution.control==="stop"&&execution.result)return execution.result;
+      let execution:Awaited<ReturnType<typeof executeServerControlStep>>;
+      let experimentOperations=0;
+      do {
+        const stepIteration=iteration++;
+        const plan=await planMissionStep(input,stepIteration);
+        execution=await executeServerControlStep(input,plan,stepIteration,diagnosticContinuation,experimentContinuation);
+        diagnosticContinuation=execution.control==="continue" ? execution.diagnosticContinuation : undefined;
+        experimentContinuation=execution.control==="continue" ? execution.experimentContinuation : undefined;
+        if(execution.control==="stop"&&execution.result)return execution.result;
+        if(experimentContinuation&&++experimentOperations>=MAX_EXPERIMENT_OPERATIONS)
+          return finalizeWorkflowResultStep(input,await failLoopGuardStep(input,iteration));
+        if(experimentContinuation&&execution.sleepMs)await sleep(execution.sleepMs);
+      } while(experimentContinuation);
 
       if(targetRound!==undefined){
-        const settlement=await settleScheduledManualRoundStep(input,targetRound,iteration);
+        const settlement=await settleScheduledManualRoundStep(input,targetRound,iteration-1);
         if(settlement.settled){
           if("result" in settlement)return finalizeWorkflowResultStep(input,settlement.result);
           scheduledFor=settlement.nextScheduledFor;
@@ -58,6 +72,6 @@ export async function evolutionMissionWorkflow(rawInput:unknown):Promise<Evoluti
       if(execution.control==="continue"&&execution.sleepMs)await sleep(execution.sleepMs);
     }
     if(rearmed)continue;
-    return finalizeWorkflowResultStep(input,await failLoopGuardStep(input,(cycle+1)*MAX_CONTROL_STEPS));
+    return finalizeWorkflowResultStep(input,await failLoopGuardStep(input,iteration));
   }
 }

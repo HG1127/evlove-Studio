@@ -325,7 +325,12 @@ describe("main flow recovery through actual durable entry", () => {
       if (role === "evaluate") throw new Error("independent Experiment Judge unavailable");
       return healthy(role, payload);
     });
-    expect(await executeServerControlStep(retry, plan, 0)).toMatchObject({ result: { status: "waiting-action" } });
+    let output=await executeServerControlStep(retry, plan, 0);
+    for(let iteration=1;output.experimentContinuation&&iteration<6;iteration++) {
+      expect(stored.experimentRun.status).toBe("running");
+      output=await executeServerControlStep(retry,await planMissionStep(retry,iteration),iteration,output.diagnosticContinuation,output.experimentContinuation);
+    }
+    expect(output).toMatchObject({ result: { status: "waiting-action" } });
     expect(stored.campaign.stopReason).toContain("experiment-judge-pending");
     expect(stored.experimentRun.executionCheckpoints?.[0]?.execution?.runs).toHaveLength(1);
     expect(stored.campaign.serverRecoveryWait).toBeUndefined();

@@ -2,7 +2,7 @@ import {withServerAiConnection} from "./server-ai-connection";
 import {runServerHtmlArtifactBatch,serverHtmlArtifactTargetEnabled} from "./server-html-artifact-execution";
 import type { Candidate, EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
 import { runVercelSandboxCodebaseValidation } from "@evolution/adapters/sandbox";
-import { runServerExperiment, SERVER_SEMANTIC_CONTEXT_VERSION } from "@evolution/harness";
+import { runServerExperiment, SERVER_SEMANTIC_CONTEXT_VERSION, type ServerExperimentContinuation } from "@evolution/harness";
 import { runServerAi, serverAiScoringRouteFingerprint } from "./ai-gateway";
 import { readServerHoldoutArtifactFingerprint as readExecutionArtifactFingerprint } from "./server-holdout-artifact-binding";
 import { getServerArtifactStore } from "./artifact-runtime";
@@ -85,7 +85,7 @@ async function executeServerCandidateExternal(project: EvolveProject, candidate:
 }
 
 /** Production composition root for the server-native Candidate Experiment. */
-export async function runServerMissionExperiment(project: EvolveProject) {
+export async function runServerMissionExperiment(project: EvolveProject, options?: { yieldAfterOperation?: boolean; continuation?: ServerExperimentContinuation }) {
   return withServerAiConnection(async()=>{
   return runServerExperiment(project, {
     fingerprint: (wire) => serverArtifactSha256(new TextEncoder().encode(wire)),
@@ -136,6 +136,6 @@ export async function runServerMissionExperiment(project: EvolveProject) {
     executeFrozenStatic: runServerFrozenArtifactStaticEvidence,
     executeExternalBatch: ({ project: current, candidate, testCases }) => executeServerCandidateExternal(current, candidate, testCases),
     judge: (payload) => runServerAi("evaluate", payload),
-  });
+  }, options);
   });
 }
