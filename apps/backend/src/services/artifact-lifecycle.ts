@@ -1,5 +1,5 @@
 import {createHash} from "node:crypto";
-import {ArtifactReconcileRequestSchema,createEvolutionEvent,type ArtifactRegistrationRequest,type ProductionRuntimePorts} from "@evolution/contracts";
+import {ArtifactReconcileRequestSchema,createEvolutionEvent,EvolutionEventSchema,type ArtifactRegistrationRequest,type ProductionRuntimePorts} from "@evolution/contracts";
 import {getServerArtifactStore} from "./artifact-runtime";
 import {appendEvidenceLedger} from "./evidence-ledger";
 
@@ -39,8 +39,16 @@ export async function linkArtifactEvidence(
   runtime:ProductionRuntimePorts,
   input:{missionId:string;jobId?:string;artifactId:string;sha256:string;kind:string},
 ){
+  const id=`artifact-registered:${input.missionId}:${input.artifactId}:${input.sha256}`;
+  const stored=await runtime.events.get?.(id);
+  const existing=stored===undefined?undefined:EvolutionEventSchema.parse(stored);
+  if(existing&&existing.id!==id){
+    throw new Error("Artifact registration Event lookup returned another identity");
+  }
+  // Reuse only the original timestamp. Strict persistence still compares every
+  // expected field, so a conflicting binding or payload cannot become a replay.
   await runtime.events.append(createEvolutionEvent({
-    id:`artifact-registered:${input.missionId}:${input.artifactId}:${input.sha256}`,
+    id,at:existing?.at,
     missionId:input.missionId,
     jobId:input.jobId,
     type:"ArtifactRegistered",
