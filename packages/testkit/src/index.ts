@@ -7,3 +7,5 @@ export { experimentRecoveryAt, experimentRecoveryFixture, experimentRecoveryWait
 export { acceptedLegacyHtmlPaperFixture } from "./accepted-legacy-html-paper-fixture";
 
 export { baselinePolicyTransitionFixture } from "./baseline-policy-transition-fixture";
+
+export { reviewedHoldoutFixture } from "./reviewed-holdout-fixture";
