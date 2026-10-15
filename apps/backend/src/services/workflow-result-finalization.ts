@@ -17,7 +17,9 @@ export function planWorkflowResultFinalization(
     return {job:current,write:false,eventType:current.status==="completed"?"JobCompleted"
       :current.status==="failed"?"JobFailed":"JobProgress"};
   }
-  const status=result.status==="failed"?"failed":result.status==="completed"?"completed":current.status;
+  // This SDK control has returned; human/action handoffs must not retain an active Job status.
+  const waiting=result.status==="waiting-human"||result.status==="waiting-action";
+  const status=result.status==="failed"?"failed":result.status==="completed"?"completed":waiting?"waiting":current.status;
   const terminal=terminalStatuses.has(status);
   const job=EvolutionJobSchema.parse({
     ...current,status,

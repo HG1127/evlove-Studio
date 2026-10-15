@@ -10,14 +10,32 @@ const current=EvolutionJobSchema.parse({
   generation:1,attempts:1,priority:70,
   createdAt:"2026-09-24T12:00:00.000Z",updatedAt:"2026-09-24T12:00:00.000Z",
 });
-function result(status:"completed"|"failed"|"waiting-human"){
+function result(status:"completed"|"failed"|"waiting-human"|"waiting-action"){
   return EvolutionWorkflowResultSchema.parse({missionId:"mission-1",controlJobId:"control-1",status,iterations:1,reason:"step finished"});
 }
 
 describe("Workflow result finalization",()=>{
   it("records a waiting result as progress instead of completion",()=>{
     const planned=planWorkflowResultFinalization(current,result("waiting-human"),at);
-    expect(planned).toMatchObject({write:true,eventType:"JobProgress",job:{status:"running"}});
+    expect(planned).toMatchObject({write:true,eventType:"JobProgress",job:{status:"waiting"}});
+  });
+
+  it.each(["queued","running","waiting"] as const)("persists waiting-human after the SDK ends from %s",(status)=>{
+    const active=EvolutionJobSchema.parse({...current,status,progress:{percent:37,detail:"active step"},error:"old transient failure"});
+    expect(planWorkflowResultFinalization(active,result("waiting-human"),at)).toMatchObject({
+      write:true,eventType:"JobProgress",job:{status:"waiting",progress:{percent:37,detail:"step finished"},error:undefined,finishedAt:undefined,updatedAt:at},
+    });
+  });
+
+  it("persists a waiting-action handoff as waiting without claiming acceptance or completion",()=>{
+    expect(planWorkflowResultFinalization(current,result("waiting-action"),at)).toMatchObject({
+      write:true,eventType:"JobProgress",job:{status:"waiting",finishedAt:undefined,progress:{detail:"step finished"}},
+    });
+  });
+
+  it.each(["completed","partial","failed","cancelled"] as const)("preserves terminal %s when a waiting result arrives",(status)=>{
+    const terminal=EvolutionJobSchema.parse({...current,status,finishedAt:at});
+    expect(planWorkflowResultFinalization(terminal,result("waiting-human"),at)).toMatchObject({write:false,job:terminal});
   });
 
   it("finishes a verified terminal Workflow result",()=>{
