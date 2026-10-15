@@ -21,7 +21,7 @@ export type ServerArtifactVerification={
 
 export type ServerArtifactAcceptancePorts={
   verifyFrozenArtifacts(args:{project:EvolveProject;candidate:Candidate}):Promise<ServerArtifactVerification>;
-  repairCandidate(args:{
+  repairCandidate?(args:{
     project:EvolveProject;
     candidate:Candidate;
     failedCriteria:AcceptanceCriterion[];
@@ -224,9 +224,10 @@ export async function runServerArtifactAcceptance(
   }
 
   const failedCriteria=verifiedValidationFailures(inputProject,inputProject.validationRun);
+  if(!ports.repairCandidate)return pause(project,"Gate F 未通过；人工续接仅授权同一冻结文件，不能自动生成另一 Candidate。",now);
   const attempt=(inputProject.artifactAcceptance.attempts??0)+1;
   const max=inputProject.artifactAcceptance.maxRepairAttempts??3;
-  if(failedCriteria.length&&attempt<=max){
+  if(ports.repairCandidate&&failedCriteria.length&&attempt<=max){
     try{
       const repaired=await ports.repairCandidate({project:inputProject,candidate,failedCriteria,attempt});
       if(repaired.id===candidate.id)throw new Error("Repair Candidate 必须使用新的 Candidate identity");

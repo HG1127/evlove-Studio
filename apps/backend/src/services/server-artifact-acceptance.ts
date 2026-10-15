@@ -119,6 +119,6 @@ export async function repairServerArtifactCandidate(args:{
   );
 }
 
-export async function runServerMissionArtifactAcceptance(project:EvolveProject){
-  return runServerArtifactAcceptance(project,{verifyFrozenArtifacts:verifyServerFrozenCandidateArtifacts,repairCandidate:repairServerArtifactCandidate});
+export async function runServerMissionArtifactAcceptance(project:EvolveProject,options?:{repair?:boolean}){
+  return runServerArtifactAcceptance(project,{verifyFrozenArtifacts:verifyServerFrozenCandidateArtifacts,...(options?.repair===false?{}:{repairCandidate:repairServerArtifactCandidate})});
 }

@@ -30,6 +30,8 @@ const EvolutionCampaignCenter = lazy(() => import("./evolution-campaign-center")
 const ProjectOutputsPanel = lazy(() => import("./project-outputs-panel").then((module) => ({ default: module.ProjectOutputsPanel })));
 const AttentionRequestPanel = lazy(() => import("./attention-request-panel").then((module) => ({ default: module.AttentionRequestPanel })));
 
+const ReviewedHoldoutPanel = lazy(() => import("./reviewed-holdout-panel").then(module => ({default:module.ReviewedHoldoutPanel})));
+
 function WorkspaceLoading({ label }: { label: string }) {
   return <div className="grid min-h-40 place-items-center rounded-2xl border border-dashed bg-white p-6 text-sm text-slate-400" role="status">正在加载{label}…</div>;
 }
@@ -266,6 +268,7 @@ export function ProjectStudio({ project: initialProject }: { project: EvolveProj
       {view === "outputs" && <Suspense fallback={<WorkspaceLoading label="成果与版本" />}><ProjectOutputsPanel runtime={runtime} /></Suspense>}
       {view === "flow" && (
         <div className="space-y-4">
+          <Suspense fallback={null}><ReviewedHoldoutPanel key={runtime.project.id} project={runtime.project} busy={runtime.status.busy}/></Suspense>
           <AutonomousEvolutionPanel runtime={runtime} onOpenSource={()=>setView("source")} onOpenOutputs={()=>setView("outputs")} onOpenAdvanced={()=>setView("campaign")} onOpenRuntime={()=>setView("runtime")} />
           <div className="flex justify-end"><Button variant="secondary" size="sm" onClick={()=>setCopilotOpen((open)=>!open)}><Bot className="size-4" />{copilotOpen?"收起 AI 助手":"打开 AI 助手"}</Button></div>
           <div className={`grid gap-6 ${copilotOpen?"xl:grid-cols-[minmax(0,1fr)_340px]":"grid-cols-1"}`}>
