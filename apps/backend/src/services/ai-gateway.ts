@@ -57,10 +57,11 @@ import {
 } from "@evolution/contracts";
 import { SERVER_SEMANTIC_CONTEXT_VERSION } from "@evolution/harness";
 import { HTML_PROTECTION_SETTLEMENT_POLICY } from "@evolution/core";
-import {COMPATIBLE_RESPONSES_OUTPUT_VERSION,COMPATIBLE_CHAT_OUTPUT_VERSION,readCompatibleResponsesOutput,readCompatibleChatOutput,parseStructuredAiOutput,StructuredAiJsonError,STRUCTURED_AI_FINAL_OUTPUT_VERSION,type StructuredAiJsonFailureKind,requestCompatibleAiJson} from "@evolution/adapters";
+import {COMPATIBLE_RESPONSES_OUTPUT_VERSION,COMPATIBLE_CHAT_OUTPUT_VERSION,readCompatibleResponsesOutput,readCompatibleChatOutput,readCompatibleSchemaToolOutput,parseStructuredAiOutput,StructuredAiJsonError,STRUCTURED_AI_FINAL_OUTPUT_VERSION,type StructuredAiJsonFailureKind,requestCompatibleAiJson} from "@evolution/adapters";
 import type { ServerAiConfig } from "../server-env";
 import {resolveServerAiConfig} from "./server-ai-connection";
 import {minimaxChatFinalOptions,MINIMAX_CHAT_FINAL_CHANNEL_VERSION} from "./minimax-chat-final-channel";
+import {usesMinimaxSchemaTool,minimaxSchemaTool,minimaxSchemaToolInstruction,MINIMAX_SCHEMA_TOOL_VERSION} from "./minimax-schema-tool";
 import {INDEPENDENT_EVALUATION_SAFETY_INSTRUCTION,INDEPENDENT_EVALUATION_SAFETY_INSTRUCTION_VERSION} from "./independent-evaluation-safety";
 import {directAiSchemaDiagnostics,directAiCorrectionDiagnosticSuffix,type DirectAiSchemaDiagnostic} from "./direct-ai-schema-diagnostics";
 import {retainDirectAiCompletionDiagnostic,readDirectAiCompletionDiagnostic} from "./direct-ai-completion-diagnostics";
@@ -84,7 +85,8 @@ export async function serverAiScoringRouteFingerprint(): Promise<string | undefi
   const directSchemaRecoveryVersion=config.mode==="openai-compatible"?DIRECT_AI_SCHEMA_RECOVERY_VERSION:undefined;
   const minimaxFinalChannelVersion=config.mode==="openai-compatible"&&config.protocol!=="responses"&&minimaxChatFinalOptions(config).reasoning_split
     ?MINIMAX_CHAT_FINAL_CHANNEL_VERSION:undefined;
-  return createHash("sha256").update(JSON.stringify({ route, protectionSettlementPolicy: HTML_PROTECTION_SETTLEMENT_POLICY, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION, evaluationSafetyInstructionVersion: INDEPENDENT_EVALUATION_SAFETY_INSTRUCTION_VERSION, responsesOutputVersion, chatOutputVersion, directSchemaInstructionVersion, directSchemaRecoveryVersion, minimaxFinalChannelVersion, finalOutputVersion: config.mode==="openai-compatible"?STRUCTURED_AI_FINAL_OUTPUT_VERSION:undefined })).digest("hex");
+  const minimaxSchemaToolVersion=config.mode==="openai-compatible"&&usesMinimaxSchemaTool(config)?MINIMAX_SCHEMA_TOOL_VERSION:undefined;
+  return createHash("sha256").update(JSON.stringify({ route, protectionSettlementPolicy: HTML_PROTECTION_SETTLEMENT_POLICY, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION, evaluationSafetyInstructionVersion: INDEPENDENT_EVALUATION_SAFETY_INSTRUCTION_VERSION, responsesOutputVersion, chatOutputVersion, directSchemaInstructionVersion, directSchemaRecoveryVersion, minimaxFinalChannelVersion, minimaxSchemaToolVersion, finalOutputVersion: config.mode==="openai-compatible"?STRUCTURED_AI_FINAL_OUTPUT_VERSION:undefined })).digest("hex");
 }
 
 type StructuredSchema={name:string;schema:Record<string,unknown>};
@@ -268,16 +270,18 @@ async function callResponses<T>(args:DirectRequest<T>){
   }
 }
 async function callChat<T>(args:DirectRequest<T>){
+  const schemaTool=usesMinimaxSchemaTool(args.config)?minimaxSchemaTool(args.contract.schema):undefined;
+  const completionDiagnostic={protocol:"chat-completions" as const,phase:args.correcting?"correction" as const:"initial" as const,expectedSchemaToolName:schemaTool?.function.name};
   const body=JSON.stringify({
     model:args.config.model,
     ...minimaxChatFinalOptions(args.config),
     messages:[
-      {role:"system",content:directSystem(args.contract,args.correcting,args.jsonFailureKind)},
+      {role:"system",content:directSystem(args.contract,args.correcting,args.jsonFailureKind)+(schemaTool?minimaxSchemaToolInstruction(schemaTool.function.name):"")},
       {role:"user",content:args.images.length?[{type:"text" as const,text:args.payloadText},
         ...args.images.map(image=>({type:"image_url",image_url:{url:image.dataUrl}}))]:args.payloadText},
       ...(args.correctionContext?[{role:"user",content:args.correctionContext}]:[]),
     ],
-    ...(args.config.responseFormat==="prompt-json"?{}:{response_format:args.config.responseFormat==="json-object"
+    ...(schemaTool?{tools:[schemaTool],tool_choice:"auto"}:args.config.responseFormat==="prompt-json"?{}:{response_format:args.config.responseFormat==="json-object"
       ?{type:"json_object"}:{type:"json_schema",json_schema:{name:args.contract.schema.name,strict:true,schema:args.contract.schema.schema}}}),
   });
   if(args.correcting)assertDirectAiCorrectionRequestBudget(body);
@@ -287,15 +291,16 @@ async function callChat<T>(args:DirectRequest<T>){
   });
   if(!response.ok){
     throw retainDirectAiCompletionDiagnostic(Object.assign(new Error("Server AI Chat HTTP "+response.status),{httpStatus:response.status}),
-      {protocol:"chat-completions",phase:args.correcting?"correction":"initial",envelope:json});
+      {...completionDiagnostic,envelope:json});
   }
   try{
     const envelope=CompatibleChatEnvelopeSchema.safeParse(json);
     if(envelope.success&&(envelope.data.error||envelope.data.message?.trim()))throw Object.assign(new Error("模型接口返回错误正文，未取得可用最终结果。"),{code:"AI_PROVIDER_RESPONSE_ERROR",httpStatus:response.status});
-    return parseStructuredResult(readCompatibleChatOutput(json),args.contract,
-      CompatibleChatEnvelopeSchema.parse(json).choices?.[0]?.finish_reason==="stop",args.captureRejected);
+    const output=schemaTool?readCompatibleSchemaToolOutput(json,schemaTool.function.name):{text:readCompatibleChatOutput(json),carrier:"text"};
+    return parseStructuredResult(output.text,args.contract,
+      output.carrier==="schema-tool"||CompatibleChatEnvelopeSchema.parse(json).choices?.[0]?.finish_reason==="stop",args.captureRejected);
   }catch(error){
-    throw retainDirectAiCompletionDiagnostic(error,{protocol:"chat-completions",phase:args.correcting?"correction":"initial",envelope:json});
+    throw retainDirectAiCompletionDiagnostic(error,{...completionDiagnostic,envelope:json});
   }
 }
 
