@@ -7,12 +7,13 @@ import {reviewedBinding} from "./reviewed-holdout-identity";
 import route from "../../server/api/evolution/reviewed-holdout.post";
 import previewRoute from "../../server/api/evolution/reviewed-holdout.get";
 const m=vi.hoisted(()=>({actor:vi.fn(),runtime:vi.fn(),create:vi.fn(),bind:vi.fn(),preview:vi.fn(),allowed:vi.fn(),reserve:vi.fn(),
-  dispatch:vi.fn(),bindOwner:vi.fn(),start:vi.fn(),metadata:vi.fn(),event:vi.fn()}));
+  dispatch:vi.fn(),bindOwner:vi.fn(),start:vi.fn(),metadata:vi.fn(),event:vi.fn(),recovery:vi.fn()}));
 vi.mock("workflow/api",()=>({start:m.start}));
 vi.mock("../../../../workflows/evolution-reviewed-holdout",()=>({evolutionReviewedHoldoutWorkflow:()=>undefined}));
 vi.mock("./security-policy",()=>({requireGovernedEvolutionPermission:m.actor}));
 vi.mock("./production-runtime",()=>({getServerProductionRuntime:m.runtime,createServerJobIdempotentReceipt:m.create,bindServerJobWorkflowRun:m.bind}));
 vi.mock("./reviewed-holdout-admission",()=>({previewReviewedHoldout:m.preview}));
+vi.mock("./reviewed-holdout-invalid-recovery",()=>({previewReviewedInvalidRecovery:m.recovery}));
 vi.mock("./workflow-control-owner",()=>({WorkflowControlOwnerError:class extends Error{},requireServerNewControlAllowed:m.allowed,
   reserveServerWorkflowControl:m.reserve,beginServerWorkflowDispatchForMission:m.dispatch,bindServerWorkflowOwner:m.bindOwner}));
 vi.mock("./workflow-run-metadata",()=>({readWorkflowRunMetadata:m.metadata}));
@@ -24,15 +25,15 @@ beforeEach(()=>{
   body={binding:reviewedBinding(p,"a".repeat(64),"b".repeat(64),"route"),idempotencyKey:"confirmed",humanReviewNote:"Human confirms this exact REVIEW",preserveReview:true,preserveAcceptanceGates:true};
   m.actor.mockImplementation(async()=>actor);m.runtime.mockReturnValue({missions:{get:async()=>p},jobs:{list:async()=>jobs},events:{append:vi.fn()}});
   m.preview.mockResolvedValue({binding:body.binding,reviewNotes:p.baselineRun.result!.notes,preservationNotice:"REVIEW 保留；仅同一冻结文件的隔离隐藏验证；验收标准、保护要求和 Gate F 不豁免。"});
-  m.reserve.mockImplementation(async(_p:EvolveProject,key:string)=>{const owner:ServerWorkflowControlOwner={
+  m.reserve.mockImplementation(async(_p:EvolveProject,key:string)=>{if(p.campaign.serverControlOwner?.operationKey===key&&p.campaign.serverControlOwner.phase==="reserved")return p.campaign.serverControlOwner;const owner:ServerWorkflowControlOwner={
     schemaVersion:"server-workflow-control-owner-v1",controlJobId:"job-fresh",operationKey:key,requestedAt:p.updatedAt,
     sourceUpdatedAt:p.updatedAt,inputFingerprint:(body.binding as {inputSha256:string}).inputSha256,phase:"reserved"};
     p.campaign.serverControlOwner=owner;return owner;});
-  m.create.mockImplementation(async(job:EvolutionJob)=>{jobs=[job];return {job,reused:false};});
+  m.create.mockImplementation(async(job:EvolutionJob)=>{const existing=jobs.find(j=>j.idempotencyKey===job.idempotencyKey);if(existing)return{job:existing,reused:true};jobs.push(job);return {job,reused:false};});
   m.dispatch.mockImplementation(async()=>{p.campaign.serverControlOwner!.phase="dispatching";});
   m.start.mockResolvedValue({runId:"run-fresh"});
-  m.bind.mockImplementation(async()=>{jobs[0]!.outputRef="run-fresh";return jobs[0];});
-  m.bindOwner.mockImplementation(async()=>{p.campaign.serverControlOwner={...p.campaign.serverControlOwner!,phase:"bound",runId:"run-fresh"};});
+  m.bind.mockImplementation(async(_id:string,_generation:number,runId:string)=>{const job=jobs.find(j=>j.id===_id)!;job.outputRef=runId;return job;});
+  m.bindOwner.mockImplementation(async(_missionId:string,_owner:ServerWorkflowControlOwner,runId:string)=>{p.campaign.serverControlOwner={...p.campaign.serverControlOwner!,phase:"bound",runId};});
   m.metadata.mockResolvedValue({exists:true,status:"completed"});
 });
 describe("governed explicit reviewed Holdout dispatch",()=>{
@@ -95,4 +96,24 @@ describe("governed explicit reviewed Holdout dispatch",()=>{
     const out=await previewRoute(mockEvent(new Request("http://localhost/api/evolution/reviewed-holdout?missionId=mission")));
     expect(out.binding).toEqual(body.binding);expect(m.create).not.toHaveBeenCalled();expect(m.start).not.toHaveBeenCalled();expect(m.event).not.toHaveBeenCalled();
   });
+});
+
+function recoveryClaim(){return{schemaVersion:"reviewed-invalid-output-recovery-v1",preserveFailedAttempts:true,acknowledgeNoValidVerdict:true,priorAttempts:[{controlJobId:"job-fresh",runId:"run-fresh",validationSha256:"a".repeat(64),approvalSha256:"b".repeat(64),sdkEvidenceSha256:"c".repeat(64),scoringRouteFingerprint:"old-route"}]};}
+it("dispatches one separately confirmed invalid-only recovery after complete server-side proof and reuses its key",async()=>{
+ await route(request());const oldValidation=structuredClone(p.validationRun);body.idempotencyKey="after-fixed-carrier";body.invalidOutputRecovery=recoveryClaim();
+ m.recovery.mockResolvedValue({binding:body.binding,reviewNotes:p.baselineRun.result!.notes,preservationNotice:"REVIEW 保留；仅同一冻结文件的隔离隐藏验证；验收标准、保护要求和 Gate F 不豁免。",invalidOutputRecovery:body.invalidOutputRecovery});
+ m.reserve.mockImplementationOnce(async(_p:EvolveProject,key:string)=>{p.campaign.serverControlOwner={...p.campaign.serverControlOwner!,controlJobId:"job-recovery",operationKey:key,phase:"reserved",runId:undefined};return p.campaign.serverControlOwner;});m.start.mockResolvedValueOnce({runId:"run-recovery"});
+ expect(await route(request())).toMatchObject({controlJobId:"job-recovery",runId:"run-recovery"});expect(await route(request())).toMatchObject({reused:true,runId:"run-recovery"});
+ expect(m.recovery).toHaveBeenCalledOnce();expect(m.start).toHaveBeenCalledTimes(2);expect(m.event.mock.calls[1]![1].payload.priorValidation).toEqual(oldValidation);
+});
+it("rejects a recovery claim without an existing reviewed attempt",async()=>{body.invalidOutputRecovery=recoveryClaim();await expect(route(request())).rejects.toThrow("没有可恢复");expect(m.start).not.toHaveBeenCalled();});
+it("does not trust a public recovery claim when private verification fails",async()=>{await route(request());body.idempotencyKey="recovery";body.invalidOutputRecovery=recoveryClaim();m.recovery.mockRejectedValue(new Error("private SDK unavailable"));await expect(route(request())).rejects.toThrow("private SDK unavailable");expect(m.start).toHaveBeenCalledOnce();});
+it("rejects an altered recovery proof before reserving a new Run",async()=>{await route(request());body.idempotencyKey="recovery";body.invalidOutputRecovery=recoveryClaim();m.recovery.mockResolvedValue({binding:body.binding,invalidOutputRecovery:{...recoveryClaim(),priorAttempts:[]}});await expect(route(request())).rejects.toThrow("核验记录已变化");expect(m.start).toHaveBeenCalledOnce();});
+it("only the explicit recovery query reads private old-step evidence",async()=>{m.recovery.mockResolvedValue({binding:body.binding,invalidOutputRecovery:recoveryClaim()});expect(await previewRoute(mockEvent(new Request("http://localhost/api/evolution/reviewed-holdout?missionId=mission&recoverInvalidOutput=true")))).toHaveProperty("invalidOutputRecovery");expect(m.recovery).toHaveBeenCalledOnce();expect(m.start).not.toHaveBeenCalled();});
+
+it("can finish the same confirmed reservation after audit append failed before dispatch without creating a second Job",async()=>{
+ await route(request());body.idempotencyKey="recover-after-audit";body.invalidOutputRecovery=recoveryClaim();m.recovery.mockResolvedValue({binding:body.binding,invalidOutputRecovery:body.invalidOutputRecovery});
+ m.reserve.mockImplementationOnce(async(_p:EvolveProject,key:string)=>{p.campaign.serverControlOwner={...p.campaign.serverControlOwner!,controlJobId:"job-recovery",operationKey:key,phase:"reserved",runId:undefined};return p.campaign.serverControlOwner;});
+ m.event.mockRejectedValueOnce(new Error("audit temporarily unavailable"));await expect(route(request())).rejects.toThrow("audit temporarily unavailable");expect(m.start).toHaveBeenCalledOnce();expect(jobs).toHaveLength(2);
+ m.start.mockResolvedValueOnce({runId:"run-recovery"});expect(await route(request())).toMatchObject({controlJobId:"job-recovery",runId:"run-recovery"});expect(jobs).toHaveLength(2);expect(m.recovery).toHaveBeenLastCalledWith(p,{controlJobId:"job-recovery",operationKey:jobs[1]!.idempotencyKey});expect(m.start).toHaveBeenCalledTimes(2);
 });

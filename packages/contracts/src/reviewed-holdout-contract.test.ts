@@ -17,3 +17,9 @@ describe("reviewed Holdout boundary DTO",()=>{
       approval:{schemaVersion:"reviewed-holdout-approval-v1",request,actorId:"svc",actorSource:"service",confirmedAt:"at"}}).success).toBe(false);
   });
 });
+
+const recovery={schemaVersion:"reviewed-invalid-output-recovery-v1",preserveFailedAttempts:true,acknowledgeNoValidVerdict:true,priorAttempts:[{controlJobId:"old-job",runId:"old-run",validationSha256:"a".repeat(64),approvalSha256:"b".repeat(64),sdkEvidenceSha256:"c".repeat(64),scoringRouteFingerprint:"old-route"}]};
+it("accepts explicit bounded invalid-only recovery references as an additive request field",()=>expect(ReviewedHoldoutRequestSchema.parse({...request,invalidOutputRecovery:recovery})).toEqual({...request,invalidOutputRecovery:recovery}));
+it.each([{preserveFailedAttempts:false},{acknowledgeNoValidVerdict:false},{priorAttempts:[]},{priorAttempts:Array(9).fill(recovery.priorAttempts[0])},{skipGateF:true},{priorAttempts:[{...recovery.priorAttempts[0],sdkEvidenceSha256:"invalid"}]}])("rejects incomplete or widened recovery declarations %#",change=>expect(ReviewedHoldoutRequestSchema.safeParse({...request,invalidOutputRecovery:{...recovery,...change}}).success).toBe(false));
+
+it.each(["controlJobId","runId","scoringRouteFingerprint"])("bounds new recovery reference %s",field=>expect(ReviewedHoldoutRequestSchema.safeParse({...request,invalidOutputRecovery:{...recovery,priorAttempts:[{...recovery.priorAttempts[0],[field]:"x".repeat(257)}]}}).success).toBe(false));

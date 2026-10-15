@@ -6,6 +6,7 @@ import {getServerProductionRuntime,createServerJobIdempotentReceipt,bindServerJo
 import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 import {requireReviewedHuman,reviewedSha,sameReviewedHoldoutScope} from "../../../src/services/reviewed-holdout-identity";
 import {previewReviewedHoldout} from "../../../src/services/reviewed-holdout-admission";
+import {previewReviewedInvalidRecovery} from "../../../src/services/reviewed-holdout-invalid-recovery";
 import {requireServerNewControlAllowed,reserveServerWorkflowControl,beginServerWorkflowDispatchForMission,bindServerWorkflowOwner,WorkflowControlOwnerError} from "../../../src/services/workflow-control-owner";
 import {readWorkflowRunMetadata} from "../../../src/services/workflow-run-metadata";
 import {workflowRunIdForJob} from "../../../src/services/workflow-run-control";
@@ -40,15 +41,20 @@ export default defineEventHandler(async(event)=>{
       return {missionId:mission.id,controlJobId:prior.id,runId,status:"queued",reused:true} satisfies EvolutionWorkflowStartResponse;
     }
   }
-  if(jobs.some(j=>j.idempotencyKey!==key&&j.missionId===mission.id&&j.type==="campaign"&&j.generation===1
-    &&j.metadata?.workflowIntent==="reviewed-holdout"&&sameReviewedHoldoutScope(j.metadata.reviewedApproval,request.binding)))
+  const priorScopeExists=jobs.some(j=>j.idempotencyKey!==key&&j.missionId===mission.id&&j.type==="campaign"&&j.generation===1
+    &&j.metadata?.workflowIntent==="reviewed-holdout"&&sameReviewedHoldoutScope(j.metadata.reviewedApproval,request.binding));
+  if(priorScopeExists&&!request.invalidOutputRecovery)
     throw createError({statusCode:409,statusMessage:"同一复核范围已有作业；请使用原请求键核对结果，不能新建评审重试。"});
-  let preview;
-  try{preview=await previewReviewedHoldout(mission);}
-  catch(error){throw createError({statusCode:409,statusMessage:error instanceof Error?error.message:"无法核验复核范围。"});}
   const reservation=mission.campaign.serverControlOwner;
   const reserved=reservation?.operationKey===key&&reservation.phase==="reserved"
     &&reservation.sourceUpdatedAt===request.binding.sourceUpdatedAt&&reservation.inputFingerprint===request.binding.inputSha256;
+  let preview;
+  try{
+    if(request.invalidOutputRecovery&&!priorScopeExists)throw new Error("没有可恢复的旧复核作业。");
+    preview=request.invalidOutputRecovery?await previewReviewedInvalidRecovery(mission,prior&&reserved?{controlJobId:prior.id,operationKey:key}:undefined):await previewReviewedHoldout(mission);
+    if(reviewedSha(preview.invalidOutputRecovery)!==reviewedSha(request.invalidOutputRecovery))throw new Error("旧失败或私有 SDK 核验记录已变化，请重新人工确认。");
+  }
+  catch(error){throw createError({statusCode:409,statusMessage:error instanceof Error?error.message:"无法核验复核范围。"});}
   const expected={...preview.binding,...(reserved?{sourceUpdatedAt:reservation.sourceUpdatedAt}:{})};
   if(reviewedSha(expected)!==reviewedSha(request.binding))throw createError({statusCode:409,statusMessage:"复核对象、隐藏卷或 Mission 版本已变化。"});
   if(prior&&(!reserved||reservation.controlJobId!==prior.id))throw createError({statusCode:409,statusMessage:"启动结果尚未确认，请保留原请求。"});
