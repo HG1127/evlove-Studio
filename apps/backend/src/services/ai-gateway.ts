@@ -67,7 +67,7 @@ import {buildDirectAiCorrectionContext,assertDirectAiCorrectionRequestBudget,typ
 
 export type ServerAiOperation=AiOperation;
 export const DIRECT_AI_SCHEMA_INSTRUCTION_VERSION="exact-schema-instructions-v1";
-export const DIRECT_AI_SCHEMA_RECOVERY_VERSION="schema-feedback-once-v6-completion-diagnostics";
+export const DIRECT_AI_SCHEMA_RECOVERY_VERSION="schema-feedback-once-v7-understanding-json";
 /** Public scoring-route identity; API keys and timeout settings are deliberately excluded. */
 export async function serverAiScoringRouteFingerprint(): Promise<string | undefined> {
   const config = await resolveServerAiConfig();
@@ -118,7 +118,7 @@ const SYSTEM=[
 
 function contract(operation:ServerAiOperation):Contract<unknown>{
   if(operation==="intake")return{schema:jsonSchemas.intake,parser:IntakeAiResultSchema,instruction:"Understand the user command and parsed artifact evidence. Infer the semantic business object, exactly six workflow stages, a compact acceptance rubric, goals, metrics, protected/editable scope, risks and artifact summaries. Parsing/runtime limitations are not product defects; never claim unseen evidence."};
-  if(operation==="understand")return{schema:jsonSchemas.understand,parser:UnderstandAiResultSchema,instruction:"Deeply understand supplied command and artifact evidence. Restate intent, implicit requirements, assumptions, material clarifications, acceptance focus and confidence. Do not ask about parser/runtime capability."};
+  if(operation==="understand")return{schema:jsonSchemas.understand,parser:UnderstandAiResultSchema,allowCompletedJsonCorrection:true,instruction:"Deeply understand supplied command and artifact evidence. Restate intent, implicit requirements, assumptions, material clarifications, acceptance focus and confidence. Do not ask about parser/runtime capability."};
   if(operation==="command")return{schema:jsonSchemas.command,parser:CommandAiResultSchema,instruction:"Interpret the new command against current mission and artifact evidence. Preserve prior intent unless explicitly changed and return the consolidated command, scope additions and safe next action."};
   if(operation==="target")return{schema:jsonSchemas.target,parser:TargetAiResultSchema,instruction:"Compile source understanding and command into an executable target contract with goal, metrics, protected/editable scope, acceptance criteria and risks. Use only supplied evidence."};
   if(operation==="rubric")return{schema:jsonSchemas.rubric,parser:RubricAiResultSchema,instruction:"Compile a compact project-specific Acceptance Rubric from user intent, business object, protected scope, artifact structures and current goal. Criteria are user/business outcomes, not parser details."};
@@ -330,7 +330,7 @@ async function structured<T>(payload:unknown,schema:Contract<T>,media?:ServerAiM
     };
     try{return await invoke(false);}catch(error){
       // One correction shares the captured evidence, protocol, format and deadline.
-      // Completed Judge/semantic observation replies may correct JSON syntax; Candidate
+      // Completed understanding/Judge replies may correct JSON syntax; Candidate
       // generation, nonfinal/refused output, transport and semantic rejections may not.
       const invalidObservationJson = schema.allowCompletedJsonCorrection
         && error instanceof StructuredAiJsonError;
