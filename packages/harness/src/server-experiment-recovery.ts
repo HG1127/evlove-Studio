@@ -48,8 +48,11 @@ function pending(project: EvolveProject, round: number) {
     && /^\[server-campaign-experiment-(?:judge|build)-pending\]/.test(project.experimentRun.summary ?? "");
 }
 /** Restore only the checkpoint-bound frozen construction; expired measurements do not change these bytes. */
-export async function restoreServerExperimentCandidate(project: EvolveProject, candidate: Candidate, round: number, ports: ServerExperimentRecoveryPorts) {
-  if (!pending(project, round) || !ports.verifyFrozenArtifact) return undefined;
+export async function restoreServerExperimentCandidate(project: EvolveProject, candidate: Candidate, round: number, ports: ServerExperimentRecoveryPorts, privateRunningContinuation = false) {
+  // Running state alone grants no restoration: only the SDK caller validates its private complete generation first.
+  const continuing = privateRunningContinuation && project.targetConnection.adapter === "artifact"
+    && project.experimentRun.status === "running" && project.experimentRun.id === "experiment-r" + round + "-server";
+  if ((!pending(project, round) && !continuing) || !ports.verifyFrozenArtifact) return undefined;
   const matches = project.experimentRun.executionCheckpoints?.filter(c => c.candidateId === candidate.id) ?? [];
   if (matches.length !== 1) return undefined;
   const parsed = ExperimentCandidateCheckpointSchema.safeParse(matches[0]);
@@ -99,9 +102,11 @@ export async function serverExperimentExecutionCheckpoint(project: EvolveProject
   return { ...checkpoint, execution: { inputFingerprint, artifactFingerprint: stablePhysicalBinding, evidenceFingerprint, observedAt, runs } };
 }
 /** Reuse complete, recent observations only; judging always remains independent and runs again. */
-export async function recoverableServerExperimentRuns(project: EvolveProject, candidate: Candidate, round: number, checkpoint: ExperimentCandidateCheckpoint | undefined, nowMs: number, ports: ServerExperimentRecoveryPorts): Promise<TargetRunResult[] | undefined> {
+export async function recoverableServerExperimentRuns(project: EvolveProject, candidate: Candidate, round: number, checkpoint: ExperimentCandidateCheckpoint | undefined, nowMs: number, ports: ServerExperimentRecoveryPorts, privateRunningContinuation = false): Promise<TargetRunResult[] | undefined> {
   const execution = checkpoint?.execution;
-  if (!pending(project, round) || !checkpoint || !execution || !Number.isFinite(nowMs)
+  const continuing = privateRunningContinuation && project.targetConnection.adapter === "artifact"
+    && project.experimentRun.status === "running" && project.experimentRun.id === "experiment-r" + round + "-server";
+  if ((!pending(project, round) && !continuing) || !checkpoint || !execution || !Number.isFinite(nowMs)
     || nowMs < execution.observedAt || nowMs - execution.observedAt >= LIVE_TARGET_OBSERVATION_MAX_AGE_MS
     || !execution.artifactFingerprint || execution.inputFingerprint !== await executionBinding(project, checkpoint, ports)
     || execution.artifactFingerprint !== await physicalBinding(project, candidate, ports)

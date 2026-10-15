@@ -1,3 +1,4 @@
+import type { ServerExperimentContinuation } from "@evolution/harness";
 import { FatalError } from "workflow";
 import { createServerDiagnosticContinuation, renewServerDiagnosticContinuation, validateServerDiagnosticContinuation, serverDiagnosticContinuationBoundaryReason, serverDiagnosticContinuationGenerationMatches, type ServerDiagnosticContinuation, type ServerControlExecution } from "../../apps/backend/src/services/server-diagnostic-continuation";
 import { campaignLiveObservationFresh, campaignPreflightStopReason, campaignScoringInputBlocker } from "@evolution/core";
@@ -502,11 +503,12 @@ export async function executeServerControlStep(
   plan:ServerHarnessPlan,
   iteration:number,
   diagnosticContinuation?:ServerDiagnosticContinuation,
+  experimentContinuation?:ServerExperimentContinuation,
 ):Promise<ServerControlExecution>{
   "use step";
   await requireServerWorkflowControlOwner(input);
   try {
-    const execute=()=>executeServerControlAction(input,plan,iteration,diagnosticContinuation);
+    const execute=()=>executeServerControlAction(input,plan,iteration,diagnosticContinuation,experimentContinuation);
     return await (plan.decision.action==="run-campaign" ? withServerAiConnection(execute) : execute());
   } catch (error) {
     if (!(error instanceof ServerControlAiUnavailableError)) throw error;
@@ -534,6 +536,7 @@ async function executeServerControlAction(
   plan:ServerHarnessPlan,
   iteration:number,
   diagnosticContinuation?:ServerDiagnosticContinuation,
+  experimentContinuation?:ServerExperimentContinuation,
 ):Promise<ServerControlExecution>{
   const runtime=getServerWorkflowControlRuntime(input);
   const mission=await runtime.missions.get(input.missionId);
@@ -1029,13 +1032,14 @@ async function executeServerControlAction(
     }
 
     if(campaignCheckpoint?.round===round&&campaignCheckpoint.completedPhase==="plan"){
-      const experimentOutcome=await runServerMissionExperiment(campaignMission);
+      const experimentOutcome=await runServerMissionExperiment(campaignMission, campaignMission.targetConnection.adapter === "artifact"
+        ? {yieldAfterOperation:true,continuation:experimentContinuation} : undefined);
       campaignMission=experimentOutcome.control==="stop" ? checkpointServerMainFlowWait(experimentOutcome.project,input.controlJobId) : clearServerMainFlowWait(experimentOutcome.project);
       await runtime.missions.save(campaignMission);
       await runtime.events.append(createEvolutionEvent({
         id:`evt-${input.controlJobId}-campaign-experiment-${iteration}`,
         missionId:input.missionId,jobId:input.controlJobId,checkpointId:plan.checkpoint.id,
-        type:experimentOutcome.control==="continue"?"ActionCompleted":"JobProgress",
+        type:experimentOutcome.control==="continue"&&!experimentOutcome.continuation?"ActionCompleted":"JobProgress",
         source:"vercel-workflow-control",
         payload:{
           action,
@@ -1068,7 +1072,8 @@ async function executeServerControlAction(
           detail:experimentOutcome.reason.slice(0,240),
         },
       }));
-      return {control:"continue",diagnosticContinuation:renewServerDiagnosticContinuation(diagnosticContinuation,campaignMission)};
+      return {control:"continue",diagnosticContinuation:renewServerDiagnosticContinuation(diagnosticContinuation,campaignMission),
+        ...(experimentOutcome.continuation ? {experimentContinuation:experimentOutcome.continuation} : {})};
     }
     const outcome=await advanceServerCampaignPreparation(campaignMission,{
       problemAnalysis:(payload)=>runServerAi("problem-analysis",payload),
@@ -1107,7 +1112,7 @@ async function executeServerControlAction(
       await runtime.jobs.put(await controlJob(input,{
         status:"running",
         startedAt:input.requestedAt,
-        progress:{percent:phasePercent,detail:`Server Campaign · ${outcome.phase} 已完成，继续下一阶段`},
+        progress:{percent:phasePercent,detail:outcome.reason.slice(0,240)},
       }));
       return {control:"continue",diagnosticContinuation:renewServerDiagnosticContinuation(diagnosticContinuation,campaignMission)};
     }

@@ -19,12 +19,16 @@ import {
 import { recoverableServerExperimentRuns, restoreServerExperimentCandidate, serverExperimentBuildCheckpoint,
   serverExperimentExecutionCheckpoint, serverExperimentObservationBinding, ServerExperimentFrozenRecoveryError, type ServerExperimentRecoveryPorts } from "./server-experiment-recovery";
 
+import { createServerExperimentContinuation, restoreServerExperimentContinuation, continuedServerExperimentRuns, runningServerExperimentProject, type ServerExperimentContinuation, type ServerExperimentCursor } from "./server-experiment-continuation";
+export type { ServerExperimentContinuation } from "./server-experiment-continuation";
+
 export type ServerExperimentPorts = ServerExperimentExecutionPorts & ServerExperimentRecoveryPorts & {
   buildCandidate(args: { project: EvolveProject; candidate: Candidate }): Promise<Candidate>;
 };
 
 export type ServerExperimentOutcome = {
   control: "continue" | "stop";
+  continuation?: ServerExperimentContinuation;
   project: EvolveProject;
   experiment: ExperimentRun;
   reason: string;
@@ -102,10 +106,10 @@ function archiveNoWinnerRound(
 export async function runServerExperiment(
   inputProject: EvolveProject,
   ports: ServerExperimentPorts,
-  options?: { now?: () => string },
+  options?: { now?: () => string; yieldAfterOperation?: boolean; continuation?: ServerExperimentContinuation },
 ): Promise<ServerExperimentOutcome> {
   const now = options?.now ?? (() => new Date().toISOString());
-  const startedAt = now();
+  const startedAt = options?.continuation ? inputProject.experimentRun.startedAt ?? now() : now();
   const round = inputProject.campaign.checkpoint?.round ?? inputProject.campaign.currentRound + 1;
   const experimentGate = inputProject.gates.find((gate) => gate.id === "experiment-ready");
   if (experimentGate?.status !== "approved") throw new Error("Experiment Ready gate is not approved");
@@ -123,13 +127,35 @@ export async function runServerExperiment(
     .flatMap((id) => inputProject.candidates.find((candidate) => candidate.id === id) ? [inputProject.candidates.find((candidate) => candidate.id === id)!] : []);
   if (!selected.length) throw new Error("Server Experiment has no selected Candidates");
 
-  const checkpoints = new Map<string, ExperimentCandidateCheckpoint>();
-  const recoveryFailures = new Set<string>();
-  const built: Candidate[] = [];
-  const buildFailures: Array<{ candidateId: string; message: string }> = [];
-  for (const candidate of selected) {
+  const incremental = options?.yieldAfterOperation === true;
+  if (options?.continuation && !incremental) throw new Error("Experiment continuation requires operation boundaries");
+  if (incremental && inputProject.targetConnection.adapter !== "artifact") throw new Error("Durable Experiment currently requires an Artifact target");
+  if (incremental && inputProject.experimentRun.status === "running" && !options?.continuation) {
+    throw new Error("Running Experiment requires its private SDK continuation; frozen work was preserved");
+  }
+  if (incremental && (!ports.verifyFrozenArtifact || !ports.readExecutionArtifactFingerprint)) throw new Error("Durable Experiment requires physical verification ports");
+  if (incremental && !options?.continuation) await createServerExperimentContinuation(inputProject,
+    {operation:"build",buildIndex:0,candidateIndex:0,builtIds:[],recoveryFailureIds:[]}, ports);
+  const resumed = options?.continuation ? await restoreServerExperimentContinuation(inputProject, options.continuation, ports) : undefined;
+  const checkpoints = new Map<string, ExperimentCandidateCheckpoint>(resumed || incremental && inputProject.experimentRun.status === "failed" ? inputProject.experimentRun.executionCheckpoints?.map(c => [c.candidateId, c]) : []);
+  const recoveryFailures = new Set<string>(resumed?.context.recoveryFailureIds);
+  const built: Candidate[] = resumed?.built ?? [];
+  const buildFailures: Array<{ candidateId: string; message: string }> = resumed ? [...inputProject.experimentRun.buildFailures ?? []] : [];
+  const candidateResults: ExperimentRun["candidateResults"] = resumed ? [...inputProject.experimentRun.candidateResults] : [];
+  const yieldOperation = async (cursor: Omit<ServerExperimentCursor, "builtIds" | "recoveryFailureIds">): Promise<ServerExperimentOutcome> => {
+    const reason = `Server Experiment 已保存单步进展；下一步 ${cursor.operation}，尚未完成全量比较。`;
+    const experiment: ExperimentRun = { id: `experiment-r${round}-server`, status: "running", startedAt,
+      candidateResults, comparisonSuite: inputProject.evalSuite, comparisonBaseline: inputProject.baselineRun,
+      buildFailures, executionCheckpoints: [...checkpoints.values()], summary: reason };
+    const project = runningServerExperimentProject(inputProject, built, experiment, now());
+    const continuation = await createServerExperimentContinuation(project, { ...cursor, builtIds: built.map(c => c.id), recoveryFailureIds: [...recoveryFailures] }, ports);
+    return { control: "continue", project, experiment, reason, readyForHoldout: false,
+      builtCount: built.length, buildFailureCount: buildFailures.length, continuation };
+  };
+  for (let buildIndex = resumed?.context.buildIndex ?? 0; buildIndex < selected.length; buildIndex++) {
+    const candidate = selected[buildIndex]!;
     try {
-      const restored = await restoreServerExperimentCandidate(inputProject, candidate, round, ports);
+      const restored = await restoreServerExperimentCandidate(inputProject, candidate, round, ports, Boolean(resumed));
       const result = restored ?? await ports.buildCandidate({ project: inputProject, candidate });
       const targets = inputProject.sourceArtifacts.filter((artifact) => artifact.role === "target");
       const snapshots = new Map(result.artifactSnapshots.map((snapshot) => [snapshot.sourceArtifactId, snapshot]));
@@ -141,16 +167,21 @@ export async function runServerExperiment(
         || targets.some((target) => !snapshots.get(target.id)?.frozenArtifact)) {
         throw new Error("Candidate Builder 未返回与全部 Target 绑定的已冻结实际文件");
       }
-      built.push(result);
       const checkpoint = restored
         ? inputProject.experimentRun.executionCheckpoints?.find(c => c.candidateId === candidate.id)
         : await serverExperimentBuildCheckpoint(inputProject, result, ports);
+      if (incremental && !checkpoint) throw new Error("Durable Experiment could not bind the frozen construction");
+      built.push(result);
       if (checkpoint) checkpoints.set(candidate.id, checkpoint);
     } catch (error) {
       if (error instanceof ServerExperimentFrozenRecoveryError) recoveryFailures.add(candidate.id);
       const prior = inputProject.experimentRun.executionCheckpoints?.filter(c => c.candidateId === candidate.id);
       if (prior?.length === 1) checkpoints.set(candidate.id, prior[0]!);
       buildFailures.push({ candidateId: candidate.id, message: error instanceof Error ? error.message : String(error) });
+    }
+    if (incremental && (built.length || buildIndex + 1 < selected.length)) {
+      return yieldOperation({ operation: buildIndex + 1 < selected.length ? "build" : "execute",
+        buildIndex: buildIndex + 1, candidateIndex: 0 });
     }
   }
 
@@ -187,16 +218,19 @@ export async function runServerExperiment(
     return { control: "stop", project, experiment, reason, readyForHoldout: false, builtCount: 0, buildFailureCount: buildFailures.length };
   }
 
-  const candidateResults: ExperimentRun["candidateResults"] = [];
-  for (const candidate of built) {
+  for (let candidateIndex = resumed?.context.candidateIndex ?? 0; candidateIndex < built.length; candidateIndex++) {
+    const candidate = built[candidateIndex]!;
     const checkpoint = checkpoints.get(candidate.id);
-    const reused = await recoverableServerExperimentRuns(inputProject, candidate, round, checkpoint, Date.parse(now()), ports);
+    const carried = resumed?.context.operation === "judge" && candidateIndex === resumed.context.candidateIndex
+      ? await continuedServerExperimentRuns(inputProject, candidate, checkpoint, () => Date.parse(now()), ports) : undefined;
+    const reused = carried ?? await recoverableServerExperimentRuns(inputProject, candidate, round, checkpoint, Date.parse(now()), ports, Boolean(resumed));
     const binding = reused ? undefined : await serverExperimentObservationBinding(inputProject, candidate, checkpoint, ports);
     const runs = reused ?? await executeServerExperimentCandidate(inputProject, candidate, ports);
     if (!reused) {
       const executed = await serverExperimentExecutionCheckpoint(inputProject, candidate, checkpoint, runs, Date.parse(now()), ports, binding);
       if (executed) checkpoints.set(candidate.id, executed);
     }
+    if (incremental && !carried) return yieldOperation({ operation: "judge", buildIndex: selected.length, candidateIndex });
     let evaluation;
     try {
       evaluation = await judgeServerExperimentCandidate(inputProject, candidate, runs, ports);
@@ -244,6 +278,9 @@ export async function runServerExperiment(
       experimentStage: "finalist",
       winnerDecision: candidateWinnerDecision(inputProject, evaluation, inputProject.baselineRun.result, candidate),
     });
+    if (incremental && candidateIndex + 1 < built.length) {
+      return yieldOperation({ operation: "execute", buildIndex: selected.length, candidateIndex: candidateIndex + 1 });
+    }
   }
 
   const eligible = candidateResults

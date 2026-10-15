@@ -1,5 +1,12 @@
 # Backend Capability Assessment and Delivery Plan
 
+
+## 2026-10-15 — Actual fresh Baseline/diagnosis and terminal Experiment timeout
+
+Human-approved production 978b100 completed actual Baseline baseline-server-1792040225529 and diagnosis for the approved independent SOP Mission. Original SHA-256 remains 6605429efe92470229601adfb3196bc74ae38855f55d71c8754f8336c52b580a. Safety PASS/rubric69 is diagnostic evidence, not acceptance. Official SDK Run wrun_01M4YYJV0A389PD989AFKQA7DS failed its Experiment control step on attempt5; the bound deployment request logged HTTP504 after300 seconds. At05:43UTC SDKfailed/Jobstillrunning60%, revision22 Plan, five drafts/no persisted snapshots. No Experiment, paired Hidden, Gate F or exact accepted download is proved.
+
+[Durable Experiment handoff](main-flow-durable-experiment-handoff.md) splits Artifact-target construction, execution and independent assessment into private SDK operations, preserving every selected Candidate, frozen identity, strict TTL and final comparison rules. Partial progress remains running. Exact-commit full CI, dedicated approved delivery and a fresh real Mission continuation remain required. Held PR22/central31 protection wiring is unchanged; no Job repair or new production mutation was performed.
+
 ## 2026-10-14 — Actual independent Safety refusal and versioned Judge instruction
 
 Normal Run `wrun_01M4WSS5WPZ851YT3GN4SH0J0S` on independently verified production `2e63af059e698ef15ed2653f73c0533d8b2b07ee` completed Baseline `baseline-server-1791968000008` with Safety FAIL. The same physical Original has five verified current cases; SYS-INTEGRITY remains partial/pass:false. Revision 34 is paused, SDK completed/Job waiting; five old draft Candidates have no snapshots. No new Candidate freeze, Experiment, same-Hidden, Gate F or accepted download/reopen is proved. The actual safety cause is not established; prompt ambiguity must not be reported as its cause.

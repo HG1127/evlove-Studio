@@ -20,7 +20,7 @@ const ContinuationSchema = z.object({
 }).strict();
 export type ServerDiagnosticContinuation = z.infer<typeof ContinuationSchema>;
 export type ServerControlExecution = { control: "continue" | "stop"; result?: import("@evolution/contracts").EvolutionWorkflowResult;
-  sleepMs?: number; diagnosticContinuation?: ServerDiagnosticContinuation };
+  sleepMs?: number; diagnosticContinuation?: ServerDiagnosticContinuation; experimentContinuation?: import("@evolution/harness").ServerExperimentContinuation };
 
 function ordered(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(ordered);

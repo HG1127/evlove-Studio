@@ -42,6 +42,22 @@ function project() {
   p.baselineRun.measurementFingerprint = serverBaselineFingerprint(p, "b".repeat(64));
   return p;
 }
+
+async function driveExperimentSteps(args:Parameters<typeof executeServerControlStep>[0], firstPlan:Awaited<ReturnType<typeof planMissionStep>>, iteration:number) {
+  let outcome=await executeServerControlStep(args,firstPlan,iteration);
+  for(let count=0;outcome.experimentContinuation&&count<12;count++) {
+    expect(stored.experimentRun.status).toBe("running");
+    expect(stored.experimentRun.winnerId).toBeUndefined();
+    expect(stored.campaign.checkpoint?.completedPhase).toBe("plan");
+    const event=m.append.mock.calls.map(c=>c[0]).findLast(e=>e.payload?.phase==="experiment");
+    expect(event.type).toBe("JobProgress");
+    const next=await planMissionStep(args,++iteration);
+    outcome=await executeServerControlStep(args,next,iteration,outcome.diagnosticContinuation,outcome.experimentContinuation);
+  }
+  expect(outcome.experimentContinuation).toBeUndefined();
+  return outcome;
+}
+
 async function paused() {
   const first = await runServerMissionExperiment(project());
   expect(first.reason).toContain("experiment-judge-pending");
@@ -85,7 +101,7 @@ describe("explicit durable run restores the stored Experiment Judge checkpoint",
     expect(stored.campaign).toEqual({ ...first.project.campaign, status: "idle", stopReason: undefined });
     expect(stored.attentionRequests![0]!.status).toBe("resolved");
     expect(stored.experimentRun).toEqual(first.experiment);
-    expect(await executeServerControlStep(input, next, 0)).toEqual({ control: "continue" });
+    expect(await driveExperimentSteps(input, next, 0)).toEqual({ control: "continue" });
     expect(stored.campaign.checkpoint?.completedPhase).toBe("experiment");
     expect(stored.experimentRun.status).toBe("completed");
     expect(stored.candidates[0]!.artifactSnapshots).toEqual(first.project.candidates[0]!.artifactSnapshots);
@@ -150,7 +166,7 @@ describe("explicit durable run restores the stored Experiment Judge checkpoint",
     const secondInput = { ...input, controlJobId: secondReceipt.controlJobId };
     const recovered = await planMissionStep(secondInput, 0);
     expect(recovered.decision.action).toBe("run-campaign");
-    expect(await executeServerControlStep(secondInput, recovered, 0)).toEqual({ control: "continue" });
+    expect(await driveExperimentSteps(secondInput, recovered, 0)).toEqual({ control: "continue" });
     expect(stored.experimentRun.status).toBe("completed");
     expect(stored.candidates[0]!.artifactSnapshots).toEqual(firstVersion.candidates[0]!.artifactSnapshots);
     expect(m.put).toHaveBeenCalledTimes(1); expect(m.browser).toHaveBeenCalledTimes(1); expect(m.ai).toHaveBeenCalledTimes(2);
@@ -220,7 +236,7 @@ describe("explicit durable run restores the stored Experiment Judge checkpoint",
     vi.setSystemTime(new Date(Date.parse(at) + minutes * 60_000));
     const recovered = await planMissionStep(input, 1);
     expect(recovered.decision.action).toBe("run-campaign");
-    expect(await executeServerControlStep(input, recovered, 1)).toEqual({ control: "continue" });
+    expect(await driveExperimentSteps(input, recovered, 1)).toEqual({ control: "continue" });
     expect(stored.experimentRun.status).toBe("completed");
     expect(stored.candidates[0]!.artifactSnapshots).toEqual(first.project.candidates[0]!.artifactSnapshots);
     expect(m.put).toHaveBeenCalledTimes(1); expect(m.browser).toHaveBeenCalledTimes(minutes < 10 ? 1 : 3); expect(m.ai).toHaveBeenCalledTimes(minutes < 10 ? 2 : 3);
