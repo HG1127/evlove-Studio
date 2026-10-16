@@ -13,7 +13,7 @@ function fixture(){
  const p=reviewedHoldoutFixture().project,input=ReviewedHoldoutRunInputSchema.parse({missionId:p.id,controlJobId:"old-job",controlOwnerKey:"key",requestedAt:p.updatedAt,approval:{schemaVersion:"reviewed-holdout-approval-v1",request:{binding:reviewedBinding(p,"a".repeat(64),"b".repeat(64),"old-route"),idempotencyKey:"old",humanReviewNote:"Human confirms exact Original REVIEW",preserveReview:true,preserveAcceptanceGates:true},actorId:"operator",actorSource:"browser-session",confirmedAt:p.updatedAt}});
  const step={runId:"old-run",stepId:"step-private",stepName:REVIEWED_EXECUTE_STEP_ID,status:"completed",attempt:1};
  const output={result:{missionId:p.id,controlJobId:"old-job",status:"waiting-human",iterations:1,reason:"Retain failed result"}};
- const r={run:vi.fn(async()=>({runId:"old-run",workflowName:REVIEWED_WORKFLOW_ID,deploymentId:"old-deployment",status:"completed"})),page:vi.fn(async()=>({data:[step],hasMore:false,cursor:null})),step:vi.fn(async()=>({...step,input:[input],output}))};return {r,step,input,output};
+ const r={run:vi.fn(async()=>({runId:"old-run",workflowName:REVIEWED_WORKFLOW_ID,deploymentId:"old-deployment",status:"completed"})),page:vi.fn(async()=>({data:[step],hasMore:false,cursor:null})),step:vi.fn(async()=>({...step,input:{args:[input],closureVars:undefined,thisVal:undefined},output}))};return {r,step,input,output};
 }
 it("reads complete private World observations and validates the exact completed first step",async()=>{
  const {r,input}=fixture();expect(await readReviewedSdkEvidence("old-run",r)).toMatchObject({runId:"old-run",stepId:"step-private",input});expect(r.step).toHaveBeenCalledWith("old-run","step-private");
@@ -28,7 +28,7 @@ it.each(["attempt","status","missing","duplicate","gate-f","wrong-run","workflow
  if(kind==="wrong-run")step.runId="other";
  if(kind==="workflow")r.run.mockResolvedValueOnce({runId:"old-run",workflowName:"ordinary",deploymentId:"old-deployment",status:"completed"});
  if(kind==="output")output.result.status="completed";
- if(kind==="continuation")r.step.mockResolvedValueOnce({...step,input:[input],output:{...output,continuation:{grant:true}}} as never);
+ if(kind==="continuation")r.step.mockResolvedValueOnce({...step,input:{args:[input],closureVars:undefined,thisVal:undefined},output:{...output,continuation:{grant:true}}} as never);
  if(kind==="input-output")output.result.controlJobId="other";
  await expect(readReviewedSdkEvidence("old-run",r)).rejects.toThrow();
 });
@@ -39,14 +39,32 @@ it("requires a minted receipt even for objects whose JSON serialization is undef
 
 it("decodes SDK-encrypted private step I/O using only a backend key bound to the original Run deployment",async()=>{
  const {step,input,output}=fixture(),rawKey=new Uint8Array(32).fill(9),key=await importKey(rawKey);
- const encrypted={...step,input:await dehydrateStepArguments([input],step.runId,key),output:await dehydrateStepReturnValue(output,step.runId,key)};
+ const encrypted={...step,input:await dehydrateStepArguments({args:[input],closureVars:undefined,thisVal:undefined},step.runId,key),output:await dehydrateStepReturnValue(output,step.runId,key)};
  const getKey=vi.fn(async()=>rawKey);live.world.mockReturnValue({runs:{get:async()=>({runId:step.runId,workflowName:REVIEWED_WORKFLOW_ID,deploymentId:"old-deployment",status:"completed"})},steps:{list:async()=>({data:[step],hasMore:false,cursor:null}),get:async()=>encrypted},getEncryptionKeyForRun:getKey});
  expect(await readReviewedSdkEvidence(step.runId)).toMatchObject({runId:step.runId,input,output});expect(getKey).toHaveBeenCalledExactlyOnceWith(step.runId,{deploymentId:"old-deployment"});
 });
 
 it.each(["nonfinal-run","wrong-step","missing-key"])("does not mint private authority for backend decode failure %s",async kind=>{
  const {step,input,output}=fixture(),rawKey=new Uint8Array(32).fill(9),key=await importKey(rawKey),getKey=vi.fn(async()=>rawKey);
- const encrypted={...step,input:await dehydrateStepArguments([input],step.runId,key),output:await dehydrateStepReturnValue(output,step.runId,key)};
+ const encrypted={...step,input:await dehydrateStepArguments({args:[input],closureVars:undefined,thisVal:undefined},step.runId,key),output:await dehydrateStepReturnValue(output,step.runId,key)};
  const get=vi.fn(async()=>({...encrypted,...(kind==="wrong-step"?{runId:"other-run"}:{})}));live.world.mockReturnValue({runs:{get:async()=>({runId:step.runId,workflowName:REVIEWED_WORKFLOW_ID,deploymentId:"old-deployment",status:kind==="nonfinal-run"?"running":"completed"})},steps:{list:async()=>({data:[step],hasMore:false,cursor:null}),get},...(kind==="missing-key"?{}:{getEncryptionKeyForRun:getKey})});
  await expect(readReviewedSdkEvidence(step.runId)).rejects.toThrow("无法核验");expect(getKey).not.toHaveBeenCalled();if(kind==="nonfinal-run")expect(get).not.toHaveBeenCalled();
+});
+
+it("accepts the SDK runtime suspension envelope rather than an invented bare argument array",async()=>{
+ const {step,input,output}=fixture(),rawKey=new Uint8Array(32).fill(9),key=await importKey(rawKey);
+ // Exact shape written by core4.8.9 runtime/suspension-handler before dehydrateStepArguments.
+ const encrypted={...step,input:await dehydrateStepArguments({args:[input],closureVars:undefined,thisVal:undefined},step.runId,key),output:await dehydrateStepReturnValue(output,step.runId,key)};
+ live.world.mockReturnValue({runs:{get:async()=>({runId:step.runId,workflowName:REVIEWED_WORKFLOW_ID,deploymentId:"old-deployment",status:"completed"})},steps:{list:async()=>({data:[step],hasMore:false,cursor:null}),get:async()=>encrypted},getEncryptionKeyForRun:async()=>rawKey});
+ expect(await readReviewedSdkEvidence(step.runId)).toMatchObject({input,output});
+});
+
+it.each(["bare-array","missing-args","extra-args","captured-scope","bound-receiver","extra-envelope-field"])("rejects an unexpected SDK envelope without minting authority: %s",async kind=>{
+ const {r,step,input,output}=fixture();let envelope:unknown={args:[input],closureVars:undefined,thisVal:undefined};
+ if(kind==="bare-array")envelope=[input];if(kind==="missing-args")envelope={};if(kind==="extra-args")envelope={args:[input,input]};if(kind==="captured-scope")envelope={args:[input],closureVars:{grant:true}};if(kind==="bound-receiver")envelope={args:[input],thisVal:{grant:true}};if(kind==="extra-envelope-field")envelope={args:[input],grant:true};
+ r.step.mockResolvedValueOnce({...step,input:envelope,output} as never);await expect(readReviewedSdkEvidence("old-run",r)).rejects.toMatchObject({code:"SDK_INPUT"});
+});
+it.each(["run","pages","output"])("reports only a safe SDK stage for %s failure",async kind=>{
+ const {r,step,input}=fixture();if(kind==="run")r.run.mockRejectedValueOnce(new Error("private-payload fictional-credential"));if(kind==="pages")r.page.mockRejectedValueOnce(new Error("private-payload fictional-credential"));if(kind==="output")r.step.mockResolvedValueOnce({...step,input:{args:[input]},output:{private:"fictional-credential"}} as never);
+ const error=await readReviewedSdkEvidence("old-run",r).catch(e=>e);expect(error.code).toBe(kind==="run"?"SDK_RUN":kind==="pages"?"SDK_PAGES":"SDK_OUTPUT");expect(error.message).not.toMatch(/private-payload|fictional-credential/);expect(error).not.toHaveProperty("cause");
 });

@@ -32,6 +32,16 @@ Only the backend resolves a derived per-run key through its configured World aft
 
 Synthetic tests use the official SDK serializers and encryption with a fictional key; no real key is exported into the local test/CI environment. Actual backend cross-deployment decoding must still be observed after the approved release before any fresh Mission dispatch.
 
+## SDK runtime Step envelope (2026-10-16)
+
+The approved e8d1ce7 production preflight returned a safe 409 and started no replacement Workflow or paired judgment. Both physical file hashes remained unchanged; an independent synthetic call using the saved MiniMax connection passed. The failing backend observation stage remains unproven from that refusal alone.
+
+The pinned core4.8.9 runtime/suspension-handler serializes an object containing args, closureVars and thisVal. The initial private-reader fixture incorrectly passed a bare argument array to the SDK serializer; that tested encoding but omitted the real runtime envelope. The new regression reproduces its refusal using the actual documented runtime shape before the fix. Validate exactly one ReviewedHoldoutRunInput inside args and prohibit captured scope, a bound receiver and unknown envelope fields for this known imported step; return only the validated argument as the existing private evidence input. Bare arrays are rejected. Workflow/Run/step identity, first completed attempt, paging, private in-memory receipt, immutable corroboration and every acceptance gate remain mandatory.
+
+The World cross-deployment key provider returns a Node Buffer. Buffer.slice shares provider-owned memory, so clearing that apparent copy also cleared the provider Buffer in the old codec. A second failing regression preserves this finding. Uint8Array.from now creates a real owned copy before import; only that copy is cleared. No real key was retrieved in the local reproduction.
+
+Safe diagnostic codes describe only locally selected observation stages, including input, output and key-read failure. They never contain provider messages, private serialized values, credentials or a cause; public DTOs/provider errors cannot mint the error brand or a recovery proof. The code grants no retry or acceptance authority. Actual backend decoding and all real main-flow acceptance remain unverified until the new exact tested source tree is approved, delivered and measured.
+
 ## Alternatives and rollback
 
 A normal duplicate start, public error-string override, reusing old raw measurements, a forged Event, relaxing the parser, lowering scores or rejudging a valid REVIEW/FAIL are rejected. The failure description is used only after private completion and immutable-record corroboration; it grants no authority by itself.
