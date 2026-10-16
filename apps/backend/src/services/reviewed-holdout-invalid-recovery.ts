@@ -6,6 +6,7 @@ import {reviewedSha,sameReviewedHoldoutScope,reviewedFrozenBindingsMatch} from "
 import {serverMainFlowRecoveryDigest} from "./server-main-flow-recovery";
 import {workflowRunIdForJob} from "./workflow-run-control";
 import {readReviewedSdkEvidence,assertReviewedSdkEvidence,type ReviewedSdkEvidence} from "./reviewed-holdout-sdk-evidence";
+import {reviewedObservationError} from "./reviewed-workflow-observation-error";
 const failureKinds:StructuredAiJsonFailureKind[]=["non-json-envelope","trailing-content","unescaped-control","invalid-escape","unfinished-string","unfinished-root","invalid-syntax"];
 const prefix="[server-campaign-holdout-judge-pending] Hidden 同卷已进入 Server 执行，但独立 Judge 未完成：";
 function invalidOnly(raw:unknown,project:EvolveProject){
@@ -74,7 +75,7 @@ export async function previewReviewedInvalidRecovery(project:EvolveProject,pendi
   for(const job of jobs){
     const runId=workflowRunIdForJob(job,project);if(!runId||!runtime.events.get)throw new Error("缺少旧 Run 或精确事件读取能力。");
     let sdk:ReviewedSdkEvidence;
-    try{sdk=await readReviewedSdkEvidence(runId);}catch{throw new Error("无法核验旧 Workflow 私有完成记录；未启动新的评审。");}
+    try{sdk=await readReviewedSdkEvidence(runId);}catch(error){throw reviewedObservationError(error,"SDK_OBSERVATION");}
     const result=await runtime.events.get('evt-'+job.id+'-reviewed-hidden-result');
     const admission=await runtime.events.get('evt-'+job.id+'-reviewed-holdout-authorized');
     const proof=certifyReviewedInvalidAttempt(project,job,sdk,result,admission,first.binding);

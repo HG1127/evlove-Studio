@@ -6,6 +6,7 @@ import {StructuredAiJsonError} from "@evolution/adapters";
 import {reviewedBinding,reviewedSha} from "./reviewed-holdout-identity";
 import {certifyReviewedInvalidAttempt,previewReviewedInvalidRecovery} from "./reviewed-holdout-invalid-recovery";
 import type {ReviewedSdkEvidence} from "./reviewed-holdout-sdk-evidence";
+import {ReviewedObservationError} from "./reviewed-workflow-observation-error";
 const m=vi.hoisted(()=>({runtime:vi.fn(),preview:vi.fn(),sdk:vi.fn()}));
 vi.mock("./production-runtime",()=>({getServerProductionRuntime:m.runtime}));
 vi.mock("./reviewed-holdout-admission",()=>({previewReviewedHoldout:m.preview}));
@@ -17,7 +18,7 @@ async function fixture(){
  const approval=input.approval,job=EvolutionJobSchema.parse({schemaVersion:"job-v1",id:"old-job",missionId:p.id,type:"campaign",status:"running",label:"old",idempotencyKey:"workflow-control:synthetic:reviewed-holdout:old",outputRef:"old-run",generation:1,createdAt:p.updatedAt,updatedAt:p.updatedAt,metadata:{workflowIntent:"reviewed-holdout",reviewedApproval:approval,reviewedActorId:approval.actorId,requestSha256:reviewedSha(approval.request)}});
  const rawSdk:ReviewedSdkEvidence={runId:"old-run",deploymentId:"old-deployment",stepId:"private-step",input,output:{result:{missionId:p.id,controlJobId:job.id,status:"waiting-human",iterations:1,reason:"Retain failed pair"}}};
  const meta={runId:rawSdk.runId,stepId:rawSdk.stepId,stepName:actualSdk.REVIEWED_EXECUTE_STEP_ID,status:"completed",attempt:1};
- const sdk=await actualSdk.readReviewedSdkEvidence(rawSdk.runId,{run:async()=>({runId:rawSdk.runId,deploymentId:rawSdk.deploymentId,workflowName:actualSdk.REVIEWED_WORKFLOW_ID,status:"completed"}),page:async()=>({data:[meta],hasMore:false,cursor:null}),step:async()=>({...meta,input:[input],output:rawSdk.output})});
+ const sdk=await actualSdk.readReviewedSdkEvidence(rawSdk.runId,{run:async()=>({runId:rawSdk.runId,deploymentId:rawSdk.deploymentId,workflowName:actualSdk.REVIEWED_WORKFLOW_ID,status:"completed"}),page:async()=>({data:[meta],hasMore:false,cursor:null}),step:async()=>({...meta,input:{args:[input],closureVars:undefined,thisVal:undefined},output:rawSdk.output})});
  const admission=createEvolutionEvent({id:'evt-'+job.id+'-reviewed-holdout-authorized',missionId:p.id,jobId:job.id,type:"MissionUpdated",source:"human-reviewed-holdout",payload:{approval,priorBaseline:before.baselineRun,priorValidation:before.validationRun,priorRecoveryWait:before.campaign.serverRecoveryWait,priorCheckpoint:before.campaign.checkpoint}});
  p.stage="validation";const runs=p.hiddenEvalSuite.map(t=>({testCaseId:t.id,output:"synthetic measured",latencyMs:1,cost:0,trace:[]}));
  p.validationRun=ValidationRunSchema.parse({id:"validation-server-r1",status:"failed",validationMode:"full",candidateId:p.experimentRun.winnerId,runs,baselineRuns:structuredClone(runs),baselineSuiteIds:runs.map(r=>r.testCaseId),checks:[],executionArtifactFingerprint:"a".repeat(64),executionEvidenceFingerprint:"a-1",error:"[server-campaign-holdout-judge-pending] Hidden 同卷已进入 Server 执行，但独立 Judge 未完成："+new StructuredAiJsonError("trailing-content").message+" [completionPhase=initial; protocol=chat-completions; finish=stop] [completionPhase=correction; protocol=chat-completions; finish=stop]"});
@@ -89,4 +90,8 @@ it("may resume only the same queued reservation before dispatch, with the origin
  m.preview.mockResolvedValue({binding:x.current,reviewNotes:x.p.baselineRun.result!.notes,preservationNotice:"REVIEW 保留；仅同一冻结文件的隔离隐藏验证；验收标准、保护要求和 Gate F 不豁免。"});m.runtime.mockReturnValue({jobs:{list:async()=>[x.job,pending]},events:{get:async(id:string)=>id.endsWith("hidden-result")?x.result:x.admission}});m.sdk.mockResolvedValue(x.sdk);
  expect((await previewReviewedInvalidRecovery(x.p,{controlJobId:pending.id,operationKey:key})).invalidOutputRecovery).toEqual(recovery);
  x.p.campaign.serverControlOwner!.phase="dispatching";await expect(previewReviewedInvalidRecovery(x.p,{controlJobId:pending.id,operationKey:key})).rejects.toThrow("已发送");
+});
+
+it("preserves only a sanitized local SDK input stage through the recovery preview",async()=>{
+ const x=await fixture(),get=vi.fn();m.preview.mockResolvedValue({binding:x.current});m.runtime.mockReturnValue({jobs:{list:async()=>[x.job]},events:{get}});m.sdk.mockRejectedValue(Object.assign(new ReviewedObservationError("SDK_INPUT"),{cause:new Error("fictional-credential") }));const error=await previewReviewedInvalidRecovery(x.p).catch(e=>e);expect(error.code).toBe("SDK_INPUT");expect(error.message).not.toContain("fictional-credential");expect(error).not.toHaveProperty("cause");expect(get).not.toHaveBeenCalled();
 });
