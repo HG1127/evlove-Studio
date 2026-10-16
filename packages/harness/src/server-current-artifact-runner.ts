@@ -1,3 +1,4 @@
+import { collectServerSuiteHtmlProtectionAuthority, type ServerHtmlProtectionAuthorityPort } from "./server-html-protection-authority";
 import type {
   EvaluateAiResult,
   ExecuteArtifactBatchAiResult,
@@ -18,6 +19,7 @@ import { serverJudgeEvidence } from "./server-judge-evidence";
 import { indexUniqueBatchResults } from "./server-batch-results";
 
 export type ServerCurrentArtifactPorts = {
+  collectHtmlProtectionAuthority?: ServerHtmlProtectionAuthorityPort;
   executeSemanticBatch(args: {
     project: EvolveProject;
     testCases: TestCase[];
@@ -97,7 +99,7 @@ export async function executeServerCurrentArtifactSuite(
       for(const testCase of semanticCases)ordered.set(testCase.id,unavailableBaselineRun(testCase,`Server AI Artifact Runtime 未完成：${message}`));
     }
   }
-  return testCases.map((testCase)=>ordered.get(testCase.id)??unavailableBaselineRun(testCase,"当前版本同卷执行未返回结果。"));
+  return collectServerSuiteHtmlProtectionAuthority({ project, testCases, runs: testCases.map((testCase)=>ordered.get(testCase.id)??unavailableBaselineRun(testCase,"当前版本同卷执行未返回结果。")) }, ports.collectHtmlProtectionAuthority);
 }
 
 export async function judgeServerCurrentArtifactSuite(
@@ -106,6 +108,7 @@ export async function judgeServerCurrentArtifactSuite(
   runs:TargetRunResult[],
   ports:ServerCurrentArtifactPorts,
 ){
+  runs = await collectServerSuiteHtmlProtectionAuthority({ project, testCases, runs, restoreOnly: true }, ports.collectHtmlProtectionAuthority);
   const judgeCriteria=criteriaRequiringJudge(project.acceptanceRubric,testCases,runs);
   const judgeIds=new Set(judgeCriteria.map((criterion)=>criterion.id));
   const evaluableIds=new Set(runs.filter((run)=>run.verificationStatus==="verified"||run.verificationStatus==="partial").map((run)=>run.testCaseId));

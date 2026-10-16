@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from "vitest";
 import type { EvolveProject } from "@evolution/contracts";
 import { resolveServerBaselineCodebaseBinding } from "./server-baseline";

@@ -26,6 +26,7 @@ export function reviewedBinding(project:EvolveProject,physicalSha256:string,orig
 export function reviewedScope(project:EvolveProject){
   const candidate=project.candidates.find(c=>c.id===project.experimentRun.winnerId);
   return reviewedSha({
+    ...(project.htmlProtectionOperationalScope ? {operationalScope:project.htmlProtectionOperationalScope} : {}),
     id:project.id,sources:project.sourceArtifacts,target:project.targetConnection,goal:project.goal,command:project.evolutionCommand,
     protected:project.protectedItems,editable:project.editableItems,clarifications:project.inputClarifications,understanding:project.inputUnderstanding,
     metrics:project.metrics,rubric:project.acceptanceRubric,rubricState:project.acceptanceRubricState,visible:project.evalSuite,hidden:project.hiddenEvalSuite,

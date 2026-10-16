@@ -28,3 +28,34 @@ export function directAiCorrectionDiagnosticSuffix(args:{code:string;httpStatus?
   for(const issue of (args.schemaIssues??[]).slice(0,4))parts.push("schema="+issue.path+":"+issue.code);
   return " ["+parts.join("; ")+"]";
 }
+
+const jsonTypes=new Set(["array","object","string","number","integer","boolean","null"]);
+function expectedSchemaType(schema:Record<string,unknown>,path:readonly PropertyKey[]):string|undefined{
+  if(path.length>16)return undefined;
+  let node:unknown=schema;
+  for(const part of path){
+    if(!node||typeof node!=="object"||Array.isArray(node))return undefined;
+    const current=node as Record<string,unknown>;
+    if(typeof part==="number"){
+      if(!Number.isInteger(part)||part<0||current.type!=="array")return undefined;
+      node=current.items;
+    }else if(typeof part==="string"){
+      const properties=current.properties;
+      if(!properties||typeof properties!=="object"||Array.isArray(properties)||!Object.hasOwn(properties,part))return undefined;
+      node=(properties as Record<string,unknown>)[part];
+    }else return undefined;
+  }
+  if(!node||typeof node!=="object"||Array.isArray(node))return undefined;
+  const type=(node as Record<string,unknown>).type;
+  return typeof type==="string"&&jsonTypes.has(type)?type:undefined;
+}
+/** Only local validation paths/codes and contract-owned JSON types enter the system prompt.
+ * Rejected values, IDs and Zod messages remain in the separate quarantined data context. */
+export function directAiSchemaCorrectionFeedback(schema:Record<string,unknown>,issues:readonly Issue[]):string{
+  const rows=directAiSchemaDiagnostics(schema,issues).map((issue,index)=>{
+    const expected=expectedSchemaType(schema,issues[index].path);
+    return{path:issue.path.slice(0,192),code:issue.code,...(expected?{expected}:{})};
+  });
+  return "\nSchema shape errors (local, not evidence): "+JSON.stringify(rows)
+    +"\nCorrect these shapes in the complete root result. These errors carry no artifact evidence or accepted scores; independently judge the unchanged original evidence.";
+}

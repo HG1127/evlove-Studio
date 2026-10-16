@@ -98,17 +98,22 @@ export function validateHtmlProtectionProof(args: {
     const receipt = receipts.byId.get(obligation.id);
     if (!receipt) { missingObligationIds.push(obligation.id); gaps.push("Missing obligation receipt: " + obligation.id); continue; }
     const observations = receipt.evidenceIds.map((id) => evidence.byId.get(id)!);
+    const statuses = observations.map((item) => item.verificationStatus);
+    const hasFailure = statuses.includes("failed");
+    const allVerified = statuses.length > 0 && statuses.every((item) => item === "verified");
     if (obligation.support === "unresolved") {
       unresolvedObligationIds.push(obligation.id);
       gaps.push("Unsupported obligation remains unresolved: " + obligation.id);
       hasPartial ||= observations.length > 0;
-      dishonestReceipt ||= receipt.verificationStatus === "verified" || receipt.verificationStatus === "failed";
+      // A trusted concrete violation is retained even when the remaining scope is
+      // unknown. It never closes that unresolved scope or grants a complete PASS.
+      if (hasFailure) {
+        failedObligationIds.push(obligation.id);
+        dishonestReceipt ||= receipt.verificationStatus !== "failed";
+      } else dishonestReceipt ||= receipt.verificationStatus === "verified" || receipt.verificationStatus === "failed";
       continue;
     }
-    const statuses = observations.map((item) => item.verificationStatus);
     // Any observed violation must survive aggregation, even if a producer claims pass.
-    const hasFailure = statuses.includes("failed");
-    const allVerified = statuses.length > 0 && statuses.every((item) => item === "verified");
     if (hasFailure) {
       failedObligationIds.push(obligation.id);
       dishonestReceipt ||= receipt.verificationStatus !== "failed";

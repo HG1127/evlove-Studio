@@ -71,17 +71,14 @@ function withTeam(path:string,teamId?:string){
   return path+(path.includes("?")?"&":"?")+"teamId="+encodeURIComponent(teamId);
 }
 
-async function vercelApi(path:string,init:RequestInit={}){
+async function vercelApi(path:string,init:RequestInit={},beforeDispatch?:()=>Promise<()=>void>){
   const config=requireWriteConfig();
-  const response=await fetch(API+withTeam(path,config.teamId),{
-    ...init,
-    headers:{
-      Authorization:"Bearer "+config.token,
-      "Content-Type":"application/json",
-      ...(init.headers??{}),
-    },
-    signal:init.signal??AbortSignal.timeout(30_000),
-  });
+  const url=API+withTeam(path,config.teamId),options={...init,headers:{Authorization:"Bearer "+config.token,"Content-Type":"application/json",...(init.headers??{})}};
+  const checkDispatch=await beforeDispatch?.();
+  if(JSON.stringify(requireWriteConfig())!==JSON.stringify(config))throw Error("Vercel write configuration changed before dispatch");
+  const requestInit={...options,signal:init.signal??AbortSignal.timeout(30_000)};
+  checkDispatch?.();
+  const response=await fetch(url,requestInit);
   const text=await response.text();
   const body=text?JSON.parse(text):{};
   if(!response.ok){
@@ -498,8 +495,9 @@ export async function executeVercelReleaseAction(args:{
   expectedGitCommitSha?:string;
   healthPath?:string;
   artifactHashes:Array<{sourceArtifactId:string;contentHash:string}>;
-}):Promise<VercelReleaseActionResponse>{
+},beforeDispatch?:()=>Promise<()=>void>):Promise<VercelReleaseActionResponse>{
   const config=requireWriteConfig();
+  const guardDispatch=async()=>{const check=await beforeDispatch?.();if(JSON.stringify(requireWriteConfig())!==JSON.stringify(config))throw Error("Vercel action configuration changed before dispatch");return check??(()=>{});};
   const deploymentId=args.deploymentId;
   if(!deploymentId){
     const label=args.action==="shadow"?"Preview Gate":args.action==="promote"?"Promote":"Rollback";
@@ -542,7 +540,7 @@ export async function executeVercelReleaseAction(args:{
       await vercelApi("/v1/projects/"+encodeURIComponent(config.projectId)+"/rolling-release/start",{
         method:"POST",
         body:JSON.stringify({deploymentId:candidate.id}),
-      });
+      },guardDispatch);
       rolling=await rollingReleaseState(progressiveConfig);
     }else{
       assertRollingCandidate(rolling,candidate.id);
@@ -559,7 +557,7 @@ export async function executeVercelReleaseAction(args:{
         await vercelApi("/v1/projects/"+encodeURIComponent(config.projectId)+"/rolling-release/approve-stage",{
           method:"POST",
           body:JSON.stringify({deploymentId:candidate.id,currentStageIndex:rolling.currentStageIndex}),
-        });
+        },guardDispatch);
         rolling=await rollingReleaseState(progressiveConfig);
       }
     }
@@ -611,10 +609,10 @@ export async function executeVercelReleaseAction(args:{
       await vercelApi("/v1/projects/"+encodeURIComponent(config.projectId)+"/rolling-release/complete",{
         method:"POST",
         body:JSON.stringify({deploymentId:candidate.id}),
-      });
+      },guardDispatch);
       activeRolling=await rollingReleaseState(rollingConfig).catch(()=>activeRolling);
     }else if(productionBefore?.id!==candidate.id){
-      await vercelApi("/v10/projects/"+encodeURIComponent(config.projectId)+"/promote/"+encodeURIComponent(candidate.id),{method:"POST",body:"{}"});
+      await vercelApi("/v10/projects/"+encodeURIComponent(config.projectId)+"/promote/"+encodeURIComponent(candidate.id),{method:"POST",body:"{}"},guardDispatch);
     }
     const productionAfter=productionBefore?.id===candidate.id?productionBefore:await waitForProduction(candidate.id);
     const health=await checkVercelReleaseHealth({url:config.productionUrl??candidate.url,healthPath:args.healthPath});
@@ -645,10 +643,10 @@ export async function executeVercelReleaseAction(args:{
       await vercelApi("/v1/projects/"+encodeURIComponent(config.projectId)+"/rolling-release/abort",{
         method:"POST",
         body:JSON.stringify({deploymentId:activeRolling.candidateDeploymentId}),
-      });
+      },guardDispatch);
       activeRolling=await rollingReleaseState(rollingConfig).catch(()=>activeRolling);
     }else if(productionBefore?.id!==target.id){
-      await vercelApi("/v1/projects/"+encodeURIComponent(config.projectId)+"/rollback/"+encodeURIComponent(target.id),{method:"POST",body:"{}"});
+      await vercelApi("/v1/projects/"+encodeURIComponent(config.projectId)+"/rollback/"+encodeURIComponent(target.id),{method:"POST",body:"{}"},guardDispatch);
     }
     const productionAfter=productionBefore?.id===target.id?productionBefore:await waitForProduction(target.id);
     const health=await checkVercelReleaseHealth({url:config.productionUrl??target.url,healthPath:args.healthPath});

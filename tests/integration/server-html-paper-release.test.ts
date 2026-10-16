@@ -21,7 +21,7 @@ function fixture(mode:Parameters<typeof acceptedLegacyHtmlPaperFixture>[1]="prio
  f.project.releaseTarget={provider:"vercel",mode:"preview-promote",status:"connected",label:"Synthetic Release",healthPath:"/"};
  f.project.gates=[{id:"artifact-ready",status:"approved"},{id:"release-ready",status:"approved"}];
  f.project.release={...f.project.release,status:"idle",candidateId:f.current.id,deploymentId:"candidate-deployment",stableDeploymentId:"stable-deployment"};
- return f;
+ mocks.get.mockResolvedValue(f.project);return f;
 }
 beforeEach(()=>{vi.resetAllMocks();mocks.grant.mockResolvedValue({id:"existing-unexpired-grant"});});
 describe("prior HTML paper cannot reuse an existing Release approval",()=>{
@@ -33,7 +33,7 @@ describe("prior HTML paper cannot reuse an existing Release approval",()=>{
  });
  it.each(["vercel","http","connector"] as const)("blocks direct %s provider before I/O",async provider=>{
   const f=fixture();f.project.releaseTarget!.provider=provider;
-  await expect(executeServerReleaseProvider(f.project,{action:"shadow",deploymentId:"candidate-deployment",artifactHashes:[]})).rejects.toThrow("html-protection-contract-pending");
+  await expect(executeServerReleaseProvider(f.project,{action:"shadow",deploymentId:"candidate-deployment",artifactHashes:[]})).rejects.toThrow(/html-protection-(?:contract-pending|current-hidden-unaccepted)/);
   for(const operation of [mocks.execute,mocks.http,mocks.connector,mocks.prepare])expect(operation).not.toHaveBeenCalled();
  });
  it("persists a durable pause before using the old grant",async()=>{
@@ -60,12 +60,12 @@ describe("whole HTML scope cannot reuse stored accepted release permission",()=>
  it.each(["search","static","mixed"] as const)("blocks %s API shadow before approval, provider or writes",async mode=>{
   const f=fixture(mode);mocks.get.mockResolvedValue(f.project);
   const response=await app.fetch(new Request("http://localhost/release-action",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({missionId:f.project.id,candidateId:f.current.id,deploymentId:"candidate-deployment",action:"shadow"})}));
-  expect(response.status).toBe(409);expect(await response.text()).toContain("html-protection-scope-pending");
+  expect(response.status).toBe(409);expect(await response.text()).toContain("Stored complete protection authority could not be independently restored");
   for(const call of [mocks.grant,mocks.execute,mocks.http,mocks.connector,mocks.prepare,mocks.save,mocks.append])expect(call).not.toHaveBeenCalled();
  });
  it.each(["vercel","http","connector"] as const)("blocks direct %s provider before I/O for mixed static/browser paper",async provider=>{
   const f=fixture("mixed");f.project.releaseTarget!.provider=provider;
-  await expect(executeServerReleaseProvider(f.project,{action:"shadow",deploymentId:"candidate-deployment",artifactHashes:[]})).rejects.toThrow("html-protection-scope-pending");
+  await expect(executeServerReleaseProvider(f.project,{action:"shadow",deploymentId:"candidate-deployment",artifactHashes:[]})).rejects.toThrow(/html-protection-(?:scope-pending|current-hidden-unaccepted)/);
   for(const call of [mocks.execute,mocks.http,mocks.connector,mocks.prepare])expect(call).not.toHaveBeenCalled();
  });
  it("durably pauses before authorizing an otherwise accepted static paper",async()=>{

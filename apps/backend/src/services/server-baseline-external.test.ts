@@ -5,7 +5,7 @@ import type {EvolveProject,TargetRunResult,TestCase} from "@evolution/contracts"
 import {executeServerBaselineExternal} from "./server-baseline";
 
 const {getBlob,runSandbox}=vi.hoisted(()=>({getBlob:vi.fn(),runSandbox:vi.fn()}));
-vi.mock("@evolution/adapters/sandbox",()=>({runVercelSandboxCodebaseValidation:runSandbox}));
+vi.mock("@evolution/adapters/sandbox",async (importOriginal) => ({ ...await importOriginal<typeof import("@evolution/adapters/sandbox")>(), ...await (()=>({runVercelSandboxCodebaseValidation:runSandbox}))() }));
 vi.mock("./artifact-runtime",()=>({getServerArtifactStore:()=>({get:getBlob})}));
 vi.mock("./connector-target-source",()=>({serverConnectorTargetEnabled:()=>false}));
 vi.mock("./server-connector-target-execution",()=>({runServerConnectorTargetBatch:vi.fn()}));

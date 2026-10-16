@@ -9,9 +9,9 @@ import download from "../../server/api/evolution/artifacts/[id].get";
 import { acceptedPackageFixture } from "@evolution/testkit";
 import { parseServerSource } from "./server-source-parser";
 
-const mocks = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn(), append: vi.fn(), getBlob: vi.fn(), putBlob: vi.fn(), deleteBlob: vi.fn() }));
+const mocks = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn(), append: vi.fn(), getBlob: vi.fn(), getMetadata: vi.fn(), putBlob: vi.fn(), deleteBlob: vi.fn() }));
 vi.mock("./production-runtime", () => ({ getServerProductionRuntime: () => ({ missions: { get: mocks.get, save: mocks.save }, events: { append: mocks.append } }) }));
-vi.mock("./artifact-runtime", () => ({ getServerArtifactStore: () => ({ get: mocks.getBlob, put: mocks.putBlob, delete: mocks.deleteBlob }) }));
+vi.mock("./artifact-runtime", () => ({ getServerArtifactStore: () => ({ get: mocks.getBlob, getMetadata: mocks.getMetadata, put: mocks.putBlob, delete: mocks.deleteBlob }) }));
 vi.mock("./security-policy", () => ({ requireGovernedEvolutionPermission: vi.fn(async () => undefined) }));
 const app = new H3().post("/render-accepted", render).get("/artifacts/:id", download);
 const request = (candidateId?: string) => app.fetch(new Request("http://localhost/render-accepted", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ missionId: "mission", ...(candidateId ? { candidateId } : {}) }) }));
@@ -19,6 +19,7 @@ function setup(withChampion = true) {
   const args = acceptedPackageFixture(withChampion);
   mocks.get.mockResolvedValue(args.project);
   mocks.getBlob.mockImplementation(async (id: string) => args.blobs.get(id));
+    mocks.getMetadata.mockImplementation(async (id: string) => args.metadata.get(id));
   return args;
 }
 beforeEach(() => vi.resetAllMocks());
@@ -105,15 +106,22 @@ describe("accepted current Candidate server package and physical download", () =
     expect(mocks.putBlob).not.toHaveBeenCalled();
     expect(mocks.deleteBlob).not.toHaveBeenCalled();
   });
-  it("retains the Champion default while preserving a different current Candidate's evidence", async () => {
+  it("defaults to the current Gate F Candidate while preserving a historical Champion", async () => {
     const args = setup();
     const response = await request();
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ candidateId: args.prior.id });
+    expect(await response.json()).toMatchObject({ candidateId: args.current.id });
     const saved = mocks.save.mock.calls[0]![0] as EvolveProject;
-    expect(assertDeliverablePackageIdentity(saved)).toBe(args.prior.id);
+    expect(assertDeliverablePackageIdentity(saved)).toBe(args.current.id);
+    expect(saved.searchChampion).toEqual(args.project.searchChampion);
     expect(saved.artifactAcceptance).toEqual(args.project.artifactAcceptance);
     expect(saved.validationRun).toEqual(args.project.validationRun);
+  });
+  it("refuses a historical Champion without the current Hidden and Gate F relationship", async () => {
+    const args=setup();
+    expect((await request(args.prior.id)).status).toBe(409);
+    expect(mocks.save).not.toHaveBeenCalled();
+    expect(mocks.append).not.toHaveBeenCalled();
   });
   it.each(["unknown", "stale", "demo", "partial", "missing-paired"])("rejects %s explicit delivery without falling back to the historical Champion", async (kind) => {
     const args = setup();

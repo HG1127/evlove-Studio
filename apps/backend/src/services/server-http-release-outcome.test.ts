@@ -3,12 +3,23 @@ import {createHash} from "node:crypto";
 import {afterEach,describe,expect,it,vi} from "vitest";
 import type {Candidate,EvolveProject,ReleaseAdapterResult} from "@evolution/contracts";
 
+// Controlled authorization seam only; private restoration/final-guard integration has separate negative coverage.
+const releaseFixture=vi.hoisted(()=>({project:undefined as EvolveProject|undefined}));
+vi.mock("./production-runtime",()=>({getServerProductionRuntime:()=>({missions:{get:async()=>releaseFixture.project}})}));
+vi.mock("./server-html-protection-accepted-authority",()=>({
+  restoreServerHtmlProtectionAcceptedProject:async({project}:{project:EvolveProject})=>({project,assertStable:async()=>undefined}),
+  serverHtmlProtectionAcceptedContext:(project:EvolveProject)=>JSON.stringify(project),
+}));
+const approvedFixture=()=>({id:"synthetic-grant",missionId:releaseFixture.project!.id,
+  candidateId:releaseFixture.project!.experimentRun.winnerId,approvedRole:"approver",approvedAt:"2026-01-01T00:00:00.000Z",expiresAt:"2099-01-01T00:00:00.000Z"});
+vi.mock("@evolution/core",async original=>({...await original<typeof import("@evolution/core")>(),deliveryReadiness:()=>({ready:true,reasons:[]})}));
+
 const {grant,record}=vi.hoisted(()=>({
-  grant:vi.fn(async()=>({id:"grant"})),
+  grant:vi.fn(async()=>approvedFixture()),
   record:vi.fn(async(_project:EvolveProject,_receipt:ReleaseAdapterResult)=>{void _project;void _receipt;return{recorded:true,inserted:1,reason:"ok",telemetry:{warnings:[]}};}),
 }));
 
-vi.mock("./release-approval-store",()=>({getActiveReleaseApprovalGrant:grant}));
+vi.mock("./release-approval-store",()=>({getActiveReleaseApprovalGrant:grant,requireActiveReleaseApprovalGrant:async()=>approvedFixture()}));
 vi.mock("./release-outcome-telemetry",()=>({recordHttpReleaseOutcomeObservation:record}));
 
 import {runServerMissionRelease} from "./server-release-orchestration";
@@ -32,16 +43,17 @@ function fixture(){
       id:"s",sourceArtifactId:"source",name:"a.txt",mimeType:"text/plain",content:"new",contentHash:"hash-c1",createdAt:"now",
     }],
   } as unknown as Candidate;
-  return{
+  const project={
     id:"http-release-outcome",version:"V12",currentVersionId:"V12",appliedPatches:[],versions:[],
     targetConnection:{adapter:"artifact",connectionId:"artifact-runtime",status:"connected",label:"Artifact Target"},
     releaseTarget:{provider:"http",mode:"preview-promote",status:"connected",label:"HTTP Release",connectionId:"release-http",healthPath:"/"},
     sourceArtifacts:[{id:"source",role:"target",name:"a.txt"}],
-    experimentRun:{winnerId:"C1"},candidates:[candidate],searchChampion:{candidate,artifactAcceptance:{status:"passed",candidateId:"C1",frozenArtifacts:[frozen]}},
+    acceptanceRubric:[],validationRun:{runs:[],baselineRuns:[]},experimentRun:{winnerId:"C1"},candidates:[candidate],searchChampion:{candidate,artifactAcceptance:{status:"passed",candidateId:"C1",frozenArtifacts:[frozen]}},
     gates:[{id:"release-ready",status:"approved"}],
     campaign:{status:"running",schedule:{enabled:false}},
     release:{status:"idle",candidateId:"C1",trafficPercent:0,kpis:[],evidenceMode:"none",history:[]},
   } as unknown as EvolveProject;
+  releaseFixture.project=project;return project;
 }
 
 describe("server HTTP release outcome persistence",()=>{

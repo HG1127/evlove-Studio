@@ -27,16 +27,20 @@ async function executionError(response:Response,action:string){
   return new Error(`${action} failed (HTTP ${response.status})${text?`: ${text.slice(0,500)}`:""}`);
 }
 
-async function post(url:string|undefined,body:unknown,action:string){
+async function post(url:string|undefined,body:unknown,action:string,beforeDispatch?:()=>Promise<()=>void>){
   const config=getServerTargetProxyConfig();
   if(!url){
     const error=new Error(`${action} target endpoint is not configured on server`);
     (error as Error&{code?:string}).code="TARGET_PROXY_NOT_CONFIGURED";
     throw error;
   }
-  const response=await fetch(url,{
-    method:"POST",headers:headers(),signal:AbortSignal.timeout(config.timeoutMs),body:JSON.stringify(body),
-  });
+  const requestHeaders=headers(),wireBody=JSON.stringify(body);
+  const checkDispatch=await beforeDispatch?.();
+  if(JSON.stringify(getServerTargetProxyConfig())!==JSON.stringify(config)||JSON.stringify(headers())!==JSON.stringify(requestHeaders))throw Error("Target proxy changed before dispatch");
+  // All payload/configuration preparation and awaited guards are complete; no intervening async operation precedes the actual mutation.
+  const requestInit={method:"POST",headers:requestHeaders,signal:AbortSignal.timeout(config.timeoutMs),body:wireBody};
+  checkDispatch?.();
+  const response=await fetch(url,requestInit);
   if(!response.ok)throw await executionError(response,action);
   return response.json();
 }
@@ -82,7 +86,7 @@ export async function runHttpTarget(raw:unknown){
   return result;
 }
 
-export async function releaseHttpTarget(raw:unknown){
+export async function releaseHttpTarget(raw:unknown,beforeDispatch?:()=>Promise<()=>void>){
   const input=TargetReleaseProxyRequestSchema.parse(raw);
   const frozen=input.frozenArtifacts??[];
   if(input.action==="rollback"&&frozen.length)throw new Error("HTTP Rollback 不应重新提交 Candidate Artifact。");
@@ -107,7 +111,7 @@ export async function releaseHttpTarget(raw:unknown){
       }
     }
   }
-  const result=TargetReleaseProxyResponseSchema.parse(await post(getServerTargetProxyConfig().releaseUrl,input,"Target Release"));
+  const result=TargetReleaseProxyResponseSchema.parse(await post(getServerTargetProxyConfig().releaseUrl,input,"Target Release",beforeDispatch));
   if(frozen.length){
     const received=result.artifactByteHashes??[];
     if(received.length!==frozen.length

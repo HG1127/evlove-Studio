@@ -4,6 +4,18 @@ import {afterEach,describe,expect,it,vi} from "vitest";
 import type {Candidate,EvolveProject} from "@evolution/contracts";
 import {executeServerReleaseProvider} from "./server-release-orchestration";
 
+// Controlled authorization seam only; private restoration/final-guard integration has separate negative coverage.
+const releaseFixture=vi.hoisted(()=>({project:undefined as EvolveProject|undefined}));
+vi.mock("./production-runtime",()=>({getServerProductionRuntime:()=>({missions:{get:async()=>releaseFixture.project}})}));
+vi.mock("./server-html-protection-accepted-authority",()=>({
+  restoreServerHtmlProtectionAcceptedProject:async({project}:{project:EvolveProject})=>({project,assertStable:async()=>undefined}),
+  serverHtmlProtectionAcceptedContext:(project:EvolveProject)=>JSON.stringify(project),
+}));
+const approvedFixture=()=>({id:"synthetic-grant",missionId:releaseFixture.project!.id,
+  candidateId:releaseFixture.project!.experimentRun.winnerId,approvedRole:"approver",approvedAt:"2026-01-01T00:00:00.000Z",expiresAt:"2099-01-01T00:00:00.000Z"});
+vi.mock("@evolution/core",async original=>({...await original<typeof import("@evolution/core")>(),deliveryReadiness:()=>({ready:true,reasons:[]})}));
+vi.mock("./release-approval-store",()=>({requireActiveReleaseApprovalGrant:async()=>approvedFixture()}));
+
 const previousUrl=process.env.EVOLUTION_TARGET_RELEASE_URL;
 const previousToken=process.env.EVOLUTION_TARGET_BEARER_TOKEN;
 
@@ -30,12 +42,13 @@ describe("server HTTP release composition",()=>{
       id:"http-release-mission",
       targetConnection:{adapter:"artifact",connectionId:"artifact-runtime",status:"connected",label:"Artifact Target"},
       releaseTarget:{provider:"http",mode:"preview-promote",status:"connected",label:"HTTP Release",connectionId:"release-http",healthPath:"/"},
-      experimentRun:{winnerId:"C1"},
+      acceptanceRubric:[],validationRun:{runs:[],baselineRuns:[]},experimentRun:{winnerId:"C1"},
       candidates:[candidate],
       sourceArtifacts:[{id:"source",role:"target",name:"a.txt"}],
       searchChampion:{candidate,artifactAcceptance:{status:"passed",candidateId:"C1",frozenArtifacts:[frozen]}},
       release:{status:"idle",candidateId:"C1",trafficPercent:0,kpis:[],evidenceMode:"none",history:[]},
     } as unknown as EvolveProject;
+    releaseFixture.project=project;
     const fetchMock=vi.fn(async(input:string|URL|Request,init?:RequestInit)=>{
       expect(String(input)).toBe("https://release.internal/action");
       expect((init?.headers as Record<string,string>).Authorization).toBe("Bearer release-secret");

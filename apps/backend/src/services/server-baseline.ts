@@ -1,3 +1,5 @@
+import { collectServerHtmlProtectionAuthority } from "./server-html-protection-authority";
+import { prepareServerHtmlProtectionNormalBaselineView } from "./server-html-protection-authority-owner";
 import {withServerAiConnection} from "./server-ai-connection";
 import {runServerHtmlArtifactBatch,serverHtmlArtifactTargetEnabled} from "./server-html-artifact-execution";
 import type { EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
@@ -126,6 +128,8 @@ export async function executeServerBaselineExternal(current:EvolveProject,testCa
 export async function runServerMissionBaseline(project: EvolveProject) {
   return withServerAiConnection(async()=>{
   return runServerBaseline(project, {
+    collectHtmlProtectionAuthority: collectServerHtmlProtectionAuthority,
+    prepareHtmlProtectionProject: prepareServerHtmlProtectionNormalBaselineView,
     scoringRouteFingerprint: await serverAiScoringRouteFingerprint(),
     executeSemanticBatch: async ({ project: current, testCases, artifactContext }) => runServerAi("execute-artifact-batch", {
       project: {

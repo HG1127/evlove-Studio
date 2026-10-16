@@ -4,6 +4,7 @@ import type {
   EvolveProject,
   OutputArtifact,
 } from "@evolution/contracts";
+import { inheritHtmlProtectionAuthorities } from "./html-protection-authority";
 import { deliveryReadiness } from "./delivery-readiness";
 import { htmlProtectionAcceptanceBlocker } from "./html-protection-scope";
 import { hasExactFrozenArtifactSet } from "./artifact-identity";
@@ -57,7 +58,7 @@ export function acceptanceArtifacts(
     mimeType:"application/json",
     kind:"acceptance-report",
     content:JSON.stringify(acceptance,null,2),
-    description:"Gate F 最终成果验收报告：逐条 Requirement Coverage、Protected Constraints、Integrity、Pairwise Improvement。",
+    description:(project.htmlProtectionOperationalScope ? "仅限人工确认的有限保护范围；未知范围外行为未验证。 " : "")+"Gate F 最终成果验收报告：逐条 Requirement Coverage、Protected Constraints、Integrity、Pairwise Improvement。",
     sourceArtifactIds:[],
     isChampion:true,
     accepted:canDeliver,
@@ -97,6 +98,7 @@ export function materializeChampionOutputs(
     validationRun:champion.validation,
     artifactAcceptance:champion.artifactAcceptance,
   };
+  inheritHtmlProtectionAuthorities(project,settled);
   if(!deliveryReadiness(settled).ready)return[];
 
   const primary=(champion.candidate.artifactSnapshots??[]).map((artifact,index):OutputArtifact=>({

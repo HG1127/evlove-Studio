@@ -47,6 +47,12 @@ function corrupt(project: EvolveProject, kind: Corruption) {
 }
 function ready(champion: boolean) {
   const args = acceptedPackageFixture();
+  if(champion){
+    const stored=args.project.searchChampion!;
+    args.project.experimentRun.winnerId=args.prior.id;
+    args.project.validationRun=structuredClone(stored.validation!);
+    args.project.artifactAcceptance=structuredClone(stored.artifactAcceptance!);
+  }
   args.project.outputArtifacts = champion ? materializeAcceptedChampionPackage(args.project) : materializeAcceptedCandidatePackage(args.project, args.current, args.project.artifactAcceptance);
   return args;
 }
@@ -54,7 +60,7 @@ describe.each([false, true])("package evidence contents before frozen delivery (
   it("retains a complete canonical package and exact physical bytes", async () => {
     const args = ready(champion);
     expect(assertDeliverablePackageIdentity(args.project)).toBe(champion ? args.prior.id : args.current.id);
-    expect((await renderAcceptedProjectArtifacts(args.project, args.project.outputArtifacts, args.store)).receipts).toHaveLength(1);
+    expect((await renderAcceptedProjectArtifacts(args.project, args.project.outputArtifacts, args.store,{readMission:async()=>structuredClone(args.project)})).receipts).toHaveLength(1);
   });
   it("accepts semantically identical JSON with reordered keys/whitespace", () => {
     const args = ready(champion);
