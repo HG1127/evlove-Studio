@@ -1,6 +1,14 @@
 # Main flow acceptance
 
 
+## 2026-10-16 — Single approved recovery completed; current Judge shape failure
+
+Actual deployed `3ae7f17` passed its complete main CI and production read-only gates. The directly approved single fixed-key Run `wrun_01M51CR5GJWNS7M8ZWFA46HE68` completed on the same SOP Mission/frozen P1-03, producing nine fresh Current and nine fresh Candidate Hidden results. Candidate independent Judge returned Safety PASS/rubric96/verified coverage92. Current Judge remained invalid after one same-connection correction (`cases:invalid_type`); the result is retained, SDK completed/Job waiting, Mission revision50 paused. Original REVIEW and old failures are preserved. Partial/unverified protection/pairwise observations remain; no paired acceptance, Gate F or accepted download/reopen is proved. The single recovery is consumed and no additional execution is authorized by this result.
+
+The [field feedback handoff](direct-ai-schema-field-feedback-handoff.md) addresses a locally confirmed omission: the one corrective request did not include the parser's known failing field/type. Synthetic red regressions reproduce it; source verification and exact-commit CI are required separately. This is not proof of the actual rejected current value or a live provider fix. Production remains paused under the explicit new-invalid-result stop condition.
+
+
+
 ## 2026-10-15 — Actual fresh Baseline/diagnosis and terminal Experiment timeout
 
 Human-approved production 978b100 completed actual Baseline baseline-server-1792040225529 and diagnosis for the approved independent SOP Mission. Original SHA-256 remains 6605429efe92470229601adfb3196bc74ae38855f55d71c8754f8336c52b580a. Safety PASS/rubric69 is diagnostic evidence, not acceptance. Official SDK Run wrun_01M4YYJV0A389PD989AFKQA7DS failed its Experiment control step on attempt5; the bound deployment request logged HTTP504 after300 seconds. At05:43UTC SDKfailed/Jobstillrunning60%, revision22 Plan, five drafts/no persisted snapshots. No Experiment, paired Hidden, Gate F or exact accepted download is proved.
