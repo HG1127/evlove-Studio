@@ -8,3 +8,4 @@ export * from "./ai-structured-output";
 export * from "./ai-json-error";
 export * from "./artifact-utf8";
 export * from "./compatible-ai-transport";
+export * from "./compatible-schema-tool";

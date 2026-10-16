@@ -1,6 +1,7 @@
 import {CompatibleChatEnvelopeSchema,CompatibleResponsesEnvelopeSchema} from "@evolution/contracts";
+import {readCompatibleSchemaToolOutput} from "@evolution/adapters";
 
-type CompletionDiagnosticInput={protocol:"chat-completions"|"responses";phase:"initial"|"correction";envelope:unknown};
+type CompletionDiagnosticInput={protocol:"chat-completions"|"responses";phase:"initial"|"correction";envelope:unknown;expectedSchemaToolName?:string};
 const statuses=new Set(["completed","failed","cancelled","incomplete","queued","in_progress"]);
 const finishReasons=new Set(["stop","length","content_filter","tool_calls","function_call"]);
 const retained=new WeakMap<object,string>();
@@ -23,7 +24,10 @@ export function directAiCompletionDiagnosticSuffix(args:CompletionDiagnosticInpu
       ?content.filter(part=>!part.type||part.type==="text"||part.type==="output_text").map(part=>part.text??""):[];
     // Follow the same first-choice text precedence as the decoder; never use a later alternative.
     const hasContent=nativeText.some(text=>text.trim());
-    const finalText=hasContent?nativeText:choice?.text?.trim()?[choice.text]:[];
+    let finalText=hasContent?nativeText:choice?.text?.trim()?[choice.text]:[];
+    if(args.expectedSchemaToolName){
+      try{const output=readCompatibleSchemaToolOutput(body,args.expectedSchemaToolName);if(output.carrier==="schema-tool"){finalText=[output.text];parts.push("carrier=schema-tool");}}catch{/* Counts never authorize correction or publish rejected tool contents. */}
+    }
     parts.push("status="+category(body.status,statuses),"finish="+category(choice?.finish_reason,finishReasons),"contentBytes="+textBytes(finalText));
     const tokens=safeTokenCount(body.usage?.completion_tokens??body.usage?.output_tokens);
     if(tokens!==undefined)parts.push("outputTokens="+tokens);

@@ -99,3 +99,10 @@ it("retains distinct metadata from both actual response phases",async()=>{
  expect(error.message).toContain("completionPhase=initial; protocol=chat-completions; status=missing; finish=stop; contentBytes=1; outputTokens=111");
  expect(error.message).toContain("completionPhase=correction; protocol=chat-completions; status=missing; finish=stop; contentBytes=11; outputTokens=222");expect(fetch).toHaveBeenCalledTimes(2);
 });
+it("counts only the single expected schema result and never publishes arguments, IDs or names",()=>{
+ const schemaName="synthetic_output",text='{"private-source":"中文"}';
+ const envelope={choices:[{finish_reason:"tool_calls",message:{content:null,tool_calls:[{id:"private-call-id",type:"function",function:{name:schemaName,arguments:text}}]}}]};
+ const suffix=directAiCompletionDiagnosticSuffix({protocol:"chat-completions",phase:"initial",expectedSchemaToolName:schemaName,envelope});
+ expect(suffix).toContain("carrier=schema-tool");expect(suffix).toContain("contentBytes="+Buffer.byteLength(text));expect(suffix).not.toMatch(/private-source|private-call-id|synthetic_output|中文/);
+ const wrong=directAiCompletionDiagnosticSuffix({protocol:"chat-completions",phase:"initial",expectedSchemaToolName:"other",envelope});expect(wrong).not.toContain("carrier=");expect(wrong).toContain("contentBytes=0");
+});
