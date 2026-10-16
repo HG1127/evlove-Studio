@@ -1,5 +1,9 @@
 # Backend Capability Assessment and Delivery Plan
 
+## 2026-10-16 — Authorized whole-protection central integration
+
+The human approved the reviewed 31 central wiring files and prerequisite integration. [Integration handoff](whole-protection-main-flow-closure-handoff.md) records private collector/settlement/Gate F restoration, exact accepted-file delivery and final release guards. The related development audit covers 46 unique files / 814 passed assertions; first failures remain retained. Exact new-source architecture/lint/build, complete CI and separately approved publication remain prerequisites. Production 3ae7f17 and old Mission revision50 are unchanged; Current Judge, paired acceptance, Gate F and accepted download/reopen are still incomplete. The already approved single independent Mission may continue on the repaired release only after its release gates. Actual-Original pure preflight additionally derives 269 unresolved runtime obligations with no complete closure producer in the current v1 policy; wiring alone cannot pass the whole-protection gate. Preserve the single new Mission until that capability or a separately confirmed measurable scope is ready.
+
 
 ## 2026-10-15 — Actual fresh Baseline/diagnosis and terminal Experiment timeout
 

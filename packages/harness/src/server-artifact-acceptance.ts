@@ -6,6 +6,7 @@ import type {
 } from "@evolution/contracts";
 import {
   campaignObservesLiveTarget,
+  inheritHtmlProtectionAuthorities,
   estimateRoundCost,
   evidenceFingerprint,
   settleArtifactAcceptanceFromValidation,
@@ -187,6 +188,7 @@ export async function runServerArtifactAcceptance(
     now,
   });
   let project:EvolveProject={...inputProject,artifactAcceptance:acceptance,updatedAt:now};
+  inheritHtmlProtectionAuthorities(inputProject,project);
   if(verification.unavailable.length||acceptance.status==="unverified"){
     const reason=`[server-campaign-artifact-acceptance-evidence-pending] Gate F 缺少真实 frozen Artifact / exact-fingerprint 证据：${verification.unavailable.join("；")||acceptance.summary}`;
     return pause(project,reason,now);
@@ -219,7 +221,13 @@ export async function runServerArtifactAcceptance(
           ?{...gate,status:"ready" as const,approvedAt:undefined,note:`Candidate ${candidate.id} 已通过 Hidden Validation + Gate F；生产 Release 需要重新授权`}
           :gate),
     };
-    const settled=settleRound(project,candidate,true,now);
+    inheritHtmlProtectionAuthorities(inputProject,project);
+    const acceptedCandidates=project.candidates.filter(item=>item.id===candidate.id);
+    if(acceptedCandidates.length!==1)throw Error("Gate F accepted Candidate identity is ambiguous");
+    // Settle the exact owned passed copy; the old pre-Gate-F winner must not become a different Champion snapshot.
+    const acceptedCandidate=acceptedCandidates[0]!;
+    const settled=settleRound(project,acceptedCandidate,true,now);
+    inheritHtmlProtectionAuthorities(project,settled);
     return {control:"continue",project:settled,reason:`Round ${round} Gate F 已通过 exact frozen Artifact 验收并完成本轮结算。`,accepted:true,repaired:false,championChanged:settled.searchChampion?.candidate?.id===candidate.id};
   }
 

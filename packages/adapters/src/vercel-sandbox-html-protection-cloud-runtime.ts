@@ -73,3 +73,5 @@ export async function runPrivateHtmlProtectionCloudRuntime(args: { chromium: Bro
 }
 
 export { runPrivateHtmlProtectionSearchCloudRuntime } from "./vercel-sandbox-html-protection-search-cloud-runtime";
+
+export { runPrivateHtmlProtectionWholeCloudRuntime } from './vercel-sandbox-html-protection-whole-cloud-runtime';

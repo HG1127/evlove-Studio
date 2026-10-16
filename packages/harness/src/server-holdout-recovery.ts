@@ -53,7 +53,7 @@ export function reusableServerHoldoutAssessment(project: EvolveProject, suite: T
   return criteriaRequiringJudge(project.acceptanceRubric, suite, runs).every(criterion => {
     const score = scores.find(item => item.criterionId === criterion.id);
     const ids = new Set(suite.filter(item => item.criterionIds.includes(criterion.id)).map(item => item.id));
-    if (htmlProtectionCoverageGap(criterion, project) && score?.pass) return false;
+    if (htmlProtectionCoverageGap(criterion, project, { testCases: suite, runs }) && score?.pass) return false;
     return score && (score.verificationStatus === "verified" || score.verificationStatus === "partial")
       && score.testCaseIds.length > 0 && score.testCaseIds.every(id => ids.has(id));
   });

@@ -1,3 +1,4 @@
+import {collectServerHtmlProtectionAuthority} from "./server-html-protection-authority";
 import {withServerAiConnection} from "./server-ai-connection";
 import {runServerHtmlArtifactBatch,serverHtmlArtifactTargetEnabled} from "./server-html-artifact-execution";
 import type { Candidate, EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
@@ -88,6 +89,7 @@ async function executeServerCandidateExternal(project: EvolveProject, candidate:
 export async function runServerMissionExperiment(project: EvolveProject, options?: { yieldAfterOperation?: boolean; continuation?: ServerExperimentContinuation }) {
   return withServerAiConnection(async()=>{
   return runServerExperiment(project, {
+    collectHtmlProtectionAuthority:collectServerHtmlProtectionAuthority,
     fingerprint: (wire) => serverArtifactSha256(new TextEncoder().encode(wire)),
     readExecutionArtifactFingerprint,
     scoringRouteFingerprint: await serverAiScoringRouteFingerprint(),

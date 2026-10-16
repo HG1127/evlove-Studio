@@ -1,3 +1,4 @@
+import { collectServerSuiteHtmlProtectionAuthority, type ServerHtmlProtectionAuthorityPort } from "./server-html-protection-authority";
 import type {
   BaselineRun,
   EvaluateAiResult,
@@ -8,6 +9,7 @@ import type {
 } from "@evolution/contracts";
 import {
   baselineReadiness,
+  inheritHtmlProtectionAuthorities,
   originalHtmlBaselineDiagnosticCase,
   assessOriginalHtmlBaselineDiagnosticEligibility,
   OriginalHtmlBaselineDiagnosticBindingSchema,
@@ -60,6 +62,8 @@ export function canReuseServerBaseline(project: EvolveProject, routeFingerprint?
     && project.baselineRun.measurementFingerprint === serverBaselineFingerprint(project, routeFingerprint);
 }
 export type ServerBaselinePorts = {
+  collectHtmlProtectionAuthority?: ServerHtmlProtectionAuthorityPort;
+  prepareHtmlProtectionProject?(args: { inputProject: EvolveProject; allocatedProject: EvolveProject }): Promise<EvolveProject>;
   scoringRouteFingerprint?: string;
   executeSemanticBatch(args: {
     project: EvolveProject;
@@ -131,7 +135,7 @@ export async function runServerBaseline(
     ].join(", ")}`);
   }
 
-  const project: EvolveProject = {
+  let project: EvolveProject = {
     ...inputProject,
     baselineRun: {
       ...inputProject.baselineRun,
@@ -147,6 +151,8 @@ export async function runServerBaseline(
     stage: "baseline",
     updatedAt: startedAt,
   };
+
+  if (ports.prepareHtmlProtectionProject) project = await ports.prepareHtmlProtectionProject({ inputProject, allocatedProject: project });
 
   const diagnosticCase = ports.readOriginalHtmlDiagnosticBinding ? originalHtmlBaselineDiagnosticCase(project) : undefined;
   let initialDiagnosticBinding: OriginalHtmlBaselineDiagnosticBinding | undefined;
@@ -261,7 +267,11 @@ export async function runServerBaseline(
     }
   }
 
-  const runs = project.evalSuite.map((testCase) => ordered.get(testCase.id) ?? unavailableBaselineRun(testCase, "Baseline 执行未返回结果。"));
+  const baselineCases = project.evalSuite.map(testCase => ({ ...testCase, criterionIds: testCase.criterionIds.filter(id => !deferredCriteria.has(id)) }));
+
+  const runs = await collectServerSuiteHtmlProtectionAuthority({ project, testCases: project.evalSuite,
+    activeCriterionIds: baselineCases.flatMap(test => test.criterionIds),
+    runs: project.evalSuite.map((testCase) => ordered.get(testCase.id) ?? unavailableBaselineRun(testCase, "Baseline 执行未返回结果。")) }, ports.collectHtmlProtectionAuthority);
   const evaluableRuns = runs.filter((run) => run.verificationStatus === "verified" || run.verificationStatus === "partial");
   if (!evaluableRuns.length) {
     const baseline: BaselineRun = {
@@ -286,7 +296,6 @@ export async function runServerBaseline(
   }
 
   // The current-only phase keeps its complete stored paper; only its Judge projection omits future comparisons.
-  const baselineCases = project.evalSuite.map(testCase => ({ ...testCase, criterionIds: testCase.criterionIds.filter(id => !deferredCriteria.has(id)) }));
   const judgeCriteria = criteriaRequiringJudge(project.acceptanceRubric, baselineCases, runs);
   const judgeIds = new Set(judgeCriteria.map((criterion) => criterion.id));
   const evaluableIds = new Set(
@@ -331,7 +340,7 @@ export async function runServerBaseline(
   try {
     if (!judgeRuns.length || !effectiveCriteria.length) {
       evaluation = settleDeterministicEvaluation({
-        criteria: project.acceptanceRubric, scope: project,
+        criteria: project.acceptanceRubric, scope: project, measurementPhase: "current-baseline",
         testCases: baselineCases,
         runs,
         notes: ["Server Baseline：仅结算已获得的确定性证据；缺失语义评审的标准保持 UNVERIFIED，通用质量维度未测量。"],
@@ -340,7 +349,7 @@ export async function runServerBaseline(
       const judged = structuredClone(await ports.judge(structuredClone(judgePayload)));
       independentJudge = structuredClone(judged);
       evaluation = settleAiEvaluation({
-        criteria: project.acceptanceRubric, scope: project,
+        criteria: project.acceptanceRubric, scope: project, measurementPhase: "current-baseline",
         testCases: baselineCases,
         runs: evaluationRuns,
         ai: judged,
@@ -394,6 +403,7 @@ export async function runServerBaseline(
     },
     updatedAt: now(),
   };
+  inheritHtmlProtectionAuthorities(project, measured);
   const readiness = baselineReadiness(measured);
   let diagnosticEligibility: OriginalHtmlBaselineDiagnosticEligibility | undefined;
   if (!requiredCapabilityGaps.length && readiness.ready && hardGateGaps.length === 1
@@ -466,6 +476,7 @@ export async function runServerBaseline(
     },
     updatedAt: checkpointAt,
   };
+  inheritHtmlProtectionAuthorities(measured, readyProject);
   return {
     project: readyProject,
     baseline,

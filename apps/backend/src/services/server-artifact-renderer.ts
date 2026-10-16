@@ -1,3 +1,5 @@
+import { restoreServerHtmlProtectionAcceptedProject } from "./server-html-protection-accepted-authority";
+import { inheritHtmlProtectionAuthorities } from "@evolution/core";
 import { decodeArtifactUtf8 } from "@evolution/adapters";
 import {createHash} from "node:crypto";
 import JSZip from "jszip";
@@ -192,6 +194,10 @@ export async function renderAcceptedProjectArtifacts(
   artifacts:OutputArtifact[],
   store:ArtifactStorePort=getServerArtifactStore(),
 ){
+  const candidateId=artifacts.filter(artifact=>artifact.kind==="primary")[0]?.candidateId;
+  if(!candidateId)throw Error("Accepted primary Candidate is missing");
+  const restored=await restoreServerHtmlProtectionAcceptedProject({project,candidateId},{store});
+  project=restored.project;
   const targets=project.sourceArtifacts.filter((source)=>source.role==="target");
   const primary=artifacts.filter((artifact)=>artifact.kind==="primary");
   if(primary.length!==targets.length)throw new Error("Primary artifact 集合未完整覆盖 Gate F Target。");
@@ -228,7 +234,9 @@ export async function renderAcceptedProjectArtifacts(
       ||artifact.frozenArtifact.mimeType!==frozen.mimeType
     ))throw new Error("Primary artifact "+artifact.name+" 的冻结引用与 Gate F 不一致。");
   }
-  assertDeliverablePackageIdentity({...project,outputArtifacts:artifacts});
+  const packageView={...project,outputArtifacts:artifacts};
+  inheritHtmlProtectionAuthorities(project,packageView);
+  assertDeliverablePackageIdentity(packageView);
   const receipts:Array<{sourceArtifactId:string;artifactRef:string;sha256:string;size:number;name:string}>=[];
   const rendered:OutputArtifact[]=[];
   for(const artifact of artifacts){
@@ -257,5 +265,6 @@ export async function renderAcceptedProjectArtifacts(
       renderLimitations:[],
     });
   }
+  await restored.assertStable();
   return {outputArtifacts:rendered,receipts};
 }

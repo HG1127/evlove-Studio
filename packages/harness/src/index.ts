@@ -29,3 +29,6 @@ export { serverHoldoutExecutionEvidenceFingerprint } from "./server-holdout-reco
 export * from "./server-failed-control-retry";
 
 export * from "./reviewed-holdout-policy";
+export * from "./server-html-protection-authority";
+
+export { serverJudgeEvidence } from "./server-judge-evidence";

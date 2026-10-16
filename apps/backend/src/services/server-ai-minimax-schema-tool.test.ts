@@ -1,6 +1,8 @@
 // @vitest-environment node
 import {afterEach,describe,expect,it,vi} from "vitest";
 import {jsonSchemas} from "@evolution/contracts";
+import {HTML_PROTECTION_SEMANTIC_OBSERVATION_VERSION} from "./html-protection-semantic-instruction";
+import {HTML_PROTECTION_VISUAL_OBSERVATION_VERSION} from "./html-protection-visual-instruction";
 import {runServerAi,serverAiScoringRouteFingerprint,DIRECT_AI_SCHEMA_INSTRUCTION_VERSION,DIRECT_AI_SCHEMA_RECOVERY_VERSION} from "./ai-gateway";
 import {probeServerAiRuntime,resetServerAiRuntimeProbeCache} from "./server-ai-health";
 import {createHash} from "node:crypto";
@@ -71,7 +73,7 @@ describe("native schema carrier retains independent evaluation semantics",()=>{
   });
 });
 function fingerprint(config:typeof selected,version?:string){
-  return createHash("sha256").update(JSON.stringify({route:["openai-compatible",config.baseUrl,config.model,config.protocol,config.responseFormat],protectionSettlementPolicy:HTML_PROTECTION_SETTLEMENT_POLICY,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,evaluationSafetyInstructionVersion:INDEPENDENT_EVALUATION_SAFETY_INSTRUCTION_VERSION,responsesOutputVersion:undefined,chatOutputVersion:COMPATIBLE_CHAT_OUTPUT_VERSION,directSchemaInstructionVersion:DIRECT_AI_SCHEMA_INSTRUCTION_VERSION,directSchemaRecoveryVersion:DIRECT_AI_SCHEMA_RECOVERY_VERSION,minimaxFinalChannelVersion:MINIMAX_CHAT_FINAL_CHANNEL_VERSION,minimaxSchemaToolVersion:version,finalOutputVersion:STRUCTURED_AI_FINAL_OUTPUT_VERSION})).digest("hex");
+  return createHash("sha256").update(JSON.stringify({route:["openai-compatible",config.baseUrl,config.model,config.protocol,config.responseFormat],protectionSettlementPolicy:HTML_PROTECTION_SETTLEMENT_POLICY,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,evaluationSafetyInstructionVersion:INDEPENDENT_EVALUATION_SAFETY_INSTRUCTION_VERSION,htmlProtectionSemanticObservationVersion:HTML_PROTECTION_SEMANTIC_OBSERVATION_VERSION,htmlProtectionVisualObservationVersion:HTML_PROTECTION_VISUAL_OBSERVATION_VERSION,responsesOutputVersion:undefined,chatOutputVersion:COMPATIBLE_CHAT_OUTPUT_VERSION,directSchemaInstructionVersion:DIRECT_AI_SCHEMA_INSTRUCTION_VERSION,directSchemaRecoveryVersion:DIRECT_AI_SCHEMA_RECOVERY_VERSION,minimaxFinalChannelVersion:MINIMAX_CHAT_FINAL_CHANNEL_VERSION,minimaxSchemaToolVersion:version,finalOutputVersion:STRUCTURED_AI_FINAL_OUTPUT_VERSION})).digest("hex");
 }
 it("versions only native schema scoring and excludes credential rotation",async()=>{
   const actual=await withExplicitServerAiConnection(selected,serverAiScoringRouteFingerprint);

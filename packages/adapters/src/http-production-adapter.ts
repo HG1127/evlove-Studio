@@ -1,4 +1,5 @@
 import {
+  AcceptedPackageDownloadRequestSchema, AcceptedPackageDownloadSchema, AcceptedFileDownloadRequestSchema, AcceptedFileDownloadIdentitySchema,
   EvolutionEventSchema,
   EvolutionJobCancelResponseSchema,
   EvolutionJobSchema,
@@ -89,6 +90,25 @@ export function createHttpProductionPorts(apiUrl:string):ProductionRuntimePorts{
   const root=baseUrl(apiUrl);
   const missionRevisions=new Map<string,number>();
   return {
+    acceptedDownloads:{
+      package:async(raw)=>{
+        const input=AcceptedPackageDownloadRequestSchema.parse(raw),query=new URLSearchParams(input);
+        const result=await json(await fetch(`${root}/accepted-file?${query}`,{credentials:"same-origin",cache:"no-store"}),AcceptedPackageDownloadSchema.parse);
+        if(result.missionId!==input.missionId||result.candidateId!==input.candidateId)throw Error("Accepted package receipt identity mismatch");
+        return result;
+      },
+      file:async(raw)=>{
+        const input=AcceptedFileDownloadRequestSchema.parse(raw),query=new URLSearchParams(input),response=await fetch(`${root}/accepted-file?${query}`,{credentials:"same-origin",cache:"no-store"});
+        await expectOk(response,"Accepted file get failed");
+        const encoded=response.headers.get("X-Evolution-Accepted-Identity");if(!encoded)throw Error("Accepted file receipt is missing");
+        const identity=AcceptedFileDownloadIdentitySchema.parse(JSON.parse(decodeURIComponent(encoded)));
+        if(identity.missionId!==input.missionId||identity.candidateId!==input.candidateId||identity.sourceArtifactId!==input.sourceArtifactId
+          ||response.headers.get("Content-Type")!==identity.mimeType||response.headers.get("Content-Length")!==String(identity.size))throw Error("Accepted file receipt identity mismatch");
+        const bytes=new Uint8Array(await response.arrayBuffer()),digest=await crypto.subtle.digest("SHA-256",bytes),sha=[...new Uint8Array(digest)].map(value=>value.toString(16).padStart(2,"0")).join("");
+        if(bytes.byteLength!==identity.size||sha!==identity.sha256)throw Error("Accepted file bytes mismatch");
+        return Object.freeze({identity:Object.freeze(identity),get bytes(){return new Uint8Array(bytes);}});
+      },
+    },
     missions:{
       initialize:async()=>undefined,
       list:async()=>{

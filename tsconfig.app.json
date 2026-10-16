@@ -32,5 +32,5 @@
       "@evolution/testkit": ["./packages/testkit/src/index.ts"]
     }
   },
-  "include": ["src", "packages/*/src"]
+  "include": ["src", "packages/*/src", "apps/backend/src/html-protection-runtime.d.ts"]
 }

@@ -8,6 +8,7 @@ import type {
 } from "@evolution/contracts";
 import {
   computeGapAnalysis,
+  inheritHtmlProtectionAuthorities,
   evidenceFingerprint,
   gapHeadline,
   indexScopedAcceptanceResults,
@@ -383,6 +384,7 @@ export async function runServerHoldout(
     },
     updatedAt: completedAt,
   };
+  inheritHtmlProtectionAuthorities(inputProject, project);
   return {
     control: evidenceReason ? "stop" : "continue",
     project,
