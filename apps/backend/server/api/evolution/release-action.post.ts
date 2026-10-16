@@ -1,5 +1,7 @@
+import {htmlProtectionCanonicalJson as canonical} from "../../../src/services/server-html-protection-authority-attestation";
+import {restoreServerHtmlProtectionAcceptedProject} from "../../../src/services/server-html-protection-accepted-authority";
 import { createError, defineEventHandler, readBody } from "nitro/h3";
-import { createEvolutionEvent, VercelReleaseActionRequestSchema,type ReleaseOutcomeTelemetryStatus } from "@evolution/contracts";
+import { createEvolutionEvent, VercelReleaseActionRequestSchema,type ReleaseApprovalGrant,type ReleaseOutcomeTelemetryStatus } from "@evolution/contracts";
 import { applyProductionLearningGovernance, applyReleaseResultToProject, htmlProtectionAcceptanceBlocker, projectHasOnlineReleaseTarget, projectUsesConnectorRelease, projectUsesHttpRelease, projectUsesVercelRelease } from "@evolution/core";
 import { getServerVercelReleaseConfig } from "../../../src/server-env";
 import { getServerProductionRuntime } from "../../../src/services/production-runtime";
@@ -17,7 +19,7 @@ export default defineEventHandler(async(event)=>{
   await requireGovernedEvolutionPermission(event,"release.execute");
   const input=VercelReleaseActionRequestSchema.parse(await readBody(event));
   const runtime=getServerProductionRuntime();
-  const mission=await runtime.missions.get(input.missionId);
+  let mission=await runtime.missions.get(input.missionId);
   if(!mission)fail(404,"Mission not found");
 
   const releaseTarget=mission.releaseTarget;
@@ -30,12 +32,19 @@ export default defineEventHandler(async(event)=>{
     }
   }
 
-  const candidate=mission.candidates.find((item)=>item.id===input.candidateId)
-    ?? (mission.searchChampion?.candidate?.id===input.candidateId?mission.searchChampion.candidate:undefined);
-  if(!candidate)fail(404,"Release Candidate not found");
-  if(mission.experimentRun.winnerId!==candidate.id)fail(409,"Only the experiment winner can be released");
+  const subjectId=input.action==="rollback"?mission.release.candidateId:input.candidateId;
+  if(!subjectId)fail(409,"Rollback stored Candidate is unavailable");
+  if(input.action==="rollback"&&input.candidateId!==subjectId)fail(409,"Rollback Candidate must match the stored deployed subject");
+  const matches=mission.candidates.filter(item=>item.id===subjectId);if(matches.length>1)fail(409,"Release Candidate is ambiguous");
+  const champion=mission.searchChampion?.candidate?.id===subjectId?mission.searchChampion.candidate:undefined;
+  if(matches[0]&&champion&&canonical(matches[0])!==canonical(champion))fail(409,"Stored Release Candidate copies disagree");
+  const candidate=matches[0]??champion;if(!candidate)fail(404,"Release Candidate not found");
+  if(input.action!=="rollback"&&mission.experimentRun.winnerId!==candidate.id)fail(409,"Only the experiment winner can be released");
 
-  let approvalGrantId:string|undefined;
+  if(input.action!=="rollback"){
+    try{mission=(await restoreServerHtmlProtectionAcceptedProject({project:mission,candidateId:candidate.id})).project;}catch{fail(409,"Stored complete protection authority could not be independently restored");}
+  }
+  let approvalGrantId:string|undefined,approvalGrant:ReleaseApprovalGrant|undefined;
   if(input.action!=="rollback"){
     const contractBlocker=htmlProtectionAcceptanceBlocker(mission);
     if(contractBlocker)fail(409,contractBlocker);
@@ -46,10 +55,11 @@ export default defineEventHandler(async(event)=>{
     if(mission.gates.find((gate)=>gate.id==="artifact-ready")?.status!=="approved")fail(409,"Artifact Ready gate is not approved");
     if(mission.gates.find((gate)=>gate.id==="release-ready")?.status!=="approved")fail(409,"Release Ready gate is not approved");
     try{
-      approvalGrantId=(await requireActiveReleaseApprovalGrant({
+      approvalGrant=await requireActiveReleaseApprovalGrant({
         missionId:mission.id,
         candidateId:candidate.id,
-      })).id;
+      });
+      approvalGrantId=approvalGrant.id;
     }catch(error){
       fail(409,error instanceof Error?error.message:"Release approval is required");
     }
@@ -116,7 +126,7 @@ export default defineEventHandler(async(event)=>{
       stableDeploymentId:mission.release.stableDeploymentId,
       healthPath:releaseTarget?.healthPath,
       artifactHashes,
-    });
+    },undefined,approvalGrant);
   }catch(error){
     const code=(error as {code?:string}).code;
     if(vercelRelease&&code==="VERCEL_RELEASE_CREDENTIAL_REQUIRED")fail(503,"Vercel Release 写操作尚未授权：需要 VERCEL_RELEASE_TOKEN");

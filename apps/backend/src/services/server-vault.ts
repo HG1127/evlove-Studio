@@ -106,6 +106,16 @@ function metadataFromRow(row:VaultRow):VaultSecretMetadata{
   });
 }
 
+/** Opaque stored-row commitment. It hashes sealed bytes, never a decrypted credential. */
+function sealedRecordIdentity(row:VaultRow){
+  if(typeof row.ciphertext!=="string"||typeof row.iv!=="string"||typeof row.auth_tag!=="string")
+    throw Object.assign(new Error("Vault sealed row is invalid"),{code:"VAULT_RECORD_INVALID"});
+  const metadata=metadataFromRow(row);
+  const sealedRecordSha256=createHash("sha256").update(JSON.stringify({metadata,
+    ciphertext:row.ciphertext,iv:row.iv,authTag:row.auth_tag})).digest("hex");
+  return {metadata,sealedRecordSha256};
+}
+
 function restClient(){
   const config=getServerSupabaseConfig();
   const root=config.url.replace(/\/+$/,"")+"/rest/v1";
@@ -172,6 +182,23 @@ export async function getVaultSecretMetadata(id:string){
   return rows?.[0]?metadataFromRow(rows[0]):undefined;
 }
 
+/** Fresh read without decryption: also detects concurrent same-version row replacement. */
+export async function getVaultSecretRecordIdentity(id:string){
+  const workspaceId=getEvolutionWorkspaceId();
+  if(!workspaceId)throw Object.assign(new Error("Vault workspace is unavailable"),{code:"VAULT_NOT_CONFIGURED"});
+  const {request}=restClient();
+  const rows=await request(
+    "evolution_vault_secrets?select=workspace_id,id,name,purpose,scopes,version,key_id,algorithm,created_by,created_at,updated_at,ciphertext,iv,auth_tag"
+    +"&workspace_id=eq."+encodeURIComponent(workspaceId)+"&id=eq."+encodeURIComponent(id)+"&limit=1",
+  ) as VaultRow[];
+  const row=rows?.[0];
+  if(!row)return undefined;
+  const identity=sealedRecordIdentity(row);
+  if(identity.metadata.workspaceId!==workspaceId||identity.metadata.id!==id)
+    throw Object.assign(new Error("Vault record identity mismatch"),{code:"VAULT_IDENTITY_MISMATCH"});
+  return identity;
+}
+
 export async function putVaultSecret(
   raw:VaultSecretPutRequest,
   actor:Pick<EvolutionActor,"id"|"role">,
@@ -226,7 +253,8 @@ export async function putVaultSecret(
   });
 }
 
-export async function resolveVaultSecret(id:string,requiredScope?:string){
+/** Private execution boundary: value and metadata come from the same authenticated row. */
+export async function resolveVaultSecretWithMetadata(id:string,requiredScope?:string){
   const {workspaceId,encryption}=requireVaultContext();
   const {request}=restClient();
   const rows=await request(
@@ -240,6 +268,9 @@ export async function resolveVaultSecret(id:string,requiredScope?:string){
     throw error;
   }
   const metadata=metadataFromRow(row);
+  if(metadata.workspaceId!==workspaceId||metadata.id!==id){
+    throw Object.assign(new Error("Vault record identity mismatch"),{code:"VAULT_IDENTITY_MISMATCH"});
+  }
   if(requiredScope&&metadata.scopes.length&&!metadata.scopes.includes(requiredScope)){
     const error=new Error("Vault secret "+id+" does not allow scope "+requiredScope);
     Object.assign(error,{code:"VAULT_SCOPE_DENIED"});
@@ -259,7 +290,7 @@ export async function resolveVaultSecret(id:string,requiredScope?:string){
     throw new Error("Vault ciphertext row is invalid");
   }
   try{
-    return decryptVaultValue({
+    const value=decryptVaultValue({
       ciphertext:row.ciphertext,
       iv:row.iv,
       authTag:row.auth_tag,
@@ -269,11 +300,17 @@ export async function resolveVaultSecret(id:string,requiredScope?:string){
       keyId:metadata.keyId,
       key,
     });
+    return {value,...sealedRecordIdentity(row)};
   }catch{
     const error=new Error("Vault secret authentication failed");
     Object.assign(error,{code:"VAULT_DECRYPT_FAILED"});
     throw error;
   }
+}
+
+/** Compatibility for callers that need only the private value. */
+export async function resolveVaultSecret(id:string,requiredScope?:string){
+  return (await resolveVaultSecretWithMetadata(id,requiredScope)).value;
 }
 
 export async function deleteVaultSecret(id:string){

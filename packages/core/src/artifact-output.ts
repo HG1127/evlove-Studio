@@ -4,6 +4,7 @@ import type {
   EvolveProject,
   OutputArtifact,
 } from "@evolution/contracts";
+import { inheritHtmlProtectionAuthorities } from "./html-protection-authority";
 import { deliveryReadiness } from "./delivery-readiness";
 import { htmlProtectionAcceptanceBlocker } from "./html-protection-scope";
 import { hasExactFrozenArtifactSet } from "./artifact-identity";
@@ -97,6 +98,7 @@ export function materializeChampionOutputs(
     validationRun:champion.validation,
     artifactAcceptance:champion.artifactAcceptance,
   };
+  inheritHtmlProtectionAuthorities(project,settled);
   if(!deliveryReadiness(settled).ready)return[];
 
   const primary=(champion.candidate.artifactSnapshots??[]).map((artifact,index):OutputArtifact=>({

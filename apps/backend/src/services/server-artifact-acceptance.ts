@@ -1,5 +1,6 @@
+import {restoreServerHtmlProtectionValidationProject} from "./server-html-protection-accepted-authority";
 import type {AcceptanceCriterion,Candidate,EvolveProject,FrozenArtifact} from "@evolution/contracts";
-import {indexUniqueById} from "@evolution/core";
+import {indexUniqueById,hasHtmlProtectionTarget,isWholeProtectionCriterion} from "@evolution/core";
 import {runServerArtifactAcceptance,type ServerArtifactVerification} from "@evolution/harness";
 import {runServerAi} from "./ai-gateway";
 import {getServerArtifactStore} from "./artifact-runtime";
@@ -120,5 +121,16 @@ export async function repairServerArtifactCandidate(args:{
 }
 
 export async function runServerMissionArtifactAcceptance(project:EvolveProject,options?:{repair?:boolean}){
-  return runServerArtifactAcceptance(project,{verifyFrozenArtifacts:verifyServerFrozenCandidateArtifacts,...(options?.repair===false?{}:{repairCandidate:repairServerArtifactCandidate})});
+  const requiresWholeProtection=hasHtmlProtectionTarget(project)!==false&&project.acceptanceRubric.some(isWholeProtectionCriterion);
+  let restored:Awaited<ReturnType<typeof restoreServerHtmlProtectionValidationProject>>|undefined;
+  if(requiresWholeProtection&&project.validationRun.candidateId){
+    try{restored=await restoreServerHtmlProtectionValidationProject({project,candidateId:project.validationRun.candidateId});project=restored.project;}
+    catch{/* Core retains an unverified refusal; saved result DTOs cannot grant complete authority. */}
+  }
+  const outcome=await runServerArtifactAcceptance(project,{verifyFrozenArtifacts:verifyServerFrozenCandidateArtifacts,...(options?.repair===false?{}:{repairCandidate:repairServerArtifactCandidate})});
+  if(outcome.accepted){
+    if(requiresWholeProtection&&!restored)throw Error("Independent complete protection restoration is missing");
+    await restored?.assertStable();
+  }
+  return outcome;
 }

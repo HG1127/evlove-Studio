@@ -1,3 +1,4 @@
+import { HtmlProtectionAuthorityReferenceSchema } from "./html-protection-authority-contract";
 import { z } from "zod";
 import { BrowserStepSchema } from "./browser-step-contract";
 export { BrowserStepSchema } from "./browser-step-contract";
@@ -499,6 +500,7 @@ export const TestCaseSchema = z.object({
 export type TestCase = z.infer<typeof TestCaseSchema>;
 
 export const TargetRunResultSchema = z.object({
+  htmlProtectionAuthorityRefs: z.array(HtmlProtectionAuthorityReferenceSchema).max(100).optional(),
   htmlProtectionProof: HtmlProtectionProofSchema.optional(),
   artifactHash:z.string().optional(),
   screenshots:z.array(z.object({name:z.string(),width:z.number(),height:z.number(),dataUrl:z.string(),artifactHash:z.string()})).optional(),
