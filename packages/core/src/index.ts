@@ -52,6 +52,8 @@ export * from "./html-document-observation";
 
 export * from "./baseline-comparison-phase";
 export * from "./html-protection-proof";
+export * from "./html-protection-operational-scope";
+export * from "./html-protection-native-visual-delta";
 
 export * from "./html-protection-inventory";
 export * from "./html-protection-file-comparison";
@@ -88,3 +90,5 @@ export * from "./html-protection-whole-search-profile";
 export * from "./html-protection-authority";
 export * from "./html-protection-proof-assembly";
 export * from "./html-protection-static-observations";
+
+export { assertPackageEvidenceContents } from "./artifact-package-evidence";

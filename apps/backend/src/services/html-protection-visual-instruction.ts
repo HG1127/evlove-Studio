@@ -1,6 +1,7 @@
-export const HTML_PROTECTION_VISUAL_OBSERVATION_VERSION = "whole-native-paired-visual-observation-v1";
+export const HTML_PROTECTION_VISUAL_OBSERVATION_VERSION = "whole-native-paired-visual-observation-v2-complete-native-delta";
 export const HTML_PROTECTION_VISUAL_OBSERVATION_INSTRUCTION = [
   "Observe the actual supplied Original/executed PNG pairs and their native DOM/style/layout scope.",
+  "When a complete nativeComparison is supplied, inspect ALL its node/style/pseudo/layout differences and the actual images; echo nativeComparison.sha256 as nativeComparisonSha256. Only declared existing-body text refinements may change document flow. Other losses must be changed; unknown comparison must be unavailable. When absent return nativeComparisonSha256:null.",
   "Return exactly one row for each supplied observationId, preserving both actual image hashes.",
   "Describe concrete visible rendering/retention or change within those exact regions, with bounded image coordinates.",
   "New or refined content may move later content in document flow; compare the supplied original component mapping and protected visual contract.",
@@ -13,8 +14,8 @@ const region = { type: "object", additionalProperties: false, properties: { x: {
 export const htmlProtectionVisualObservationJsonSchema = { name: "htmlProtectionVisualObservations", schema: { type: "object", additionalProperties: false,
   properties: { schemaVersion: { type: "string", enum: ["html-protection-visual-observations-v1"] }, observations: { type: "array", minItems: 1, maxItems: 2,
     items: { type: "object", additionalProperties: false, properties: { observationId: { type: "string" }, originalImageSha256: { type: "string" },
-      executedImageSha256: { type: "string" }, status: { type: "string", enum: ["retained", "changed", "unavailable"] },
+      executedImageSha256: { type: "string" }, nativeComparisonSha256: { type: ["string","null"] }, status: { type: "string", enum: ["retained", "changed", "unavailable"] },
       originalRegions: { type: "array", items: region }, executedRegions: { type: "array", items: region }, observedRendering: { type: "string" },
       differences: { type: "array", items: { type: "string" } } },
-      required: ["observationId", "originalImageSha256", "executedImageSha256", "status", "originalRegions", "executedRegions", "observedRendering", "differences"] } } },
+      required: ["observationId", "originalImageSha256", "executedImageSha256", "nativeComparisonSha256", "status", "originalRegions", "executedRegions", "observedRendering", "differences"] } } },
   required: ["schemaVersion", "observations"] } } as const;

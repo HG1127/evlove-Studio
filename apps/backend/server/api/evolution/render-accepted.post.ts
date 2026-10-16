@@ -19,10 +19,12 @@ export default defineEventHandler(async(event)=>{
   const mission=await runtime.missions.get(input.missionId);
   if(!mission)throw createError({statusCode:404,statusMessage:"Mission not found"});
   const champion=mission.searchChampion;
-  const candidateId=input.candidateId??champion?.candidate?.id;
+  const candidateId=input.candidateId??mission.artifactAcceptance.candidateId;
   const candidate=candidateId===champion?.candidate?.id?champion?.candidate:mission.candidates.find((item)=>item.id===candidateId);
   if(!candidate)throw createError({statusCode:409,statusMessage:"Requested accepted Candidate not found"});
-  const restored=await restoreServerHtmlProtectionAcceptedProject({project:mission,candidateId:candidate.id});
+  const restored=await restoreServerHtmlProtectionAcceptedProject({project:mission,candidateId:candidate.id},{readMission:id=>runtime.missions.get(id)}).catch(error=>{
+    throw createError({statusCode:409,statusMessage:error instanceof Error?error.message:"Stored acceptance cannot be independently restored"});
+  });
   let artifacts;
   try{
     artifacts=candidate.id===champion?.candidate?.id
@@ -31,7 +33,7 @@ export default defineEventHandler(async(event)=>{
   }catch(error){
     throw createError({statusCode:409,statusMessage:error instanceof Error?error.message:"Candidate is not deliverable"});
   }
-  const rendered=await renderAcceptedProjectArtifacts(restored.project,artifacts);
+  const rendered=await renderAcceptedProjectArtifacts(restored.project,artifacts,undefined,{readMission:id=>runtime.missions.get(id)});
   const updated={
     ...mission,
     outputArtifacts:rendered.outputArtifacts,

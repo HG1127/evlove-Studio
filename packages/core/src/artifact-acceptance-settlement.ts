@@ -5,6 +5,7 @@ import type {
   FrozenArtifact,
   ValidationRun,
 } from "@evolution/contracts";
+import { HtmlProtectionOperationalReportScopeSchema } from "@evolution/contracts";
 import { evidenceFingerprint } from "./evidence-binding";
 import { htmlProtectionAcceptanceBlocker } from "./html-protection-scope";
 import { hasAuthoritativeHiddenRelease, hasFullHiddenMeasurement, hasVerifiedHiddenBaseline } from "./hidden-validation-evidence";
@@ -118,6 +119,7 @@ export function settleArtifactAcceptanceFromValidation(args:{
   return {
     id:`artifact-acceptance-server-${Date.parse(now)||Date.now()}`,
     status,
+    ...(args.project.htmlProtectionOperationalScope ? {confirmedOperationalScope:HtmlProtectionOperationalReportScopeSchema.parse(args.project.htmlProtectionOperationalScope)} : {}),
     frozenArtifacts:allTargetsFrozen?args.frozenArtifacts:undefined,
     candidateId:args.candidate.id,
     evidenceFingerprint:binding,
@@ -130,7 +132,7 @@ export function settleArtifactAcceptanceFromValidation(args:{
     attempts:args.project.artifactAcceptance.attempts??0,
     maxRepairAttempts:args.project.artifactAcceptance.maxRepairAttempts??3,
     summary:passed
-      ?"Gate F 已复用同一 Candidate 的 Hidden Validation 证据，并校验 exact frozen Artifact bytes/hash；Artifact Ready。"
+      ?(args.project.htmlProtectionOperationalScope ? "仅限人工确认的完整 Original/登记控件与状态/登记视口范围；范围外行为仍未验证，未证明全部未知行为。 " : "")+"Gate F 已复用同一 Candidate 的 Hidden Validation 证据，并校验 exact frozen Artifact bytes/hash；Artifact Ready。"
       : status==="unverified"
         ?contractBlocker ?? "Gate F 尚缺 exact-fingerprint 验证证据或 frozen Artifact 字节证明；保持 UNVERIFIED，不把能力缺口当产品失败。"
         : `Gate F 未通过：${verifiedFailures.length} 个已验证 Criterion 失败或交付阈值未达标。`,

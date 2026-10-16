@@ -14,13 +14,14 @@ export default defineEventHandler(async(event)=>{
   let mission=await getServerProductionRuntime().missions.get(input.projectId);
   if(!mission)fail("Release Mission not found; stored acceptance authority is required");
   const rollback=input.action==="rollback";
+  if(!projectUsesHttpRelease(mission)||!mission.releaseTarget?.connectionId)fail("Stored Mission is not connected to an HTTP Release Target");
+  if(input.connectionId!==mission.releaseTarget.connectionId)fail("Release connection does not match the stored target");
+
   if(!rollback){
     const subject=currentReleaseCandidate(mission);if(!subject)fail("Exact accepted release Candidate is missing");
     try{mission=(await restoreServerHtmlProtectionAcceptedProject({project:mission,candidateId:subject.id})).project;}catch{fail("Stored complete protection authority could not be independently restored");}
     const blocker=htmlProtectionAcceptanceBlocker(mission);if(blocker)fail(blocker);
   }
-  if(!projectUsesHttpRelease(mission)||!mission.releaseTarget?.connectionId)fail("Stored Mission is not connected to an HTTP Release Target");
-  if(input.connectionId!==mission.releaseTarget.connectionId)fail("Release connection does not match the stored target");
   const championCandidate=mission.searchChampion?.candidate;
   const candidate=rollback
     ?mission.candidates.find(item=>item.id===mission.release.candidateId)
@@ -44,7 +45,7 @@ export default defineEventHandler(async(event)=>{
     return await executeServerReleaseProvider(mission,{
       action:input.action,artifactHashes:rollback?[]:expectedReleaseArtifactHashes(candidate),
       deploymentId:rollback?mission.release.stableDeploymentId:mission.release.deploymentId,
-      stableDeploymentId:mission.release.stableDeploymentId,healthPath:mission.releaseTarget.healthPath,
+      stableDeploymentId:mission.release.stableDeploymentId,healthPath:mission.releaseTarget?.healthPath,
     },undefined,approvalGrant);
   }catch(error){
     if((error as {code?:string}).code==="TARGET_PROXY_NOT_CONFIGURED")throw createError({statusCode:503,statusMessage:error instanceof Error?error.message:String(error)});

@@ -3,6 +3,7 @@ import {
   type AcceptanceCriterion, type Candidate, type EvolveProject, type HtmlProtectionEvidence,
   type HtmlProtectionObligation, type HtmlProtectionProofBinding, type TargetRunResult, type TestCase,
 } from "@evolution/contracts";
+import { assessHtmlProtectionOperationalAcceptance, confirmedHtmlProtectionOperationalScope } from "./html-protection-operational-scope";
 import { baselineDeferredComparisonCriterionIds } from "./baseline-comparison-phase";
 import { validateHtmlProtectionProof, type HtmlProtectionProofValidation } from "./html-protection-proof";
 
@@ -11,6 +12,7 @@ export const HTML_PROTECTION_AUTHORITY_POLICY = "html-protection-independent-aut
 export type HtmlProtectionAuthority = Readonly<{ readonly capability: "html-protection-authority-v1" }>;
 type Record = {
   binding: HtmlProtectionProofBinding; hidden: boolean; paper: string; criterion: string; subjectIdentity: string; run: string; contract: string;
+  operationalAcceptance?: ReturnType<typeof assessHtmlProtectionOperationalAcceptance>;
   validation: HtmlProtectionProofValidation; observedAt: number; expiresAt: number;
 };
 const records = new WeakMap<HtmlProtectionAuthority, Record>();
@@ -53,6 +55,7 @@ function canonical(value: unknown): string {
 export function htmlProtectionAuthorityContract(project: EvolveProject): string {
   return canonical({ policy: HTML_PROTECTION_AUTHORITY_POLICY, id: project.id, version: project.version,
     currentVersionId: project.currentVersionId, sourceArtifacts: project.sourceArtifacts,
+    ...(project.htmlProtectionOperationalScope ? { operationalScope: project.htmlProtectionOperationalScope } : {}),
     goal: project.goal, command: project.evolutionCommand, protectedItems: project.protectedItems,
     editableItems: project.editableItems, rubric: project.acceptanceRubric,
     visible: project.evalSuite, hidden: project.hiddenEvalSuite, target: project.targetConnection,
@@ -146,10 +149,14 @@ export function createHtmlProtectionAuthority(args: {
     requiredObligations: args.requiredObligations, trustedEvidence: args.trustedEvidence });
   // Honest partial and observed failure remain consumable rejection evidence.
   if (!validation.valid) return undefined;
+  let operationalAcceptance: ReturnType<typeof assessHtmlProtectionOperationalAcceptance> | undefined;
+  try { const scope = confirmedHtmlProtectionOperationalScope(args.project,binding.data.original);
+    if (scope) operationalAcceptance = assessHtmlProtectionOperationalAcceptance({scope,validation,requiredObligations:args.requiredObligations});
+  } catch { return undefined; }
   const capability = Object.freeze({ capability: "html-protection-authority-v1" as const });
   records.set(capability, { binding: structuredClone(binding.data), hidden: test.data.hidden, paper: canonical(test.data), criterion: canonical(AcceptanceCriterionSchema.parse(criterion[0])),
     subjectIdentity: identity, run: runWire(run.data),
-    contract: htmlProtectionAuthorityContract(args.project), validation: structuredClone(validation), observedAt, expiresAt });
+    contract: htmlProtectionAuthorityContract(args.project), operationalAcceptance, validation: structuredClone(validation), observedAt, expiresAt });
   return capability;
 }
 /** Only registered capabilities can cross a pure composition boundary; a JSON copy fails. */
@@ -256,7 +263,7 @@ export function htmlProtectionCriterionAuthority(args: {
   const complete = mapped.every(test => {
     const matches = applicable.filter(item => item.binding.testCaseId === test.id && item.hidden === test.hidden && item.paper === canonical(test)
       && (args.measurementPhase !== "current-baseline" || item.binding.subject.kind === "current"));
-    if (matches.length !== 1 || !matches[0]!.validation.complete || !matches[0]!.validation.passed) return false;
+    if (matches.length !== 1 || !(matches[0]!.validation.complete && matches[0]!.validation.passed || matches[0]!.operationalAcceptance?.passed)) return false;
     const arm = canonical(matches[0]!.binding.subject);
     if (subject !== undefined && subject !== arm) return false;
     subject = arm;

@@ -6,7 +6,7 @@ import { executeServerBaselineExternal } from "./server-baseline";
 import { serverArtifactSha256 } from "./server-experiment-artifacts";
 const { blobs, run, visual } = vi.hoisted(() => ({ blobs: new Map<string, Blob>(), run: vi.fn(), visual: vi.fn() }));
 vi.mock("./artifact-runtime", () => ({ getServerArtifactStore: () => ({ get: async (id: string) => blobs.get(id) }) }));
-vi.mock("@evolution/adapters/sandbox", () => ({ runVercelSandboxHtmlValidation: run, runVercelSandboxCodebaseValidation: vi.fn() }));
+vi.mock("@evolution/adapters/sandbox", async (importOriginal) => ({ ...await importOriginal<typeof import("@evolution/adapters/sandbox")>(), ...await (() => ({ runVercelSandboxHtmlValidation: run, runVercelSandboxCodebaseValidation: vi.fn() }))() }));
 vi.mock("./server-http-target-execution", async (importOriginal) => ({ ...await importOriginal<typeof import("./server-http-target-execution")>(), runServerHttpTargetBatch: vi.fn() }));
 vi.mock("./connector-target-source", () => ({ serverConnectorTargetEnabled: () => false }));
 vi.mock("./server-visual-evidence", () => ({ attachServerVisualEvidence: visual }));

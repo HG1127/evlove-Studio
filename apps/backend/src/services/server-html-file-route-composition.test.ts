@@ -12,7 +12,7 @@ vi.mock("./ai-gateway",()=>({serverAiScoringRouteFingerprint:async()=>"independe
 vi.mock("./server-visual-evidence",()=>({attachServerVisualEvidence:async(_p:unknown,_t:unknown,runs:unknown)=>runs}));
 vi.mock("./connector-target-source",()=>({serverConnectorTargetEnabled:()=>false}));
 vi.mock("./server-http-target-execution",async(original)=>({...await original<typeof import("./server-http-target-execution")>(),runServerHttpTargetBatch:mocks.http}));
-vi.mock("@evolution/adapters/sandbox",()=>({runVercelSandboxHtmlValidation:mocks.sandbox,runVercelSandboxCodebaseValidation:vi.fn()}));
+vi.mock("@evolution/adapters/sandbox",async (importOriginal) => ({ ...await importOriginal<typeof import("@evolution/adapters/sandbox")>(), ...await (()=>({runVercelSandboxHtmlValidation:mocks.sandbox,runVercelSandboxCodebaseValidation:vi.fn()}))() }));
 vi.mock("@evolution/harness",async(original)=>({...await original<typeof import("@evolution/harness")>(),runServerExperiment:(_p:unknown,ports:unknown)=>ports,runServerHoldout:(_p:unknown,ports:unknown)=>ports}));
 const original='<html><body><p id="config">Complete original configuration</p></body></html>';
 const changed='<html><body><p id="config">Complete changed configuration with defaults</p></body></html>';

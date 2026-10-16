@@ -9,6 +9,9 @@ import type {
 } from "@evolution/contracts";
 import {
   baselineReadiness,
+  hasHtmlProtectionTarget,
+  isWholeProtectionCriterion,
+  goalReadiness,
   inheritHtmlProtectionAuthorities,
   originalHtmlBaselineDiagnosticCase,
   assessOriginalHtmlBaselineDiagnosticEligibility,
@@ -122,6 +125,7 @@ export async function runServerBaseline(
     };
     return { project: paused, baseline: paused.baselineRun, ready: false, reason: scoringBlocker, capabilityGaps: ["server-scoring-contract"] };
   }
+  if (inputProject.htmlProtectionOperationalScope && !goalReadiness(inputProject).ready) throw new Error("Confirmed operational Target Ready contract is stale");
   const targetGate = inputProject.gates.find((gate) => gate.id === "target-ready");
   if (targetGate?.status !== "approved") throw new Error("Target Ready gate is not approved");
   if (!inputProject.evalSuite.length) throw new Error("Project evalSuite is empty");
@@ -152,7 +156,8 @@ export async function runServerBaseline(
     updatedAt: startedAt,
   };
 
-  if (ports.prepareHtmlProtectionProject) project = await ports.prepareHtmlProtectionProject({ inputProject, allocatedProject: project });
+  if (ports.prepareHtmlProtectionProject && hasHtmlProtectionTarget(inputProject) !== false
+    && inputProject.acceptanceRubric.some(isWholeProtectionCriterion)) project = await ports.prepareHtmlProtectionProject({ inputProject, allocatedProject: project });
 
   const diagnosticCase = ports.readOriginalHtmlDiagnosticBinding ? originalHtmlBaselineDiagnosticCase(project) : undefined;
   let initialDiagnosticBinding: OriginalHtmlBaselineDiagnosticBinding | undefined;

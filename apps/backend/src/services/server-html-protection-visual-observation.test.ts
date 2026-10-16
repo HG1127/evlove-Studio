@@ -31,3 +31,13 @@ describe("complete physical paired native visual observations",()=>{
   it("keeps real pixel scope partial while continuous responsive/runtime scope remains unknown",()=>{const f=fixture();f.verify.unresolvedRuntimeObligationIds=["responsive"];const result=validateServerHtmlProtectionVisualObservations(f.verify);expect(result.supportedObligationIds).toEqual([]);expect(result.evidence[0]?.verificationStatus).toBe("partial");});
   it("retains missing and unavailable selected-model image observations as gaps",()=>{const f=fixture();f.raw[0]!.observations.pop();expect(validateServerHtmlProtectionVisualObservations(f.verify).gaps).toContain("html-protection-selected-model-full-visual-observation-unavailable");});
 });
+
+describe("confirmed finite native visual binding",()=>{
+  it.each(["missing","foreign","matched"] as const)("requires independently reconstructed complete native delta: %s",kind=>{
+    const f=fixture();for(const pair of f.pairs)pair.nativeComparison={sha256:"d".repeat(64)} as never;
+    const raw=f.raw.map(batch=>({...batch,observations:batch.observations.map(row=>({...row,
+      ...(kind!=="missing"?{nativeComparisonSha256:(kind==="matched"?"d":"e").repeat(64)}:{})}))}));
+    if(kind==="matched")expect(validateServerHtmlProtectionVisualObservations({...f.verify,raw}).evidence[0]?.verificationStatus).toBe("verified");
+    else expect(()=>validateServerHtmlProtectionVisualObservations({...f.verify,raw})).toThrow("native-comparison-not-observed");
+  });
+});

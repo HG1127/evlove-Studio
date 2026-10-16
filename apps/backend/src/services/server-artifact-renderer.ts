@@ -1,11 +1,11 @@
-import { restoreServerHtmlProtectionAcceptedProject } from "./server-html-protection-accepted-authority";
+import { restoreServerHtmlProtectionAcceptedProject, type ServerHtmlProtectionAcceptedPorts } from "./server-html-protection-accepted-authority";
 import { inheritHtmlProtectionAuthorities } from "@evolution/core";
 import { decodeArtifactUtf8 } from "@evolution/adapters";
 import {createHash} from "node:crypto";
 import JSZip from "jszip";
 import * as XLSX from "xlsx";
 import type {ArtifactStorePort,CandidateArtifactSnapshot,EvolveProject,OutputArtifact,SourceArtifact} from "@evolution/contracts";
-import {assertDeliverablePackageIdentity,describeArtifact,hasExactFrozenArtifactSet} from "@evolution/core";
+import {assertPackageEvidenceContents,assertDeliverablePackageIdentity,describeArtifact,hasExactFrozenArtifactSet} from "@evolution/core";
 import {getServerArtifactStore} from "./artifact-runtime";
 
 type TextRun=string|{index:number;text:string};
@@ -193,10 +193,18 @@ export async function renderAcceptedProjectArtifacts(
   project:EvolveProject,
   artifacts:OutputArtifact[],
   store:ArtifactStorePort=getServerArtifactStore(),
+  protectionPorts:ServerHtmlProtectionAcceptedPorts={},
 ){
   const candidateId=artifacts.filter(artifact=>artifact.kind==="primary")[0]?.candidateId;
-  if(!candidateId)throw Error("Accepted primary Candidate is missing");
-  const restored=await restoreServerHtmlProtectionAcceptedProject({project,candidateId},{store});
+  if(!candidateId)throw Error("Accepted primary Candidate is missing; Primary artifact 集合未完整覆盖 Gate F Target。");
+  // Reject corrupt package DTOs before physical reads; this pure check grants no acceptance authority.
+  const packageChampion=artifacts.find(artifact=>artifact.kind==="primary")?.isChampion?project.searchChampion:undefined;
+  const packageCandidate=packageChampion?.candidate??project.candidates.find(item=>item.id===candidateId);
+  const packageAcceptance=packageChampion?.artifactAcceptance??project.artifactAcceptance;
+  const packageValidation=packageChampion?.validation??project.validationRun;
+  if(!packageCandidate||!packageAcceptance||!packageValidation)throw Error("Accepted package evidence context missing");
+  assertPackageEvidenceContents({project,artifacts,candidate:packageCandidate,champion:packageChampion,acceptance:packageAcceptance,validation:packageValidation});
+  const restored=await restoreServerHtmlProtectionAcceptedProject({project,candidateId},{...protectionPorts,store});
   project=restored.project;
   const targets=project.sourceArtifacts.filter((source)=>source.role==="target");
   const primary=artifacts.filter((artifact)=>artifact.kind==="primary");

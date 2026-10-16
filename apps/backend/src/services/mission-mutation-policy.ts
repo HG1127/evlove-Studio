@@ -9,6 +9,9 @@ const SERVER_RELEASE_FIELDS=[
 function json(value:unknown){return JSON.stringify(value??null);}
 
 export function assertClientControlOwnerMutationSafe(current:EvolveProject|undefined,next:EvolveProject){
+  if(json(current?.htmlProtectionOperationalScope)!==json(next.htmlProtectionOperationalScope)) {
+    throw new Error("明确范围确认只能通过专用人工保护范围 API 修改；通用 Mission 写入不能启用、删除或替换该确认。");
+  }
   if(json(current?.campaign.serverControlOwner)!==json(next.campaign.serverControlOwner)){
     throw new Error("后台控制预留只能通过专用 Workflow API 修改");
   }

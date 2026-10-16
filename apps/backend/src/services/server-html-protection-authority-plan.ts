@@ -1,17 +1,20 @@
 import { createHash } from "node:crypto";
 import { CandidateSchema, HtmlProtectionSemanticFrozenRequirementsSchema, type Candidate, type EvolveProject, type HtmlProtectionProofBinding, type TestCase } from "@evolution/contracts";
+import { confirmedHtmlProtectionOperationalScope } from "@evolution/core";
 import { prepareServerHtmlProtectionCollectionPlan } from "./server-html-protection-collection-plan";
 import { htmlProtectionCanonicalJson } from "./server-html-protection-authority-attestation";
 export function prepareServerHtmlProtectionSemanticFrozenRequirements(args: { project: EvolveProject; testCase: TestCase; binding: HtmlProtectionProofBinding }) {
   const { project, testCase, binding } = args;
+  const operationalScope = confirmedHtmlProtectionOperationalScope(project, binding.original);
   const frozen = HtmlProtectionSemanticFrozenRequirementsSchema.parse({ schemaVersion: "html-protection-semantic-frozen-requirements-v1",
     missionId: project.id, sourceArtifactId: binding.original.sourceArtifactId, criterionId: binding.criterionId, paperSha256: binding.paperSha256,
     testCase, paper: testCase.hidden ? project.hiddenEvalSuite : project.evalSuite, rubric: project.acceptanceRubric,
+    ...(operationalScope ? { operationalScope } : {}),
     goal: project.goal, evolutionCommand: project.evolutionCommand, protectedItems: project.protectedItems, editableItems: project.editableItems });
   const sha = (value: unknown) => createHash("sha256").update(htmlProtectionCanonicalJson(value), "utf8").digest("hex");
   if (binding.missionId !== frozen.missionId || binding.testCaseId !== frozen.testCase.id
     || frozen.paper.filter(item => item.id === testCase.id && htmlProtectionCanonicalJson(item) === htmlProtectionCanonicalJson(frozen.testCase)).length !== 1
-    || sha({ version: "html-protection-paper-v1", paper: frozen.paper, rubric: frozen.rubric, protectedItems: frozen.protectedItems }) !== binding.paperSha256) {
+    || sha({ version: "html-protection-paper-v1", paper: frozen.paper, rubric: frozen.rubric, protectedItems: frozen.protectedItems, ...(operationalScope ? { operationalScope } : {}) }) !== binding.paperSha256) {
     throw Error("html-protection-semantic-frozen-paper-binding-invalid");
   }
   return { semanticRequirements: frozen, semanticRequirementsSha256: sha(frozen) };

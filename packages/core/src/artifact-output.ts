@@ -58,7 +58,7 @@ export function acceptanceArtifacts(
     mimeType:"application/json",
     kind:"acceptance-report",
     content:JSON.stringify(acceptance,null,2),
-    description:"Gate F 最终成果验收报告：逐条 Requirement Coverage、Protected Constraints、Integrity、Pairwise Improvement。",
+    description:(project.htmlProtectionOperationalScope ? "仅限人工确认的有限保护范围；未知范围外行为未验证。 " : "")+"Gate F 最终成果验收报告：逐条 Requirement Coverage、Protected Constraints、Integrity、Pairwise Improvement。",
     sourceArtifactIds:[],
     isChampion:true,
     accepted:canDeliver,

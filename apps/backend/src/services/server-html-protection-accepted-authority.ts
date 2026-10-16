@@ -97,6 +97,8 @@ export async function restoreServerHtmlProtectionValidationProject(args: { proje
 }
 /** Gate F remains an independent requirement after same-Hidden restoration. */
 export async function restoreServerHtmlProtectionAcceptedProject(args:{project:EvolveProject;candidateId:string},ports:ServerHtmlProtectionAcceptedPorts={}) {
+  // Known stale Gate F relationships fail before file I/O; positive DTOs still require full independent restoration.
+  acceptedCandidate(EvolveProjectSchema.parse(structuredClone(args.project)),args.candidateId);
   const restored=await restoreServerHtmlProtectionValidationProject(args,ports);
   acceptedCandidate(restored.project,args.candidateId);
   if(!deliveryReadiness(restored.project).ready)throw Error("html-protection-accepted-delivery-not-ready");

@@ -9,9 +9,9 @@ import download from "../../apps/backend/server/api/evolution/artifacts/[id].get
 import { acceptedPackageFixture, acceptedLegacyHtmlPaperFixture } from "@evolution/testkit";
 import { buildDeliverableZip } from "../../src/features/evolve/runtime/artifact-output-builders";
 
-const mocks = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn(), append: vi.fn(), getBlob: vi.fn(), putBlob: vi.fn(), deleteBlob: vi.fn() }));
+const mocks = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn(), append: vi.fn(), getBlob: vi.fn(), getMetadata: vi.fn(), putBlob: vi.fn(), deleteBlob: vi.fn() }));
 vi.mock("../../apps/backend/src/services/production-runtime", () => ({ getServerProductionRuntime: () => ({ missions: { get: mocks.get, save: mocks.save }, events: { append: mocks.append } }) }));
-vi.mock("../../apps/backend/src/services/artifact-runtime", () => ({ getServerArtifactStore: () => ({ get: mocks.getBlob, put: mocks.putBlob, delete: mocks.deleteBlob }) }));
+vi.mock("../../apps/backend/src/services/artifact-runtime", () => ({ getServerArtifactStore: () => ({ get: mocks.getBlob, getMetadata: mocks.getMetadata, put: mocks.putBlob, delete: mocks.deleteBlob }) }));
 vi.mock("../../apps/backend/src/services/security-policy", () => ({ requireGovernedEvolutionPermission: vi.fn(async () => undefined) }));
 vi.mock("../../src/features/evolve/runtime/artifact-blob-store", () => ({ getArtifactBlob: async (id: string) => {
   const response = await app.fetch(new Request("http://localhost/artifacts/" + encodeURIComponent(id)));
@@ -25,6 +25,7 @@ describe("frontend ZIP delivery of explicitly accepted server Candidate", () => 
     const args = acceptedPackageFixture(withChampion);
     mocks.get.mockResolvedValue(args.project);
     mocks.getBlob.mockImplementation(async (id: string) => args.blobs.get(id));
+    mocks.getMetadata.mockImplementation(async (id: string) => args.metadata.get(id));
     const response = await app.fetch(new Request("http://localhost/render-accepted", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ missionId: args.project.id, candidateId: args.current.id }) }));
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ candidateId: args.current.id });
@@ -45,6 +46,7 @@ describe("frontend ZIP delivery of explicitly accepted server Candidate", () => 
     const args = acceptedPackageFixture(true);
     mocks.get.mockResolvedValue(args.project);
     mocks.getBlob.mockImplementation(async (id: string) => args.blobs.get(id));
+    mocks.getMetadata.mockImplementation(async (id: string) => args.metadata.get(id));
     const response = await app.fetch(new Request("http://localhost/render-accepted", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ missionId: args.project.id, candidateId: args.current.id }) }));
     expect(response.status).toBe(200);
     const project = mocks.save.mock.calls[0]![0] as EvolveProject;
@@ -78,7 +80,7 @@ describe("stored whole HTML acceptance cannot deliver an evidence slice",()=>{
  for(const champion of [false,true])it.each(["search","static","mixed"] as const)("blocks "+(champion?"Champion":"Candidate")+" %s render/ZIP before artifact or storage I/O",async mode=>{
   const f=acceptedLegacyHtmlPaperFixture(champion,mode);mocks.get.mockResolvedValue(f.project);mocks.getBlob.mockImplementation(async(id:string)=>f.blobs.get(id));
   const response=await app.fetch(new Request("http://localhost/render-accepted",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({missionId:f.project.id,candidateId:champion?f.prior.id:f.current.id})}));
-  expect(response.status).toBe(409);expect(await response.text()).toContain("html-protection-scope-pending");
+  expect(response.status).toBe(409);expect(await response.text()).toMatch(/html-protection-(?:current-hidden-unaccepted|scope-pending)/);
   await expect(buildDeliverableZip(f.project)).rejects.toThrow("html-protection-scope-pending");
   for(const call of [mocks.getBlob,mocks.putBlob,mocks.deleteBlob,mocks.save,mocks.append])expect(call).not.toHaveBeenCalled();
  });

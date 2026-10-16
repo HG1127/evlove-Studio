@@ -774,3 +774,17 @@ describe("persisted fresh Baseline diagnostic refusal codes", () => {
     expect(outcome.baseline.result?.criterionScores?.find(row => row.criterionId === "SYS-INTEGRITY")).toMatchObject({ pass: false, verificationStatus: "partial" });
   });
 });
+
+
+describe("normal HTML protection Baseline preparation admission",()=>{
+ it("keeps a known non-HTML Baseline independent of HTML private owner preparation",async()=>{
+  let preparations=0;
+  await runServerBaseline(fixture(),{executeSemanticBatch:async()=>({results:[]}),judge:async()=>judge(),prepareHtmlProtectionProject:async()=>{preparations++;throw Error("Unexpected HTML preparation");}});
+  expect(preparations).toBe(0);
+ });
+ it("cannot skip the private preparation of an actual whole HTML diagnostic Baseline",async()=>{
+  const f=originalHtmlDiagnosticFixture();let preparations=0;
+  await expect(runServerBaseline(f.project,{...f.ports,prepareHtmlProtectionProject:async()=>{preparations++;throw Error("Controlled owner refusal");}})).rejects.toThrow("Controlled owner refusal");
+  expect(preparations).toBe(1);
+ });
+});

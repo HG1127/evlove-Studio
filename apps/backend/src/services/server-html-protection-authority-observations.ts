@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { HtmlProtectionWholeRuntimeActionFactSchema, type ArtifactStorePort, type HtmlProtectionEvidence, type HtmlProtectionObligation } from "@evolution/contracts";
 import { HTML_PROTECTION_AUTHORITY_POLICY, assembleHtmlProtectionProof, deriveHtmlProtectionStaticObservations,
-  supportHtmlProtectionObservedObligations, assessHtmlProtectionWholeRuntimeObservationCoverage, htmlProtectionWholeRuntimeSourcePlan, htmlProtectionWholeSubjectScriptLocations } from "@evolution/core";
+  HTML_PROTECTION_OPERATIONAL_RUNTIME_ID, assessHtmlProtectionOperationalAcceptance, supportHtmlProtectionObservedObligations, assessHtmlProtectionWholeRuntimeObservationCoverage, htmlProtectionWholeRuntimeSourcePlan, htmlProtectionWholeSubjectScriptLocations } from "@evolution/core";
 import { HtmlProtectionWholeCloudManifestSchema, HtmlProtectionWholePrivateRecordSchema,
   validateHtmlProtectionWholeReadback, HtmlProtectionOwnedRuntimeBindingSchema } from "@evolution/adapters/sandbox";
 import type { prepareServerHtmlProtectionAuthorityPlan } from "./server-html-protection-authority-plan";
@@ -50,6 +50,9 @@ export function deriveServerHtmlProtectionAuthorityObservations(args: { prepared
   semanticRaw: readonly unknown[]; visualRaw: readonly unknown[]; observedAt: string }) {
   const { prepared, roles } = args, originalHtml = prepared.physicalInputs.original.toString("utf8"), executedHtml = prepared.physicalInputs.executed.toString("utf8");
   const runtime = assessHtmlProtectionWholeRuntimeObservationCoverage({ sourcePlan: args.sourcePlan, original: roles.original, executed: roles.executed });
+  const operationalRuntime = prepared.operationalScope ? [{ obligationId: HTML_PROTECTION_OPERATIONAL_RUNTIME_ID,
+    verificationStatus: runtime.knownBehaviorFailures.length ? "failed" as const : runtime.completeNativeSequence ? "verified" as const : "unverified" as const }] : [];
+  const operationalSupported = prepared.operationalScope && runtime.completeNativeSequence ? [HTML_PROTECTION_OPERATIONAL_RUNTIME_ID] : [];
   const statics = deriveHtmlProtectionStaticObservations({ plan: prepared.obligationPlan, originalHtml, executedHtml });
   const documents = (role: "original" | "executed") => roles[role].records.filter(item => item.record.kind === "document").map(item => ({ stateId: item.record.stateId, material: item.material }));
   const originalDocuments = documents("original"), executedDocuments = documents("executed");
@@ -65,17 +68,18 @@ export function deriveServerHtmlProtectionAuthorityObservations(args: { prepared
   };
   try {
     const pairs = prepareServerHtmlProtectionVisualPairs({ originalTiles: roles.original.records.filter(item => item.record.kind === "visual-tile").map(item => ({ stateId: item.record.stateId, material: item.material })),
-      executedTiles: roles.executed.records.filter(item => item.record.kind === "visual-tile").map(item => ({ stateId: item.record.stateId, material: item.material })), expectedDocumentStates, nativeComplete: runtime.completeNativeSequence });
-    const unresolvedRuntime = prepared.obligationPlan.requiredObligations.filter(item => item.evidenceKind === "browser" && !runtime.supportedObligationIds.includes(item.id)).map(item => item.id);
+      executedTiles: roles.executed.records.filter(item => item.record.kind === "visual-tile").map(item => ({ stateId: item.record.stateId, material: item.material })), expectedDocumentStates, nativeComplete: runtime.completeNativeSequence,
+      ...(prepared.operationalScope ? {operationalDocuments:{original:originalDocuments,executed:executedDocuments}} : {}) });
+    const unresolvedRuntime = prepared.obligationPlan.requiredObligations.filter(item => item.evidenceKind === "browser" && !(prepared.operationalScope && item.kind === "unknown-runtime") && ![...runtime.supportedObligationIds,...operationalSupported].includes(item.id)).map(item => item.id);
     visual = validateServerHtmlProtectionVisualObservations({ pairs, raw: args.visualRaw, required: prepared.obligationPlan.requiredObligations, unresolvedRuntimeObligationIds: unresolvedRuntime });
   } catch {
     if (args.visualRaw.length) throw Error("html-protection-saved-visual-observations-cannot-be-rebound");
     visual = { raw: [], supportedObligationIds: [], evidence: prepared.obligationPlan.requiredObligations.filter(item => item.evidenceKind === "visual").map(item => ({ obligationId: item.id,
       verificationStatus: "unverified" as const, detail: "Complete actual paired visual observations are unavailable" })), gaps: ["html-protection-full-visual-observation-unavailable"] };
   }
-  const supported = [...new Set([...statics.supportedObligationIds, ...semantic.supportedObligationIds, ...visual.supportedObligationIds, ...runtime.supportedObligationIds])];
+  const supported = [...new Set([...statics.supportedObligationIds, ...semantic.supportedObligationIds, ...visual.supportedObligationIds, ...runtime.supportedObligationIds, ...operationalSupported])];
   const requiredObligations = supportHtmlProtectionObservedObligations(prepared.obligationPlan.requiredObligations, supported);
-  const observations = [...statics.staticFacts.map(item => ({ ...item, kind: "static" as const })), ...runtime.evidence.map(item => ({ ...item, kind: "browser" as const })),
+  const observations = [...statics.staticFacts.map(item => ({ ...item, kind: "static" as const })), ...[...runtime.evidence, ...operationalRuntime].map(item => ({ ...item, kind: "browser" as const })),
     ...runtime.knownBehaviorFailures.map(item => ({ ...item, obligationId: prepared.obligationPlan.scope.document.runtimeResidual, kind: "browser" as const })),
     ...semantic.evidence.map(item => ({ ...item, kind: "semantic" as const })), ...visual.evidence.map(item => ({ ...item, kind: "visual" as const }))];
   const trustedEvidence: HtmlProtectionEvidence[] = observations.map((item, index) => ({ schemaVersion: "html-protection-evidence-v1", id: "observed:" + index + ":" + sha(item).slice(0,32),
@@ -86,7 +90,8 @@ export function deriveServerHtmlProtectionAuthorityObservations(args: { prepared
     schemaVersion: "html-protection-evidence-v1", id: "missing:" + sha(item).slice(0,32), binding: prepared.binding, kind: "browser", producer: "browser-runner",
     obligationIds: [item.id], verificationStatus: "unverified", observedAt: args.observedAt });
   const assembled = assembleHtmlProtectionProof({ binding: prepared.binding, requiredObligations, trustedEvidence });
-  return { ...assembled, requiredObligations: requiredObligations as HtmlProtectionObligation[], trustedEvidence, components, runtime, semantic, visual,
+  const operationalAcceptance = prepared.operationalScope ? assessHtmlProtectionOperationalAcceptance({ scope: prepared.operationalScope, validation: assembled.validation, requiredObligations }) : undefined;
+  return { ...assembled, operationalAcceptance, requiredObligations: requiredObligations as HtmlProtectionObligation[], trustedEvidence, components, runtime, semantic, visual,
     policyVersion: HTML_PROTECTION_AUTHORITY_POLICY, planSha256: sha({ policy: HTML_PROTECTION_AUTHORITY_POLICY, preparedPlan: prepared.planSha256,
       semanticRequirementsSha256: prepared.semanticRequirementsSha256, sourcePlan: args.sourcePlan, requiredObligations }) };
 }
@@ -99,7 +104,7 @@ export function deriveServerHtmlProtectionAuthorityStaticObservations(args: { pr
   const trustedEvidence: HtmlProtectionEvidence[] = requiredObligations.map((item, index) => ({ schemaVersion: "html-protection-evidence-v1", id: "static-fallback:" + index,
     binding: prepared.binding, kind: item.evidenceKind, producer: ({ static: "core-static", browser: "browser-runner", semantic: "semantic-runtime", visual: "visual-judge", manual: "human" } as const)[item.evidenceKind],
     obligationIds: [item.id], verificationStatus: statics.staticFacts.find(fact => fact.obligationId === item.id)?.verificationStatus ?? "unverified", observedAt: args.observedAt }));
-  return { ...assembleHtmlProtectionProof({ binding: prepared.binding, requiredObligations, trustedEvidence }), requiredObligations, trustedEvidence,
+  return { ...assembleHtmlProtectionProof({ binding: prepared.binding, requiredObligations, trustedEvidence }), operationalAcceptance: undefined, requiredObligations, trustedEvidence,
     planSha256: sha({ policy: HTML_PROTECTION_AUTHORITY_POLICY, mode: "physical-static", preparedPlan: prepared.planSha256, semanticRequirementsSha256: prepared.semanticRequirementsSha256, requiredObligations }) };
 }
 /** Prefix bytes are retained and re-read for audit; missing custody never turns them into native PASS/failure authority. */

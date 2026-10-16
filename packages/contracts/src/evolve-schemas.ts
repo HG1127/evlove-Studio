@@ -2,6 +2,7 @@ import { HtmlProtectionAuthorityReferenceSchema } from "./html-protection-author
 import { z } from "zod";
 import { BrowserStepSchema } from "./browser-step-contract";
 export { BrowserStepSchema } from "./browser-step-contract";
+import { HtmlProtectionOperationalReportScopeSchema, HtmlProtectionOperationalScopeSchema } from "./html-protection-operational-scope-contract";
 import { HtmlProtectionProofSchema } from "./html-protection-proof-contract";
 import {ServerWorkflowControlOwnerSchema} from "./workflow-control-owner-contract";
 import { GitRepositoryBindingSchema, GitTargetSnapshotBindingSchema } from "./git-target-contract";
@@ -334,6 +335,7 @@ export const EvidenceRefSchema = z.object({
 export type EvidenceRef = z.infer<typeof EvidenceRefSchema>;
 
 export const ArtifactAcceptanceSchema = z.object({
+  confirmedOperationalScope: HtmlProtectionOperationalReportScopeSchema.optional(),
   evidenceFingerprint: z.string().optional(),
   // id 只作标识、无业务逻辑依赖；带默认值让 .prefault({}) 在 zod 4 输入类型下成立（见下方 campaign 注释）。
   id: z.string().default("artifact-acceptance"),
@@ -1169,6 +1171,7 @@ export const EvolveProjectSchema = z.object({
   protectedItems: z.array(z.string()),
   editableItems: z.array(z.string()),
   metrics: z.array(MetricSchema),
+  htmlProtectionOperationalScope: HtmlProtectionOperationalScopeSchema.optional(),
   acceptanceRubric: z.array(AcceptanceCriterionSchema).default([]),
   acceptanceRubricState: AcceptanceRubricStateSchema.prefault({}),
   evalSuite: z.array(TestCaseSchema).default([]),

@@ -20,7 +20,9 @@ export function createServerHtmlProtectionPhysicalReader(args: { project: Evolve
   }
   const metadata = async (id: string) => {
     if (!store.getMetadata) throw Error("html-protection-physical-metadata-unavailable");
-    const result = ArtifactMetadataSchema.safeParse(await store.getMetadata(id));
+    const raw = await store.getMetadata(id);
+    if (raw === undefined) throw Error("html-protection-physical-metadata-unavailable");
+    const result = ArtifactMetadataSchema.safeParse(raw);
     if (!result.success || result.data.id !== id || result.data.missionId && result.data.missionId !== args.project.id) throw Error("html-protection-physical-metadata-foreign");
     return result.data;
   };

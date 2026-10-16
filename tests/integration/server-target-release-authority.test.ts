@@ -5,9 +5,9 @@ import {beforeEach,describe,expect,it,vi} from "vitest";
 import {evidenceFingerprint} from "@evolution/core";
 import {acceptedLegacyHtmlPaperFixture,acceptedPackageFixture} from "@evolution/testkit";
 import type {Candidate} from "@evolution/contracts";
-const mocks=vi.hoisted(()=>({get:vi.fn(),grant:vi.fn(),blob:vi.fn(),provider:vi.fn()}));
-vi.mock("../../apps/backend/src/services/production-runtime",()=>({getServerProductionRuntime:()=>({missions:{get:mocks.get}})}));
-vi.mock("../../apps/backend/src/services/artifact-runtime",()=>({getServerArtifactStore:()=>({get:mocks.blob})}));
+const mocks=vi.hoisted(()=>({get:vi.fn(),grant:vi.fn(),blob:vi.fn(),metadata:vi.fn(),provider:vi.fn()}));
+vi.mock("../../apps/backend/src/services/production-runtime",()=>({getServerMissionEnvelope:async()=>({payload:await mocks.get()}),getServerProductionRuntime:()=>({missions:{get:mocks.get}})}));
+vi.mock("../../apps/backend/src/services/artifact-runtime",()=>({getServerArtifactStore:()=>({get:mocks.blob,getMetadata:mocks.metadata})}));
 vi.mock("../../apps/backend/src/services/security-policy",()=>({requireGovernedEvolutionPermission:vi.fn(async()=>undefined)}));
 vi.mock("../../apps/backend/src/services/release-approval-store",()=>({requireActiveReleaseApprovalGrant:mocks.grant,getActiveReleaseApprovalGrant:mocks.grant}));
 vi.mock("../../apps/backend/src/services/http-target-gateway",()=>({releaseHttpTarget:mocks.provider}));
@@ -30,15 +30,20 @@ function fixture(){
  p.releaseTarget={provider:"http",mode:"preview-promote",status:"connected",label:"Stored HTTP target",connectionId:"stored-http-release",healthPath:"/"};
  p.gates=[{id:"artifact-ready",status:"approved"},{id:"release-ready",status:"approved"}];
  p.release={...p.release,status:"idle",candidateId:f.prior.id,stableDeploymentId:"stored-stable",deploymentId:undefined};
+ const original=p.sourceArtifacts[0]!;const raw=new Blob([original.textContent!],{type:original.mimeType});original.size=raw.size;f.blobs.set(original.id,raw);
+ for(const [id,blob] of f.blobs){const content=id===original.id?original.textContent!:p.candidates.flatMap(candidate=>candidate.artifactSnapshots).find(snapshot=>snapshot.frozenArtifact?.blobId===id)?.content;
+  if(content!==undefined)f.metadata.set(id,{schemaVersion:"artifact-v1",id,missionId:p.id,bucket:"synthetic-private",objectPath:id,mimeType:blob.type,sizeBytes:blob.size,sha256:createHash("sha256").update(content).digest("hex"),createdAt:"2026-10-08T16:00:00.000Z",updatedAt:"2026-10-08T16:00:00.000Z"});}
+ mocks.metadata.mockImplementation(async(id:string)=>f.metadata.get(id));
+ mocks.grant.mockResolvedValue({id:"stored-active-grant",missionId:p.id,candidateId:f.prior.id,approvedRole:"approver",approvedAt:"2026-01-01T00:00:00.000Z",expiresAt:"2099-01-01T00:00:00.000Z"});
  mocks.get.mockResolvedValue(p);mocks.blob.mockImplementation(async(id:string)=>f.blobs.get(id));
  return {...f,candidate:f.prior};
 }
 beforeEach(()=>{vi.resetAllMocks();mocks.grant.mockResolvedValue({id:"stored-active-grant"});mocks.provider.mockResolvedValue({ok:true,effectiveAction:"shadow"});});
 describe("target release authority comes only from stored Gate F and target",()=>{
  it.each(["search","static","mixed"] as const)("blocks stored whole HTML %s scope even if client omits snapshots",async mode=>{
-  const f=acceptedLegacyHtmlPaperFixture(false,mode);mocks.get.mockResolvedValue(f.project);
+  const f=acceptedLegacyHtmlPaperFixture(false,mode);f.project.releaseTarget={provider:"http",mode:"preview-promote",status:"connected",connectionId:"stored-http-release",label:"Stored target",healthPath:"/"};mocks.get.mockResolvedValue(f.project);
   const response=await request(f.project.id,{...f.current,artifactSnapshots:[]});
-  expect(response.status).toBe(409);expect(await response.text()).toContain("html-protection-scope-pending");
+  expect(response.status).toBe(409);expect(await response.text()).toContain("Stored complete protection authority could not be independently restored");
   for(const call of [mocks.grant,mocks.blob,mocks.provider])expect(call).not.toHaveBeenCalled();
  });
  it.each(["shadow","rollback"] as const)("refuses unknown Mission before %s",async action=>{
@@ -73,12 +78,12 @@ describe("target release authority comes only from stored Gate F and target",()=
  it("refuses a wrong release stage before provider",async()=>{
   const f=fixture();expect((await request(f.project.id,f.candidate,{action:"promote"})).status).toBe(409);expect(mocks.provider).not.toHaveBeenCalled();
  });
- it("requires the durable grant before reading accepted bytes",async()=>{
+ it("requires the durable grant before dispatching independently read accepted bytes",async()=>{
   const f=fixture();mocks.grant.mockRejectedValue(new Error("grant expired"));
-  expect((await request(f.project.id,f.candidate)).status).toBe(409);expect(mocks.blob).not.toHaveBeenCalled();expect(mocks.provider).not.toHaveBeenCalled();
+  expect((await request(f.project.id,f.candidate)).status).toBe(409);expect(mocks.provider).not.toHaveBeenCalled();
  });
  it("allows a known stored approved non-HTML release using actual Gate F bytes",async()=>{
-  const f=fixture();expect((await request(f.project.id,f.candidate)).status).toBe(200);expect(mocks.provider).toHaveBeenCalledOnce();expect(mocks.blob).toHaveBeenCalledOnce();
+  const f=fixture();expect((await request(f.project.id,f.candidate)).status).toBe(200);expect(mocks.provider).toHaveBeenCalledOnce();expect(mocks.blob).toHaveBeenCalledWith(f.candidate.artifactSnapshots[0]!.frozenArtifact!.blobId);
  });
 });
 describe("target release recovery keeps object identity without new acceptance",()=>{
@@ -86,7 +91,7 @@ describe("target release recovery keeps object identity without new acceptance",
   const f=fixture();f.project.release.status="promoted";f.project.gates=f.project.gates.map(g=>({...g,status:"blocked"}));f.project.artifactAcceptance.status="unverified";
   mocks.provider.mockResolvedValue({ok:true,effectiveAction:"rollback"});
   expect((await request(f.project.id,f.candidate,{action:"rollback"})).status).toBe(200);
-  expect(mocks.provider).toHaveBeenCalledWith(expect.objectContaining({connectionId:"stored-http-release",candidate:f.candidate,action:"rollback",frozenArtifacts:undefined}));
+  expect(mocks.provider).toHaveBeenCalledWith(expect.objectContaining({connectionId:"stored-http-release",candidate:f.candidate,action:"rollback",frozenArtifacts:undefined}),expect.any(Function));
   expect(mocks.grant).not.toHaveBeenCalled();expect(mocks.blob).not.toHaveBeenCalled();
  });
  it.each(["idle","missing-stable","candidate-mismatch","connection-mismatch","missing-subject-no-champion"] as const)("refuses rollback %s before provider",async mode=>{
@@ -102,6 +107,6 @@ it("keeps rollback bound to the stored deployed Candidate after a different expe
  const f=fixture();f.project.release.status="promoted";f.project.experimentRun.winnerId=f.current.id;f.project.gates=f.project.gates.map(g=>({...g,status:"blocked"}));
  mocks.provider.mockResolvedValue({ok:true,effectiveAction:"rollback"});
  expect((await request(f.project.id,f.candidate,{action:"rollback"})).status).toBe(200);
- expect(mocks.provider).toHaveBeenCalledWith(expect.objectContaining({candidate:f.candidate,connectionId:"stored-http-release",action:"rollback"}));
+ expect(mocks.provider).toHaveBeenCalledWith(expect.objectContaining({candidate:f.candidate,connectionId:"stored-http-release",action:"rollback"}),expect.any(Function));
  expect(mocks.grant).not.toHaveBeenCalled();expect(mocks.blob).not.toHaveBeenCalled();
 });

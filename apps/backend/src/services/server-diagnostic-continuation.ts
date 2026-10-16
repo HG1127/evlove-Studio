@@ -31,6 +31,7 @@ const sha = (value: unknown) => createHash("sha256").update(JSON.stringify(order
 const generation = (project: EvolveProject) => sha(EvolveProjectSchema.parse(project));
 function staticInput(project: EvolveProject) {
   return sha({ id: project.id, version: project.version, currentVersionId: project.currentVersionId, objectType: project.objectType,
+    ...(project.htmlProtectionOperationalScope ? {operationalScope:project.htmlProtectionOperationalScope} : {}),
     goal: project.goal, command: project.evolutionCommand, sources: project.sourceArtifacts, target: project.targetConnection,
     protected: project.protectedItems, editable: project.editableItems, clarifications: project.inputClarifications,
     understanding: project.inputUnderstanding, metrics: project.metrics, rubric: project.acceptanceRubric,

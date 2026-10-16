@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { CandidateSchema, HtmlProtectionSearchStateRegistrationSchema, HtmlProtectionSearchStateRequestSchema, HtmlProtectionSnapshotRequestSchema, type Candidate, type EvolveProject, type TestCase } from "@evolution/contracts";
-import { htmlProtectionInventory, htmlProtectionObligationPlan, htmlProtectionOriginalRuntimePlan, htmlProtectionOriginalSearchCountFormat } from "@evolution/core";
+import { confirmedHtmlProtectionOperationalScope, htmlProtectionInventory, htmlProtectionObligationPlan, htmlProtectionOriginalRuntimePlan, htmlProtectionOriginalSearchCountFormat } from "@evolution/core";
 import { HTML_PROTECTION_CLOUD_URL } from "@evolution/adapters/sandbox";
 import { readServerHtmlProtectionInputs, type ServerHtmlProtectionInputPorts } from "./server-html-protection-input";
 
@@ -37,11 +37,12 @@ export async function prepareServerHtmlProtectionCollectionPlan(args: {
   }
   const inputs = await readServerHtmlProtectionInputs({ project, testCase, criterionId, candidate, ports });
   const original = inputs.binding.original;
+  const operationalScope = confirmedHtmlProtectionOperationalScope(project, original);
   const inventory = htmlProtectionInventory({ sourceArtifactId: original.sourceArtifactId, html: inputs.originalHtml });
   const runtimePlan = htmlProtectionOriginalRuntimePlan({ sourceArtifactId: original.sourceArtifactId, originalSha256: original.sha256, html: inputs.originalHtml });
   const searchCountFormat = htmlProtectionOriginalSearchCountFormat({ sourceArtifactId: original.sourceArtifactId, originalSha256: original.sha256, html: inputs.originalHtml });
   const obligationPlan = htmlProtectionObligationPlan({ originalInventory: inventory, runtimeProfile: runtimePlan.runtimeProfile,
-    frozenContentContract: { protectionCriterionId: criterionId, rubric: project.acceptanceRubric } });
+    frozenContentContract: { protectionCriterionId: criterionId, rubric: project.acceptanceRubric, ...(operationalScope ? { operationalScope } : {}) } });
   const planSha256 = sha({ policyVersion: SERVER_HTML_PROTECTION_COLLECTION_POLICY,
     paperSha256: inputs.binding.paperSha256, criterionId, original, obligationPlan, runtimePlan, searchCountFormat });
   const searchRegistry = runtimePlan.search.registry;
@@ -70,7 +71,7 @@ export async function prepareServerHtmlProtectionCollectionPlan(args: {
       stateId: batch.stateId, batchId: batch.batchId })));
   return {
     schemaVersion: "server-html-protection-collection-plan-v1" as const,
-    binding: inputs.binding, planSha256, obligationPlan, runtimePlan, bootRequests,
+    binding: inputs.binding, planSha256, obligationPlan, operationalScope, runtimePlan, bootRequests,
     searchRegistration, searchRequests, searchCountFormat, searchRequiresStatefulExecution: true as const,
     // Full private physical inputs stay inside the app collector; no public route returns this material.
     physicalInputs: { original: Buffer.from(inputs.originalHtml, "utf8"), executed: Buffer.from(inputs.executedHtml, "utf8") },

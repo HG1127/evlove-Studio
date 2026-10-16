@@ -26,5 +26,5 @@ export function validateHtmlProtectionWholeNativeDocument(value: unknown, frameI
   if (nodes.pseudoType && (nodes.pseudoType.index.length !== nodes.pseudoType.value.length || nodes.pseudoType.index.some(index => index >= nodes.nodeType.length) || nodes.pseudoType.value.some(index => index >= snapshot.strings.length))) throw Error("Whole native generated pseudo scope inconsistent");
   if ((nodes.pseudoType?.value ?? []).some(index => !["before", "after", "marker"].includes(snapshot.strings[index]!))) throw Error("Whole native additional active pseudo domain unobserved");
   if (nodes.nodeType.filter((type, index) => type === 1 && !pseudos.has(index)).length !== material.elementCount) throw Error("Whole native element census differs from complete DOM snapshot");
-  return material;
+  return { ...material, snapshot };
 }

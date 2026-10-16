@@ -81,7 +81,7 @@ export function createServerHtmlProtectionAuthorityCollector(ports: ServerHtmlPr
         continue;
       }
       const collectionGaps:string[]=[];
-      const collected: Array<{ derived: Pick<ReturnType<typeof deriveServerHtmlProtectionAuthorityObservations>, "proof" | "validation" | "requiredObligations" | "trustedEvidence" | "planSha256">; observations: ServerHtmlProtectionAuthorityObservations;
+      const collected: Array<{ derived: Pick<ReturnType<typeof deriveServerHtmlProtectionAuthorityObservations>, "proof" | "validation" | "requiredObligations" | "trustedEvidence" | "planSha256" | "operationalAcceptance">; observations: ServerHtmlProtectionAuthorityObservations;
         inputSha256: string; route: string; selection:ServerAiPublicSelection; execution: Awaited<ReturnType<typeof readServerHtmlProtectionCollectionOwner>>; observedAt: string; expiresAt: string; guard: () => Promise<void> }> = [];
       for (const criterion of applicable) {
         let fallback: { prepared: Awaited<ReturnType<typeof prepareServerHtmlProtectionAuthorityPlan>>; execution: Awaited<ReturnType<typeof readServerHtmlProtectionCollectionOwner>>;
@@ -137,9 +137,11 @@ export function createServerHtmlProtectionAuthorityCollector(ports: ServerHtmlPr
         try {
           const expectedDocumentStates = roles.original.manifest.expectedActions.filter(item => ["boot", "viewport"].includes(item.operation)).map(item => item.stateId);
           const pairs = prepareServerHtmlProtectionVisualPairs({ originalTiles: roles.original.records.filter(item => item.record.kind === "visual-tile").map(item => ({ stateId: item.record.stateId, material: item.material })),
-            executedTiles: roles.executed.records.filter(item => item.record.kind === "visual-tile").map(item => ({ stateId: item.record.stateId, material: item.material })), expectedDocumentStates, nativeComplete: derived.runtime.completeNativeSequence });
+            executedTiles: roles.executed.records.filter(item => item.record.kind === "visual-tile").map(item => ({ stateId: item.record.stateId, material: item.material })), expectedDocumentStates, nativeComplete: derived.runtime.completeNativeSequence,
+            ...(prepared.operationalScope ? {operationalDocuments:{original:roles.original.records.filter(item=>item.record.kind==="document").map(item=>({stateId:item.record.stateId,material:item.material})),
+              executed:roles.executed.records.filter(item=>item.record.kind==="document").map(item=>({stateId:item.record.stateId,material:item.material}))}} : {}) });
           const result = await collectServerHtmlProtectionVisualObservations({ pairs, binding: prepared.binding, originalHtml, executedHtml, required: prepared.obligationPlan.requiredObligations,
-            unresolvedRuntimeObligationIds: prepared.obligationPlan.requiredObligations.filter(item => item.evidenceKind === "browser" && !derived.runtime.supportedObligationIds.includes(item.id)).map(item => item.id) },
+            unresolvedRuntimeObligationIds: prepared.obligationPlan.requiredObligations.filter(item => item.evidenceKind === "browser" && !(prepared.operationalScope && item.kind === "unknown-runtime") && !(prepared.operationalScope && derived.runtime.completeNativeSequence && item.id === "plan:document:confirmed-operational-runtime-v2") && !derived.runtime.supportedObligationIds.includes(item.id)).map(item => item.id) },
           async (payload, media) => { await guard(); const response = await (ports.observeVisual ?? (async (data, images) => (await import("./ai-gateway")).runServerAi("html-protection-visual-observe", data, images)))(payload, media); await guard(); return response; });
           observations.visualRaw = result.raw; observations.gaps.push(...result.gaps);
         } catch { observations.gaps.push("html-protection-selected-model-visual-observation-unavailable"); }
@@ -171,13 +173,15 @@ export function createServerHtmlProtectionAuthorityCollector(ports: ServerHtmlPr
         artifactHash: collected[0]!.derived.proof.binding.executed.sha256, htmlProtectionAuthorityRefs: undefined,
         htmlProtectionProof: collected.length === 1 ? collected[0]!.derived.proof : undefined };
       if (failed) { next.verificationStatus = "failed"; next.trace = [...run.trace, { id: "html-protection-observed-failure", stage: "assertion", status: "fail", summary: "Independent complete-file preservation observation retained a violation" }]; }
+      if (project.htmlProtectionOperationalScope) next.trace = [...next.trace, { id: "html-protection-confirmed-operational-scope", stage: "assertion", status: "warning",
+        summary: "Acceptance is limited to the explicitly confirmed finite Original source/control/state/viewport scope. Unknown residual behavior remains UNVERIFIED; universal protection is not proved." }];
       let signed: ServerHtmlProtectionSigningConfig | undefined;
       try { signed = await readSigning(); } catch { /* Missing existing signer is a real capability gap; no new key is generated. */ }
       if (!signed) next.trace = [...next.trace, { id: "html-protection-signing-unavailable", stage: "assertion", status: "warning", summary: "Complete preservation authority cannot be restored without the existing purpose-bound server signer" }];
       const references: HtmlProtectionAuthorityReference[] = [];
       for (const item of collected) {
         await item.guard();
-        if (!signed && item.derived.validation.passed) continue;
+        if (!signed && (item.derived.validation.passed || item.derived.operationalAcceptance?.passed)) continue;
         if (signed) {
           const attestation = attestServerHtmlProtectionAuthority({ collected: { policyVersion: HTML_PROTECTION_AUTHORITY_POLICY, binding: item.derived.proof.binding,
             requiredObligations: item.derived.requiredObligations, trustedEvidence: item.derived.trustedEvidence, canonicalRun: next,

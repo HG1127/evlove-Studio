@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { HtmlProtectionOperationalScopeSchema } from "./html-protection-operational-scope-contract";
 import { AcceptanceCriterionSchema, TestCaseSchema } from "./evolve-schemas";
 const identity = z.string().min(1).max(512), sha256 = z.string().regex(/^[a-f0-9]{64}$/);
 /** Complete frozen domain input, not permission supplied by a Candidate or a model. The App must authenticate its stored owner/paper. */
@@ -6,6 +7,7 @@ export const HtmlProtectionSemanticFrozenRequirementsSchema = z.object({
   schemaVersion: z.literal("html-protection-semantic-frozen-requirements-v1"),
   missionId: identity, sourceArtifactId: identity, criterionId: identity, paperSha256: sha256,
   testCase: TestCaseSchema, paper: z.array(TestCaseSchema).min(1), rubric: z.array(AcceptanceCriterionSchema).min(1),
+  operationalScope: HtmlProtectionOperationalScopeSchema.optional(),
   goal: z.string(), evolutionCommand: z.string(), protectedItems: z.array(z.string()), editableItems: z.array(z.string()),
 }).strict();
 export type HtmlProtectionSemanticFrozenRequirements = z.infer<typeof HtmlProtectionSemanticFrozenRequirementsSchema>;

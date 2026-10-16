@@ -48,6 +48,8 @@ function semanticTextNodes(html: string, plan: HtmlProtectionObligationPlan) {
     const cardId = expectedCard?.id ?? frame.cardId;
     const inBody = frame.inBody || element?.tagName === "body";
     const blocked = frame.blocked || Boolean(element && (/^(?:script|style|template|noscript|h[1-6]|button|input|textarea|select|option|a)$/i.test(element.tagName)
+      || Boolean(plan.contentScope?.operationalScope && (/^(?:label|summary|nav)$/i.test(element.tagName)
+        || element.attrs.some(attribute => /^(?:role|tabindex|contenteditable|on[a-z]+)$/i.test(attribute.name))))
       || element.namespaceURI !== "http://www.w3.org/1999/xhtml"));
     if (node.nodeName === "#text" && "value" in node) {
       const location = node.sourceCodeLocation;
@@ -81,8 +83,9 @@ export function deriveHtmlProtectionSemanticRequirementScopes(args: { plan: Html
       && (!item.artifactIds.length || item.artifactIds.includes(plan.sourceArtifactId))).length !== 1) throw Error("html-protection-semantic-frozen-paper-scope-invalid");
   if (!equal(htmlProtectionInventory({ sourceArtifactId: plan.sourceArtifactId, html: args.originalHtml }), plan.originalInventory)) throw Error("html-protection-semantic-original-inventory-drift");
   const contentScope = htmlProtectionContentScope({ sourceArtifactId: plan.sourceArtifactId,
-    frozenContract: { protectionCriterionId: frozen.criterionId, rubric: frozen.rubric } });
+    frozenContract: { protectionCriterionId: frozen.criterionId, rubric: frozen.rubric, ...(frozen.operationalScope ? { operationalScope: frozen.operationalScope } : {}) } });
   if (!equal(contentScope, plan.contentScope)) throw Error("html-protection-semantic-frozen-content-plan-drift");
+  if (frozen.operationalScope) return deriveConfirmedOperationalSemanticScopes(args, frozen);
   const ids = plan.scope.cards.flatMap(card => card.id ? [card.id] : []), gaps: string[] = [...(plan.contentScope?.gaps ?? [])];
   if (ids.length !== plan.scope.cards.length || new Set(ids).size !== ids.length || plan.originalInventory.duplicateIds.length) gaps.push("html-protection-semantic-original-card-scope-ambiguous");
   const relevant = frozen.rubric.filter(item => !item.artifactIds.length || item.artifactIds.includes(plan.sourceArtifactId));
@@ -197,4 +200,37 @@ export function supportHtmlProtectionObservedObligations(required: readonly Html
   const supported = new Set(supportedIds), expected = new Set(required.map(item => item.id));
   if (supported.size !== supportedIds.length || [...supported].some(id => !expected.has(id))) throw Error("Supported HTML protection scope is duplicated or foreign");
   return required.map(item => supported.has(item.id) && item.kind !== "unknown-runtime" ? { ...item, support: "supported" as const } : { ...item });
+}
+
+/** New explicit human policy; no natural-language region inference and no grant to non-card text. */
+function deriveConfirmedOperationalSemanticScopes(args: { plan: HtmlProtectionObligationPlan; originalHtml: string; executedHtml: string },
+  frozen: HtmlProtectionSemanticFrozenRequirements) {
+  const { plan } = args, gaps = [...(plan.contentScope?.gaps ?? [])];
+  if (!frozen.operationalScope || !equal(frozen.operationalScope, plan.contentScope?.operationalScope)
+    || frozen.operationalScope.original.sourceArtifactId !== plan.sourceArtifactId) throw Error("operational-semantic-confirmed-contract-drift");
+  const ids = plan.scope.cards.flatMap(card => card.id ? [card.id] : []);
+  if (!ids.length || ids.length !== plan.scope.cards.length || new Set(ids).size !== ids.length || plan.originalInventory.duplicateIds.length)
+    gaps.push("operational-semantic-complete-original-card-scope-ambiguous");
+  const original = semanticTextNodes(args.originalHtml, plan), executed = semanticTextNodes(args.executedHtml, plan);
+  const complete = original.complete && executed.complete && original.nodes.length === executed.nodes.length
+    && original.nodes.every((node, index) => node.path === executed.nodes[index]?.path && node.cardId === executed.nodes[index]?.cardId && node.body === executed.nodes[index]?.body);
+  if (!complete) gaps.push("operational-semantic-complete-text-partition-unavailable");
+  const allowed = new Set(ids), mayEdit = (node: SemanticTextNode) => !gaps.length && node.body && node.cardId !== undefined && allowed.has(node.cardId);
+  const mask = (html: string, nodes: SemanticTextNode[]) => { let result = "", at = 0;
+    for (const node of nodes.filter(mayEdit)) { result += html.slice(at,node.start) + "<!--confirmed-body:" + node.path + "-->"; at=node.end; }
+    return result + html.slice(at);
+  };
+  const forbidden = complete ? original.nodes.filter((node,index)=>!mayEdit(node)&&node.literal!==executed.nodes[index]!.literal) : [];
+  const changed = complete && mask(args.originalHtml,original.nodes)!==mask(args.executedHtml,executed.nodes);
+  const sourceScopedCriteria=frozen.rubric.filter(item=>!item.artifactIds.length||item.artifactIds.includes(plan.sourceArtifactId));
+  const refinementCriterionIds=sourceScopedCriteria.filter(item=>item.source==="user-command"&&!item.protectedConstraint).map(item=>item.id);
+  const protectedCriterionIds=sourceScopedCriteria.filter(item=>item.protectedConstraint).map(item=>item.id);
+  const scopes: SemanticRequirementScope[]=plan.requiredObligations.filter(item=>item.evidenceKind==="semantic").map(item=>{
+    const card=plan.scope.cards.find(card=>card.semanticObligationId===item.id||card.contentObligationId===item.id);
+    const failed=card?forbidden.some(node=>node.cardId===card.id):changed;
+    return {obligationId:item.id,mode:gaps.length?"unknown":"semantic-refinement",verificationStatus:gaps.length?"unverified":failed?"failed":"verified",
+      editableCardIds:ids,editableWholeDocumentBody:false,refinementCriterionIds,protectedCriterionIds,gaps:[...gaps]};
+  });
+  return {policyVersion:"html-protection-semantic-confirmed-operational-v2",frozenRequirements:frozen,sourceScopedCriteria,
+    editableCardIds:ids,editableWholeDocumentBody:false,scopes,gaps};
 }

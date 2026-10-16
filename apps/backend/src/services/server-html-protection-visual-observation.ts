@@ -4,6 +4,7 @@ import { HtmlProtectionVisualObservationsSchema } from "@evolution/contracts";
 import { runServerAi, type ServerAiMedia } from "./ai-gateway";
 import type { HtmlProtectionObligation, HtmlProtectionEvidence } from "@evolution/contracts";
 import type { HtmlProtectionObligationPlan } from "@evolution/core";
+import { prepareServerHtmlProtectionNativeVisualComparison } from "./server-html-protection-native-visual";
 import { htmlProtectionCanonicalJson } from "./server-html-protection-authority-attestation";
 /** Native full-document observations stay separate from semantic/static decisions. */
 export function deriveServerHtmlProtectionVisualObservations(args: { plan: HtmlProtectionObligationPlan;
@@ -38,7 +39,8 @@ const Tile = z.object({ value: z.object({ image: z.object({ mimeType: z.literal(
   nativeScrollDispatches: z.number().int().nonnegative() }).strict() }).passthrough();
 type NativeTile = { stateId: string; material: unknown };
 export type ServerHtmlProtectionVisualPair = { observationId: string; stateId: string;
-  original: z.infer<typeof Tile>["value"]; executed: z.infer<typeof Tile>["value"] };
+  original: z.infer<typeof Tile>["value"]; executed: z.infer<typeof Tile>["value"];
+  nativeComparison?: ReturnType<typeof prepareServerHtmlProtectionNativeVisualComparison> };
 function parsedTiles(records: readonly NativeTile[], states: readonly string[]) {
   if (!states.length || new Set(states).size !== states.length || !records.length) throw Error("html-protection-full-visual-state-unavailable");
   const map = new Map<string, Array<z.infer<typeof Tile>["value"]>>();
@@ -71,16 +73,23 @@ function parsedTiles(records: readonly NativeTile[], states: readonly string[]) 
 }
 /** Complete, actual read-back pixels for both source roles and every registered viewport; finite pixels alone do not close continuous responsive scope. */
 export function prepareServerHtmlProtectionVisualPairs(args: { originalTiles: readonly NativeTile[]; executedTiles: readonly NativeTile[];
-  expectedDocumentStates: readonly string[]; nativeComplete: boolean }) {
+  expectedDocumentStates: readonly string[]; nativeComplete: boolean;
+  operationalDocuments?: {original:readonly NativeTile[];executed:readonly NativeTile[]} }) {
   if (!args.nativeComplete) throw Error("html-protection-native-visual-sequence-incomplete");
   const original = parsedTiles(args.originalTiles, args.expectedDocumentStates), executed = parsedTiles(args.executedTiles, args.expectedDocumentStates);
   const pairs: ServerHtmlProtectionVisualPair[] = [];
   for (const stateId of args.expectedDocumentStates) {
     const left = original.get(stateId)!, right = executed.get(stateId)!;
+    let nativeComparison: ServerHtmlProtectionVisualPair["nativeComparison"];
+    if(args.operationalDocuments){
+      const a=args.operationalDocuments.original.filter(item=>item.stateId===stateId),b=args.operationalDocuments.executed.filter(item=>item.stateId===stateId);
+      if(a.length!==1||b.length!==1)throw Error("operational-native-visual-document-state-missing");
+      nativeComparison=prepareServerHtmlProtectionNativeVisualComparison(a[0]!.material,b[0]!.material);
+    }
     if (htmlProtectionCanonicalJson(left[0]!.viewport) !== htmlProtectionCanonicalJson(right[0]!.viewport)) throw Error("html-protection-paired-visual-viewport-mismatch");
     // Extra Candidate height is also observed. Reusing the last counterpart avoids dropping any actual PNG bytes.
     for (let index = 0; index < Math.max(left.length, right.length); index++) pairs.push({ observationId: stateId + ":pair:" + index,
-      stateId, original: left[Math.min(index, left.length - 1)]!, executed: right[Math.min(index, right.length - 1)]! });
+      stateId, ...(nativeComparison?{nativeComparison}:{}), original: left[Math.min(index, left.length - 1)]!, executed: right[Math.min(index, right.length - 1)]! });
   }
   return pairs;
 }
@@ -95,6 +104,8 @@ export function validateServerHtmlProtectionVisualObservations(args: { pairs: re
   for (const pair of args.pairs) {
     const row = rows.find(item => item.observationId === pair.observationId);
     if (!row) { unavailable = true; continue; }
+    if (pair.nativeComparison && row.nativeComparisonSha256 !== pair.nativeComparison.sha256) throw Error("operational-visual-native-comparison-not-observed");
+    if (!pair.nativeComparison && row.nativeComparisonSha256) throw Error("operational-visual-native-comparison-foreign");
     if (row.originalImageSha256 !== pair.original.image.sha256 || row.executedImageSha256 !== pair.executed.image.sha256
       || row.status === "retained" && (htmlProtectionCanonicalJson(row.originalRegions) !== htmlProtectionCanonicalJson([wholeRegion(pair.original)])
         || htmlProtectionCanonicalJson(row.executedRegions) !== htmlProtectionCanonicalJson([wholeRegion(pair.executed)]))
@@ -122,6 +133,7 @@ export async function collectServerHtmlProtectionVisualObservations(args: { pair
     const pairs = args.pairs.slice(index, index + 2);
     try { const response = await observe({ binding: args.binding, fullPhysicalOriginalHtml: args.originalHtml, fullPhysicalExecutedHtml: args.executedHtml,
       pairs: pairs.map(pair => ({ observationId: pair.observationId, stateId: pair.stateId,
+        ...(pair.nativeComparison ? {nativeComparison:pair.nativeComparison,confirmedPolicy:"original-finite-operational-v2",instruction:"Read the COMPLETE native node/style/layout differences alongside both actual images. Retained requires all changes to preserve the Original visual meaning, controls and layout except explicitly allowed existing body text refinement flow. Changed non-flow behavior or style loss must be changed; unknown must be unavailable. Echo the exact nativeComparison.sha256."} : {}),
         original: { ...pair.original, image: { ...pair.original.image, base64: undefined } }, executed: { ...pair.executed, image: { ...pair.executed.image, base64: undefined } },
         requiredOriginalRegion: wholeRegion(pair.original), requiredExecutedRegion: wholeRegion(pair.executed) })),
       instruction: "Observe the entire actual paired image regions and identify original rendering changes. All PNG tiles on both roles are processed; additions are contextualized by both complete physical files. Return grounded image observations, never whole safety or responsive/runtime PASS." },
