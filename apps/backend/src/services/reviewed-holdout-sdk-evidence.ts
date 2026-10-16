@@ -16,11 +16,21 @@ export function assertReviewedSdkEvidence(value:ReviewedSdkEvidence):void{
 }
 type Reader={run(id:string):Promise<unknown>;page(id:string,cursor?:string):Promise<unknown>;step(runId:string,stepId:string):Promise<unknown>};
 async function reader():Promise<Reader>{
-  const [{getWorld},{hydrateResourceIO,observabilityRevivers}]=await Promise.all([import("workflow/runtime"),import("workflow/observability")]);
-  const world=getWorld();
-  return{run:id=>world.runs.get(id,{resolveData:"none"}),
+  const [{getWorld},{decodeReviewedWorkflowIo}]=await Promise.all([import("workflow/runtime"),import("./reviewed-workflow-observation-codec")]);
+  const world=await getWorld();let observedRun:{runId:string;deploymentId:string}|undefined;
+  return{run:async id=>{const run=await world.runs.get(id,{resolveData:"none"});observedRun={runId:run.runId,deploymentId:run.deploymentId};return run;},
     page:(id,cursor)=>world.steps.list({runId:id,pagination:{limit:100,cursor},resolveData:"none"}),
-    step:async(runId,stepId)=>hydrateResourceIO(await world.steps.get(runId,stepId,{resolveData:"all"}),observabilityRevivers)};
+    step:async(runId,stepId)=>{
+      const run=observedRun;if(!run||run.runId!==runId)throw new Error("旧 Run 身份未核实。");
+      const step=await world.steps.get(runId,stepId,{resolveData:"all"});
+      const metadata=Step.parse(step);
+      if(metadata.runId!==runId||metadata.stepId!==stepId||metadata.stepName!==REVIEWED_EXECUTE_STEP_ID||metadata.status!=="completed"||metadata.attempt!==1)throw new Error("旧步骤身份已变化。");
+      const io=await decodeReviewedWorkflowIo(step,async()=>{
+        if(!world.getEncryptionKeyForRun)throw new Error("SDK 派生密钥读取能力不可用。");
+        return world.getEncryptionKeyForRun(runId,{deploymentId:run.deploymentId});
+      });
+      return{...step,...io};
+    }};
 }
 /** Private World I/O only. A public Event or Mission DTO cannot manufacture this observation. */
 async function validatedEvidence(runId:string,read?:Reader):Promise<ReviewedSdkEvidence>{

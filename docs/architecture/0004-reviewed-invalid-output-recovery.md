@@ -22,6 +22,16 @@ Reconstruct the original full input hash in a temporary local projection using o
 
 After a second physical/input/route preview and CAS owner reservation, dispatch the existing zero-retry reviewed Workflow. It clears only its local fresh Hidden working state, executes both arms anew, persists new real verdicts, and can reach Gate F only through its existing private fresh-result carrier. Frozen bytes, original REVIEW, whole protection, scores, TTL, Gate F and identical accepted delivery requirements remain unchanged. No old Job is repaired.
 
+## Encrypted World observations
+
+A real read-only inspection of the old production Run found encr input/output. The initial 55d2fff reader used synchronous display hydration, which leaves encrypted bytes untouched. Its structural CI does not prove production recovery capability. The failed real read and a failing SDK-generated synthetic encrypted regression are preserved; no production key was retrieved locally.
+
+Declare the already locked @workflow/core 4.8.9 as a direct dependency, matching workflow 4.8.9. Use its public serialization-format/encryption exports for isEncryptedData, hydrateDataWithKey and a nonextractable decrypt-only CryptoKey. Existing package and snapshot selections are retained; no unrelated version is upgraded. The workflow facade in this installed version does not expose the async key-aware hydration helper.
+
+Only the backend resolves a derived per-run key through its configured World after validating the completed Run, exact execute-step metadata and original deployment identity. Passing the original deployment ID is mandatory for cross-deployment reads. The key remains in backend memory and never appears in a response, Event, log or persisted proof. The platform's deployment key and model Vault are unchanged. Plain SDK frames request no key. Encoded I/O is bounded to 4MiB per field and key resolution to 15 seconds. Missing/invalid keys, authentication-tag errors, expired/malformed payloads or unavailable access fail closed without a model call or replacement Run. These limits do not change the model correction's existing 2MiB/4MiB constraints.
+
+Synthetic tests use the official SDK serializers and encryption with a fictional key; no real key is exported into the local test/CI environment. Actual backend cross-deployment decoding must still be observed after the approved release before any fresh Mission dispatch.
+
 ## Alternatives and rollback
 
 A normal duplicate start, public error-string override, reusing old raw measurements, a forged Event, relaxing the parser, lowering scores or rejudging a valid REVIEW/FAIL are rejected. The failure description is used only after private completion and immutable-record corroboration; it grants no authority by itself.
