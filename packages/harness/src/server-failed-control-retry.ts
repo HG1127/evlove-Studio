@@ -36,8 +36,21 @@ export function serverFailedControlRetryTarget(project:EvolveProject,jobs:Evolut
 export function serverFailedControlRetryEligibility(
   project:EvolveProject,status:EvolutionWorkflowStatusResponse,target:ServerFailedControlRetryTarget,
 ){
-  const job=status.job;
-  return Boolean(target.missionId===project.id&&["running","paused"].includes(project.campaign.status)
+  const job=status.job,owner=project.campaign.serverControlOwner,baseline=project.baselineRun,validation=project.validationRun,acceptance=project.artifactAcceptance;
+  // A bound first Run can fail before the normal Campaign start is persisted. This is
+  // not permission to resume an arbitrary idle record or reuse any measured outcome.
+  const unstartedOwnedIdle=Boolean(job && project.campaign.status==="idle" && project.campaign.currentRound===0
+    && !project.campaign.startedAt && !project.campaign.stopReason
+    && owner?.phase==="bound" && owner.controlJobId===target.jobId && owner.runId===target.runId
+    && owner.operationKey===job.idempotencyKey
+    && baseline.status==="idle" && !baseline.startedAt && !baseline.measurementFingerprint && !baseline.runs.length && !baseline.result
+    && !project.candidates.length && !project.searchChampion && !project.evolutionArchive.length
+    && project.experimentRun.status==="idle" && !project.experimentRun.winnerId && !project.experimentRun.candidateResults.length
+    && validation.status==="idle" && !validation.candidateId && !validation.runs.length && !validation.baselineRuns.length
+    && !validation.evaluation && !validation.baselineEvaluation
+    && acceptance.status==="idle" && !acceptance.attempts && !acceptance.candidateId && !acceptance.frozenArtifacts?.length && !acceptance.acceptedAt
+    && !project.attentionRequests?.some(item=>item.blocking && item.status==="pending"));
+  return Boolean(target.missionId===project.id&&(["running","paused"].includes(project.campaign.status)||unstartedOwnedIdle)
     &&job&&job.id===target.jobId&&job.missionId===project.id&&job.type==="campaign"&&job.generation===1
     &&job.idempotencyKey.startsWith(`workflow-control:${project.id}:`)
     &&serverControlJobRunId(job,project)===target.runId&&status.workflow?.exists===true

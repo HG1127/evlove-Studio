@@ -1,0 +1,25 @@
+# Fresh Campaign Baseline owner startup
+
+## Actual execution and retained failure
+
+PR #35 is merged as production/main 6eb29e1376a6071708fcec43c5bf64eb1cb03262, tree 9182366cd1e5a78b635785c559e07e43c04b9426. Exact main Quality Gate 39197222439 and Production Smoke 39198371200 passed; 441 actual build files were independently rehashed. These deployment gates do not prove real Mission acceptance.
+
+The same approved Mission project-main-flow-sop-fields-7ba9c02b-0ffc-48bc-b109-101592ae0d14 confirmed its unchanged finite protection scope through the dedicated human API (HTTP200, revision3). Original remains 264173 bytes / SHA256 6605429efe92470229601adfb3196bc74ae38855f55d71c8754f8336c52b580a; target-contract SHA256 f9991bf30e86871ee6286c51ef425bd50c3701c27b21b7ec6639ce028ffe0adf. The old HTTP409 remains retained.
+
+The first fixed-key normal Workflow created Run wrun_01M596BTE44M928AAJQZ0P1QW1 / Job workflow-control-57bb4b86-5723-4367-a835-87801a329e44. At revision6 the SDK Run failed while the Job still said running. Official production logs identify html-protection-active-owner-unavailable in readServerHtmlProtectionCollectionOwner, called by prepareServerHtmlProtectionNormalBaselineView before Baseline execution. SDK logged attempt4/retryCount3 with the same error. This is a terminal Run, not live verification. Baseline remains idle, zero Candidates, Experiment/Hidden/Gate F idle. No accepted download or reopen is proved. The Run was not resubmitted and the Job was not repaired.
+
+## Source correction
+
+The first normal control binds its owner and starts its Job, but the Campaign stays idle until preparation after Baseline. Protection collection independently requires a running Campaign, bound owner, actual running Job and SDK Run. The normal first-run order therefore rejects itself before measurement.
+
+The Workflow now persists the running Campaign through its existing owner-checked CAS before calling Baseline. This applies only to round0 / idle Campaign / idle Baseline without prior runs or a result. Owner is checked again after the selected-route await. Failure to persist stops before Baseline. Already running Campaigns add no startup write; paused/stopped/completed states and historical Baseline rows do not receive this transition. The strict owner/Job/SDK/selection, input-generation and allocation guards remain unchanged.
+
+The existing normal failed-control retry previously required a running/paused Campaign and therefore rejected this exact idle failure. Its pure policy now admits only a bound round0 idle first Run with no Campaign start/stop, no Baseline start/fingerprint/runs/result, no Candidate/Champion/archive, no Experiment winner/results, no Hidden rows/evaluations, no Gate F attempt/accepted receipt, and no pending blocking attention. Owner Job/Run/operation must match the exact terminal SDK identity. Missing, active, completed or unknown SDK states still fail. The normal route retains stable-key, Mission-version, latest-Job, owner reservation/CAS and SDK read guards, creates a distinct Job/Run, and preserves the old Job unchanged. A red route/policy regression retained 2 failures/50 passes; a subsequent schema-normalization fixture failure is also retained. The actual saved revision6 state passes only the new local pure policy preview; no online retry was sent. No Candidate, Experiment, Hidden or Gate F implementation file is changed.
+
+## Development verification and delivery boundary
+
+The first local fixture failed before the intended boundary; it is retained separately. The corrected red composition reproduced the same active-owner error (3 failed / 2 passed). The first source-edit attempt did not apply due to newline matching; its failed test log remains retained. Startup-only related coverage passed 12 unique files / 243 assertions; the expanded final manifest and counts are recorded in the external handoff. Tests use maxWorkers1 and real owner/allocation guards with synthetic external ports. This is source verification, not a provider or real acceptance pass.
+
+External evidence is under D:/Downloads/evolution-os-smoke-temp/fresh-campaign-owner-start-20261019; actual first-Run failure is in the sibling real-mission-6eb29e1-20261019/first-workflow-failure-final.json. The final handoff records exact commit, architecture/lint/build commands, exit codes, source/build hashes and all retained failures. Complete exact-source CI and authorized dedicated Git delivery are required before any production continuation.
+
+The existing Mission and failed Run remain preserved. A continuation must use the normal explicit failed-control retry contract with exact prior Job/Run and current Mission version; it must not repair the Job, mint a new Mission, rewrite an outcome or silently replay the first request. Any necessary continuation authorization and exact deployed release gates must be recorded before sending it. Finite measured scope, 92 points, all hard gates, Safety, same-Hidden pairing, Gate F and identical frozen/download/reopen bytes remain mandatory.
