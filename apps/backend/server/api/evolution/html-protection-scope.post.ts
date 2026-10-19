@@ -26,8 +26,10 @@ export default defineEventHandler(async event=>{
     const reread=await getServerMissionEnvelope(request.missionId);
     if(!reread||reread.revision!==envelope.revision||JSON.stringify(reread.payload)!==JSON.stringify(envelope.payload))throw Error("确认期间 Mission 发生变化。");
     const at=new Date().toISOString();
-    const change=createEvolutionEvent({id:`operational-scope:${request.missionId}:${envelope.revision}`,missionId:request.missionId,
-      type:"ActionCompleted",source:"backend-human-operational-scope",at,
+    // The atomic Mission/event RPC requires a checkpoint event with matching identity.
+    const checkpointId=`operational-scope:${request.missionId}:${envelope.revision}`;
+    const change=createEvolutionEvent({id:checkpointId,checkpointId,missionId:request.missionId,
+      type:"CheckpointCreated",source:"backend-human-operational-scope",at,
       payload:{action:"confirm-html-protection-operational-scope",policy:preview.policy,original:preview.original,
         targetContractSha256:preview.targetContractSha256,confirmedBy:prepared.next.htmlProtectionOperationalScope!.confirmedBy,
         confirmedAt:prepared.next.htmlProtectionOperationalScope!.confirmedAt,universalProtectionProved:false}});

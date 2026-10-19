@@ -1,5 +1,6 @@
 // @vitest-environment node
 import {beforeEach,describe,expect,it,vi} from "vitest";
+import {readFileSync} from "node:fs";
 import {acceptedPackageFixture} from "@evolution/testkit";
 import {missionEnvelope} from "@evolution/contracts";
 const mocks=vi.hoisted(()=>({permission:vi.fn(),read:vi.fn(),jobs:vi.fn(),prepare:vi.fn(),save:vi.fn()}));
@@ -26,7 +27,7 @@ describe("human operational-scope API admission",()=>{
   expect(mocks.save).not.toHaveBeenCalled();
   expect(await f.run()).toMatchObject({confirmed:true,revision:3,universalProtectionProved:false});expect(mocks.save).toHaveBeenCalledOnce();
   expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({revision:2}),expect.objectContaining({missionId:f.body.missionId,
-    type:"ActionCompleted",source:"backend-human-operational-scope",payload:expect.objectContaining({policy:"original-finite-operational-v2",original,targetContractSha256:digest,confirmedBy:{actorId:"human",actorSource:"browser-session"},universalProtectionProved:false})}));
+    type:"CheckpointCreated",checkpointId:`operational-scope:${f.body.missionId}:2`,source:"backend-human-operational-scope",payload:expect.objectContaining({policy:"original-finite-operational-v2",original,targetContractSha256:digest,confirmedBy:{actorId:"human",actorSource:"browser-session"},universalProtectionProved:false})}));
  });
  it.each(["service","revision","job","target","original","race","forged-scope"] as const)("rejects %s without a confirmation write",async kind=>{
   const f=fixture(),body={...f.body};
@@ -48,4 +49,21 @@ describe("human operational-scope API admission",()=>{
 it("reports an atomic Mission/event CAS refusal without reporting a successful confirmation",async()=>{
  const f=fixture();mocks.save.mockRejectedValue(Error("Controlled atomic CAS/event refusal"));
  await expect(f.run()).rejects.toThrow("Controlled atomic CAS/event refusal");expect(mocks.save).toHaveBeenCalledOnce();
+});
+
+
+it("obeys the existing checkpoint-only SQL CAS/event contract",async()=>{
+ const sql=readFileSync(new URL("../../../../supabase/migrations/20260924100000_job_lifecycle_security_invariants.sql",import.meta.url),"utf8");
+ const atomic=sql.slice(sql.indexOf("create or replace function public.compare_and_swap_mission_with_event("),sql.indexOf("create or replace function public.bind_evolution_job_workflow_run("));
+ expect(atomic).toContain("p_event->>'type' is distinct from 'CheckpointCreated'");
+ expect(atomic).toContain("p_event->>'checkpointId' is distinct from p_event->>'id'");
+ const f=fixture();
+ mocks.save.mockImplementation(async(envelope,event)=>{
+  if(event.missionId!==envelope.missionId||event.type!=="CheckpointCreated"||!event.id||event.checkpointId!==event.id)throw Error("Checkpoint Event binding mismatch");
+  return {...envelope,revision:envelope.revision+1};
+ });
+ await expect(f.run()).resolves.toMatchObject({confirmed:true,revision:3});
+ expect(mocks.save).toHaveBeenCalledOnce();
+ const event=mocks.save.mock.calls[0]![1];
+ expect(event).toMatchObject({id:`operational-scope:${f.body.missionId}:2`,checkpointId:`operational-scope:${f.body.missionId}:2`,type:"CheckpointCreated",missionId:f.body.missionId,payload:{action:"confirm-html-protection-operational-scope",original,targetContractSha256:digest,universalProtectionProved:false}});
 });
