@@ -52,6 +52,7 @@ import { lockConnectorTargetSnapshot,materializeLockedConnectorTargetSource } fr
 import {withServerAiConnection,serverAiConnectionConfigured as serverAiConfigured} from "../../apps/backend/src/services/server-ai-connection";
 import {appendWorkflowControlEvent} from "../../apps/backend/src/services/workflow-control-events";
 import {getServerWorkflowControlRuntime,requireServerWorkflowControlOwner} from "../../apps/backend/src/services/workflow-control-runtime";
+import {transferServerFailedControlRecovery} from "../../apps/backend/src/services/workflow-failed-control-retry";
 import {planWorkflowResultFinalization} from "../../apps/backend/src/services/workflow-result-finalization";
 
 
@@ -70,7 +71,7 @@ export async function initializeWorkflowControlStep(input:EvolutionWorkflowRunIn
   "use step";
   await requireServerWorkflowControlOwner(input);
   const runtime=getServerWorkflowControlRuntime(input);
-  const mission=await runtime.missions.get(input.missionId);
+  let mission=await runtime.missions.get(input.missionId);
   if(!mission)throw new FatalError(`Mission 不存在：${input.missionId}`);
   if(input.failedControlRetry&&((!mission.campaign.serverControlOwner&&mission.updatedAt!==input.failedControlRetry.sourceUpdatedAt)
     ||serverMainFlowRecoveryDigest(mission)!==input.failedControlRetry.inputFingerprint)){
@@ -81,6 +82,22 @@ export async function initializeWorkflowControlStep(input:EvolutionWorkflowRunIn
     if(owner.controlJobId!==input.controlJobId)throw new FatalError("已有其他后台控制接管当前 Mission");
     if(owner.phase!=="bound")throw new Error("后台 Run 绑定尚未完成，请稍后继续");
     if(serverMainFlowRecoveryDigest(mission)!==owner.inputFingerprint)throw new FatalError("预留后输入已变化，未接管后台执行");
+  }
+  const transferred=transferServerFailedControlRecovery(mission,input);
+  if(transferred!==mission){
+    await requireServerWorkflowControlOwner(input);
+    await runtime.missions.save(transferred);
+    mission=transferred;
+  }
+  if(input.failedControlRetry && mission.campaign.serverRecoveryWait?.status==="recovering"
+    && mission.campaign.serverRecoveryWait.resumedByControlJobId===input.controlJobId){
+    await runtime.events.append(createEvolutionEvent({
+      id:`evt-${input.controlJobId}-recovery-owner-transfer`,missionId:input.missionId,jobId:input.controlJobId,
+      type:"ActionCompleted",source:"vercel-workflow-control",at:input.requestedAt,
+      payload:{phase:"recovery-owner-transfer",priorControlJobId:input.failedControlRetry.retryOfControlJobId,
+        priorRunId:input.failedControlRetry.retryOfRunId,resumedByControlJobId:input.controlJobId,
+        recoveryInputFingerprint:mission.campaign.serverRecoveryWait.inputFingerprint,priorEvidenceRetained:true},
+    }));
   }
   const startedAt=new Date().toISOString();
   const initializedJob=await controlJob(input,{
@@ -875,14 +892,25 @@ async function executeServerControlAction(
       diagnosticContinuation=continuation.continuation;
     }
     if(!diagnosticContinuation && !canReuseServerBaseline(campaignMission,scoringRouteFingerprint,measurementNowMs)){
-      // A first control Run is bound while Campaign is still idle. Persist its start before
-      // Baseline independently verifies the active Mission/Job/SDK owner; never relax that guard.
-      if(campaignMission.campaign.status==="idle" && campaignMission.campaign.currentRound===0
+      // First starts and explicitly admitted recoveries are idle until their active write.
+      // Persist that transition before the unchanged independent collection owner checks.
+      const firstBaselineStart=campaignMission.campaign.status==="idle" && campaignMission.campaign.currentRound===0
         && campaignMission.baselineRun.status==="idle" && !campaignMission.baselineRun.runs.length
-        && !campaignMission.baselineRun.result){
+        && !campaignMission.baselineRun.result;
+      const recoveredBaselineStart=campaignMission.campaign.status==="idle"
+        && campaignMission.campaign.serverRecoveryWait?.resumedByControlJobId===input.controlJobId
+        && serverMainFlowRecoveryActive(campaignMission) && hasServerMainFlowRecoveryBinding(campaignMission);
+      if(firstBaselineStart || recoveredBaselineStart){
         await requireServerWorkflowControlOwner(input);
-        campaignMission={...campaignMission,campaign:{...campaignMission.campaign,status:"running",
-          startedAt:campaignMission.campaign.startedAt??now},updatedAt:now};
+        const latest=await runtime.missions.get(input.missionId);
+        if(!latest || serverMainFlowRecoveryDigest(latest)!==serverMainFlowRecoveryDigest(campaignMission)
+          || JSON.stringify(latest.campaign.serverControlOwner)!==JSON.stringify(campaignMission.campaign.serverControlOwner)
+          || latest.campaign.status!=="idle"
+          || recoveredBaselineStart && (!serverMainFlowRecoveryActive(latest) || !hasServerMainFlowRecoveryBinding(latest)
+            || latest.campaign.serverRecoveryWait?.resumedByControlJobId!==input.controlJobId))
+          throw new FatalError("Baseline 启动前恢复输入或控制所有者已变化；未采集或覆盖保存的证据。");
+        campaignMission={...latest,campaign:{...latest.campaign,status:"running",
+          startedAt:latest.campaign.startedAt??now},updatedAt:now};
         await runtime.missions.save(campaignMission);
       }
       const baselineOutcome=await runServerMissionBaseline(campaignMission);

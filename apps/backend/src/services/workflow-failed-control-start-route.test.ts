@@ -1,10 +1,11 @@
 // @vitest-environment node
 import {createHash} from "node:crypto";
-import {beforeEach,describe,expect,it,vi} from "vitest";
+import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
 import {mockEvent} from "nitro/h3";
 import {EvolveProjectSchema,EvolutionJobSchema,type EvolveProject,type MissionEnvelope,missionEnvelope,type EvolutionJob,type EvolutionWorkflowRunInput} from "@evolution/contracts";
-import {acceptedPackageFixture} from "@evolution/testkit";
-import {serverFailedControlRetryWire} from "@evolution/harness";
+import {acceptedPackageFixture,recoveredControlAiFixture} from "@evolution/testkit";
+import {recoverServerMainFlowWait,serverFailedControlRetryWire,serverMainFlowRecoveryActive} from "@evolution/harness";
+import {checkpointServerMainFlowWait,hasServerMainFlowRecoveryBinding} from "./server-main-flow-recovery";
 import route from "../../server/api/evolution/start.post";
 import {MissionRevisionConflictError} from "./production-runtime";
 import {initializeWorkflowControlStep} from "../../../../workflows/evolution-mission/steps";
@@ -151,4 +152,59 @@ describe("governed failed control retry through normal start",()=>{
   expect(mocks.start).toHaveBeenCalledOnce();
  });
 
+});
+
+function recoveringFailedMission(){
+ const x=recoveredControlAiFixture();vi.useFakeTimers({toFake:["Date"]});vi.setSystemTime(new Date(x.at));
+ const p=EvolveProjectSchema.parse({...x.project,id:old.missionId,campaign:{...x.project.campaign,
+  serverControlOwner:{...x.project.campaign.serverControlOwner!,controlJobId:old.id,runId:"old-run",operationKey:old.idempotencyKey}}});
+ mission=recoverServerMainFlowWait(checkpointServerMainFlowWait(p,"predecessor-control"),x.at,old.id);
+ expect(serverMainFlowRecoveryActive(mission)).toBe(true);expect(hasServerMainFlowRecoveryBinding(mission)).toBe(true);
+ mocks.save.mockImplementation(async(next:EvolveProject)=>{mission=EvolveProjectSchema.parse(next);});
+ const currentKey="server-failed-control-retry:"+createHash("sha256").update(serverFailedControlRetryWire(mission.id,mission.updatedAt,old.id,"old-run")).digest("hex");
+ return event({missionId:mission.id,intent:"retry-failed-control",retryOfControlJobId:old.id,retryOfRunId:"old-run",expectedMissionUpdatedAt:mission.updatedAt,idempotencyKey:currentKey});
+}
+describe("terminal failed recovering control transfers only its bound generation",()=>{
+ afterEach(()=>vi.useRealTimers());
+ it("rebinds the recovering pointer through normal retry while retaining old Job, paper and budget",async()=>{
+  const req=recoveringFailedMission(),before=structuredClone(mission);
+  const result=await route(req);expect(result).toMatchObject({runId:"new-run",status:"queued"});
+  const input=mocks.start.mock.calls[0]![1][0] as EvolutionWorkflowRunInput;
+  await initializeWorkflowControlStep(input);
+  expect(mission.campaign.serverRecoveryWait).toEqual({...before.campaign.serverRecoveryWait,resumedByControlJobId:input.controlJobId});
+  expect(mission.campaign.status).toBe("idle");expect(serverMainFlowRecoveryActive(mission)).toBe(true);expect(hasServerMainFlowRecoveryBinding(mission)).toBe(true);
+  expect(mission.baselineRun).toEqual(before.baselineRun);expect(mission.diagnosis).toEqual(before.diagnosis);
+  expect(mission.campaign.startedAt).toBe(before.campaign.startedAt);expect(mission.campaign.checkpoint).toEqual(before.campaign.checkpoint);
+  expect(jobs.get(old.id)).toEqual(old);expect(mocks.cancel).not.toHaveBeenCalled();
+  expect(mocks.put.mock.calls.every(([value])=>value.id===input.controlJobId)).toBe(true);
+  expect(mocks.append).toHaveBeenCalledWith(expect.objectContaining({id:`evt-${input.controlJobId}-recovery-owner-transfer`,type:"ActionCompleted",payload:expect.objectContaining({priorControlJobId:old.id,priorRunId:"old-run",resumedByControlJobId:input.controlJobId})}));
+  await initializeWorkflowControlStep(input);expect(mission.baselineRun).toEqual(before.baselineRun);expect(mocks.start).toHaveBeenCalledOnce();
+ });
+ it("rejects an unverified full SHA even when the fast context still matches",async()=>{
+  const req=recoveringFailedMission();mission.campaign.serverRecoveryWait!.inputFingerprint="b".repeat(64);
+  expect(serverMainFlowRecoveryActive(mission)).toBe(true);expect(hasServerMainFlowRecoveryBinding(mission)).toBe(false);
+  expect(await route(req)).toMatchObject({error:expect.any(String)});expect(req.res.status).toBe(409);expect(mocks.start).not.toHaveBeenCalled();expect(jobs.get(old.id)).toEqual(old);
+ });
+ it("rejects a recovery generation changed during SDK terminal lookup",async()=>{
+  const req=recoveringFailedMission();mocks.readRun.mockImplementation(async(runId:string)=>{
+   if(runId==="old-run")mission.campaign.serverRecoveryWait!.resumedByControlJobId="other-control";
+   return {runId,status:"failed"};
+  });
+  expect(await route(req)).toMatchObject({error:expect.any(String)});expect(req.res.status).toBe(409);expect(mocks.start).not.toHaveBeenCalled();expect(jobs.get(old.id)).toEqual(old);
+ });
+
+ describe("initialization transfer boundaries",()=>{
+  it.each(["generation","sha","metadata"] as const)("rejects changed %s after reservation before new Job/Event writes",async kind=>{
+   const req=recoveringFailedMission();await route(req);const input=mocks.start.mock.calls[0]![1][0] as EvolutionWorkflowRunInput;
+   if(kind==="generation")mission.campaign.serverRecoveryWait!.resumedByControlJobId="other-control";
+   if(kind==="sha")mission.campaign.serverRecoveryWait!.inputFingerprint="b".repeat(64);
+   if(kind==="metadata")mission.campaign.serverControlOwner!.retryOfControlJobId="other-control";
+   await expect(initializeWorkflowControlStep(input)).rejects.toThrow();expect(mocks.put).not.toHaveBeenCalled();expect(mocks.append).not.toHaveBeenCalled();expect(mocks.save).not.toHaveBeenCalled();expect(jobs.get(old.id)).toEqual(old);
+  });
+  it("does not initialize the new Job or append transfer after a failed CAS write",async()=>{
+   const req=recoveringFailedMission();await route(req);const input=mocks.start.mock.calls[0]![1][0] as EvolutionWorkflowRunInput;
+   const before=structuredClone(mission);mocks.save.mockRejectedValue(new Error("synthetic recovery transfer CAS conflict"));
+   await expect(initializeWorkflowControlStep(input)).rejects.toThrow("synthetic recovery transfer CAS conflict");expect(mocks.put).not.toHaveBeenCalled();expect(mocks.append).not.toHaveBeenCalled();expect(mission).toEqual(before);expect(jobs.get(old.id)).toEqual(old);
+  });
+ });
 });
