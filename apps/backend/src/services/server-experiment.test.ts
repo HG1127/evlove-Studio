@@ -1,3 +1,4 @@
+// @vitest-environment node
 import JSZip from "jszip";
 import { Blob as NodeBlob } from "node:buffer";
 import { webcrypto } from "node:crypto";

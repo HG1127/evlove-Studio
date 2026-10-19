@@ -1,5 +1,22 @@
 # Main flow acceptance
 
+## 2026-10-16 — Human-confirmed finite operational protection v2
+
+The owner approved the complete Original finite measured scope and a new Target Ready confirmation (`call_b1f5badabfe949489f633494a4b476dc`). [Implementation and continuation handoff](confirmed-operational-protection-handoff.md) documents the fresh-Mission human-only contract, complete native/image observations, unchanged legacy unknown receipts and explicit scope-limited reports. Only existing chapter body wording may change; all 111 actual cards and Original source structure/styles/scripts remain protected. Hosted base 799 CI failed 69 assertions; consumer repairs and exact new-source checks are recorded separately. No production publication or new real Mission is implied by development tests. The one previously approved new Mission remains uncreated until exact-version release/full-main-CI/production identity prerequisites pass; same-Hidden, 92 points, Safety, Gate F and identical frozen download/reopen remain incomplete.
+
+
+## 2026-10-16 — Authorized whole-protection central integration
+
+The human approved the reviewed 31 central wiring files and prerequisite integration. [Integration handoff](whole-protection-main-flow-closure-handoff.md) records private collector/settlement/Gate F restoration, exact accepted-file delivery and final release guards. The related development audit covers 46 unique files / 814 passed assertions; first failures remain retained. Exact new-source architecture/lint/build, complete CI and separately approved publication remain prerequisites. Production 3ae7f17 and old Mission revision50 are unchanged; Current Judge, paired acceptance, Gate F and accepted download/reopen are still incomplete. The already approved single independent Mission may continue on the repaired release only after its release gates. Actual-Original pure preflight additionally derives 269 unresolved runtime obligations with no complete closure producer in the current v1 policy; wiring alone cannot pass the whole-protection gate. Preserve the single new Mission until that capability or a separately confirmed measurable scope is ready.
+
+
+## 2026-10-16 — Single approved recovery completed; current Judge shape failure
+
+Actual deployed `3ae7f17` passed its complete main CI and production read-only gates. The directly approved single fixed-key Run `wrun_01M51CR5GJWNS7M8ZWFA46HE68` completed on the same SOP Mission/frozen P1-03, producing nine fresh Current and nine fresh Candidate Hidden results. Candidate independent Judge returned Safety PASS/rubric96/verified coverage92. Current Judge remained invalid after one same-connection correction (`cases:invalid_type`); the result is retained, SDK completed/Job waiting, Mission revision50 paused. Original REVIEW and old failures are preserved. Partial/unverified protection/pairwise observations remain; no paired acceptance, Gate F or accepted download/reopen is proved. The single recovery is consumed and no additional execution is authorized by this result.
+
+The [field feedback handoff](direct-ai-schema-field-feedback-handoff.md) addresses a locally confirmed omission: the one corrective request did not include the parser's known failing field/type. Synthetic red regressions reproduce it; source verification and exact-commit CI are required separately. This is not proof of the actual rejected current value or a live provider fix. Production remains paused under the explicit new-invalid-result stop condition.
+
+
 
 ## 2026-10-15 — Actual fresh Baseline/diagnosis and terminal Experiment timeout
 

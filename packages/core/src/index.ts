@@ -52,6 +52,8 @@ export * from "./html-document-observation";
 
 export * from "./baseline-comparison-phase";
 export * from "./html-protection-proof";
+export * from "./html-protection-operational-scope";
+export * from "./html-protection-native-visual-delta";
 
 export * from "./html-protection-inventory";
 export * from "./html-protection-file-comparison";
@@ -70,3 +72,23 @@ export * from "./original-html-baseline-diagnostic";
 export * from "./html-complete-source-retention";
 export * from "./html-protection-original-search-reference";
 export * from "./html-protection-original-search-count-format";
+
+export * from "./html-protection-whole-runtime-plan";
+
+export * from './html-protection-whole-runtime-coverage';
+
+export * from './html-protection-script-effect-profile';
+
+export * from './html-protection-script-effect-execution';
+export * from "./html-protection-whole-script-locations";
+
+export * from "./html-protection-whole-source-continuity";
+
+export * from "./html-protection-whole-source-dependencies";
+
+export * from "./html-protection-whole-search-profile";
+export * from "./html-protection-authority";
+export * from "./html-protection-proof-assembly";
+export * from "./html-protection-static-observations";
+
+export { assertPackageEvidenceContents } from "./artifact-package-evidence";

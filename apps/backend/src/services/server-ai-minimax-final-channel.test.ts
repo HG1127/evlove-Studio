@@ -6,6 +6,8 @@ import { COMPATIBLE_RESPONSES_OUTPUT_VERSION, COMPATIBLE_CHAT_OUTPUT_VERSION, ST
 import { SERVER_SEMANTIC_CONTEXT_VERSION } from "@evolution/harness";
 import { HTML_PROTECTION_SETTLEMENT_POLICY } from "@evolution/core";
 import { INDEPENDENT_EVALUATION_SAFETY_INSTRUCTION_VERSION } from "./independent-evaluation-safety";
+import { HTML_PROTECTION_SEMANTIC_OBSERVATION_VERSION } from "./html-protection-semantic-instruction";
+import { HTML_PROTECTION_VISUAL_OBSERVATION_VERSION } from "./html-protection-visual-instruction";
 import { minimaxChatFinalOptions, MINIMAX_CHAT_FINAL_CHANNEL_VERSION } from "./minimax-chat-final-channel";
 import { withExplicitServerAiConnection } from "./server-ai-connection";
 
@@ -89,6 +91,8 @@ function expectedFingerprint(selected: typeof connection | Omit<typeof connectio
     protectionSettlementPolicy: HTML_PROTECTION_SETTLEMENT_POLICY,
     semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION,
     evaluationSafetyInstructionVersion: INDEPENDENT_EVALUATION_SAFETY_INSTRUCTION_VERSION,
+    htmlProtectionSemanticObservationVersion: HTML_PROTECTION_SEMANTIC_OBSERVATION_VERSION,
+    htmlProtectionVisualObservationVersion: HTML_PROTECTION_VISUAL_OBSERVATION_VERSION,
     responsesOutputVersion: selected.protocol === "responses" ? COMPATIBLE_RESPONSES_OUTPUT_VERSION : undefined,
     chatOutputVersion: selected.protocol === "chat-completions" ? COMPATIBLE_CHAT_OUTPUT_VERSION : undefined,
     directSchemaInstructionVersion: undefined,

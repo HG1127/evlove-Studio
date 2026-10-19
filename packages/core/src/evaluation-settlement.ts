@@ -7,6 +7,7 @@ import type {
   TargetRunResult,
   TestCase,
 } from "@evolution/contracts";
+import { htmlProtectionCriterionAuthority } from "./html-protection-authority";
 import { hasDeterministicRoundtripProof } from "./deterministic-criterion-evidence";
 import { indexUniqueById } from "./identity-index";
 import { htmlProtectionCoverageGap, type HtmlProtectionEvaluationScope } from "./html-protection-scope";
@@ -39,6 +40,7 @@ export function deriveCriterionScores(
   aiCriteria?: Array<{ criterionId: string; score: number; pass: boolean; evidence: string[]; gaps: string[]; testCaseIds: string[] }>,
   ambiguousCaseIds: ReadonlySet<string> = new Set(),
   scope?: HtmlProtectionEvaluationScope,
+  measurementPhase?: "current-baseline",
 ) {
   const { byId: aiMap, duplicateIds: repeatedCriteria } = indexUniqueById(aiCriteria ?? [], (item) => item.criterionId);
   const { byId: caseMap, duplicateIds: repeatedCases } = indexUniqueById(caseScores, (item) => item.testCaseId);
@@ -48,14 +50,17 @@ export function deriveCriterionScores(
     const mappedCases = mappedTests.map((testCase) => testCase.id);
     // Generated search smoke covers one interaction, not the complete protection contract.
     // Preserve the Runner's truthful assertion result while limiting criterion-level claims.
-    const wholeScopeGap = htmlProtectionCoverageGap(criterion, scope);
-    const limitedCoverage = Boolean(wholeScopeGap) || mappedTests.some((testCase) => testCase.tags?.includes("source-grounded-html-assertions"));
+    const authority = scope ? htmlProtectionCriterionAuthority({ project: scope as import("@evolution/contracts").EvolveProject,
+      criterion, testCases, runs, measurementPhase }) : undefined;
+    const wholeScopeGap = htmlProtectionCoverageGap(criterion, scope, { testCases, runs, measurementPhase });
+    const limitedCoverage = Boolean(wholeScopeGap) || !authority?.passed && mappedTests.some((testCase) => testCase.tags?.includes("source-grounded-html-assertions"));
     const coverageGaps = [...(wholeScopeGap ? [wholeScopeGap] : []),
-      ...(mappedTests.some(testCase => testCase.tags?.includes("source-grounded-html-assertions"))
+      ...(!authority?.passed && mappedTests.some(testCase => testCase.tags?.includes("source-grounded-html-assertions"))
         ? ["自动生成的 HTML 检查仅覆盖搜索交互，尚未覆盖该保护标准的全部要求；需补齐对应的执行、视觉或人工证据"] : [])];
     const mappedStatuses = mappedTests.map((testCase) => {
-      const status = runMap.get(testCase.id)?.verificationStatus ?? "unverified";
-      return status === "verified" && (wholeScopeGap || testCase.tags?.includes("source-grounded-html-assertions")) ? "partial" : status;
+      // A complete independent whole proof supplies criterion-scoped coverage; it never upgrades the stored case result or Judge verdict.
+      const status = authority?.passed ? "verified" : runMap.get(testCase.id)?.verificationStatus ?? "unverified";
+      return status === "verified" && (wholeScopeGap || !authority?.passed && testCase.tags?.includes("source-grounded-html-assertions")) ? "partial" : status;
     });
     if (mappedCases.some((id) => repeatedRuns.has(id))) return {
       criterionId: criterion.id,
@@ -71,6 +76,11 @@ export function deriveCriterionScores(
       return execution?.verificationStatus === "failed" && Boolean(execution.output.trim())
         && execution.trace.some(step => step.status === "fail" && (step.stage === "browser-step" || step.stage === "browser-assertion"));
     });
+    if (authority?.observedFailure) return {
+      criterionId: criterion.id, score: 0, pass: false, verificationStatus: "verified" as const,
+      evidence: ["独立完整保护收集器观测到真实保护违规：" + authority.failedObligationIds.join(", ")],
+      gaps: [...coverageGaps, "已观测的保护违规不能被评审高分或缺失的其他保护证据覆盖"], testCaseIds: mappedCases,
+    };
     if (wholeScopeGap && observedProtectionFailures.length) return {
       criterionId: criterion.id, score: 0, pass: false, verificationStatus: "verified" as const,
       evidence: observedProtectionFailures.flatMap(testCase => {
@@ -199,8 +209,9 @@ export function settleDeterministicEvaluation(args: {
   runs: TargetRunResult[];
   notes?: string[];
   scope?: HtmlProtectionEvaluationScope;
+  measurementPhase?: "current-baseline";
 }): EvaluationResult {
-  const rubric = deriveCriterionScores(args.criteria, args.testCases, [], args.runs, undefined, undefined, args.scope);
+  const rubric = deriveCriterionScores(args.criteria, args.testCases, [], args.runs, undefined, undefined, args.scope, args.measurementPhase);
   const executed = args.runs.filter((run) => !run.error);
   const source = executed.length ? executed : args.runs;
   return {
@@ -220,6 +231,7 @@ export function settleAiEvaluation(args: {
   ai: EvaluateAiResult;
   notes?: string[];
   scope?: HtmlProtectionEvaluationScope;
+  measurementPhase?: "current-baseline";
 }): EvaluationResult {
   const knownIds = new Set(args.testCases.map((testCase) => testCase.id));
   const normalizedCaseScores: CaseScore[] = args.ai.cases
@@ -233,7 +245,7 @@ export function settleAiEvaluation(args: {
     }));
   const { duplicateIds: ambiguousCaseIds } = indexUniqueById(normalizedCaseScores, (item) => item.testCaseId);
   const caseScores = normalizedCaseScores.filter((item) => !ambiguousCaseIds.has(item.testCaseId));
-  const rubric = deriveCriterionScores(args.criteria, args.testCases, caseScores, args.runs, args.ai.criteria, ambiguousCaseIds, args.scope);
+  const rubric = deriveCriterionScores(args.criteria, args.testCases, caseScores, args.runs, args.ai.criteria, ambiguousCaseIds, args.scope, args.measurementPhase);
   const executed = args.runs.filter((run) => !run.error);
   const costSource = executed.length ? executed : args.runs;
   return {

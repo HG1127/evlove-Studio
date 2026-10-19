@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { CandidateSchema, EvolveProjectSchema, SourceArtifactSchema, type ArtifactStorePort } from "@evolution/contracts";
+import { CandidateSchema, EvolveProjectSchema, SourceArtifactSchema, type ArtifactMetadata, type ArtifactStorePort } from "@evolution/contracts";
 import { evidenceFingerprint } from "@evolution/core";
 
 export const acceptedAt = "2026-10-08T16:00:00.000Z";
@@ -9,6 +9,7 @@ export function acceptedPackageFixture(withChampion = true) {
   const source = SourceArtifactSchema.parse({ id: "source", name: "original.html", extension: "html", mimeType: "text/html", role: "target", artifactKind: "document", inputMode: "upload", size: 44, textContent: "<html><body>original input</body></html>", createdAt: acceptedAt });
   source.size = new TextEncoder().encode(source.textContent!).byteLength;
   const blobs = new Map<string, Blob>();
+  blobs.set(source.id,new Blob([source.textContent!],{type:source.mimeType}));
   const make = (id: string, text: string) => {
     const content = "<html><body><p>" + text + "</p></body></html>";
     const sha = hash(content), blob = new Blob([content], { type: "text/html" });
@@ -35,11 +36,14 @@ export function acceptedPackageFixture(withChampion = true) {
   if (withChampion) {
     const priorBinding = evidenceFingerprint(project, prior);
     project.searchChampion = {
-      id: "historical-champion", versionLabel: "S1", round: 1, score: 98, reason: "historical best", patches: [], selectedAt: acceptedAt, candidate: project.candidates.find((item) => item.id === prior.id)!, evaluation: project.validationRun.evaluation,
+      id: "historical-champion", versionLabel: "S1", round: 1, parentVersionId: project.version, score: 98, reason: "historical best", patches: [], selectedAt: acceptedAt, candidate: project.candidates.find((item) => item.id === prior.id)!, evaluation: project.validationRun.evaluation,
       validation: { ...structuredClone(project.validationRun), id: "validation-prior", candidateId: prior.id, evidenceFingerprint: priorBinding },
       artifactAcceptance: { ...project.artifactAcceptance, id: "acceptance-prior", candidateId: prior.id, evidenceFingerprint: priorBinding, frozenArtifacts: [prior.artifactSnapshots[0]!.frozenArtifact!] },
     };
   }
-  const store: ArtifactStorePort = { get: async (id) => blobs.get(id), put: async () => { throw new Error("delivery must not regenerate bytes"); }, delete: async () => { throw new Error("delivery must not delete bytes"); } };
-  return { project, current: project.candidates.find((item) => item.id === current.id)!, prior: project.candidates.find((item) => item.id === prior.id)!, blobs, store };
+  const metadata = new Map<string,ArtifactMetadata>();
+  for(const [id,blob] of blobs){const text=id===source.id?source.textContent!:project.candidates.find(candidate=>candidate.artifactSnapshots[0]!.frozenArtifact!.blobId===id)!.artifactSnapshots[0]!.content;
+    metadata.set(id,{schemaVersion:"artifact-v1",id,missionId:project.id,bucket:"synthetic-private",objectPath:id,mimeType:blob.type,sizeBytes:blob.size,sha256:hash(text),createdAt:acceptedAt,updatedAt:acceptedAt});}
+  const store: ArtifactStorePort = { getMetadata:async id=>structuredClone(metadata.get(id)), get: async (id) => blobs.get(id), put: async () => { throw new Error("delivery must not regenerate bytes"); }, delete: async () => { throw new Error("delivery must not delete bytes"); } };
+  return { project, current: project.candidates.find((item) => item.id === current.id)!, prior: project.candidates.find((item) => item.id === prior.id)!, blobs, metadata, store };
 }

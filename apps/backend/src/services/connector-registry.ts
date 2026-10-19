@@ -149,7 +149,7 @@ async function authHeader(manifest:ConnectorServerManifest):Promise<Record<strin
   return {Authorization:`Bearer ${token}`};
 }
 
-export async function executeConnectorAction(raw:ConnectorActionRequest){
+export async function executeConnectorAction(raw:ConnectorActionRequest,beforeDispatch?:()=>Promise<()=>void>){
   const input=ConnectorActionRequestSchema.parse(raw);
   const manifest=resolveManifest(input.connectorId);
   const url=endpoint(manifest,input.operation);
@@ -159,18 +159,13 @@ export async function executeConnectorAction(raw:ConnectorActionRequest){
     ...await authHeader(manifest),
   };
   if(input.idempotencyKey)requestHeaders["Idempotency-Key"]=input.idempotencyKey;
-  const response=await fetch(url,{
-    method:"POST",
-    headers:requestHeaders,
-    signal:AbortSignal.timeout(90_000),
-    body:JSON.stringify({
-      missionId:input.missionId,
-      targetId:input.targetId,
-      expectedVersionRef:input.expectedVersionRef,
-      idempotencyKey:input.idempotencyKey,
-      payload:input.payload,
-    }),
-  });
+  const wireBody=JSON.stringify({missionId:input.missionId,targetId:input.targetId,expectedVersionRef:input.expectedVersionRef,idempotencyKey:input.idempotencyKey,payload:input.payload});
+  // Resolve the actual credential first; a drift during that await must be visible to the final private guard.
+  const checkDispatch=await beforeDispatch?.();
+  if(JSON.stringify(resolveManifest(input.connectorId))!==JSON.stringify(manifest))throw configError("Connector manifest changed before dispatch");
+  const requestInit={method:"POST",headers:requestHeaders,signal:AbortSignal.timeout(90_000),body:wireBody};
+  checkDispatch?.();
+  const response=await fetch(url,requestInit);
   const body=await response.json().catch(()=>({})) as Record<string,unknown>;
   if(!response.ok){
     const detail=typeof body.message==="string"?body.message:`HTTP ${response.status}`;

@@ -26,6 +26,7 @@ vi.mock("./production-runtime",()=>({getServerProductionRuntime:()=>({
   missions:{get:mocks.missionGet,save:mocks.missionSave},events:{append:mocks.eventAppend},
 })}));
 vi.mock("./release-approval-store",()=>({requireActiveReleaseApprovalGrant:async()=>({id:"grant-1"})}));
+vi.mock("./server-html-protection-accepted-authority",()=>({restoreServerHtmlProtectionAcceptedProject:async({project}:{project:unknown})=>({project})}));
 vi.mock("./server-release-orchestration",()=>({executeServerReleaseProvider:mocks.execute}));
 vi.mock("./release-outcome-telemetry",()=>({
   recordConnectorReleaseOutcomeObservation:vi.fn(),recordHttpReleaseOutcomeObservation:mocks.record,

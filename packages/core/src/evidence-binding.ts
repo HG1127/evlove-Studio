@@ -9,6 +9,7 @@ export function evidenceFingerprint(project: EvolveProject, candidate: Candidate
     candidate.artifactSnapshots.map((item) => [item.sourceArtifactId, item.name, item.mimeType, item.content]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
     project.sourceArtifacts.map((item) => [item.id, item.role, item.textContent, item.structuredContent]),
     project.goal, project.evolutionCommand, project.protectedItems, project.acceptanceRubric,
+    ...(project.htmlProtectionOperationalScope ? [project.htmlProtectionOperationalScope] : []),
     project.hiddenEvalSuite, project.metrics.map(({ key, target, direction }) => ({ key, target, direction })),
   ]));
 }

@@ -1,4 +1,5 @@
 import {createHash} from "node:crypto";
+import {htmlProtectionCanonicalJson as canonical} from "./server-html-protection-authority-attestation";
 import {
   ConnectorReleaseReceiptSchema,
   type Candidate,
@@ -16,7 +17,7 @@ import {
 } from "@evolution/core";
 import {assertConnectorCandidateIsolation,executeConnectorAction} from "./connector-registry";
 
-type ConnectorExecutor=(input:ConnectorActionRequest)=>Promise<ConnectorActionResponse>;
+type ConnectorExecutor=(input:ConnectorActionRequest,beforeDispatch?:()=>Promise<()=>void>)=>Promise<ConnectorActionResponse>;
 type IsolationAssert=(connectorId:string)=>unknown;
 
 function trafficPercent(action:DurableReleaseAction){
@@ -48,11 +49,18 @@ function assertReceiptSemantics(project:EvolveProject,receipt:ConnectorReleaseRe
   }
 }
 
-function releaseBinding(project:EvolveProject){
+function rollbackCandidate(project:EvolveProject){
+  const id=project.release.candidateId;if(!id)throw Error("Connector rollback stored Candidate is unavailable");
+  const matches=project.candidates.filter(candidate=>candidate.id===id);if(matches.length>1)throw Error("Connector rollback stored Candidate is ambiguous");
+  const champion=project.searchChampion?.candidate?.id===id?project.searchChampion.candidate:undefined;
+  if(matches[0]&&champion&&canonical(matches[0])!==canonical(champion))throw Error("Connector rollback stored Candidate copies disagree");
+  const candidate=matches[0]??champion;if(!candidate)throw Error("Connector rollback stored Candidate is unavailable");return candidate;
+}
+function releaseBinding(project:EvolveProject,action?:DurableReleaseAction){
   if(!projectUsesConnectorRelease(project))throw new Error("Mission 未连接 Connector Release Target");
   const target=project.targetConnection.connector;
   const source=project.targetConnection.connectorSnapshot;
-  const candidate=currentReleaseCandidate(project);
+  const candidate=action==="rollback"?rollbackCandidate(project):currentReleaseCandidate(project);
   if(!target||!source)throw new Error("Connector Release 缺少 exact Target snapshot binding");
   if(!candidate)throw new Error("Connector Release 找不到 exact Candidate");
   const binding=candidate.connectorBinding;
@@ -80,7 +88,7 @@ function toReleaseResult(args:{
   observedDeploymentId?:string;
   observedStableDeploymentId?:string;
 }):ReleaseAdapterResult{
-  const {candidate,binding}=releaseBinding(args.project);
+  const {candidate,binding}=releaseBinding(args.project,args.action);
   const receipt=ConnectorReleaseReceiptSchema.parse(args.response.output);
   assertReceiptSemantics(args.project,receipt);
   if(receipt.effectiveAction!==args.action){
@@ -147,8 +155,9 @@ export async function executeConnectorReleaseAction(
   },
   execute:ConnectorExecutor=executeConnectorAction,
   assertIsolation:IsolationAssert=assertConnectorCandidateIsolation,
+  beforeDispatch?:()=>Promise<()=>void>,
 ){
-  const {target,candidate,binding}=releaseBinding(project);
+  const {target,candidate,binding}=releaseBinding(project,args.action);
   assertIsolation(target.connectorId);
   const operation=args.action==="rollback"?"rollback" as const:"deploy" as const;
   const versionRef=args.action==="rollback"?binding.baseVersionRef:binding.versionRef;
@@ -170,7 +179,7 @@ export async function executeConnectorReleaseAction(
       deploymentRef:args.deploymentId,
       stableDeploymentRef:args.stableDeploymentId,
     },
-  });
+  },beforeDispatch);
   return toReleaseResult({project,response,action:args.action});
 }
 
@@ -184,7 +193,7 @@ export async function observeConnectorReleaseReality(
   execute:ConnectorExecutor=executeConnectorAction,
   assertIsolation:IsolationAssert=assertConnectorCandidateIsolation,
 ){
-  const {target,candidate,binding}=releaseBinding(project);
+  const {target,candidate,binding}=releaseBinding(project,args.recoveryAction);
   assertIsolation(target.connectorId);
   const response=await execute({
     connectorId:target.connectorId,

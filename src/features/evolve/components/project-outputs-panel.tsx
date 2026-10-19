@@ -1,6 +1,5 @@
 import { ArchiveRestore, Boxes, Download, ExternalLink, Eye, FileArchive, FileText, GitBranch, GitCompareArrows, History, PackageCheck, Rocket, RotateCcw, Trophy, X } from "lucide-react";
 import { useMemo, useState } from "react";
-import { htmlProtectionAcceptanceBlocker } from "@evolution/core";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,7 +8,7 @@ import type { EvolvedVersion, OutputArtifact } from "../schemas";
 import { diffLines, compactDiffLines, projectFullDiffSides } from "../runtime/diff";
 import { MermaidBlock } from "./mermaid-block";
 import { splitMermaidSegments } from "../runtime/mermaid-split";
-import { buildDeliverableZip } from "../runtime/artifact-output-builders";
+import { buildDeliverableZip, readAcceptedPrimary } from "../runtime/artifact-output-builders";
 import { readFrozenArtifact } from "../runtime/frozen-artifact";
 import { toast } from "sonner";
 import type { ProjectRuntime } from "../runtime/use-project-runtime";
@@ -155,11 +154,11 @@ export function ProjectOutputsPanel({ runtime }: { runtime: ProjectRuntime }) {
   const downloadOne = async (artifact: DownloadableArtifact, archival = false) => {
     try {
       if (artifact.kind === "primary" || artifact.frozenArtifact) {
-        const contractBlocker = !archival && htmlProtectionAcceptanceBlocker(project);
-        if (contractBlocker) throw new Error(contractBlocker);
         if (artifact.kind === "primary" && !artifact.accepted) throw new Error("此成果尚未通过验收，请先完成验证。");
-        const blob = await readFrozenArtifact(artifact.frozenArtifact, artifact.content);
-        downloadBlob(artifact.frozenArtifact!.name, blob);
+        const current=project.outputArtifacts.find(item=>item.id===artifact.id);
+        if(!archival&&!current)throw Error("当前成果身份已变化，请刷新。");
+        const accepted = archival?{blob:await readFrozenArtifact(artifact.frozenArtifact,artifact.content),identity:{name:artifact.frozenArtifact!.name}}:await readAcceptedPrimary(project,current!);
+        downloadBlob(accepted.identity.name, accepted.blob);
       } else {
         if (!artifact.kind) throw new Error("这份历史记录没有实际文件验证信息。可查看内容或对照差异，请重新验收后下载原格式文件。");
         downloadBlob(artifact.name, new Blob([artifact.content], { type: artifact.mimeType || "text/plain;charset=utf-8" }));

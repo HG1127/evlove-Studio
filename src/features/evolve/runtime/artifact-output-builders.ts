@@ -1,3 +1,6 @@
+import {assertAcceptedPackageDownloadContext,AcceptedFileDownloadIdentitySchema} from "@evolution/contracts";
+import {htmlProtectionAcceptanceBlocker} from "@evolution/core";
+import {getProductionRuntime,productionRuntimeMode} from "./production-runtime";
 import { decodeArtifactUtf8 } from "@evolution/adapters";
 import JSZip from "jszip";
 import { assertDeliverablePackageIdentity } from "@evolution/core";
@@ -5,7 +8,7 @@ import * as XLSX from "xlsx";
 import type { CandidateArtifactSnapshot, SourceArtifact } from "../schemas";
 import { getArtifactBlob } from "./artifact-blob-store";
 import { describeArtifact } from "./artifact-strategy";
-import { readFrozenArtifact } from "./frozen-artifact";
+import { sha256, readFrozenArtifact } from "./frozen-artifact";
 
 function xmlEscape(value:string){return value.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&apos;");}
 function json<T>(text:string):T|undefined{try{return JSON.parse(text) as T}catch{return undefined}}
@@ -102,19 +105,52 @@ export async function buildDownloadBlob(source: SourceArtifact, snapshot: Candid
   return {blob:new Blob([snapshot.content],{type:snapshot.mimeType||source.mimeType||"text/plain;charset=utf-8"}),name:evolvedName(source,source.extension),note:"文本/结构化文本成果直接下载已通过 Hidden + Artifact Acceptance 的 exact Candidate Snapshot。"};
 }
 
+/** Read a server-validated current file; response identity and actual bytes are checked, never converted into Core authority. */
+export async function readAcceptedPrimary(project:import("../schemas").EvolveProject,artifact:Pick<import("../schemas").OutputArtifact,"candidateId"|"sourceArtifactIds"|"frozenArtifact"|"content">,expected?:{acceptanceId:string;validationId:string}){
+  const receipt=artifact.frozenArtifact,candidateId=artifact.candidateId,source=artifact.sourceArtifactIds[0];
+  if(!receipt||!candidateId||artifact.sourceArtifactIds.length!==1||source!==receipt.sourceArtifactId)throw Error("Accepted file identity is incomplete");
+  if(productionRuntimeMode()==="local"){
+    const blocker=htmlProtectionAcceptanceBlocker(project);if(blocker)throw Error(blocker);
+    const blob=await readFrozenArtifact(receipt,artifact.content);
+    const identity=AcceptedFileDownloadIdentitySchema.parse({missionId:project.id,candidateId,sourceArtifactId:source,acceptanceId:project.artifactAcceptance.id,validationId:project.validationRun.id,
+      blobId:receipt.blobId,sha256:receipt.sha256,size:receipt.size,name:receipt.name,mimeType:receipt.mimeType});
+    return Object.freeze({blob,identity:Object.freeze(identity)});
+  }
+  const downloads=getProductionRuntime().acceptedDownloads;if(!downloads)throw Error("配置的生产端口不支持验收下载，请接入对应后端下载端口。");
+  const result=await downloads.file({missionId:project.id,candidateId,sourceArtifactId:source}),identity=AcceptedFileDownloadIdentitySchema.parse(result.identity);
+  const bound=expected??{acceptanceId:project.artifactAcceptance.id,validationId:project.validationRun.id};
+  if(identity.missionId!==project.id||identity.candidateId!==candidateId||identity.sourceArtifactId!==source||identity.blobId!==receipt.blobId||identity.sha256!==receipt.sha256
+    ||identity.size!==receipt.size||identity.name!==receipt.name||identity.mimeType!==receipt.mimeType||identity.acceptanceId!==bound.acceptanceId||identity.validationId!==bound.validationId)throw Error("验收身份已变化，请刷新成果包。");
+  if(!(result.bytes instanceof Uint8Array))throw Error("下载端口没有返回实际字节。");
+  const bytes=new Uint8Array(result.bytes),blob=new Blob([bytes.buffer],{type:identity.mimeType});
+  if(blob.size!==receipt.size||await sha256(bytes.buffer)!==receipt.sha256)throw Error("下载字节与冻结文件不一致。");
+  return Object.freeze({blob,identity:Object.freeze(identity)});
+}
+
 export async function buildDeliverableZip(project: import("../schemas").EvolveProject) {
-  assertDeliverablePackageIdentity(project);
+  let artifacts=project.outputArtifacts,identity:{acceptanceId:string;validationId:string}|undefined;
+  if(productionRuntimeMode()==="local")assertDeliverablePackageIdentity(project);
+  else{
+    const candidateId=project.artifactAcceptance.candidateId;if(!candidateId||project.validationRun.candidateId!==candidateId)throw Error("Accepted package current Candidate identity is incomplete");
+    const downloads=getProductionRuntime().acceptedDownloads;if(!downloads)throw Error("配置的生产端口不支持验收下载。");
+    const packageData=assertAcceptedPackageDownloadContext(await downloads.package({missionId:project.id,candidateId}),{missionId:project.id,candidateId,acceptanceId:project.artifactAcceptance.id,validationId:project.validationRun.id,
+      targetSourceArtifactIds:project.sourceArtifacts.filter(item=>item.role==="target").map(item=>item.id),sourceArtifactIds:project.sourceArtifacts.map(item=>item.id)});
+    artifacts=packageData.artifacts;identity={acceptanceId:packageData.acceptanceId,validationId:packageData.validationId};
+  }
+  const targetIds=project.sourceArtifacts.filter(item=>item.role==="target").map(item=>item.id),targets=new Set(targetIds),primary=artifacts.filter(item=>item.kind==="primary");
+  if(!targets.size||targets.size!==targetIds.length||primary.length!==targets.size||new Set(primary.map(item=>item.sourceArtifactIds[0])).size!==targets.size
+    ||primary.some(item=>item.sourceArtifactIds.length!==1||!targets.has(item.sourceArtifactIds[0]!)))throw Error("Accepted package primary Target coverage is incomplete or duplicated");
   const zip=new JSZip();
-  for(const artifact of project.outputArtifacts){
+  for(const artifact of artifacts){
     const entryName = artifact.kind === "primary" ? artifact.frozenArtifact?.name : artifact.name;
     if (!entryName || !safeArchivePath(entryName)) throw new Error("交付文件名无效，请重新验收生成有效文件。");
     if (zip.file(entryName)) throw new Error(`交付文件重名：${entryName}，请分别下载或修改源文件名后重新验收。`);
     if(artifact.kind==="primary"){
       if (!artifact.accepted) throw new Error("成果尚未通过验收，不能作为正式交付文件打包。");
-      const blob = await readFrozenArtifact(artifact.frozenArtifact, artifact.content);
-      const name = artifact.frozenArtifact!.name;
+      const accepted = await readAcceptedPrimary(project,artifact,identity);
+      const name = accepted.identity.name;
       if (zip.file(name)) throw new Error(`交付文件重名：${name}，请分别下载或修改源文件名后重新验收。`);
-      zip.file(name, new Uint8Array(await blob.arrayBuffer()));continue;
+      zip.file(name, new Uint8Array(await accepted.blob.arrayBuffer()));continue;
     }
     zip.file(artifact.name,artifact.content);
   }

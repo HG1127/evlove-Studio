@@ -3,15 +3,17 @@ import {createHash} from "node:crypto";
 import JSZip from "jszip";
 import * as XLSX from "xlsx";
 import {describe,expect,it} from "vitest";
-import {CandidateSchema,type ArtifactStorePort,type Candidate,type EvolveProject,type OutputArtifact,type SourceArtifact} from "@evolution/contracts";
+import {CandidateSchema,type ArtifactMetadata,type ArtifactStorePort,type Candidate,type EvolveProject,type OutputArtifact,type SourceArtifact} from "@evolution/contracts";
 import {evidenceFingerprint,materializeAcceptedChampionPackage} from "@evolution/core";
 import {acceptedPackageFixture} from "@evolution/testkit";
 import {renderAcceptedProjectArtifacts,renderSnapshot,verifyRendered} from "./server-artifact-renderer";
 
 function memoryStore(){
   const blobs=new Map<string,Blob>();
+  const metadata=new Map<string,ArtifactMetadata>();
   const store:ArtifactStorePort={
-    put:async(id,blob)=>{blobs.set(id,blob);},
+    getMetadata:async id=>structuredClone(metadata.get(id)),
+    put:async(id,blob)=>{blobs.set(id,blob);metadata.set(id,{schemaVersion:"artifact-v1",id,missionId:"mission-render",bucket:"synthetic-private",objectPath:id,mimeType:blob.type,sizeBytes:blob.size,sha256:createHash("sha256").update(new Uint8Array(await blob.arrayBuffer())).digest("hex"),createdAt:"2026-10-08T16:00:00.000Z",updatedAt:"2026-10-08T16:00:00.000Z"});},
     get:async(id)=>blobs.get(id),
     delete:async(id)=>{blobs.delete(id);},
   };
@@ -35,9 +37,10 @@ function missionFor(source:SourceArtifact,snapshot:Candidate["artifactSnapshots"
     frozenArtifacts:[{sourceArtifactId:source.id,snapshotHash:snapshot.contentHash,blobId:"frozen-"+source.id,name:source.name,
       mimeType:source.mimeType,sha256:"a".repeat(64),size:source.size,verifiedAt:"now",checks:[],limitations:[]}]};
   mission.artifactAcceptance=acceptance;
+  candidate.artifactSnapshots[0]!.frozenArtifact=acceptance.frozenArtifacts[0];
   const binding=evidenceFingerprint(mission,candidate);
   acceptance.evidenceFingerprint=binding;mission.validationRun.evidenceFingerprint=binding;
-  mission.searchChampion={id:"champion",round:1,versionLabel:"V1",candidate,artifactAcceptance:acceptance,
+  mission.searchChampion={id:"champion",parentVersionId:mission.version,round:1,versionLabel:"V1",candidate,artifactAcceptance:acceptance,
     validation:mission.validationRun,score:100,reason:"accepted",patches:[],evaluation:mission.validationRun.evaluation,selectedAt:"now"};
   const output:OutputArtifact={id:"output-1",projectId:mission.id,round:1,versionLabel:"V1",candidateId:candidate.id,
     name:outputName,mimeType:source.mimeType,kind:"primary",content:snapshot.content,description:"accepted",sourceArtifactIds:[source.id],
@@ -46,9 +49,16 @@ function missionFor(source:SourceArtifact,snapshot:Candidate["artifactSnapshots"
 }
 
 /** Exercise physical failures using a complete accepted package, as the API supplies. */
-function deliverAccepted(project:EvolveProject,primary:OutputArtifact[],store:ArtifactStorePort){
+async function deliverAccepted(project:EvolveProject,primary:OutputArtifact[],store:ArtifactStorePort){
+  for(const source of project.sourceArtifacts.filter(item=>item.role==="target")){
+    const id=source.storageRef||source.id;
+    let original=await store.get(id);
+    if(!original){if(!/^(txt|pdf)$/.test(source.extension))throw Error("Complete actual Original fixture missing");
+      original=new Blob([source.extension==="pdf"?"%PDF-1.7 Original fixture bytes":"Original fixture input"],{type:source.mimeType});await store.put(id,original);}
+    source.size=original.size;
+  }
   const metadata=materializeAcceptedChampionPackage(project).filter((artifact)=>artifact.kind!=="primary");
-  return renderAcceptedProjectArtifacts(project,[...primary,...metadata],store);
+  return renderAcceptedProjectArtifacts(project,[...primary,...metadata],store,{readMission:async()=>structuredClone(project)});
 }
 
 async function freezeAccepted(mission:EvolveProject,blob:Blob,store:ArtifactStorePort){
@@ -150,6 +160,7 @@ describe("server accepted artifact renderer",()=>{
       contentHash:"hash-pdf",buildMode:"ai-full" as const,notes:[],createdAt:"now",
     };
     const {mission,output}=missionFor(src,snapshot);
+    await store.put("raw-pdf",new Blob(["%PDF-1.7 Original fixture bytes"],{type:src.mimeType}));
     const acceptedBytes=new Blob(["%PDF-1.7 accepted bytes"],{type:"application/pdf"});
     const frozen=await freezeAccepted(mission,acceptedBytes,store);
     const blobCount=blobs.size;
@@ -165,8 +176,8 @@ describe("server accepted artifact renderer",()=>{
     const snapshot={id:"snap-txt",sourceArtifactId:src.id,name:src.name,mimeType:src.mimeType,content:"accepted",
       contentHash:"hash-txt",buildMode:"ai-full" as const,notes:[],createdAt:"now"};
     const {mission,output}=missionFor(src,snapshot);
-    await expect(deliverAccepted(mission,[output],store)).rejects.toThrow("找不到 Gate F 冻结 Artifact Blob");
-    expect(blobs.size).toBe(0);
+    await expect(deliverAccepted(mission,[output],store)).rejects.toThrow("html-protection-physical-metadata-unavailable");
+    expect(blobs.size).toBe(1);
   });
 
   it("refuses changed frozen bytes of the same size",async()=>{
@@ -177,8 +188,8 @@ describe("server accepted artifact renderer",()=>{
     const {mission,output}=missionFor(src,snapshot);
     const frozen=await freezeAccepted(mission,new Blob(["good"],{type:"text/plain"}),store);
     await store.put(frozen.blobId,new Blob(["evil"],{type:"text/plain"}));
-    await expect(deliverAccepted(mission,[output],store)).rejects.toThrow("SHA-256");
-    expect(blobs.size).toBe(1);
+    await expect(deliverAccepted(mission,[output],store)).rejects.toThrow("html-protection-physical-subject-metadata-mismatch");
+    expect(blobs.size).toBe(2);
   });
 
   it("rejects a stale Output frozen receipt even when the accepted Blob exists",async()=>{
@@ -209,6 +220,7 @@ describe("server accepted artifact renderer",()=>{
       contentHash:"hash-new",buildMode:"ai-full" as const,notes:[],createdAt:"now",
     };
     const {mission,output}=missionFor(src,snapshot);
+    await freezeAccepted(mission,new Blob(["new"],{type:"text/plain"}),store);
     mission.searchChampion!.artifactAcceptance!.frozenArtifacts![0]!.snapshotHash="hash-old";
     const before=blobs.size;
     await expect(deliverAccepted(mission,[output],store)).rejects.toThrow(/frozen hash/i);

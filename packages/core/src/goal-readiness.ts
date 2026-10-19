@@ -1,10 +1,15 @@
 import type { EvolveProject } from "@evolution/contracts";
+import { confirmedHtmlProtectionOperationalScope } from "./html-protection-operational-scope";
 import { describeArtifact } from "./artifact-strategy";
 
 /** Shared by manual approval and automatic execution; no silent AI assumptions. */
 export function goalReadiness(project: EvolveProject) {
   const blockers: string[] = [];
   const warnings: string[] = [];
+  if (project.htmlProtectionOperationalScope) {
+    try { confirmedHtmlProtectionOperationalScope(project, project.htmlProtectionOperationalScope.original); }
+    catch { blockers.push("明确保护范围与当前 Target Ready 契约不一致，需要使用独立新任务重新确认。"); }
+  }
   const targets = project.sourceArtifacts.filter((a) => a.role === "target");
   if (!targets.length) blockers.push("请加入至少一份要修改的当前成果。");
   if (!project.goal?.trim()) blockers.push("请说明希望改善的目标。");

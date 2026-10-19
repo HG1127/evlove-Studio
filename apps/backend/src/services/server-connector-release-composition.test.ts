@@ -4,6 +4,18 @@ import type {Candidate,EvolveProject} from "@evolution/contracts";
 import {executeServerReleaseProvider} from "./server-release-orchestration";
 import {runServerMissionReleaseReconciliation} from "./server-release-reconciliation";
 
+// Controlled authorization seam only; private restoration/final-guard integration has separate negative coverage.
+const releaseFixture=vi.hoisted(()=>({project:undefined as EvolveProject|undefined}));
+vi.mock("./production-runtime",()=>({getServerProductionRuntime:()=>({missions:{get:async()=>releaseFixture.project}})}));
+vi.mock("./server-html-protection-accepted-authority",()=>({
+  restoreServerHtmlProtectionAcceptedProject:async({project}:{project:EvolveProject})=>({project,assertStable:async()=>undefined}),
+  serverHtmlProtectionAcceptedContext:(project:EvolveProject)=>JSON.stringify(project),
+}));
+const approvedFixture=()=>({id:"synthetic-grant",missionId:releaseFixture.project!.id,
+  candidateId:releaseFixture.project!.experimentRun.winnerId,approvedRole:"approver",approvedAt:"2026-01-01T00:00:00.000Z",expiresAt:"2099-01-01T00:00:00.000Z"});
+vi.mock("@evolution/core",async original=>({...await original<typeof import("@evolution/core")>(),deliveryReadiness:()=>({ready:true,reasons:[]})}));
+vi.mock("./release-approval-store",()=>({requireActiveReleaseApprovalGrant:async()=>approvedFixture()}));
+
 const previousConnectors=process.env.EVOLUTION_CONNECTORS_JSON;
 
 afterEach(()=>{
@@ -37,11 +49,11 @@ function fixture(){
       connectorSnapshot:{connectorId:"workflow-main",targetId:"workflow-42",versionRef:"v42",snapshotRef:"snap42",artifactId:"source",observedAt:"now"},
     },
     releaseTarget:{provider:"connector",mode:"preview-promote",status:"connected",label:"Connector Release",healthPath:"/"},
-    experimentRun:{winnerId:"C1"},candidates:[candidate],searchChampion:{candidate},
+    acceptanceRubric:[],validationRun:{runs:[],baselineRuns:[]},experimentRun:{winnerId:"C1"},candidates:[candidate],searchChampion:{candidate},
     campaign:{status:"running",schedule:{enabled:false}},
     release:{status:"idle",candidateId:"C1",trafficPercent:0,kpis:[],evidenceMode:"none",history:[]},
   } as unknown as EvolveProject;
-  return{project,candidate};
+  releaseFixture.project=project;return{project,candidate};
 }
 
 function providerBody(action:"shadow"|"promote"){

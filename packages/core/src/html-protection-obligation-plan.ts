@@ -102,7 +102,8 @@ export function htmlProtectionObligationPlan(args: {
   }
   const contentScope = args.frozenContentContract ? htmlProtectionContentScope({ sourceArtifactId: original.sourceArtifactId, frozenContract: args.frozenContentContract }) : undefined;
   const semanticContent = contentScope?.mode === "semantic-refinement";
-  const profile = refinements(args.runtimeProfile, original);
+  const operational = contentScope?.operationalScope;
+  const profile = refinements(operational ? undefined : args.runtimeProfile, original);
   const requiredObligations: HtmlProtectionObligation[] = [], gaps: HtmlProtectionPlanGap[] = [];
   function obligation(id: string, kind: Kind, target: string, description: string, evidenceKind: EvidenceKind, supported = false) {
     const item = HtmlProtectionObligationSchema.parse({ id: "plan:" + id, sourceArtifactId: original.sourceArtifactId,
@@ -204,6 +205,8 @@ export function htmlProtectionObligationPlan(args: {
       "Unenumerated behavior of this original coarse runtime scope remains required beyond any finite profile children", "browser");
     return { parentObligationId: parent.id, residualObligationId, children };
   });
+  if (operational) obligation("document:confirmed-operational-runtime-v2", "browser-behavior", "document",
+    "Verify every Original startup-registered control and required state, full native document material and every Original-derived viewport; no unknown future behavior is claimed", "browser");
   const ids = new Set(requiredObligations.map((item) => item.id));
   if (ids.size !== requiredObligations.length) throw new Error("Duplicate generated obligation identity");
   const unresolvedObligationIds = requiredObligations.filter((item) => item.support === "unresolved").map((item) => item.id);
@@ -214,7 +217,7 @@ export function htmlProtectionObligationPlan(args: {
   return { schemaVersion: "html-protection-obligation-plan-v1" as const, sourceArtifactId: original.sourceArtifactId,
     originalInventory: original, requiredObligations,
     scope: { document, cards, styles, scripts, references, handlers, runtime },
-    runtimeProfileId: args.runtimeProfile?.id ?? null, contentScope: contentScope ?? null,
+    runtimeProfileId: operational ? null : args.runtimeProfile?.id ?? null, contentScope: contentScope ?? null,
     expectedCoverage: { obligationCount: requiredObligations.length, byEvidenceKind, unresolvedObligationIds,
       originalFactCounts: { cards: original.cards.length, styles: original.styles.length, scripts: original.scripts.length,
         references: original.references.length, handlers: original.handlers.length, documentElements: original.documentElements.length,

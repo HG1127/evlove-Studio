@@ -1,3 +1,4 @@
+import {collectServerHtmlProtectionAuthority} from "./server-html-protection-authority";
 import {withServerAiConnection} from "./server-ai-connection";
 import {runServerHtmlArtifactBatch,serverHtmlArtifactTargetEnabled} from "./server-html-artifact-execution";
 import type { Candidate, EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
@@ -100,6 +101,7 @@ export async function runServerMissionHoldout(project:EvolveProject){
     scoringRouteFingerprint:await serverAiScoringRouteFingerprint(),
     readArtifactFingerprint:readServerHoldoutArtifactFingerprint,
     current:{
+      collectHtmlProtectionAuthority:collectServerHtmlProtectionAuthority,
       executeSemanticBatch:({project:current,testCases,artifactContext})=>runServerAi("execute-artifact-batch",{
         project:{name:current.name,objectType:current.objectType,goal:current.goal,evolutionCommand:current.evolutionCommand,protectedItems:current.protectedItems,editableItems:current.editableItems,sourceArtifacts:artifactContext},
         testCases:testCases.map((testCase)=>({id:testCase.id,title:testCase.title,input:testCase.input,expected:testCase.expected,criterionIds:testCase.criterionIds,evidenceScope:testCase.evidenceScope})),
@@ -112,6 +114,7 @@ export async function runServerMissionHoldout(project:EvolveProject){
       judge:(payload)=>runServerAi("evaluate",payload),
     },
     candidate:{
+      collectHtmlProtectionAuthority:collectServerHtmlProtectionAuthority,
       executeSemanticBatch:({project:current,candidate,testCases,artifactContext})=>runServerAi("execute-artifact-batch",{
         project:{name:current.name,objectType:current.objectType,goal:current.goal,evolutionCommand:current.evolutionCommand,protectedItems:current.protectedItems,editableItems:current.editableItems,sourceArtifacts:artifactContext},
         testCases:testCases.map((testCase)=>({id:testCase.id,title:testCase.title,input:testCase.input,expected:testCase.expected,criterionIds:testCase.criterionIds,evidenceScope:testCase.evidenceScope})),

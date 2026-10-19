@@ -9,6 +9,7 @@
     "erasableSyntaxOnly": false
   },
   "include": [
-    "tests/integration/**/*.ts"
+    "tests/integration/**/*.ts",
+    "apps/backend/src/html-protection-runtime.d.ts"
   ]
 }

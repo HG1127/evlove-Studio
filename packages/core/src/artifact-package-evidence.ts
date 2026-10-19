@@ -39,7 +39,7 @@ function only(artifacts: OutputArtifact[], kind: OutputArtifact["kind"], label: 
 
 /** Shared deterministic content, independent of package creation and validation. */
 export function requirementCoverageContent(project: EvolveProject, acceptance: ArtifactAcceptance): string {
-  return "# Requirement Coverage\n\n" + project.acceptanceRubric.map((criterion) => {
+  return "# Requirement Coverage\n\n" + (project.htmlProtectionOperationalScope ? "## 明确确认的验收范围\n\n仅限完整 Original 来源、现有章节正文细化、全部登记控件与状态及全部登记视口/图像区域。范围外未知行为仍为 UNVERIFIED；不宣称全部未知行为已证明。\n\n" : "") + project.acceptanceRubric.map((criterion) => {
     const result = acceptance.results.find((item) => item.criterionId === criterion.id);
     return "- " + (result?.pass ? "✅" : "❌") + " **" + criterion.id + " · " + criterion.title + "** — " + (result?.score ?? 0) + "/100" + (criterion.hardGate ? " · HARD GATE" : "")
       + "\n  - Requirement: " + criterion.requirement

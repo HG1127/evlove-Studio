@@ -1,3 +1,4 @@
+import type {AcceptedPackageDownloadPort} from "./accepted-package-download-contract";
 import type { EvolveProject } from "./evolve-schemas";
 import type { EvolutionEvent, EventStorePort } from "./event-contract";
 import type { EvolutionJob, JobStorePort } from "./job-contract";
@@ -24,6 +25,8 @@ export interface ProductionRuntimePorts {
   jobs: JobStorePort;
   events: EventStorePort;
   artifacts: ArtifactStorePort;
+  /** Optional governed current-acceptance download boundary; unavailable ports must not fall back to another origin. */
+  acceptedDownloads?: AcceptedPackageDownloadPort;
 }
 
 export type ProductionRuntimePortName = keyof ProductionRuntimePorts;

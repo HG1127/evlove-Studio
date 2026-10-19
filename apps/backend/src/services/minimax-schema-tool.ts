@@ -1,7 +1,7 @@
 import {z} from "zod";
 import type {ServerAiConfig} from "../server-env";
 import {minimaxChatFinalOptions} from "./minimax-chat-final-channel";
-type Direct=Extract<ServerAiConfig,{mode:"openai-compatible"}>;
+type Direct=Pick<Extract<ServerAiConfig,{mode:"openai-compatible"}>,"mode"|"baseUrl"|"model"|"protocol"|"responseFormat">;
 export const MINIMAX_SCHEMA_TOOL_VERSION="minimax-schema-result-v1";
 const ResultSchema=z.object({name:z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),schema:z.record(z.string(),z.unknown())});
 export function usesMinimaxSchemaTool(config:Direct):boolean{

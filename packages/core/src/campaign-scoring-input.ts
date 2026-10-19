@@ -7,6 +7,7 @@ function campaignScoringInputFingerprintAtPolicy(project: EvolveProject, policy:
   return fastHash({
     version: "campaign-scoring-input-v1",
     ...(policy === "current" ? { protectionSettlementPolicy: HTML_PROTECTION_SETTLEMENT_POLICY } : {}),
+    ...(project.htmlProtectionOperationalScope ? { htmlProtectionOperationalScope: project.htmlProtectionOperationalScope } : {}),
     goal: project.goal,
     objectType: project.objectType,
     evolutionCommand: project.evolutionCommand,

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import {mkdir,writeFile,rename} from "node:fs/promises";
 import { isBuiltin } from "node:module";
 import path from "node:path";
 import { build, type Plugin } from "vite";
@@ -13,7 +14,7 @@ export type BuiltHtmlProtectionRuntime={version:typeof runtimeVersion;sha256:str
 export async function buildOwnedHtmlProtectionRuntime(projectRoot:string):Promise<BuiltHtmlProtectionRuntime>{
   const output=await build({
     configFile:false,envFile:false,root:projectRoot,logLevel:"error",
-    resolve:{alias:{"@evolution/contracts":path.join(projectRoot,"packages/contracts/src/index.ts")}},
+    resolve:{alias:{"@evolution/contracts":path.join(projectRoot,"packages/contracts/src/index.ts"),"@evolution/core":path.join(projectRoot,"packages/core/src/index.ts")}},
     ssr:{noExternal:true},
     build:{
       ssr:path.join(projectRoot,"packages/adapters/src/vercel-sandbox-html-protection-cloud-runtime.ts"),
@@ -26,7 +27,7 @@ export async function buildOwnedHtmlProtectionRuntime(projectRoot:string):Promis
   }
   const chunk=output.output[0];
   if(!chunk||chunk.type!=="chunk"||chunk.dynamicImports.length||chunk.imports.some(id=>!isBuiltin(id))
-    ||!chunk.exports.includes("runPrivateHtmlProtectionCloudRuntime")||!chunk.exports.includes("runPrivateHtmlProtectionSearchCloudRuntime")){
+    ||!chunk.exports.includes("runPrivateHtmlProtectionCloudRuntime")||!chunk.exports.includes("runPrivateHtmlProtectionSearchCloudRuntime")||!chunk.exports.includes("runPrivateHtmlProtectionWholeCloudRuntime")){
     throw new Error("Owned HTML runtime contains unsupported external code");
   }
   const bytes=Buffer.from(chunk.code,"utf8");
@@ -39,7 +40,18 @@ export function htmlProtectionRuntimePlugin():Plugin{
   let root=process.cwd(),compiled:Promise<BuiltHtmlProtectionRuntime>|undefined;
   return {
     name:"evolution-owned-html-protection-runtime",
-    configResolved(config){root=config.root;},
+    async configResolved(config){
+      root=config.root;
+      // Workflow compiles step dependencies with its own esbuild instance, before
+      // Vite module hooks. Its root-tsconfig alias must resolve the same owned bytes.
+      compiled=buildOwnedHtmlProtectionRuntime(root).catch(error=>{compiled=undefined;throw error;});
+      const runtime=await compiled;
+      const destination=path.join(root,"node_modules/.cache/evolution/owned-html-protection-runtime.mjs");
+      await mkdir(path.dirname(destination),{recursive:true});
+      const temporary=destination+"."+process.pid+".tmp";
+      await writeFile(temporary,"export default Object.freeze("+JSON.stringify(runtime)+");");
+      await rename(temporary,destination);
+    },
     async buildStart(){
       // Compile even if no Mission currently selects this optional collector. Never emit it to client assets.
       compiled??=buildOwnedHtmlProtectionRuntime(root).catch(error=>{compiled=undefined;throw error;});

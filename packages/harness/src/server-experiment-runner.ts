@@ -1,3 +1,4 @@
+import { collectServerSuiteHtmlProtectionAuthority, type ServerHtmlProtectionAuthorityPort } from "./server-html-protection-authority";
 import type {
   Candidate,
   CandidateArtifactSnapshot,
@@ -26,6 +27,7 @@ import { serverJudgeEvidence } from "./server-judge-evidence";
 import { indexUniqueBatchResults } from "./server-batch-results";
 
 export type ServerExperimentExecutionPorts = {
+  collectHtmlProtectionAuthority?: ServerHtmlProtectionAuthorityPort;
   executeSemanticBatch(args: {
     project: EvolveProject;
     candidate: Candidate;
@@ -199,7 +201,7 @@ export async function executeServerExperimentCandidate(
     }
   }
   const runs = testCases.map((testCase) => ordered.get(testCase.id) ?? unavailableExperimentRun(testCase, "Candidate 执行未返回结果。"));
-  return normalizeLocallyVerifiableCandidateRuns(project, candidate, testCases, runs);
+  return collectServerSuiteHtmlProtectionAuthority({ project, candidate, testCases, runs: normalizeLocallyVerifiableCandidateRuns(project, candidate, testCases, runs) }, ports.collectHtmlProtectionAuthority);
 }
 
 export async function judgeServerExperimentCandidate(
@@ -210,6 +212,7 @@ export async function judgeServerExperimentCandidate(
   testCases: TestCase[] = project.evalSuite,
   mode = "server-candidate",
 ) {
+  runs = await collectServerSuiteHtmlProtectionAuthority({ project, candidate, testCases, runs, restoreOnly: true }, ports.collectHtmlProtectionAuthority);
   const judgeCriteria = criteriaRequiringJudge(project.acceptanceRubric, testCases, runs);
   const judgeIds = new Set(judgeCriteria.map((criterion) => criterion.id));
   const evaluableRunIds = new Set(runs

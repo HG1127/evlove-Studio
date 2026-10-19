@@ -246,7 +246,7 @@ async function ensureBrowserRuntimeSnapshot(){
 }
 
 const PreparedHtmlProtectionBrowserSchema=z.object({
-  name:z.string().regex(/^evo-protection-[a-f0-9]{24}$/),
+  name:z.string().regex(/^evo-protection-(?:search-)?[a-f0-9]{24}$/),
   persistent:z.literal(false),networkPolicy:z.literal("deny-all"),
   timeout:z.literal(HTML_PROTECTION_CLOUD_LIMITS.deadlineMs),
   signal:z.instanceof(AbortSignal),
@@ -260,7 +260,17 @@ const PreparedHtmlProtectionBrowserSchema=z.object({
 export async function createVercelSandboxHtmlProtectionBrowser(
   raw:Parameters<NonNullable<HtmlProtectionPreparedBrowserFactory["createPreparedBrowserSandbox"]>>[0],
 ):Promise<Sandbox>{
-  const spec=PreparedHtmlProtectionBrowserSchema.parse(raw);
+  return createBoundedHtmlProtectionBrowser(PreparedHtmlProtectionBrowserSchema.parse(raw));
+}
+const PreparedWholeHtmlProtectionBrowserSchema = PreparedHtmlProtectionBrowserSchema.extend({
+  name: z.string().regex(/^evo-protection-whole-[a-f0-9]{24}$/), timeout: z.literal(600_000),
+}).strict();
+export async function createVercelSandboxHtmlProtectionWholeBrowser(
+  raw: Parameters<NonNullable<HtmlProtectionPreparedBrowserFactory["createPreparedBrowserSandbox"]>>[0],
+): Promise<Sandbox> {
+  return createBoundedHtmlProtectionBrowser(PreparedWholeHtmlProtectionBrowserSchema.parse(raw));
+}
+async function createBoundedHtmlProtectionBrowser(spec: z.infer<typeof PreparedHtmlProtectionBrowserSchema> | z.infer<typeof PreparedWholeHtmlProtectionBrowserSchema>): Promise<Sandbox> {
   spec.signal.throwIfAborted();
   const snapshotId=await ensureBrowserRuntimeSnapshot();
   spec.signal.throwIfAborted();

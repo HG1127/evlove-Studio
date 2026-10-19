@@ -110,7 +110,7 @@ export async function readServerHtmlProtectionInputs(args: {
   const executed = subjectCandidate ? await readFrozen(source, subjectCandidate, ports) : original;
   const binding = HtmlProtectionProofBindingSchema.parse({
     missionId: project.id, testCaseId: testCase.id, criterionId: criterion.id,
-    paperSha256: sha(canonical({ version: "html-protection-paper-v1", paper, rubric, protectedItems: project.protectedItems })),
+    paperSha256: sha(canonical({ version: "html-protection-paper-v1", paper, rubric, protectedItems: project.protectedItems, ...(project.htmlProtectionOperationalScope ? { operationalScope: project.htmlProtectionOperationalScope } : {}) })),
     original: { sourceArtifactId: source.id, sha256: sha(original.bytes), byteLength: original.bytes.length },
     executed: { sourceArtifactId: source.id, sha256: sha(executed.bytes), byteLength: executed.bytes.length },
     subject: args.candidate ? { kind: "candidate", candidateId: args.candidate.id }

@@ -1,6 +1,7 @@
-import { AcceptanceCriterionSchema, type AcceptanceCriterion } from "@evolution/contracts";
+import { HtmlProtectionOperationalScopeSchema, type HtmlProtectionOperationalScope, AcceptanceCriterionSchema, type AcceptanceCriterion } from "@evolution/contracts";
 
 export type HtmlProtectionFrozenContentContract = {
+  operationalScope?: HtmlProtectionOperationalScope;
   protectionCriterionId: string;
   rubric: readonly AcceptanceCriterion[];
 };
@@ -17,7 +18,7 @@ export function htmlProtectionContentScope(args: {
   if (!args || Object.keys(args).some(key => !["sourceArtifactId", "frozenContract"].includes(key))
     || typeof args.sourceArtifactId !== "string" || !args.sourceArtifactId.trim()) throw Error("Invalid content scope inputs");
   const frozen = args.frozenContract;
-  if (!frozen || Object.keys(frozen).some(key => !["protectionCriterionId", "rubric"].includes(key))
+  if (!frozen || Object.keys(frozen).some(key => !["protectionCriterionId", "rubric", "operationalScope"].includes(key))
     || typeof frozen.protectionCriterionId !== "string" || !Array.isArray(frozen.rubric) || !frozen.rubric.length) {
     throw Error("Complete stored protection rubric required");
   }
@@ -36,16 +37,19 @@ export function htmlProtectionContentScope(args: {
     && content.test(item.requirement) && negated.test(item.requirement)
     && /(?:修改|改写|重写|更改|调整|删除|替换|\b(?:alter|modify|change|edit|rewrite|delete|replace)\b)/i.test(item.requirement)
     && !literalRequirement.test(item.requirement));
+  const operationalScope = frozen.operationalScope ? HtmlProtectionOperationalScopeSchema.parse(frozen.operationalScope) : undefined;
+  if (operationalScope && operationalScope.original.sourceArtifactId !== args.sourceArtifactId) throw Error("operational-scope-content-source-foreign");
   const conflict = (literalCriteria.length > 0 || ambiguousRestrictions.length > 0) && refinementCriteria.length > 0;
   return {
     schemaVersion: "html-protection-content-scope-v1" as const,
+    ...(operationalScope ? { operationalScope } : {}),
     sourceArtifactId: args.sourceArtifactId,
     protectionCriterionId: protection.id,
-    mode: !conflict && !ambiguousRestrictions.length && refinementCriteria.length ? "semantic-refinement" as const : "literal-retention" as const,
+    mode: operationalScope && !literalCriteria.length ? "semantic-refinement" as const : !conflict && !ambiguousRestrictions.length && refinementCriteria.length ? "semantic-refinement" as const : "literal-retention" as const,
     refinementCriterionIds: refinementCriteria.map(item => item.id),
     literalCriterionIds: literalCriteria.map(item => item.id),
     ambiguousRestrictionCriterionIds: ambiguousRestrictions.map(item => item.id),
-    gaps: [...(conflict ? ["conflicting-literal-and-refinement-contract"] : []),
+    gaps: operationalScope ? (literalCriteria.length ? ["conflicting-operational-and-literal-contract"] : []) : [...(conflict ? ["conflicting-literal-and-refinement-contract"] : []),
       ...(ambiguousRestrictions.length ? ["content-restriction-needs-independent-interpretation"] : [])],
     limitations: [
       "A stored rubric-shaped DTO does not authenticate the frozen paper; the app must bind its exact paper hash.",

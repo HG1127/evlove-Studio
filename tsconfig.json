@@ -15,7 +15,8 @@
       "@evolution/adapters/sandbox": ["./packages/adapters/src/sandbox.ts"],
       "@evolution/adapters": ["./packages/adapters/src/index.ts"],
       "@evolution/ui": ["./packages/ui/src/index.ts"],
-      "@evolution/testkit": ["./packages/testkit/src/index.ts"]
+      "@evolution/testkit": ["./packages/testkit/src/index.ts"],
+      "virtual:evolution-html-protection-runtime": ["./node_modules/.cache/evolution/owned-html-protection-runtime.mjs"]
     }
   }
 }
