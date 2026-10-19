@@ -2,7 +2,7 @@
 import {createHash} from "node:crypto";
 import {beforeEach,describe,expect,it,vi} from "vitest";
 import {mockEvent} from "nitro/h3";
-import {EvolutionJobSchema,type EvolveProject,type MissionEnvelope,missionEnvelope,type EvolutionJob,type EvolutionWorkflowRunInput} from "@evolution/contracts";
+import {EvolveProjectSchema,EvolutionJobSchema,type EvolveProject,type MissionEnvelope,missionEnvelope,type EvolutionJob,type EvolutionWorkflowRunInput} from "@evolution/contracts";
 import {acceptedPackageFixture} from "@evolution/testkit";
 import {serverFailedControlRetryWire} from "@evolution/harness";
 import route from "../../server/api/evolution/start.post";
@@ -48,6 +48,23 @@ describe("governed failed control retry through normal start",()=>{
   expect(mocks.put.mock.calls.every(([value])=>value.id===input.controlJobId)).toBe(true);
   expect(mocks.append).toHaveBeenCalledWith(expect.objectContaining({id:`evt-${input.controlJobId}-started`,jobId:input.controlJobId,type:"JobStarted"}));
   expect(mocks.save).not.toHaveBeenCalled();
+ });
+ it("preserves a failed bound idle first Run while starting its explicit normal retry",async()=>{
+  mission={...mission,candidates:[],searchChampion:undefined,evolutionArchive:[],attentionRequests:[],
+    baselineRun:{...mission.baselineRun,status:"idle",runs:[],result:undefined},
+    experimentRun:{...mission.experimentRun,status:"idle",winnerId:undefined,candidateResults:[]},
+    validationRun:{...mission.validationRun,status:"idle",candidateId:undefined,evaluation:undefined,baselineEvaluation:undefined,runs:[],baselineRuns:[],checks:[]},
+    artifactAcceptance:{...mission.artifactAcceptance,status:"idle",attempts:0,hardGatePass:false,candidateId:undefined,frozenArtifacts:undefined,acceptedAt:undefined},
+    campaign:{...mission.campaign,status:"idle",currentRound:0,startedAt:undefined,stopReason:undefined,
+      serverControlOwner:{schemaVersion:"server-workflow-control-owner-v1",controlJobId:old.id,runId:"old-run",operationKey:old.idempotencyKey,
+        phase:"bound",sourceUpdatedAt,inputFingerprint:"a".repeat(64),requestedAt:old.createdAt}}};
+  // Match the production read port: normalize the envelope payload through its public schema.
+  mission=EvolveProjectSchema.parse(mission);
+  const firstSource=structuredClone(mission.sourceArtifacts),result=await route(retryRequest());
+  expect(result).toMatchObject({runId:"new-run",status:"queued"});expect(mocks.start).toHaveBeenCalledOnce();
+  await initializeWorkflowControlStep(mocks.start.mock.calls[0][1][0]);
+  expect(jobs.get(old.id)).toEqual(old);expect(mocks.cancel).not.toHaveBeenCalled();expect(mocks.save).not.toHaveBeenCalled();
+  expect(mission.sourceArtifacts).toEqual(firstSource);expect(mission.candidates).toEqual([]);expect(mission.baselineRun.status).toBe("idle");
  });
  it("replays the same retry acknowledgement after Mission advancement without starting another Run",async()=>{
   const first=await route(retryRequest());mission={...mission,updatedAt:"2026-10-12T02:00:00Z"};

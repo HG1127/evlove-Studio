@@ -875,6 +875,16 @@ async function executeServerControlAction(
       diagnosticContinuation=continuation.continuation;
     }
     if(!diagnosticContinuation && !canReuseServerBaseline(campaignMission,scoringRouteFingerprint,measurementNowMs)){
+      // A first control Run is bound while Campaign is still idle. Persist its start before
+      // Baseline independently verifies the active Mission/Job/SDK owner; never relax that guard.
+      if(campaignMission.campaign.status==="idle" && campaignMission.campaign.currentRound===0
+        && campaignMission.baselineRun.status==="idle" && !campaignMission.baselineRun.runs.length
+        && !campaignMission.baselineRun.result){
+        await requireServerWorkflowControlOwner(input);
+        campaignMission={...campaignMission,campaign:{...campaignMission.campaign,status:"running",
+          startedAt:campaignMission.campaign.startedAt??now},updatedAt:now};
+        await runtime.missions.save(campaignMission);
+      }
       const baselineOutcome=await runServerMissionBaseline(campaignMission);
       campaignMission=!baselineOutcome.ready ? checkpointServerMainFlowWait(baselineOutcome.project,input.controlJobId) : baselineOutcome.project;
       diagnosticContinuation=createServerDiagnosticContinuation(baselineOutcome,input,scoringRouteFingerprint);

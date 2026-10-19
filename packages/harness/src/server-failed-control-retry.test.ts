@@ -1,5 +1,5 @@
 import {describe,expect,it} from "vitest";
-import {EvolutionJobSchema,type EvolutionWorkflowStatusResponse} from "@evolution/contracts";
+import {EvolutionJobSchema,type EvolveProject,type EvolutionWorkflowStatusResponse} from "@evolution/contracts";
 import {acceptedPackageFixture} from "@evolution/testkit";
 import {serverFailedControlRetryEligibility,serverFailedControlRetryTarget,serverFailedControlRetryWire} from "./server-failed-control-retry";
 const project={...acceptedPackageFixture().project,campaign:{...acceptedPackageFixture().project.campaign,status:"running" as const}};
@@ -51,4 +51,43 @@ describe("failed control retry policy",()=>{
     expect(serverFailedControlRetryTarget(reserved,[{...job,outputRef:"foreign"},newJob])).toBeUndefined();
   });
 
+});
+
+function unstartedIdle():EvolveProject{
+  const p:EvolveProject=structuredClone(project);p.campaign={...p.campaign,status:"idle",currentRound:0,startedAt:undefined,stopReason:undefined,
+    serverControlOwner:{schemaVersion:"server-workflow-control-owner-v1",controlJobId:job.id,runId:target.runId,operationKey:job.idempotencyKey,phase:"bound",sourceUpdatedAt:p.updatedAt,inputFingerprint:"a".repeat(64),requestedAt:job.createdAt}};
+  p.baselineRun={...p.baselineRun,status:"idle",runs:[],result:undefined};p.candidates=[];p.searchChampion=undefined;p.evolutionArchive=[];p.attentionRequests=[];
+  p.experimentRun={...p.experimentRun,status:"idle",winnerId:undefined,candidateResults:[]};p.validationRun={...p.validationRun,status:"idle",candidateId:undefined,evaluation:undefined,baselineEvaluation:undefined,runs:[],baselineRuns:[],checks:[]};p.artifactAcceptance={...p.artifactAcceptance,status:"idle",attempts:0,hardGatePass:false,candidateId:undefined,frozenArtifacts:undefined,acceptedAt:undefined};return p;
+}
+describe("normal retry of a bound first Run that failed before Campaign start",()=>{
+  it("allows the exact failed idle first Run without changing the Mission or old Job",()=>{
+    const p=unstartedIdle(),before=structuredClone({p,status});expect(serverFailedControlRetryEligibility(p,status,target)).toBe(true);expect({p,status}).toEqual(before);
+  });
+  const mutations:Array<[string,(p:EvolveProject)=>void]>=[
+    ["missing owner",p=>{p.campaign.serverControlOwner=undefined;}],
+    ["unbound owner",p=>{p.campaign.serverControlOwner!.phase="dispatching";}],
+    ["foreign Job",p=>{p.campaign.serverControlOwner!.controlJobId="other";}],
+    ["foreign Run",p=>{p.campaign.serverControlOwner!.runId="other";}],
+    ["foreign operation",p=>{p.campaign.serverControlOwner!.operationKey="other";}],
+    ["later round",p=>{p.campaign.currentRound=1;}],
+    ["previous start",p=>{p.campaign.startedAt=job.createdAt;}],
+    ["explicit stop",p=>{p.campaign.stopReason="operator requested stop";}],
+    ["completed Baseline",p=>{p.baselineRun.status="completed";}],
+    ["old Baseline row",p=>{p.baselineRun.runs=[{testCaseId:"retained",output:"retained",latencyMs:1,cost:0,verificationStatus:"verified",trace:[]}];}],
+    ["old Baseline result",p=>{p.baselineRun.result=structuredClone(project.baselineRun.result!);}],
+    ["old Baseline timestamp",p=>{p.baselineRun.startedAt=job.createdAt;}],
+    ["old Baseline fingerprint",p=>{p.baselineRun.measurementFingerprint="old";}],
+    ["old Hidden evaluation",p=>{p.validationRun.evaluation=structuredClone(project.validationRun.evaluation!);}],
+    ["old frozen receipt",p=>{p.artifactAcceptance.frozenArtifacts=structuredClone(project.artifactAcceptance.frozenArtifacts);}],
+    ["old accepted timestamp",p=>{p.artifactAcceptance.acceptedAt=job.createdAt;}],
+    ["Candidate",p=>{p.candidates=[structuredClone(project.candidates[0]!)];}],
+    ["completed Experiment",p=>{p.experimentRun.status="completed";}],
+    ["completed Hidden",p=>{p.validationRun.status="completed";}],
+    ["Gate F attempt",p=>{p.artifactAcceptance.attempts=1;}],
+    ["passed Gate F",p=>{p.artifactAcceptance.status="passed";}],
+  ];
+  it.each(mutations)("rejects idle retry with %s",(_name,mutate)=>{const p=unstartedIdle();mutate(p);expect(serverFailedControlRetryEligibility(p,status,target)).toBe(false);});
+  it.each(["pending","running","completed",undefined])("still rejects nonfailed actual SDK state %s",actual=>{
+    expect(serverFailedControlRetryEligibility(unstartedIdle(),{...status,workflow:{exists:true,status:actual}},target)).toBe(false);
+  });
 });
