@@ -9,3 +9,5 @@ export { acceptedLegacyHtmlPaperFixture } from "./accepted-legacy-html-paper-fix
 export { baselinePolicyTransitionFixture } from "./baseline-policy-transition-fixture";
 
 export { reviewedHoldoutFixture } from "./reviewed-holdout-fixture";
+
+export { recoveredControlAiFixture } from "./recovered-control-ai-fixture";

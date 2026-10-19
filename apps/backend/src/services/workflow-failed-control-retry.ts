@@ -1,9 +1,9 @@
 import {createHash} from "node:crypto";
 import type {EvolveProject,EvolutionJob,EvolutionWorkflowRunInput,EvolutionWorkflowStartRequest,ProductionRuntimePorts} from "@evolution/contracts";
-import {serverFailedControlRetryEligibility,serverFailedControlRetryTarget,serverFailedControlRetryWire,serverControlJobRunId} from "@evolution/harness";
+import {serverFailedControlRetryEligibility,serverFailedControlRetryTarget,serverFailedControlRetryWire,serverControlJobRunId,serverRecoveringControlRetrySource} from "@evolution/harness";
 import {getServerJobByIdempotencyKey} from "./production-runtime";
 import {readWorkflowRunMetadata} from "./workflow-run-metadata";
-import {serverMainFlowRecoveryDigest} from "./server-main-flow-recovery";
+import {hasServerMainFlowRecoveryBinding,serverMainFlowRecoveryDigest} from "./server-main-flow-recovery";
 
 export class WorkflowControlRetryError extends Error{
   constructor(readonly statusCode:400|409|503,message:string){super(message);this.name="WorkflowControlRetryError";}
@@ -55,6 +55,7 @@ export async function prepareServerFailedControlRetry(
   }
   if(mission.updatedAt!==sourceUpdatedAt)throw new WorkflowControlRetryError(409,"Mission 已变化，请刷新后核对最新后台执行");
   const inputFingerprint=serverMainFlowRecoveryDigest(mission);
+  requireRecoveringControlRetryBinding(mission,jobId);
   const target=serverFailedControlRetryTarget(mission,await runtime.jobs.list(mission.id));
   if(!target||target.jobId!==jobId||target.runId!==runId){
     throw new WorkflowControlRetryError(409,"已有更新或未绑定的后台任务，请刷新运行状态后重试");
@@ -70,6 +71,7 @@ export async function prepareServerFailedControlRetry(
   if(!current||current.updatedAt!==sourceUpdatedAt||serverMainFlowRecoveryDigest(current)!==inputFingerprint){
     throw new WorkflowControlRetryError(409,"后台状态核验期间 Mission 已变化，请刷新后重试");
   }
+  requireRecoveringControlRetryBinding(current,jobId);
   const latest=serverFailedControlRetryTarget(current,await runtime.jobs.list(mission.id));
   if(latest?.jobId!==jobId||latest.runId!==runId){
     throw new WorkflowControlRetryError(409,"核验期间出现了更新的后台任务，请刷新运行状态");
@@ -78,4 +80,27 @@ export async function prepareServerFailedControlRetry(
     binding:{sourceUpdatedAt,inputFingerprint,retryOfControlJobId:jobId,retryOfRunId:runId},
     metadata:{workflowIntent:"retry-failed-control",sourceUpdatedAt,inputFingerprint,retryOfControlJobId:jobId,retryOfRunId:runId},
   };
+}
+
+function requireRecoveringControlRetryBinding(project:EvolveProject,priorControlJobId:string){
+  if(project.campaign.serverRecoveryWait?.status!=="recovering")return;
+  if(!serverRecoveringControlRetrySource(project,priorControlJobId)||!hasServerMainFlowRecoveryBinding(project))
+    throw new WorkflowControlRetryError(409,"恢复断点的原控制身份、完整输入或运行条件已变化，未启动后台重试");
+}
+
+/** Transfer only an explicitly admitted failed controller's existing recovery, never a new budget/paper. */
+export function transferServerFailedControlRecovery(project:EvolveProject,input:EvolutionWorkflowRunInput):EvolveProject{
+  const retry=input.failedControlRetry,receipt=project.campaign.serverRecoveryWait;
+  if(!retry || receipt?.status!=="recovering")return project;
+  const owner=project.campaign.serverControlOwner;
+  if(!owner || owner.phase!=="bound" || owner.controlJobId!==input.controlJobId || owner.operationKey!==input.controlOwnerKey
+    || owner.retryOfControlJobId!==retry.retryOfControlJobId || owner.retryOfRunId!==retry.retryOfRunId
+    || owner.sourceUpdatedAt!==retry.sourceUpdatedAt || owner.inputFingerprint!==retry.inputFingerprint
+    || serverMainFlowRecoveryDigest(project)!==retry.inputFingerprint)
+    throw new WorkflowControlRetryError(409,"恢复接管的当前预留与明确失败重试不一致");
+  requireRecoveringControlRetryBinding(project,receipt.resumedByControlJobId!);
+  if(receipt.resumedByControlJobId===input.controlJobId)return project;
+  if(receipt.resumedByControlJobId!==retry.retryOfControlJobId)
+    throw new WorkflowControlRetryError(409,"恢复断点不属于已核验失败的原控制，未接管其他执行");
+  return {...project,campaign:{...project.campaign,status:"idle",serverRecoveryWait:{...receipt,resumedByControlJobId:input.controlJobId}},updatedAt:input.requestedAt};
 }

@@ -1,4 +1,5 @@
 import type {EvolveProject,EvolutionJob,EvolutionWorkflowStatusResponse} from "@evolution/contracts";
+import {serverMainFlowRecoveryActive} from "./server-main-flow-wait";
 
 export type ServerFailedControlRetryTarget={missionId:string;jobId:string;runId:string;sourceUpdatedAt?:string};
 
@@ -33,6 +34,15 @@ export function serverFailedControlRetryTarget(project:EvolveProject,jobs:Evolut
   return runId?{missionId:project.id,jobId:latest.id,runId}:undefined;
 }
 
+/** Existing recovery admission only; composition must additionally verify its full SHA binding. */
+export function serverRecoveringControlRetrySource(project:EvolveProject,priorControlJobId:string){
+  const receipt=project.campaign.serverRecoveryWait;
+  if(!receipt || receipt.status!=="recovering" || receipt.resumedByControlJobId!==priorControlJobId
+    || project.campaign.stopReason || project.campaign.completedAt
+    || !["idle","running"].includes(project.campaign.status))return undefined;
+  const admissionView=project.campaign.status==="idle"?project:{...project,campaign:{...project.campaign,status:"idle" as const}};
+  return serverMainFlowRecoveryActive(admissionView)?receipt:undefined;
+}
 export function serverFailedControlRetryEligibility(
   project:EvolveProject,status:EvolutionWorkflowStatusResponse,target:ServerFailedControlRetryTarget,
 ){
@@ -50,7 +60,10 @@ export function serverFailedControlRetryEligibility(
     && !validation.evaluation && !validation.baselineEvaluation
     && acceptance.status==="idle" && !acceptance.attempts && !acceptance.candidateId && !acceptance.frozenArtifacts?.length && !acceptance.acceptedAt
     && !project.attentionRequests?.some(item=>item.blocking && item.status==="pending"));
-  return Boolean(target.missionId===project.id&&(["running","paused"].includes(project.campaign.status)||unstartedOwnedIdle)
+  const recoveringOwnedIdle=Boolean(job && project.campaign.status==="idle" && owner?.phase==="bound"
+    && owner.controlJobId===target.jobId && owner.runId===target.runId && owner.operationKey===job.idempotencyKey
+    && serverRecoveringControlRetrySource(project,target.jobId));
+  return Boolean(target.missionId===project.id&&(["running","paused"].includes(project.campaign.status)||unstartedOwnedIdle||recoveringOwnedIdle)
     &&job&&job.id===target.jobId&&job.missionId===project.id&&job.type==="campaign"&&job.generation===1
     &&job.idempotencyKey.startsWith(`workflow-control:${project.id}:`)
     &&serverControlJobRunId(job,project)===target.runId&&status.workflow?.exists===true
