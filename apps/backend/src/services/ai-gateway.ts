@@ -1,3 +1,4 @@
+import {prepareDirectAiTextEditPayload} from "./direct-ai-text-edit-feedback";
 import { HtmlProtectionVisualObservationsSchema, type HtmlProtectionVisualObservations } from "@evolution/contracts";
 import { HTML_PROTECTION_VISUAL_OBSERVATION_VERSION, HTML_PROTECTION_VISUAL_OBSERVATION_INSTRUCTION, htmlProtectionVisualObservationJsonSchema } from "./html-protection-visual-instruction";
 import { HtmlProtectionSemanticObservationsSchema, type HtmlProtectionSemanticObservations } from "@evolution/contracts";
@@ -409,7 +410,7 @@ export function runServerAi(operation:"html-protection-visual-observe",payload:u
 export function runServerAi(operation:ServerAiOperation,payload:unknown,media?:ServerAiMedia):Promise<unknown>;
 export function runServerAi(operation:ServerAiOperation,payload:unknown,media?:ServerAiMedia){
   if(operation!=="html-protection-observe"&&operation!=="html-protection-visual-observe")AiOperationSchema.parse(operation);
-  return structured(payload,contract(operation),media);
+  return structured(operation==="build-candidate"?prepareDirectAiTextEditPayload(payload):payload,contract(operation),media);
 }
 
 function serverAiErrorChain(error:unknown){
@@ -455,4 +456,3 @@ export function serverAiUnavailableMessage(reasonCode:string){
 export function isServerAiUnavailable(error:unknown){
   return Boolean(serverAiUnavailableReason(error));
 }
-
