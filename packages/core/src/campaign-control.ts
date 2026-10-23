@@ -60,6 +60,11 @@ export function estimateNextRoundCost(project: EvolveProject) {
 export function campaignStopReason(project: EvolveProject): string | undefined {
   if (project.artifactAcceptance.status === "unverified") return `缺少验证能力，已停止重复改写：${project.artifactAcceptance.summary}`;
   if ((project.validationRun.evaluation?.unverifiedCriterionIds?.length ?? 0) > 0) return "仍有要求缺少真实验证证据，请补齐执行或视觉验证后继续。";
+  return campaignLimitStopReason(project);
+}
+
+/** Resource, safety and configured completion limits, independently of evidence readiness. */
+export function campaignLimitStopReason(project:EvolveProject):string|undefined{
   const campaign = project.campaign;
   const criteria = campaign.stopCriteria;
   if (criteria.stopWhenAcceptanceMet && campaignGoalSatisfied(project)) return "当前进化要求已全部通过：独立验证与成果完整性验收完成";
@@ -80,6 +85,15 @@ export function campaignStopReason(project: EvolveProject): string | undefined {
 export function campaignPreflightStopReason(project: EvolveProject): string | undefined {
   const existing = campaignStopReason(project);
   if (existing) return existing;
+  return projectedCostStopReason(project);
+}
+
+/** Repair may act on a proven rejection while other evidence remains unknown; limits still apply. */
+export function campaignRepairLimitStopReason(project:EvolveProject):string|undefined{
+  return campaignLimitStopReason(project)??projectedCostStopReason(project);
+}
+
+function projectedCostStopReason(project:EvolveProject):string|undefined{
   const limit = project.campaign.stopCriteria.maxEstimatedCost;
   if (limit !== undefined) {
     const next = estimateNextRoundCost(project);

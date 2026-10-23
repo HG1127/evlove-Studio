@@ -1,4 +1,5 @@
 import type { AttentionRequest, EvolveProject, Stage } from "@evolution/contracts";
+import {hasServerFrozenVerifiedRejection} from "./server-frozen-validation-checkpoint";
 import {
   campaignGoalSatisfied,
   campaignPreflightStopReason,
@@ -360,9 +361,20 @@ export function activeAttentionRequest(project: EvolveProject) {
   return [...(project.attentionRequests ?? [])].reverse().find((item) => item.status === "pending");
 }
 
+function evidenceCanWaitDuringRepair(project:EvolveProject,request:AttentionRequest|undefined){
+  return request?.type==="evidence"&&request.stage==="validation"&&request.criterionIds.length>0
+    &&request.criterionIds.every(id=>project.validationRun.evaluation?.criterionScores?.find(score=>score.criterionId===id)?.verificationStatus!=="verified")
+    &&hasServerFrozenVerifiedRejection(project);
+}
+
 export function reconcileAttentionRequest(project: EvolveProject, next?: AttentionRequest): EvolveProject {
   const at = new Date().toISOString();
   const existing = project.attentionRequests ?? [];
+  if(!next&&existing.some(item=>item.status==="pending"&&item.type==="evidence"&&item.stage==="validation")
+    &&project.validationRun.status==="completed"){
+    const stillNeeded=deriveAttentionRequest(project);
+    if(evidenceCanWaitDuringRepair(project,stillNeeded))next=stillNeeded;
+  }
   const normalized = existing.map((item) => item.status === "pending" && item.id !== next?.id
     ? { ...item, status: "resolved" as const, resolvedAt: at, resolution: item.resolution ?? "系统状态变化后自动解除阻塞" }
     : item);
@@ -599,6 +611,9 @@ export function deriveAutonomousDecision(project: EvolveProject): AutonomousDeci
   if (clarifications.auto.length) return { action: "adopt-defaults", reason: `自动采用 ${clarifications.auto.length} 条低风险默认假设`, stage: "target", autoClarifications: clarifications.auto };
 
   const request = deriveAttentionRequest(project);
+  if(evidenceCanWaitDuringRepair(project,request)){
+    return {action:"run-campaign",stage:"validation",reason:"先处理同一冻结候选已证实的失败；其他标准的证据请求保持待补，不因此进入发布。"};
+  }
   if (request) return { action: "wait-human", reason: request.reason, stage: request.stage, attention: request };
 
   const currentCandidateId = project.experimentRun.winnerId ?? project.experimentRun.pendingEvidenceCandidateId;

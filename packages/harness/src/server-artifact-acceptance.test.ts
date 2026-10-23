@@ -3,6 +3,7 @@ import {InputUnderstandingSchema,type Candidate,type EvolveProject} from "@evolu
 import {campaignGoalSatisfied,campaignStopReason,completeAutonomousMission,evidenceFingerprint,materializeAcceptedChampionPackage,reconcileAcceptedOfflineChampion} from "@evolution/core";
 import {runServerArtifactAcceptance} from "./server-artifact-acceptance";
 import {buildServerHarnessPlan} from "./server-plan";
+import {deriveAttentionRequest,reconcileAttentionRequest} from "./autonomous-planner";
 
 function fixture(pass=true){
   const now="2026-09-20T14:00:00.000Z";
@@ -30,6 +31,31 @@ function fixture(pass=true){
 }
 
 describe("server artifact acceptance",()=>{
+  it.each(["experiment","validation"] as const)("plans bound content repair from %s while retaining the pending protection request",phase=>{
+    const x=fixture(false),p=x.project;
+    p.inputUnderstanding=InputUnderstandingSchema.parse({status:"ready",confidence:0.95});
+    p.acceptanceRubric=[{...p.acceptanceRubric[0]!,weight:50},{...p.acceptanceRubric[0]!,id:"PROTECT",weight:50,title:"保护交互",validationMethod:"visual-review",protectedConstraint:true}];
+    p.hiddenEvalSuite[0]!.criterionIds=["CONTENT","PROTECT"];
+    p.validationRun.evaluation!.criterionScores!.push({criterionId:"PROTECT",score:93,pass:false,verificationStatus:"partial",evidence:["partial search"],gaps:["visual unobserved"],testCaseIds:["H1"]});
+    p.validationRun.evaluation!.unverifiedCriterionIds=["PROTECT"];
+    p.validationRun.evidenceFingerprint=evidenceFingerprint(p,x.candidate);
+    p.campaign.checkpoint={...p.campaign.checkpoint!,completedPhase:phase};
+    const request=deriveAttentionRequest(p)!;
+    expect(request).toMatchObject({type:"evidence",stage:"validation",criterionIds:["PROTECT"]});
+    p.attentionRequests=[request];
+    expect(buildServerHarnessPlan(p).decision.action).toBe("run-campaign");
+    const reconciled=reconcileAttentionRequest(p);
+    expect(reconciled.attentionRequests?.find(item=>item.id===request.id)?.status).toBe("pending");
+    expect(p.validationRun.evaluation!.criterionScores!.find(item=>item.criterionId==="PROTECT")?.verificationStatus).toBe("partial");
+    expect(buildServerHarnessPlan({...p,campaign:{...p.campaign,status:"paused",stopReason:"用户暂停"}}).decision.action).toBe("wait-human");
+    expect(buildServerHarnessPlan({...p,campaign:{...p.campaign,currentRound:3}}).decision.action).toBe("wait-human");
+    expect(buildServerHarnessPlan({...p,goal:"changed contract"}).decision.action).toBe("wait-human");
+    expect(buildServerHarnessPlan({...p,campaign:{...p.campaign,stopCriteria:{...p.campaign.stopCriteria,maxEstimatedCost:0}}}).decision.action).toBe("wait-human");
+    expect(buildServerHarnessPlan({...p,campaign:{...p.campaign,startedAt:"2020-01-01T00:00:00.000Z",stopCriteria:{...p.campaign.stopCriteria,maxWallMinutes:1}}}).decision.action).toBe("wait-human");
+    expect(buildServerHarnessPlan({...p,validationRun:{...p.validationRun,evaluation:{...p.validationRun.evaluation!,safety:"FAIL"}}}).decision.action).toBe("wait-human");
+    const unknown=structuredClone(p);unknown.validationRun.evaluation!.criterionScores![0]!.verificationStatus="partial";
+    expect(buildServerHarnessPlan(unknown).decision.action).toBe("wait-human");
+  });
   it("accepts exact frozen bytes and settles Search Champion/round",async()=>{
     const x=fixture(true);
     const outcome=await runServerArtifactAcceptance(x.project,{

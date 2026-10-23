@@ -269,6 +269,9 @@ describe("server Hidden assessment recovery",()=>{
       const project=fixture(),first=semanticPorts(82,50);
       addLimitedProtection(project,first.ports);
       const measured=await runServerHoldout(project,{...first.ports,readArtifactFingerprint:async()=>artifactBinding});
+      // Incomplete comparison evidence is retained as unknown, not rerolled or upgraded.
+      measured.validation.baselineEvaluation!.criterionScores![0]!.verificationStatus="unverified";
+      measured.validation.baselineEvaluation!.unverifiedCriterionIds=["CONTENT"];
       // Simulate the old controller's completed-but-paused Experiment checkpoint.
       const prior={...measured.project,campaign:{...measured.project.campaign,checkpoint:project.campaign.checkpoint}};
       vi.setSystemTime(observed+60*60_000);

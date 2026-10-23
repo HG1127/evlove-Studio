@@ -798,6 +798,10 @@ async function executeServerControlAction(
       })};
     }
     let campaignMission=mission;
+    if(!campaignMission.campaign.startedAt){
+      campaignMission={...campaignMission,campaign:{...campaignMission.campaign,startedAt:input.requestedAt},updatedAt:now};
+      await runtime.missions.save(campaignMission);
+    }
     if(!hasServerFrozenValidationCheckpoint(campaignMission)
       &&!canReuseServerBaseline(campaignMission,scoringRouteFingerprint)){
       const baselineOutcome=await runServerMissionBaseline(campaignMission);

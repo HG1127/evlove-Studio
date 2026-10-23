@@ -54,5 +54,6 @@ describe("frozen validation Workflow routing",()=>{
     expect(m.acceptance).toHaveBeenCalledTimes(phase==="validation"?1:0);
     expect(m.experiment).toHaveBeenCalledTimes(phase==="repair"?1:0);
     expect(m.save.mock.calls[0]![0].candidates[0].artifactSnapshots).toEqual(candidate.artifactSnapshots);
+    expect(m.save.mock.calls[0]![0].campaign.startedAt).toBe(input.requestedAt);
   });
 });

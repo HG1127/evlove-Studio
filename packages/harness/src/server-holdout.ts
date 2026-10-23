@@ -25,7 +25,7 @@ import {
   type ServerExperimentExecutionPorts,
 } from "./server-experiment-runner";
 import { serverBaselineFingerprint } from "./server-baseline-evidence";
-import { readServerHoldoutArtifactFingerprint, recoverableServerHoldout, reusableServerHoldoutAssessment, serverHoldoutExecutionEvidenceFingerprint, type ServerHoldoutArtifactReader } from "./server-holdout-recovery";
+import { knownServerHoldoutRejection, readServerHoldoutArtifactFingerprint, recoverableServerHoldout, reusableServerHoldoutAssessment, serverHoldoutExecutionEvidenceFingerprint, type ServerHoldoutArtifactReader } from "./server-holdout-recovery";
 import { exactServerHoldoutSuite, pauseServerHoldoutPreflight } from "./server-holdout-preflight";
 import {fastHash} from "@evolution/core";
 
@@ -197,6 +197,7 @@ export async function runServerHoldout(
 
   const beforeArtifactFingerprint = await readServerHoldoutArtifactFingerprint(inputProject, candidate, ports.readArtifactFingerprint);
   const prior = recoverableServerHoldout(inputProject, candidate, suite, round, baseFingerprint, beforeArtifactFingerprint, Date.now());
+  const retainedRejection=prior&&knownServerHoldoutRejection(inputProject,suite,prior);
   let executionArtifactFingerprint: string | undefined;
   let baselineRuns:TargetRunResult[]=[];
   let runs:TargetRunResult[]=[];
@@ -224,10 +225,10 @@ export async function runServerHoldout(
       }
     }
     const [currentJudge,candidateJudge] = await Promise.allSettled([
-      prior && reusableServerHoldoutAssessment(inputProject, suite, baselineRuns, prior.baselineEvaluation)
+      prior && (retainedRejection||reusableServerHoldoutAssessment(inputProject, suite, baselineRuns, prior.baselineEvaluation))
         ? Promise.resolve(prior.baselineEvaluation!)
         : judgeServerCurrentArtifactSuite(inputProject, suite, baselineRuns, ports.current),
-      prior && reusableServerHoldoutAssessment(inputProject, suite, runs, prior.evaluation)
+      prior && (retainedRejection||reusableServerHoldoutAssessment(inputProject, suite, runs, prior.evaluation))
         ? Promise.resolve(prior.evaluation!)
         : judgeServerExperimentCandidate(inputProject, candidate, runs, ports.candidate, suite, "server-hidden-holdout-candidate", baselineRuns),
     ]);

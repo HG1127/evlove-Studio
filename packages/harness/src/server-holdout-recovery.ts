@@ -19,6 +19,19 @@ export function serverHoldoutExecutionEvidenceFingerprint(prior: Pick<Validation
   return fastHash(wire);
 }
 
+/** A complete negative Candidate verdict does not require a passing/complete comparison verdict. */
+export function knownServerHoldoutRejection(project:EvolveProject,suite:TestCase[],prior:ValidationRun){
+  return prior.status==="completed"&&Boolean(prior.baselineEvaluation&&!prior.baselineEvaluation.demoJudged)
+    &&Boolean(prior.evaluation&&!prior.evaluation.demoJudged&&prior.evaluation.measuredReviewVersion===SERVER_MEASURED_REVIEW_VERSION)
+    &&verifiedValidationFailures(project,prior).some(criterion=>{
+      if(!criterion.hardGate)return false;
+      const score=prior.evaluation?.criterionScores?.find(item=>item.criterionId===criterion.id);
+      const mapped=suite.filter(test=>test.criterionIds.includes(criterion.id)).map(test=>test.id);
+      return Boolean(score?.testCaseIds.length&&score.testCaseIds.every(id=>mapped.includes(id))
+        &&mapped.length&&mapped.every(id=>prior.runs.some(run=>run.testCaseId===id&&run.verificationStatus==="verified"&&!run.error)));
+    });
+}
+
 /** A bound rejection may advance to repair; it never becomes a fresh passing observation. */
 export function recoverableServerHoldout(
   project: EvolveProject, candidate: Candidate, suite: TestCase[], round: number,
@@ -26,10 +39,7 @@ export function recoverableServerHoldout(
 ): ValidationRun | undefined {
   const prior = project.validationRun;
   const observed = prior.baselineObservedAt;
-  const knownFailure = prior.status === "completed"
-    && verifiedValidationFailures(project, prior).some(criterion => criterion.hardGate)
-    && reusableServerHoldoutAssessment(project, suite, prior.runs, prior.evaluation)
-    && reusableServerHoldoutAssessment(project, suite, prior.baselineRuns, prior.baselineEvaluation);
+  const knownFailure = knownServerHoldoutRejection(project,suite,prior);
   const pending = prior.status === "failed" && prior.error?.startsWith("[server-campaign-holdout-judge-pending]")
     || prior.status === "completed" && prior.summary?.startsWith("[server-campaign-holdout-review-pending]")
     || knownFailure;
