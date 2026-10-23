@@ -45,6 +45,27 @@ const slideCardIds = (nodes: Element[]) => nodes.flatMap((node) => {
   const id = attribute(node, "id");
   return node.tagName === "article" && id && attribute(node, "class")?.split(/\s+/).includes("slide-card") ? [id] : [];
 });
+const attributes = (node:Element) => node.attrs.map(attr=>[attr.namespace??"",attr.prefix??"",attr.name,attr.value])
+  .sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
+function embeddedBlocks(nodes:Element[],tag:string){
+  return nodes.filter(node=>node.tagName===tag).map(node=>[attributes(node),textContent(descendants(node))]);
+}
+function skeleton(nodes:Element[]){
+  const positions=new Map(nodes.map((node,index)=>[node,index]));
+  return nodes.map(node=>[node.tagName,attributes(node),positions.get(node.parentNode as Element)??-1]);
+}
+function elementRecords(nodes:Element[],include:(node:Element)=>boolean){
+  const ancestors=new Map<Element,string>();
+  return nodes.flatMap(node=>{
+    const parent=node.parentNode;
+    const ancestor=parent&&"tagName" in parent?(attribute(parent,"id")||ancestors.get(parent)||""):"";
+    ancestors.set(node,ancestor);
+    return include(node)?[JSON.stringify([node.tagName,attributes(node),ancestor])]:[];
+  });
+}
+const interactive=(node:Element)=>["button","input","select","textarea","form","summary","details","label"].includes(node.tagName)
+  ||node.tagName==="a"&&attribute(node,"href")!==undefined
+  ||node.attrs.some(attr=>/^on/i.test(attr.name)||["role","tabindex","contenteditable","data-action"].includes(attr.name));
 function ids(nodes: Element[]) {
   const counts = new Map<string, number>();
   const first = new Map<string, Element>();
@@ -96,5 +117,25 @@ export function htmlCandidateProtection(input: {
     ...protectedSections.filter((section) => !section.textRetained || !section.structureRetained || !section.titleRetained)
       .map((section) => "保护章节 " + section.id + " 的原内容、标题或结构未完整保留"),
   ];
-  return { sourceArtifactId: input.sourceArtifactId, readWholeFiles: true, newDuplicateIds, protectedSections, unresolvedProtectedIds, originalSlideCount: originalSlideIds.length, missingSlideIds, issues };
+  const equal=(before:unknown,after:unknown)=>JSON.stringify(before)===JSON.stringify(after);
+  const originalScripts=embeddedBlocks(original,"script"),candidateScripts=embeddedBlocks(candidate,"script");
+  const originalStyles=embeddedBlocks(original,"style"),candidateStyles=embeddedBlocks(candidate,"style");
+  const stylesheets=(nodes:Element[])=>nodes.filter(node=>node.tagName==="link"&&attribute(node,"rel")?.split(/\s+/).includes("stylesheet")).map(attributes);
+  const originalNamed=elementRecords(original,node=>Boolean(attribute(node,"id"))),candidateNamed=elementRecords(candidate,node=>Boolean(attribute(node,"id")));
+  const originalInteractive=elementRecords(original,interactive),candidateInteractive=elementRecords(candidate,interactive);
+  const nativeObservation={
+    originalScriptCount:originalScripts.length,candidateScriptCount:candidateScripts.length,
+    scriptBlocksUnchanged:equal(originalScripts,candidateScripts),
+    originalStyleCount:originalStyles.length,candidateStyleCount:candidateStyles.length,
+    styleBlocksUnchanged:equal(originalStyles,candidateStyles),stylesheetReferencesUnchanged:equal(stylesheets(original),stylesheets(candidate)),
+    elementTreeAndAttributesUnchanged:equal(skeleton(original),skeleton(candidate)),
+    originalNamedElementCount:originalNamed.length,candidateNamedElementCount:candidateNamed.length,
+    originalNamedElementsRetained:preservesSequence(originalNamed,candidateNamed),
+    originalInteractiveElementCount:originalInteractive.length,candidateInteractiveElementCount:candidateInteractive.length,
+    originalInteractiveElementSequenceRetained:preservesSequence(originalInteractive,candidateInteractive),
+    originalSlideCardCount:slideCardIds(original).length,candidateSlideCardCount:slideCardIds(candidate).length,
+    slideCardOrderUnchanged:equal(slideCardIds(original),slideCardIds(candidate)),
+    templateCount:original.filter(node=>node.tagName==="template").length+candidate.filter(node=>node.tagName==="template").length,
+  };
+  return { sourceArtifactId: input.sourceArtifactId, readWholeFiles: true, newDuplicateIds, protectedSections, unresolvedProtectedIds, originalSlideCount: originalSlideIds.length, missingSlideIds, issues, nativeObservation };
 }

@@ -320,6 +320,13 @@ describe("server Hidden assessment recovery",()=>{
     expect(result.readyForArtifactAcceptance).toBe(true);expect(candidateJudge).toHaveBeenCalledOnce();
     expect(setup.currentCases).toEqual([]);expect(setup.candidateCases).toEqual([]);
   });
+  it("remeasures both sheets when the injected physical execution policy changes",async()=>{
+    const p=await paused(),setup=semanticPorts();
+    const result=await runServerHoldout(p,{...setup.ports,readArtifactFingerprint:async()=>artifactBinding,executionRuntimeFingerprint:"new-physical-observations"});
+    expect(result.readyForArtifactAcceptance).toBe(true);
+    expect(setup.currentCases).toEqual(["H1"]);expect(setup.candidateCases).toEqual(["H1"]);
+    expect(result.validation.baselineContextFingerprint).not.toBe(p.validationRun.baselineContextFingerprint);
+  });
   it("keeps bounded partial evidence partial when resuming a missing assessment",async()=>{
     const p=await paused("current",true);
     const setup=semanticPorts();

@@ -6,6 +6,7 @@ import { getServerArtifactStore } from "./artifact-runtime";
 import { serverArtifactSha256, verifyServerCandidateFrozenArtifact } from "./server-experiment-artifacts";
 import { runServerFrozenCodebaseStaticEvidence } from "./server-static-codebase-evidence";
 import {serverStaticArtifactReviewText} from "./server-static-review-text";
+import {serverHtmlPreservationObservation} from "./server-html-preservation-observation";
 
 const MAX_FILE_BYTES = 12_000_000;
 const MAX_XML_BYTES = 2_000_000;
@@ -136,11 +137,12 @@ export async function runServerFrozenArtifactStaticEvidence(args: {
     if (actual === undefined) return unavailable(testCase, `${source.name} 尚无 Server 冻结文件静态解析器。`);
     if (!actual.trim()) return unavailable(testCase, "冻结文件没有可定位的静态文本/结构证据。");
     const reviewText=serverStaticArtifactReviewText(extension,actual,MAX_OUTPUT_CHARS);
+    const preservation=await serverHtmlPreservationObservation({project,source,candidateBytes:bytes,candidateSha256:receipt.sha256});
     const complete = reviewText.length <= MAX_OUTPUT_CHARS;
     const status: TargetRunResult["verificationStatus"] = !complete || testCase.evidenceScope === "product-behavior" ? "partial" : "verified";
     return {
       testCaseId: testCase.id,
-      output: `SERVER FROZEN ARTIFACT STATIC EVIDENCE · SHA-256 ${receipt.sha256}\n${snapshot.name} · ${extension}\n${reviewText.slice(0, MAX_OUTPUT_CHARS)}\n${complete ? "已读取此格式受支持的冻结文件静态文本索引。" : "文本索引超过输出预算，仅展示前段；不得视为完整证据。"}\n静态证据不能证明真实交互、公式重算或视觉保真。`,
+      output: `SERVER FROZEN ARTIFACT STATIC EVIDENCE · SHA-256 ${receipt.sha256}\n${snapshot.name} · ${extension}\n${reviewText.slice(0, MAX_OUTPUT_CHARS)}\n${complete ? "已读取此格式受支持的冻结文件静态文本索引。" : "文本索引超过输出预算，仅展示前段；不得视为完整证据。"}\n静态证据不能证明真实交互、公式重算或视觉保真。${preservation?"\nPHYSICAL ORIGINAL COMPARISON (metadata only): "+JSON.stringify(preservation):""}`,
       latencyMs: 0, cost: 0, verificationStatus: status, artifactHash: receipt.sha256,
       trace: [{ id: `server-frozen-static-${testCase.id}`, stage: "server-frozen-static", summary: "已从冻结文件字节建立静态索引", status: "pass", detail: JSON.stringify([source.id, receipt.sha256, fastHash(snapshot.content)]) }],
     };

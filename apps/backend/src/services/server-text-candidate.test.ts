@@ -23,6 +23,40 @@ const edits = (beforeText = before, afterText = after) => JSON.stringify({kind: 
 beforeEach(() => {blobs.clear(); ai.mockReset();});
 
 describe("server full text Candidate construction", () => {
+  it("corrects one invented anchor against the same source before any frozen write",async()=>{
+    const {project,candidate}=fixture();
+    ai.mockResolvedValueOnce(output(edits("<p>必须连接正式配置。</p>")))
+      .mockImplementationOnce(async(_operation,payload)=>{
+        expect(blobs.size).toBe(1);expect(await blobs.get("source")!.text()).toBe(original);
+        expect(payload.project.currentTargets).toEqual(ai.mock.calls[0]![1].project.currentTargets);
+        expect(payload.constructionCorrection).toMatchObject({code:"TEXT_EDIT_ANCHOR_INVALID",editIndex:0});
+        expect(JSON.stringify(payload)).not.toContain("finalHoldout");
+        return output(edits());
+      });
+    const built=await buildServerExperimentCandidate(project,candidate);
+    expect(ai).toHaveBeenCalledTimes(2);expect(built.artifactSnapshots[0]!.content).toBe(original.replace(before,after));
+    expect(await verifyServerCandidateFrozenArtifact(built.artifactSnapshots[0]!)).toBe(true);
+  });
+  it("stops after one construction correction when anchors remain invalid",async()=>{
+    const {project,candidate}=fixture();ai.mockResolvedValue(output(edits("invented anchor")));
+    await expect(buildServerExperimentCandidate(project,candidate)).rejects.toMatchObject({code:"TEXT_EDIT_ANCHOR_INVALID"});
+    expect(ai).toHaveBeenCalledTimes(2);expect(blobs.size).toBe(1);
+  });
+  it("does not regenerate a Candidate on protection failures",async()=>{
+    const {project,candidate}=fixture();ai.mockResolvedValue(output(edits(before,after+after)));
+    await expect(buildServerExperimentCandidate(project,candidate)).rejects.toThrow(/重复 ID/);
+    expect(ai).toHaveBeenCalledTimes(1);expect(blobs.size).toBe(1);
+  });
+  it("never treats a storage error after writing bytes as an anchor correction",async()=>{
+    const {project,candidate}=fixture();ai.mockResolvedValue(output(edits()));
+    const set=blobs.set.bind(blobs);
+    const writes=vi.spyOn(blobs,"set").mockImplementationOnce((id,blob)=>{
+      set(id,blob);throw Object.assign(Error("storage write acknowledgement failed"),{code:"TEXT_EDIT_ANCHOR_INVALID"});
+    });
+    try{await expect(buildServerExperimentCandidate(project,candidate)).rejects.toThrow("storage write acknowledgement failed");}
+    finally{writes.mockRestore();}
+    expect(ai).toHaveBeenCalledTimes(1);expect(blobs.size).toBe(2);
+  });
   it("freezes an exact planned replacement without depending on the AI provider", async () => {
     const {project,candidate}=fixture();
     candidate.patches[0]!.target=before;

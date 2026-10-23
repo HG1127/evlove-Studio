@@ -5,6 +5,7 @@ import type { Candidate, EvolveProject, TargetRunResult, TestCase } from "@evolu
 import { runServerExperiment, SERVER_SEMANTIC_CONTEXT_VERSION, SERVER_MEASURED_REVIEW_VERSION } from "@evolution/harness";
 import { runServerAi, serverAiScoringRouteFingerprint } from "./ai-gateway";
 import {runServerEvidenceJudge} from "./server-evidence-judge";
+import {HTML_PRESERVATION_EXECUTION_VERSION} from "./server-html-preservation-observation";
 import { readServerHoldoutArtifactFingerprint as readExecutionArtifactFingerprint } from "./server-holdout-artifact-binding";
 
 import { runServerFrozenArtifactStaticEvidence } from "./server-static-artifact-evidence";
@@ -38,7 +39,7 @@ export async function runServerMissionExperiment(project: EvolveProject) {
     fingerprint: (wire) => serverArtifactSha256(new TextEncoder().encode(wire)),
     readExecutionArtifactFingerprint,
     scoringRouteFingerprint: await serverAiScoringRouteFingerprint(),
-    executionRuntimeFingerprint: JSON.stringify([process.env.VERCEL_GIT_COMMIT_SHA ?? "local", SERVER_SEMANTIC_CONTEXT_VERSION, SERVER_MEASURED_REVIEW_VERSION]),
+    executionRuntimeFingerprint: JSON.stringify([process.env.VERCEL_GIT_COMMIT_SHA ?? "local", SERVER_SEMANTIC_CONTEXT_VERSION, SERVER_MEASURED_REVIEW_VERSION, HTML_PRESERVATION_EXECUTION_VERSION]),
     buildCandidate: async({ project: current, candidate }) => {
       const built=await buildServerExperimentCandidate(current,candidate);
       return serverConnectorTargetEnabled(current)

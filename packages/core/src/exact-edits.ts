@@ -1,5 +1,11 @@
 import { TextArtifactEditsSchema, type TextArtifactEdit as TextEdit, type CandidatePatch } from "@evolution/contracts";
 
+export class ExactEditAnchorError extends Error {
+  readonly code="TEXT_EDIT_ANCHOR_INVALID";
+  readonly editIndex:number;
+  constructor(editIndex:number,message:string){super(message);this.name="ExactEditAnchorError";this.editIndex=editIndex;}
+}
+
 function preview(value: string) {
   return value.replace(/\s+/g, " ").trim().slice(0, 54);
 }
@@ -100,7 +106,7 @@ function locateEdit(original: string, edit: TextEdit, index: number, strict: boo
     ?? (strict ? undefined : whitespaceRange(original, edit.before))
     ?? (strict ? undefined : compactWhitespaceRange(original, edit.before))
     ?? (strict ? undefined : cssSelectorRange(original, edit.before));
-  if (!range) throw new Error(`第 ${index + 1} 处修改锚点缺失或不唯一：“${preview(edit.before)}”`);
+  if (!range) throw new ExactEditAnchorError(index,`第 ${index + 1} 处修改锚点缺失或不唯一：“${preview(edit.before)}”`);
   return range;
 }
 

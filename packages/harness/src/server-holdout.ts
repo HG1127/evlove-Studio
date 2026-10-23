@@ -27,9 +27,11 @@ import {
 import { serverBaselineFingerprint } from "./server-baseline-evidence";
 import { readServerHoldoutArtifactFingerprint, recoverableServerHoldout, reusableServerHoldoutAssessment, serverHoldoutExecutionEvidenceFingerprint, type ServerHoldoutArtifactReader } from "./server-holdout-recovery";
 import { exactServerHoldoutSuite, pauseServerHoldoutPreflight } from "./server-holdout-preflight";
+import {fastHash} from "@evolution/core";
 
 export type ServerHoldoutPorts = {
   scoringRouteFingerprint?: string;
+  executionRuntimeFingerprint?: string;
   readArtifactFingerprint?: ServerHoldoutArtifactReader;
   current: ServerCurrentArtifactPorts;
   candidate: ServerExperimentExecutionPorts;
@@ -189,7 +191,9 @@ export async function runServerHoldout(
     }
     throw error;
   }
-  const baseFingerprint = serverBaselineFingerprint({ ...inputProject, evalSuite: suite }, ports.scoringRouteFingerprint);
+  const measuredBaselineFingerprint = serverBaselineFingerprint({ ...inputProject, evalSuite: suite }, ports.scoringRouteFingerprint);
+  const baseFingerprint = ports.executionRuntimeFingerprint
+    ? fastHash(JSON.stringify([measuredBaselineFingerprint,ports.executionRuntimeFingerprint])) : measuredBaselineFingerprint;
 
   const beforeArtifactFingerprint = await readServerHoldoutArtifactFingerprint(inputProject, candidate, ports.readArtifactFingerprint);
   const prior = recoverableServerHoldout(inputProject, candidate, suite, round, baseFingerprint, beforeArtifactFingerprint, Date.now());

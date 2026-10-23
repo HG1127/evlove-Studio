@@ -5,6 +5,7 @@ import type { Candidate, EvolveProject, TargetRunResult, TestCase } from "@evolu
 import { runServerHoldout } from "@evolution/harness";
 import { runServerAi, serverAiScoringRouteFingerprint } from "./ai-gateway";
 import {runServerEvidenceJudge} from "./server-evidence-judge";
+import {HTML_PRESERVATION_EXECUTION_VERSION} from "./server-html-preservation-observation";
 
 import { runServerFrozenArtifactStaticEvidence } from "./server-static-artifact-evidence";
 import {verifyServerCandidateNativeFormats} from "./server-candidate-native-roundtrip";
@@ -33,6 +34,7 @@ export async function runServerMissionHoldout(project:EvolveProject){
   return withServerAiConnection(async()=>{
   return runServerHoldout(project,{
     scoringRouteFingerprint:await serverAiScoringRouteFingerprint(),
+    executionRuntimeFingerprint:HTML_PRESERVATION_EXECUTION_VERSION,
     readArtifactFingerprint:readServerHoldoutArtifactFingerprint,
     current:{
       executeSemanticBatch:({project:current,testCases,artifactContext})=>runServerAi("execute-artifact-batch",{

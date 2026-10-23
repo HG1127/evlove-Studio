@@ -30,6 +30,10 @@ describe("source-grounded exact text edits", () => {
     const before = "body { color: red; }";
     expect(applyExactEdits(source, blueprint([{before, after: "body { color: black; }"}]), {strict: true})).toBe(source.replace(before, "body { color: black; }"));
   });
+  it("identifies an invalid construction anchor without changing strict matching",()=>{
+    try{applyExactEdits("actual parent",blueprint([{before:"invented",after:"change"}]),{strict:true});throw Error("must reject");}
+    catch(error){expect(error).toMatchObject({code:"TEXT_EDIT_ANCHOR_INVALID",editIndex:0});}
+  });
   it("retains the explicit legacy recovery behavior in the compatibility API", () => {
     const source = "<html><body>old</body></html>";
     const after = "<html><body>new</body></html>";

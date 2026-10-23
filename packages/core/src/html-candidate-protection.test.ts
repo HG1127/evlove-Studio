@@ -8,6 +8,29 @@ const report = (originalHtml: string, candidateHtml: string, protectedItems = ["
   htmlCandidateProtection({ sourceArtifactId: "source", originalHtml, candidateHtml, protectedItems });
 
 describe("pure complete HTML Candidate protection", () => {
+  it("observes static preservation when only document wording changes, without making a runtime verdict",()=>{
+    const original='<html><head><style>p{color:red}</style><script>const label="same";</script></head><body><article class="slide-card" id="slide-1"><p>old wording</p></article></body></html>';
+    const result=report(original,original.replace("old wording","clearer configuration instructions"),["保留 slide 章节结构"]);
+    expect(result.nativeObservation).toMatchObject({originalScriptCount:1,candidateScriptCount:1,scriptBlocksUnchanged:true,
+      styleBlocksUnchanged:true,stylesheetReferencesUnchanged:true,elementTreeAndAttributesUnchanged:true,slideCardOrderUnchanged:true,
+      originalSlideCardCount:1,candidateSlideCardCount:1,templateCount:0});
+    expect(result.nativeObservation).not.toHaveProperty("runtimePassed");
+  });
+  it.each(["script","style","attributes","parent","order"])("detects changed %s even when slide IDs survive",kind=>{
+    const original='<html><head><style>p{color:red}</style><script>const x=1;</script></head><body><div><p>one</p></div><p>two</p><article class="slide-card" id="slide-1"></article><article class="slide-card" id="slide-2"></article></body></html>';
+    const changed=kind==="script"?original.replace("x=1","x=2"):kind==="style"?original.replace("color:red","color:blue")
+      :kind==="attributes"?original.replace('<p>one','<p onclick="broken()">one'):kind==="parent"?original.replace('<div><p>one</p></div><p>two</p>','<div><p>one</p><p>two</p></div>')
+      :original.replace('id="slide-1"','id="swap"').replace('id="slide-2"','id="slide-1"').replace('id="swap"','id="slide-2"');
+    const facts=report(original,changed,["保留 slide 章节结构"]).nativeObservation;
+    expect(kind==="script"?facts.scriptBlocksUnchanged:kind==="style"?facts.styleBlocksUnchanged:kind==="order"?facts.slideCardOrderUnchanged:facts.elementTreeAndAttributesUnchanged).toBe(false);
+  });
+  it("distinguishes additive document markup from changed existing controls",()=>{
+    const original=html('<article id="slide-1" class="slide-card"><p>old</p><button id="next" onclick="next()">Next</button></article>');
+    const expanded=original.replace("<p>old</p>","<p>clearer</p><p><strong>new detail</strong></p>");
+    expect(report(original,expanded).nativeObservation).toMatchObject({elementTreeAndAttributesUnchanged:false,
+      originalNamedElementsRetained:true,originalInteractiveElementSequenceRetained:true});
+    expect(report(original,expanded.replace('onclick="next()"','onclick="broken()"')).nativeObservation.originalInteractiveElementSequenceRetained).toBe(false);
+  });
   it("works without a browser DOMParser and preserves additive nodes", () => {
     expect(typeof globalThis.DOMParser).toBe("undefined");
     const result = report(html(section), html(section.replace("</article>", "<p>新增操作示例</p></article>")));
