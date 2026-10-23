@@ -12,6 +12,7 @@ export * from "./server-experiment";
 export {executeServerExperimentCandidate} from "./server-experiment-runner";
 export * from "./server-current-artifact-runner";
 export * from "./server-holdout";
+export * from "./server-frozen-validation-checkpoint";
 export * from "./server-artifact-acceptance";
 export * from "./server-release-orchestration";
 export * from "./server-release-reconciliation";

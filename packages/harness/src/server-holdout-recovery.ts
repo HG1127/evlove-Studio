@@ -1,5 +1,5 @@
 import type { Candidate, EvaluationResult, EvolveProject, TargetRunResult, TestCase, ValidationRun } from "@evolution/contracts";
-import { criteriaRequiringJudge, evidenceFingerprint, fastHash, LIVE_TARGET_OBSERVATION_MAX_AGE_MS } from "@evolution/core";
+import { criteriaRequiringJudge, evidenceFingerprint, fastHash, LIVE_TARGET_OBSERVATION_MAX_AGE_MS, verifiedValidationFailures } from "@evolution/core";
 import { SERVER_MEASURED_REVIEW_VERSION } from "./server-measured-review-evidence";
 
 export type ServerHoldoutArtifactReader = (args: { project: EvolveProject; candidate: Candidate }) => Promise<string | undefined>;
@@ -19,22 +19,27 @@ export function serverHoldoutExecutionEvidenceFingerprint(prior: Pick<Validation
   return fastHash(wire);
 }
 
-/** Resume assessment only; incomplete execution and legacy observations must run again. */
+/** A bound rejection may advance to repair; it never becomes a fresh passing observation. */
 export function recoverableServerHoldout(
   project: EvolveProject, candidate: Candidate, suite: TestCase[], round: number,
   baselineFingerprint: string, artifactFingerprint: string | undefined, nowMs: number,
 ): ValidationRun | undefined {
   const prior = project.validationRun;
   const observed = prior.baselineObservedAt;
+  const knownFailure = prior.status === "completed"
+    && verifiedValidationFailures(project, prior).some(criterion => criterion.hardGate)
+    && reusableServerHoldoutAssessment(project, suite, prior.runs, prior.evaluation)
+    && reusableServerHoldoutAssessment(project, suite, prior.baselineRuns, prior.baselineEvaluation);
   const pending = prior.status === "failed" && prior.error?.startsWith("[server-campaign-holdout-judge-pending]")
-    || prior.status === "completed" && prior.summary?.startsWith("[server-campaign-holdout-review-pending]");
+    || prior.status === "completed" && prior.summary?.startsWith("[server-campaign-holdout-review-pending]")
+    || knownFailure;
   if (project.targetConnection.adapter !== "artifact" || !pending || !artifactFingerprint || prior.executionArtifactFingerprint !== artifactFingerprint
     || prior.id !== "validation-server-r"+round || prior.validationMode !== "full"
     || prior.candidateId !== candidate.id || prior.evidenceFingerprint !== evidenceFingerprint(project, candidate)
     || prior.baselineContextFingerprint !== baselineFingerprint
     || prior.executionEvidenceFingerprint !== serverHoldoutExecutionEvidenceFingerprint(prior)
     || !Number.isFinite(nowMs) || !Number.isFinite(observed) || !observed || nowMs < observed
-    || nowMs - observed >= LIVE_TARGET_OBSERVATION_MAX_AGE_MS
+    || !knownFailure && nowMs - observed >= LIVE_TARGET_OBSERVATION_MAX_AGE_MS
     || prior.plannedCases !== suite.length || prior.executedCases !== suite.length
     || !suite.length || new Set(suite.map(item => item.id)).size !== suite.length
     || prior.baselineSuiteIds?.length !== suite.length

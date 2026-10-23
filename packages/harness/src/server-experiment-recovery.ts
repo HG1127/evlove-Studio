@@ -47,8 +47,35 @@ function pending(project: EvolveProject, round: number) {
     && project.experimentRun.id === "experiment-r" + round + "-server"
     && /^\[server-campaign-experiment-(?:judge|build)-pending\]/.test(project.experimentRun.summary ?? "");
 }
+
+/** Newly frozen repair construction is not a Visible winner. It must be measured first. */
+export function serverFrozenRepairCandidate(project: EvolveProject, round = project.campaign.currentRound + 1) {
+  if (project.targetConnection.adapter !== "artifact" || project.campaign.checkpoint?.round !== round
+    || project.campaign.checkpoint.completedPhase !== "plan" || project.artifactAcceptance.status !== "repairing"
+    || project.selectedCandidateIds.length !== 1
+    || !(project.experimentRun.status === "idle" && project.experimentRun.summary?.startsWith("[server-campaign-artifact-repair-visible-pending]")
+      || pending(project, round))) return undefined;
+  const id = project.selectedCandidateIds[0];
+  const candidates = project.candidates.filter(candidate => candidate.id === id);
+  if (candidates.length !== 1 || project.artifactAcceptance.candidateId !== id
+    || project.validationRun.status !== "idle" || project.validationRun.candidateId !== id
+    || project.validationRun.id !== "validation-repair-pending-" + id
+    || !hasCompleteServerExperimentFrozenSet(project, candidates[0]!)) return undefined;
+  return candidates[0];
+}
 /** Restore only the checkpoint-bound frozen construction; expired measurements do not change these bytes. */
 export async function restoreServerExperimentCandidate(project: EvolveProject, candidate: Candidate, round: number, ports: ServerExperimentRecoveryPorts) {
+  const freshRepair = serverFrozenRepairCandidate(project, round)?.id === candidate.id
+    && !project.experimentRun.executionCheckpoints?.some(checkpoint => checkpoint.candidateId === candidate.id);
+  if (freshRepair) {
+    if (!ports.verifyFrozenArtifact) throw new ServerExperimentFrozenRecoveryError("Repair 冻结文件缺少真实回读能力，不能重新生成替代文件。");
+    for (const snapshot of candidate.artifactSnapshots) {
+      let verified = false;
+      try { verified = await ports.verifyFrozenArtifact(snapshot); } catch { /* Preserve the frozen repair on unavailable storage. */ }
+      if (!verified) throw new ServerExperimentFrozenRecoveryError("Repair 冻结文件回读不可用或身份不一致，禁止重新生成替代文件。");
+    }
+    return candidate;
+  }
   if (!pending(project, round) || !ports.verifyFrozenArtifact) return undefined;
   const matches = project.experimentRun.executionCheckpoints?.filter(c => c.candidateId === candidate.id) ?? [];
   if (matches.length !== 1) return undefined;

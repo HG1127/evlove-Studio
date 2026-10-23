@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ExperimentRunSchema, type Candidate, type EvaluateAiResult } from "@evolution/contracts";
 import { experimentRecoveryAt as at, experimentRecoveryFixture } from "@evolution/testkit";
 import { runServerExperiment } from "./server-experiment";
+import { hasServerFrozenValidationCheckpoint } from "./server-frozen-validation-checkpoint";
 
 const digest = async (value: string) => createHash("sha256").update(value).digest("hex");
 function setup(count = 1) {
@@ -18,6 +19,52 @@ function setup(count = 1) {
   return { x, project, ports };
 }
 describe("server Experiment recovery after independent assessment outage", () => {
+  function frozenRepair(){
+    const setupResult=setup(),{project,x}=setupResult;
+    project.candidates=[structuredClone(x.current)];
+    const id=x.current.id;
+    project.selectedCandidateIds=[id];
+    project.artifactAcceptance={...project.artifactAcceptance,status:"repairing",candidateId:id,attempts:1};
+    project.validationRun={id:"validation-repair-pending-"+id,status:"idle",candidateId:id,runs:[],baselineRuns:[],checks:[]};
+    project.experimentRun={id:"experiment-r1-server",status:"idle",candidateResults:[],summary:"[server-campaign-artifact-repair-visible-pending] remeasure repaired bytes"};
+    return setupResult;
+  }
+  it("measures newly frozen repair bytes on the complete Visible suite before admitting Hidden",async()=>{
+    const {project,ports}=frozenRepair();
+    const snapshot=structuredClone(project.candidates[0]!.artifactSnapshots);
+    expect(hasServerFrozenValidationCheckpoint(project)).toBe(true);
+    const result=await runServerExperiment(project,ports,{now:()=>at});
+    expect(ports.buildCandidate).not.toHaveBeenCalled();
+    expect(ports.verifyFrozenArtifact).toHaveBeenCalled();
+    expect(ports.executeExternalBatch).toHaveBeenCalledOnce();
+    expect(ports.judge).toHaveBeenCalledOnce();
+    expect(result.readyForHoldout).toBe(true);
+    expect(result.experiment.candidateResults[0]!.runs).toHaveLength(project.evalSuite.length);
+    expect(result.experiment.executionCheckpoints?.[0]?.execution?.runs).toHaveLength(project.evalSuite.length);
+    expect(result.project.candidates[0]!.artifactSnapshots).toEqual(snapshot);
+  });
+  it("retains newly frozen repair construction across a Visible Judge outage",async()=>{
+    const {project,ports}=frozenRepair();
+    ports.judge.mockRejectedValueOnce(Error("Judge unavailable"));
+    const first=await runServerExperiment(project,ports,{now:()=>at});
+    const second=await runServerExperiment(first.project,ports,{now:()=>"2026-10-09T02:01:00.000Z"});
+    expect(second.readyForHoldout).toBe(true);
+    expect(ports.buildCandidate).not.toHaveBeenCalled();
+    expect(ports.executeExternalBatch).toHaveBeenCalledOnce();
+    expect(ports.judge).toHaveBeenCalledTimes(2);
+  });
+  it("waits on unavailable repair storage without rebuilding or executing replacement bytes",async()=>{
+    const {project,ports}=frozenRepair();
+    ports.verifyFrozenArtifact.mockResolvedValue(false);
+    const first=await runServerExperiment(project,ports,{now:()=>at});
+    expect(first.readyForHoldout).toBe(false);
+    expect(first.project.candidates[0]!.artifactSnapshots).toEqual(project.candidates[0]!.artifactSnapshots);
+    expect(ports.buildCandidate).not.toHaveBeenCalled();expect(ports.executeExternalBatch).not.toHaveBeenCalled();
+    ports.verifyFrozenArtifact.mockResolvedValue(true);
+    const second=await runServerExperiment(first.project,ports,{now:()=>at});
+    expect(second.readyForHoldout).toBe(true);
+    expect(ports.buildCandidate).not.toHaveBeenCalled();
+  });
   it("retains actual failed-judge observations and resumes the same frozen Candidate", async () => {
     const { project, ports } = setup();
     ports.judge.mockRejectedValueOnce(new Error("model timeout"));

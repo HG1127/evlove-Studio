@@ -14,6 +14,7 @@ import {
   SERVER_SOURCE_CONTEXT_INSTRUCTION,
   serverCampaignScoringRouteBlocker,
   canReuseServerBaseline,
+  hasServerFrozenValidationCheckpoint,
   buildServerHarnessPlan,
   buildWorkflowControlJobUpdate,
   WorkflowControlJobUnavailableError,
@@ -797,7 +798,8 @@ async function executeServerControlAction(
       })};
     }
     let campaignMission=mission;
-    if(!canReuseServerBaseline(campaignMission,scoringRouteFingerprint)){
+    if(!hasServerFrozenValidationCheckpoint(campaignMission)
+      &&!canReuseServerBaseline(campaignMission,scoringRouteFingerprint)){
       const baselineOutcome=await runServerMissionBaseline(campaignMission);
       campaignMission=baselineOutcome.project;
       await runtime.missions.save(campaignMission);

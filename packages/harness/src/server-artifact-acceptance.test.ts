@@ -261,7 +261,7 @@ describe("server artifact acceptance",()=>{
     expect(repair).not.toHaveBeenCalled();
   });
 
-  it("repairs only verified failures into a new Candidate and forces Hidden Holdout again",async()=>{
+  it("repairs only verified failures into a new Candidate and forces Visible before Hidden again",async()=>{
     const x=fixture(false);
     const repaired={...x.candidate,id:"C1-repair-1",name:"repair",status:"draft" as const,artifactSnapshots:[{...x.candidate.artifactSnapshots[0]!,id:"snap-repair",content:"fixed",contentHash:"hash2",frozenArtifact:{...x.frozen,blobId:"blob2",sha256:"sha2",snapshotHash:"hash2"}}]} as Candidate;
     const outcome=await runServerArtifactAcceptance(x.project,{
@@ -274,10 +274,36 @@ describe("server artifact acceptance",()=>{
     expect(outcome.repaired).toBe(true);
     expect(outcome.project.validationRun.status).toBe("idle");
     expect(outcome.project.validationRun.candidateId).toBe("C1-repair-1");
-    expect(outcome.project.campaign.checkpoint).toMatchObject({round:1,completedPhase:"experiment"});
+    expect(outcome.project.campaign.checkpoint).toMatchObject({round:1,completedPhase:"plan"});
+    expect(outcome.project.experimentRun).toMatchObject({status:"idle",candidateResults:[]});
+    expect(outcome.project.experimentRun.winnerId).toBeUndefined();
     expect(outcome.project.artifactAcceptance.status).toBe("repairing");
     expect(outcome.project.candidates.some((item)=>item.id==="C1-repair-1")).toBe(true);
     expect(campaignGoalSatisfied(outcome.project)).toBe(false);
+  });
+
+  it("repairs a bound verified failure without treating an unrelated unknown criterion as failure",async()=>{
+    const x=fixture(false);
+    x.project.acceptanceRubric.push({...x.project.acceptanceRubric[0]!,id:"PROTECT",title:"保留交互",protectedConstraint:true});
+    x.project.hiddenEvalSuite[0]!.criterionIds.push("PROTECT");
+    x.project.validationRun.evaluation!.criterionScores!.push({criterionId:"PROTECT",score:93,pass:false,verificationStatus:"partial",evidence:["search only"],gaps:["remaining interactions unobserved"],testCaseIds:["H1"]});
+    x.project.validationRun.evaluation!.unverifiedCriterionIds=["PROTECT"];
+    x.project.validationRun.evidenceFingerprint=evidenceFingerprint(x.project,x.candidate);
+    const evaluation=structuredClone(x.project.validationRun.evaluation);
+    const repair=vi.fn(async({failedCriteria}:{failedCriteria:EvolveProject["acceptanceRubric"]})=>{
+      expect(failedCriteria.map((item:{id:string})=>item.id)).toEqual(["CONTENT"]);
+      return {...x.candidate,id:"C1-repair",status:"draft" as const};
+    });
+    const ports={verifyFrozenArtifacts:async()=>({verified:[x.frozen],unavailable:[],failed:[]}),repairCandidate:repair};
+    const outcome=await runServerArtifactAcceptance(x.project,ports);
+    expect(outcome).toMatchObject({control:"continue",accepted:false,repaired:true});
+    expect(outcome.project.validationRun.previousEvaluation).toEqual(evaluation);
+    expect(outcome.project.gates.find(gate=>gate.id==="artifact-ready")?.status).toBe("pending");
+    expect(x.project.validationRun.evaluation).toEqual(evaluation);
+    repair.mockClear();
+    const unavailable=await runServerArtifactAcceptance(x.project,{...ports,verifyFrozenArtifacts:async()=>({verified:[],unavailable:["missing physical file"],failed:[]})});
+    expect(unavailable).toMatchObject({control:"stop",accepted:false,repaired:false});
+    expect(repair).not.toHaveBeenCalled();
   });
 
   it("settles a failed round instead of rewriting after repair budget is exhausted",async()=>{

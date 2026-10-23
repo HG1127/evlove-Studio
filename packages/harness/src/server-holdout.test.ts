@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {ValidationRunSchema,type EvaluateAiResult,type EvolveProject,type TargetRunResult} from "@evolution/contracts";
 import { runServerHoldout, type ServerHoldoutPorts } from "./server-holdout";
 import { executeServerCurrentArtifactSuite, judgeServerCurrentArtifactSuite } from "./server-current-artifact-runner";
+import { hasServerFrozenValidationCheckpoint } from "./server-frozen-validation-checkpoint";
 
 function judged(score:number,testCaseId="H1"):EvaluateAiResult{
   return {
@@ -61,7 +62,36 @@ function semanticPorts(baselineScore=82,candidateScore=92){
   return {ports,currentCases,candidateCases,reviewPayload:()=>reviewPayload};
 }
 
+function addLimitedProtection(project:EvolveProject,ports:ServerHoldoutPorts){
+  project.acceptanceRubric.push({...project.acceptanceRubric[0]!,id:"PROTECT",title:"保留交互",protectedConstraint:true});
+  project.hiddenEvalSuite.push({...project.hiddenEvalSuite[0]!,id:"H2",criterionIds:["PROTECT"],tags:["source-grounded-html-assertions"]});
+  for(const arm of ["current","candidate"] as const){
+    const judge=ports[arm].judge;
+    ports[arm].judge=async(payload)=>{
+      const result=await judge(payload);
+      return {...result,criteria:[...result.criteria!,{criterionId:"PROTECT",score:95,pass:true,evidence:["search smoke"],gaps:[],testCaseIds:["H2"]}]};
+    };
+  }
+}
+
 describe("server hidden holdout",()=>{
+  it("routes a proven content failure to repair while keeping preservation evidence unknown",async()=>{
+    const project=fixture();
+    const setup=semanticPorts(82,50);
+    addLimitedProtection(project,setup.ports);
+    const review=vi.fn(setup.ports.releaseReview);setup.ports.releaseReview=review;
+    const outcome=await runServerHoldout(project,setup.ports);
+    expect(outcome).toMatchObject({control:"continue",readyForArtifactAcceptance:true,evidenceIncomplete:true});
+    expect(outcome.validation.recommendation).toBe("hold");
+    expect(outcome.validation.evaluation?.criterionScores).toContainEqual(expect.objectContaining({criterionId:"CONTENT",pass:false,verificationStatus:"verified"}));
+    expect(outcome.validation.evaluation?.criterionScores).toContainEqual(expect.objectContaining({criterionId:"PROTECT",pass:false,verificationStatus:"partial"}));
+    expect(outcome.project.campaign.checkpoint?.completedPhase).toBe("validation");
+    expect(review).not.toHaveBeenCalled();
+    expect(hasServerFrozenValidationCheckpoint(project)).toBe(true);
+    expect(hasServerFrozenValidationCheckpoint(outcome.project)).toBe(true);
+    expect(hasServerFrozenValidationCheckpoint({...outcome.project,goal:"changed contract"})).toBe(false);
+    expect(hasServerFrozenValidationCheckpoint({...project,targetConnection:{...project.targetConnection,adapter:"http"}})).toBe(false);
+  });
   it("supplies the Hidden current Judge with its complete existing measured observation",async()=>{
     const p=fixture();
     const run:TargetRunResult={testCaseId:"H1",output:"COMPLETE CURRENT DOCUMENT TEXT OBSERVATION\n"+"measured text ".repeat(1000)+"HIDDEN-TAIL",
@@ -232,6 +262,30 @@ it("holds Release when a non-Hard Criterion has no independent judgment",async()
 
 describe("server Hidden assessment recovery",()=>{
   const artifactBinding="a".repeat(64);
+  it("retains an old exact-file rejection without rerolling either Judge",async()=>{
+    vi.useFakeTimers({toFake:["Date"]});
+    const observed=Date.parse("2026-10-08T00:00:00.000Z");vi.setSystemTime(observed);
+    try{
+      const project=fixture(),first=semanticPorts(82,50);
+      addLimitedProtection(project,first.ports);
+      const measured=await runServerHoldout(project,{...first.ports,readArtifactFingerprint:async()=>artifactBinding});
+      // Simulate the old controller's completed-but-paused Experiment checkpoint.
+      const prior={...measured.project,campaign:{...measured.project.campaign,checkpoint:project.campaign.checkpoint}};
+      vi.setSystemTime(observed+60*60_000);
+      const setup=semanticPorts(),currentJudge=vi.fn(setup.ports.current.judge),candidateJudge=vi.fn(setup.ports.candidate.judge),review=vi.fn(setup.ports.releaseReview);
+      const outcome=await runServerHoldout(prior,{...setup.ports,readArtifactFingerprint:async()=>artifactBinding,
+        current:{...setup.ports.current,judge:currentJudge},candidate:{...setup.ports.candidate,judge:candidateJudge},releaseReview:review});
+      expect(outcome).toMatchObject({control:"continue",readyForArtifactAcceptance:true,evidenceIncomplete:true});
+      expect(outcome.validation.evaluation).toEqual(measured.validation.evaluation);
+      expect(outcome.validation.baselineEvaluation).toEqual(measured.validation.baselineEvaluation);
+      expect(outcome.validation.baselineObservedAt).toBe(observed);
+      expect(setup.currentCases).toEqual([]);expect(setup.candidateCases).toEqual([]);
+      expect(currentJudge).not.toHaveBeenCalled();expect(candidateJudge).not.toHaveBeenCalled();expect(review).not.toHaveBeenCalled();
+      const changed=semanticPorts();
+      await runServerHoldout(prior,{...changed.ports,readArtifactFingerprint:async()=>"b".repeat(64)});
+      expect(changed.currentCases).toEqual(["H1","H2"]);expect(changed.candidateCases).toEqual(["H1","H2"]);
+    }finally{vi.useRealTimers();}
+  });
   async function paused(failingArm:"current"|"candidate"|"review"="current",partial=false){
     const setup=semanticPorts();
     const ports={...setup.ports,readArtifactFingerprint:vi.fn(async()=>artifactBinding)};

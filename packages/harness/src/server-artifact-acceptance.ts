@@ -14,6 +14,7 @@ import {
   verifiedValidationFailures,
   independentFinalReadiness,
   hasAuthoritativeHiddenRelease,
+  hasFullHiddenMeasurement,
 } from "@evolution/core";
 
 export type ServerArtifactVerification={
@@ -208,7 +209,11 @@ export async function runServerArtifactAcceptance(
     now,
   });
   let project:EvolveProject={...inputProject,artifactAcceptance:acceptance,updatedAt:now};
-  if(verification.unavailable.length||acceptance.status==="unverified"){
+  const failedCriteria=verifiedValidationFailures(inputProject,inputProject.validationRun);
+  const hasBoundFailure=failedCriteria.length>0
+    &&hasFullHiddenMeasurement(inputProject.validationRun,candidate.id,inputProject.hiddenEvalSuite)
+    &&Boolean(acceptance.frozenArtifacts?.length);
+  if(verification.unavailable.length||(acceptance.status==="unverified"&&!hasBoundFailure)){
     const reason=`[server-campaign-artifact-acceptance-evidence-pending] Gate F 缺少真实 frozen Artifact / exact-fingerprint 证据：${verification.unavailable.join("；")||acceptance.summary}`;
     return pause(project,reason,now);
   }
@@ -244,7 +249,6 @@ export async function runServerArtifactAcceptance(
     return {control:"continue",project:settled,reason:`Round ${round} Gate F 已通过 exact frozen Artifact 验收并完成本轮结算。`,accepted:true,repaired:false,championChanged:settled.searchChampion?.candidate?.id===candidate.id};
   }
 
-  const failedCriteria=verifiedValidationFailures(inputProject,inputProject.validationRun);
   const attempt=(inputProject.artifactAcceptance.attempts??0)+1;
   const max=inputProject.artifactAcceptance.maxRepairAttempts??3;
   if(failedCriteria.length&&attempt<=max){
@@ -260,13 +264,13 @@ export async function runServerArtifactAcceptance(
         checks:[],
         recommendation:"hold" as const,
         previousEvaluation:inputProject.validationRun.evaluation,
-        summary:"Server targeted Repair 已生成新的 frozen Artifact；必须重新运行 authoritative Hidden Holdout。",
+        summary:"Server targeted Repair 已生成新的 frozen Artifact；必须先重新运行 Visible Experiment，再运行 authoritative Hidden Holdout。",
       };
       project={
         ...project,
         candidates:[...project.candidates,repaired],
         selectedCandidateIds:[repaired.id],
-        experimentRun:{...project.experimentRun,status:"completed",winnerId:repaired.id,pendingEvidenceCandidateId:undefined},
+        experimentRun:{id:`experiment-r${round}-server`,status:"idle",candidateResults:[],summary:"[server-campaign-artifact-repair-visible-pending] 新 Repair 文件必须重新完成 Visible Experiment。"},
         validationRun:validation,
         artifactAcceptance:{...acceptance,status:"repairing",candidateId:repaired.id,attempts:attempt,summary:`Targeted Repair ${attempt}/${max} 已生成新 Candidate；等待重新 Hidden Holdout。`},
         stage:"experiment",
@@ -274,11 +278,11 @@ export async function runServerArtifactAcceptance(
           ...project.campaign,
           status:"running",
           stopReason:undefined,
-          checkpoint:{round,completedPhase:"experiment",at:now},
+          checkpoint:{round,completedPhase:"plan",at:now},
         },
         updatedAt:now,
       };
-      return {control:"continue",project,reason:`Gate F 已证实 ${failedCriteria.length} 个 Criterion 失败；Targeted Repair ${attempt}/${max} 已生成新 Candidate ${repaired.id}，重新进入 Hidden Holdout。`,accepted:false,repaired:true};
+      return {control:"continue",project,reason:`Gate F 已证实 ${failedCriteria.length} 个 Criterion 失败；Targeted Repair ${attempt}/${max} 已生成新 Candidate ${repaired.id}，先重新运行 Visible Experiment，再运行 Hidden Holdout。`,accepted:false,repaired:true};
     }catch(error){
       const reason=`[server-campaign-artifact-repair-pending] 已保留 Gate F/Hidden 失败证据，但 Targeted Repair 未完成：${error instanceof Error?error.message:String(error)}`;
       return pause(project,reason,now);

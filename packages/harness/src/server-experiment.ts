@@ -142,9 +142,9 @@ export async function runServerExperiment(
         throw new Error("Candidate Builder 未返回与全部 Target 绑定的已冻结实际文件");
       }
       built.push(result);
-      const checkpoint = restored
+      const checkpoint = (restored
         ? inputProject.experimentRun.executionCheckpoints?.find(c => c.candidateId === candidate.id)
-        : await serverExperimentBuildCheckpoint(inputProject, result, ports);
+        : undefined) ?? await serverExperimentBuildCheckpoint(inputProject, result, ports);
       if (checkpoint) checkpoints.set(candidate.id, checkpoint);
     } catch (error) {
       if (error instanceof ServerExperimentFrozenRecoveryError) recoveryFailures.add(candidate.id);

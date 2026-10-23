@@ -361,7 +361,9 @@ export async function runServerHoldout(
     summary: reviewSummary,
   };
   validation.executionEvidenceFingerprint = executionArtifactFingerprint ? serverHoldoutExecutionEvidenceFingerprint(validation) : undefined;
-  const evidenceReason = decision.evidenceIncomplete
+  // A proven rejection is actionable even while another criterion lacks evidence.
+  // Keep those gaps truthful; only an otherwise undecided result waits for evidence.
+  const evidenceReason = decision.evidenceIncomplete && !decision.hardFail
     ? `[server-campaign-holdout-evidence-pending] Hidden Holdout 已执行，但真实证据未完成：${[
       ...decision.unverifiedHardCriteria.map((criterion) => criterion.id),
       ...decision.comparisonEvidenceGaps.map((criterion) => `baseline:${criterion.id}`),
