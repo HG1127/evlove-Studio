@@ -4,6 +4,7 @@ import {ArtifactBlobTombstoneRowSchema,ArtifactBlobLiveRowSchema,
   type ArtifactBlobTombstoneRow,type SupabaseBackendConfig} from "@evolution/contracts";
 import type {SupabaseClient} from "@supabase/supabase-js";
 import {createSupabaseBackendClient} from "./supabase-production-adapter";
+import {supabaseTimestampToIso} from "./supabase-timestamp";
 
 export type ArtifactBlobCleanupPort={
   listPending:(olderThan:string,limit:number)=>Promise<ArtifactBlobTombstoneRow[]>;
@@ -32,7 +33,7 @@ export function createSupabaseArtifactBlobCleanupPort(
         .eq("bucket",allowedBucket).is("blob_deleted_at",null).lte("deleted_at",olderThan)
         .order("deleted_at",{ascending:true}).limit(limit);
       requireSuccess(error,"List Artifact blob tombstones");
-      return (data??[]).map((row)=>ArtifactBlobTombstoneRowSchema.parse(row));
+      return (data??[]).map((row)=>ArtifactBlobTombstoneRowSchema.parse({...row,deleted_at:supabaseTimestampToIso(row.deleted_at)}));
     },
     async hasLivePath(path){
       const {data,error}=await client.from("artifacts").select("id").eq("object_path",path).limit(1);

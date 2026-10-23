@@ -24,6 +24,18 @@ function fakeClient(rows:unknown[]=[tombstone]){
 }
 
 describe("Supabase Artifact blob cleanup adapter",()=>{
+  it("reads PostgreSQL timezone timestamps while preserving tombstone submillisecond precision",async()=>{
+    const fake=fakeClient([{...tombstone,deleted_at:"2026-09-24T19:00:00.123456+08:00"}]);
+    const rows=await createSupabaseArtifactBlobCleanupPort(config,fake.client).listPending("2026-09-25T00:00:00.000Z",25);
+    expect(rows).toEqual([{...tombstone,deleted_at:"2026-09-24T11:00:00.123456Z"}]);
+  });
+
+  it.each(["2026-02-30T00:00:00+00:00","2026-09-24T11:00:00","invalid-date"])("rejects invalid or timezone-free database timestamp %s",async deleted_at=>{
+    const fake=fakeClient([{...tombstone,deleted_at}]);
+    await expect(createSupabaseArtifactBlobCleanupPort(config,fake.client).listPending("2026-09-25T00:00:00.000Z",25)).rejects.toThrow();
+    expect(fake.remove).not.toHaveBeenCalled();
+  });
+
   it("validates pending tombstones and queries only aged, unfinished rows",async()=>{
     const fake=fakeClient();
     const port=createSupabaseArtifactBlobCleanupPort(config,fake.client);

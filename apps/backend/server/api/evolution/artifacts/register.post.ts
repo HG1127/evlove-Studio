@@ -3,6 +3,7 @@ import {ArtifactRegistrationRequestSchema} from "@evolution/contracts";
 import {getServerProductionRuntime} from "../../../../src/services/production-runtime";
 import {linkArtifactEvidence,registerArtifact} from "../../../../src/services/artifact-lifecycle";
 import {requireGovernedEvolutionPermission} from "../../../../src/services/security-policy";
+import {assertServerArtifactEvidenceReady} from "../../../../src/services/artifact-evidence-readiness";
 
 export default defineEventHandler(async(event)=>{
   await requireGovernedEvolutionPermission(event,"mission.write");
@@ -22,6 +23,7 @@ export default defineEventHandler(async(event)=>{
     throw createError({statusCode:400,statusMessage:"jobId requires missionId"});
   }
 
+  await assertServerArtifactEvidenceReady(body.missionId);
   const artifact=await registerArtifact(body);
 
   if(artifact.missionId){

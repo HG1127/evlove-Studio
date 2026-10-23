@@ -19,10 +19,26 @@ const browser=(overrides:Partial<SandboxBrowserHealth>={})=>({
   previewHealthy:true,browserStepsVerified:true,browserStepsExecuted:2,...overrides,
 }) as SandboxBrowserHealth;
 function probes(s:SandboxHealth=sandbox(true),b:SandboxBrowserHealth=browser()){
-  return {sandbox:vi.fn(async()=>s),browser:vi.fn(async()=>b)};
+  return {admission:vi.fn(async()=>{}),evidence:vi.fn<(missionId:string)=>Promise<void>>().mockResolvedValue(undefined),sandbox:vi.fn(async()=>s),browser:vi.fn(async()=>b)};
 }
 
 describe("HTML Mission execution preflight - actual Browser capability",()=>{
+  it("stops before metered probes when the real database admission migration is missing",async()=>{
+    const ports=probes();
+    ports.admission.mockRejectedValueOnce(new Error("HTML_CAMPAIGN_MIGRATION_REQUIRED"));
+    await expect(assertServerHtmlBrowserExecutionReady(mission([source("real-sop","html")]),ports)).rejects.toThrow("HTML_CAMPAIGN_MIGRATION_REQUIRED");
+    expect(ports.evidence).not.toHaveBeenCalled();
+    expect(ports.sandbox).not.toHaveBeenCalled();
+    expect(ports.browser).not.toHaveBeenCalled();
+  });
+  it("stops before metered probes when immutable evidence cannot be registered",async()=>{
+    const ports=probes();
+    ports.evidence.mockRejectedValueOnce(new Error("ARTIFACT_EVIDENCE_NOT_READY"));
+    await expect(assertServerHtmlBrowserExecutionReady(mission([source("real-sop","html")]),ports)).rejects.toThrow("ARTIFACT_EVIDENCE_NOT_READY");
+    expect(ports.evidence).toHaveBeenCalledWith("audit-html");
+    expect(ports.sandbox).not.toHaveBeenCalled();
+    expect(ports.browser).not.toHaveBeenCalled();
+  });
   it("does not create or probe a Sandbox for normal Markdown/paste Missions",async()=>{
     const ports=probes();
     await expect(assertServerHtmlBrowserExecutionReady(mission([source("document","md")]),ports)).resolves.toBeUndefined();

@@ -3,13 +3,19 @@ import type {EvolveProject,SandboxBrowserHealth,SandboxHealth} from "@evolution/
 import {hasAmbiguousAutoProxyHtmlTarget} from "@evolution/core";
 import {checkVercelSandboxBrowserHealth,checkVercelSandboxHealth} from "@evolution/adapters/sandbox";
 import {serverHtmlArtifactTargetEnabled} from "./server-html-artifact-execution";
+import {assertServerHtmlCampaignAdmissionReady} from "./html-campaign-admission-readiness";
+import {assertServerArtifactEvidenceReady} from "./artifact-evidence-readiness";
 
 type HtmlProbePorts={
+  admission:()=>Promise<void>;
+  evidence:(missionId:string)=>Promise<void>;
   sandbox:()=>Promise<SandboxHealth>;
   browser:()=>Promise<SandboxBrowserHealth>;
 };
 
 const defaultPorts:HtmlProbePorts={
+  admission:assertServerHtmlCampaignAdmissionReady,
+  evidence:assertServerArtifactEvidenceReady,
   sandbox:checkVercelSandboxHealth,
   browser:checkVercelSandboxBrowserHealth,
 };
@@ -37,6 +43,10 @@ export async function assertServerHtmlBrowserExecutionReady(
     });
   }
   if(!serverHtmlArtifactTargetEnabled(project))return;
+
+  // Fail before allocating billable resources when the durable database or evidence chain cannot finish the run.
+  await ports.admission();
+  await ports.evidence(project.id);
 
   let sandbox:SandboxHealth;
   try{

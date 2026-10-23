@@ -1,10 +1,13 @@
 // @vitest-environment node
 import {createHash} from "node:crypto";
 import {beforeEach,describe,expect,it,vi} from "vitest";
-import {ArtifactMetadataSchema,type ProductionRuntimePorts} from "@evolution/contracts";
+import {ArtifactMetadataSchema,type ProductionRuntimePorts,type EvolutionEvent} from "@evolution/contracts";
+import {EventEvidenceMirrorError,EventIdempotencyConflictError} from "./event-persistence";
 
 const appendEvidence=vi.hoisted(()=>vi.fn());
-vi.mock("./evidence-ledger",()=>({appendEvidenceLedger:appendEvidence}));
+const readEvent=vi.hoisted(()=>vi.fn());
+vi.mock("./production-runtime",()=>({getServerEventById:readEvent}));
+vi.mock("./evidence-ledger",async(original)=>({...await original<typeof import("./evidence-ledger")>(),appendEvidenceLedger:appendEvidence}));
 import {isTextArtifactMimeType,reconcileArtifactRegistration} from "./artifact-lifecycle";
 
 const content="exact artifact bytes";
@@ -84,5 +87,41 @@ describe("Artifact registration reconciliation",()=>{
     await expect(reconcileArtifactRegistration(ports,input)).resolves.toMatchObject({status:"reconciled"});
     expect(ports.artifacts.get).toHaveBeenCalledTimes(2);
     expect(appendEvidence).toHaveBeenCalledTimes(2);
+  });
+
+  it("recovers a real partial registration while retaining the first immutable Event time",async()=>{
+    const ports=runtime();
+    let stored:EvolutionEvent|undefined;
+    let mirrored=false;
+    ports.events.append=vi.fn(async value=>{
+      if(!stored){
+        stored={...value,at:"2026-10-23T00:00:00.123456+00:00"};
+        throw new EventEvidenceMirrorError(value.id,new Error("signer previously missing"));
+      }
+      if(value.at!==stored.at)throw new EventIdempotencyConflictError(value.id);
+      mirrored=true;
+    });
+    readEvent.mockImplementation(async()=>stored);
+    const input={missionId:"mission-1",artifactId:"artifact-1"};
+    await expect(reconcileArtifactRegistration(ports,input)).rejects.toBeInstanceOf(EventEvidenceMirrorError);
+    expect(appendEvidence).not.toHaveBeenCalled();
+    await expect(reconcileArtifactRegistration(ports,input)).resolves.toMatchObject({status:"reconciled",sha256});
+    expect(mirrored).toBe(true);
+    expect(ports.events.append).toHaveBeenCalledTimes(3);
+    expect(ports.events.append).toHaveBeenLastCalledWith(stored);
+    expect(stored?.at).toBe("2026-10-23T00:00:00.123456+00:00");
+    expect(appendEvidence).toHaveBeenCalledOnce();
+  });
+
+  it("refuses a conflicting stored Event instead of certifying its Artifact",async()=>{
+    const ports=runtime();
+    const conflict=new EventIdempotencyConflictError("artifact-event");
+    ports.events.append=vi.fn(async value=>{
+      readEvent.mockResolvedValue({...value,payload:{...value.payload,sha256:"f".repeat(64)}});
+      throw conflict;
+    });
+    await expect(reconcileArtifactRegistration(ports,{missionId:"mission-1",artifactId:"artifact-1"})).rejects.toBe(conflict);
+    expect(ports.events.append).toHaveBeenCalledOnce();
+    expect(appendEvidence).not.toHaveBeenCalled();
   });
 });

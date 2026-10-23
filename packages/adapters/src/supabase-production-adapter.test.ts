@@ -19,6 +19,24 @@ import {
 const at = "2026-09-18T08:00:00.000Z";
 
 describe("supabase production adapter contracts", () => {
+  it.each([
+    ["2026-10-23T03:12:34.123456+00:00","2026-10-23T03:12:34.123456Z"],
+    ["2026-10-23T11:12:34.123456+08:00","2026-10-23T03:12:34.123456Z"],
+  ])("reads actual PostgreSQL Artifact timestamps %s without changing identity",async(timestamp,expected)=>{
+    const sha256=createHash("sha256").update("exact bytes").digest("hex");
+    const row={id:"source-real",schema_version:"artifact-v1",mission_id:"mission-real",
+      bucket:"evolution-artifacts",object_path:"mission-real/source-real",mime_type:"text/html",size_bytes:11,
+      sha256,metadata:{kind:"source"},created_at:timestamp,updated_at:timestamp};
+    const query={select:vi.fn().mockReturnThis(),eq:vi.fn().mockReturnThis(),
+      maybeSingle:vi.fn(async()=>({data:row,error:null}))};
+    const ports=createSupabaseProductionPorts({url:"https://example.supabase.co",
+      anonKey:"sb_secret_test_fixture_0000000000000000",artifactBucket:"evolution-artifacts"},
+      {from:vi.fn(()=>query)} as unknown as SupabaseClient);
+    expect(await ports.artifacts.getMetadata!("source-real")).toMatchObject({id:"source-real",missionId:"mission-real",
+      sha256,createdAt:expected,updatedAt:expected});
+    expect(row.created_at).toBe(timestamp);
+  });
+
   it("reports the pending Artifact cleanup migration separately from core table health",async()=>{
     const from=vi.fn((table:string)=>({
       select:vi.fn().mockReturnValue({

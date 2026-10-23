@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import {supabaseTimestampToIso} from "./supabase-timestamp";
 import {
   EvolutionEventSchema,
   EvolutionJobSchema,
@@ -331,7 +332,7 @@ export function createSupabaseProductionPorts(
           id:row.id,schemaVersion:row.schema_version,missionId:row.mission_id??undefined,
           jobId:extra.jobId,kind:extra.kind,bucket:row.bucket,objectPath:row.object_path,
           mimeType:row.mime_type,sizeBytes:Number(row.size_bytes),sha256:row.sha256,
-          createdAt:row.created_at,updatedAt:row.updated_at,
+          createdAt:supabaseTimestampToIso(row.created_at),updatedAt:supabaseTimestampToIso(row.updated_at),
         });
       },
       delete: async (id) => {

@@ -2,6 +2,7 @@ import {createHash} from "node:crypto";
 import {ArtifactReconcileRequestSchema,createEvolutionEvent,type ArtifactRegistrationRequest,type ProductionRuntimePorts} from "@evolution/contracts";
 import {getServerArtifactStore} from "./artifact-runtime";
 import {appendEvidenceLedger} from "./evidence-ledger";
+import {appendCanonicalOccurrenceEvent} from "./event-replay";
 
 export type ArtifactRegistration=ArtifactRegistrationRequest;
 
@@ -39,7 +40,7 @@ export async function linkArtifactEvidence(
   runtime:ProductionRuntimePorts,
   input:{missionId:string;jobId?:string;artifactId:string;sha256:string;kind:string},
 ){
-  await runtime.events.append(createEvolutionEvent({
+  await appendCanonicalOccurrenceEvent(runtime.events,createEvolutionEvent({
     id:`artifact-registered:${input.missionId}:${input.artifactId}:${input.sha256}`,
     missionId:input.missionId,
     jobId:input.jobId,
