@@ -1,9 +1,10 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { AcceptanceCriterionSchema, SourceArtifactSchema, EvolutionJobSchema, type EvolveProject } from "@evolution/contracts";
+import { AcceptanceCriterionSchema, SourceArtifactSchema, EvolutionJobSchema, type AiUsageLedgerRecord,type EvolveProject } from "@evolution/contracts";
 import { buildServerHarnessPlan, serverControlCapabilityWaitPlan, type ServerHarnessPlan } from "@evolution/harness";
 import {demoProject} from "../../../../src/features/evolve/data/mock-project";
 import { executeServerControlStep, planMissionStep } from "../../../../workflows/evolution-mission/steps";
+import {fetchServerAiProviderUsage,withServerAiUsageScope} from "./server-ai-usage";
 
 const mocks = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn(), jobGet: vi.fn(), put: vi.fn(), append: vi.fn(), probe: vi.fn(), passive: vi.fn(), ai: vi.fn() }));
 vi.mock("./production-runtime", () => ({ getServerProductionRuntime: () => ({
@@ -33,6 +34,22 @@ beforeEach(() => {
   mocks.ai.mockRejectedValue(Object.assign(new Error("provider health temporarily unavailable"), { status: 503 }));
 });
 describe("Durable Workflow AI capability wait", () => {
+  it("binds provider accounting to the trusted control Job and checkpoint rather than the model payload",async()=>{
+    const records:AiUsageLedgerRecord[]=[];
+    mocks.probe.mockResolvedValue({ready:true,status:"ready"});
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({usage:{prompt_tokens:2,completion_tokens:3,total_tokens:5}}))));
+    mocks.ai.mockImplementation(async()=>{
+      const measured=await fetchServerAiProviderUsage({mode:"openai-compatible",baseUrl:"https://provider.test/v1",apiKey:"private",model:"model",timeoutMs:1000},
+        "chat-completions","understand","https://provider.test/v1/chat/completions",{});
+      await measured.observe(await measured.response.json());return{summary:"observed fixture",confidence:0.8};
+    });
+    try{
+      await withServerAiUsageScope({phase:"outer-test"},()=>executeServerControlStep(input,plan,0),async record=>{records.push(record);});
+    }finally{vi.unstubAllGlobals();}
+    expect(records).toHaveLength(2);
+    for(const record of records)expect((record.kind==="request-start"?record.request:record.observation.request).scope)
+      .toEqual({missionId:"mission",jobId:"control",phase:"understand",stepKey:"checkpoint"});
+  });
   it("persists a resumable wait with the actual current stage and unchanged evidence", async () => {
     const outcome = await executeServerControlStep(input, plan, 2);
     expect(outcome).toMatchObject({ control: "stop", result: { status: "waiting-human", iterations: 3, checkpointId: "checkpoint" } });

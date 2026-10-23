@@ -1,6 +1,6 @@
 # Real evolution acceptance
 
-Status: in progress, 2026-10-23. Green engineering checks do not establish measured evolution.
+Status: in progress, 2026-10-24. Green engineering checks do not establish measured evolution.
 
 ## Workload and identity
 
@@ -13,6 +13,14 @@ Pilot Mission: `real-evolution-sop-5bf3b2e0-b5ab-4ea9-a30b-192d1c9c0aad`. The fi
 1. **Autonomous improvement:** a real model constructs the changed file, preserving the original full scope. Visible execution, ordinary Hidden validation, the pre-reserved independent final paper and Gate F must pass. The frozen Artifact hash must equal the delivered file hash. Human-authored repairs, weaker thresholds and replayed fixture scores cannot satisfy this requirement.
 2. **Actual benefit:** the tested bytes must reach an appropriate pilot deployment. Observe accepted deliveries per real attempted task, end-to-end elapsed time and actual provider usage/cost against a stable control under comparable conditions. Choose an acceptance-rate target of at least 80%, a 20% reduction in median elapsed time and no increase in actual cost per accepted delivery for a subsequent controlled workload. These operational targets supplement the original quality rubric. They cannot replace it. Require independent per-task observations and sufficient per-arm samples; repeatedly polling one aggregate is not additional evidence. Missing monetary billing stays unknown. Local runtime checks and benchmark traffic cannot establish human business ROI.
 3. **Learning effect:** retain causal lessons with source/evidence identity, then compare later unseen tasks with and without eligible lessons under the same model, task contract and budget. Pre-reserve the comparison workload. Report actual acceptance, elapsed time and usage, including failures. Saving or selecting a Lesson, passing a unit test or improving the same visible cases does not establish transfer. One SOP task cannot establish broad cross-project generalization.
+
+## Actual provider usage observation
+
+The server now records each scoped physical HTTP attempt, including connection retries and malformed-output corrections, with Mission/Job/checkpoint identity. Canonical start/result events and their hashes are checked on readback. Unknown counts, incomplete records and opaque SDK retries remain explicit. Legacy run `cost: 0` fields are not actual monetary evidence.
+
+One real, diagnostic-only request to the current `MiniMax-M2.7-highspeed` service returned 426 input tokens and 89 output tokens, total 515. Both events and the receipt Artifact were authoritatively read back. Receipt SHA-256 is `4ee78d23ac25a53714bb603c4c829b295b4447bf61b8779718df9ac5f386fec6`, Artifact `usage-observation-ai-usage-observation-ae8adc3c-d329-4cc9-82a6-11231a871faa`. Only fixed diagnostic text was sent; no SOP, CSS, JS or final-paper content was supplied. This proves the new usage capture, not a user delivery or business improvement. Monetary billing remains unmeasured, and no request latency is treated as end-to-end task time. See [the recording design and remaining limits](architecture/2026-10-24-ai-request-usage-evidence.md).
+
+A fresh authoritative Mission read after the diagnostic still selects frozen `0de13e…`, with campaign paused at validation, Artifact Acceptance `repairing`, attempts **2 of a configured maximum 2**, and release `idle`. The diagnostic does not reset that budget or certify the ranked `winner` as accepted. Further evolution must respect the actual current budget and preserve the failed/partial history.
 
 ## Failures found by the real pilot
 

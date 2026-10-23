@@ -65,3 +65,4 @@ export * from "./html-readable-body";
 export * from "./html-native-program-identity";
 export * from "./html-derived-search-index";
 export * from "./html-native-evidence";
+export * from "./ai-usage-ledger";

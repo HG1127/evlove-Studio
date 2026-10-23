@@ -15,10 +15,16 @@ export function aiProviderTransportFailure(error:unknown):"provider-network-erro
 }
 
 /** AI generation requests contain no executable tools; retry one connection failure within the original deadline. */
-export async function fetchAiProvider(url:string,init:RequestInit):Promise<Response>{
+export type AiProviderAttemptObserver={
+  beforeAttempt(attempt:number):Promise<void>;
+  failedAttempt(attempt:number,reason:ReturnType<typeof aiProviderTransportFailure>):Promise<void>;
+};
+export async function fetchAiProvider(url:string,init:RequestInit,observer?:AiProviderAttemptObserver):Promise<Response>{
   for(let attempt=0;;attempt++){
+    await observer?.beforeAttempt(attempt+1);
     try{return await fetch(url,init);}
     catch(error){
+      await observer?.failedAttempt(attempt+1,aiProviderTransportFailure(error));
       if(attempt!==0||init.signal?.aborted||aiProviderTransportFailure(error)!=="provider-network-error")throw error;
     }
   }

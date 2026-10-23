@@ -28,6 +28,7 @@ import {
 } from "@evolution/harness";
 import { getServerProductionRuntime } from "../../apps/backend/src/services/production-runtime";
 import { serverAiScoringRouteFingerprint } from "../../apps/backend/src/services/ai-gateway";
+import {withServerAiUsageScope} from "../../apps/backend/src/services/server-ai-usage";
 import { runServerControlAi as runServerAi, ServerControlAiUnavailableError } from "../../apps/backend/src/services/server-control-ai";
 import { restoreServerControlAiWait } from "../../apps/backend/src/services/server-control-ai-recovery";
 import {reserveServerMissionFinalPaper,serverFinalPaperExecutionContract} from "../../apps/backend/src/services/server-final-paper";
@@ -467,7 +468,8 @@ export async function executeServerControlStep(
 ):Promise<{control:"continue"|"stop";result?:EvolutionWorkflowResult;sleepMs?:number}>{
   "use step";
   try {
-    return await executeServerControlAction(input,plan,iteration);
+    return await withServerAiUsageScope({missionId:input.missionId,jobId:input.controlJobId,
+      phase:plan.decision.action,stepKey:plan.checkpoint.id},()=>executeServerControlAction(input,plan,iteration));
   } catch (error) {
     if (!(error instanceof ServerControlAiUnavailableError)) throw error;
     const runtime=getServerProductionRuntime();

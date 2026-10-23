@@ -1,5 +1,5 @@
 import type { ZodType } from "zod";
-import { aiProviderTransportFailure,fetchAiProvider,parseStructuredAiOutput } from "@evolution/adapters";
+import { aiProviderTransportFailure,parseStructuredAiOutput } from "@evolution/adapters";
 import { createHash } from "node:crypto";
 import {serverAiRepairContract} from "./server-ai-repair-contract";
 import {
@@ -57,6 +57,7 @@ import {
 import { SERVER_SEMANTIC_CONTEXT_VERSION } from "@evolution/harness";
 import type { ServerAiConfig } from "../server-env";
 import {resolveServerAiConfig} from "./server-ai-connection";
+import {fetchServerAiProviderUsage,measureServerAiSdkUsage} from "./server-ai-usage";
 
 export type ServerAiOperation=AiOperation;
 /** Public scoring-route identity; API keys and timeout settings are deliberately excluded. */
@@ -179,13 +180,14 @@ function parseStructuredResult<T>(text:string,contract:Contract<T>):T{
 }
 
 async function callVercelGateway<T>(args:{
+  operation:AiOperation;
   config:Extract<ServerAiConfig,{mode:"vercel-gateway"}>;
   contract:Contract<T>;
   payload:unknown;
   images:ParsedImage[];
 }){
   const {Output,generateText,gateway}=await loadVercelAiSdk();
-  const generated=await generateText({
+  const generated=await measureServerAiSdkUsage(args.config,args.operation,()=>generateText({
     model:gateway(args.config.model),
     system:SYSTEM+"\n\nTask: "+args.contract.instruction,
     messages:[{
@@ -203,7 +205,7 @@ async function callVercelGateway<T>(args:{
     }),
     maxOutputTokens:10_000,
     timeout:args.config.timeoutMs,
-  });
+  }));
   return args.contract.parser.parse(generated.output);
 }
 
@@ -221,8 +223,8 @@ function directFormat<T>(config:Extract<ServerAiConfig,{mode:"openai-compatible"
   return {type:"json_schema" as const,name:contract.schema.name,strict:true,schema:contract.schema.schema};
 }
 
-async function callResponses<T>(args:{config:Extract<ServerAiConfig,{mode:"openai-compatible"}>;contract:Contract<T>;payload:unknown;images:ParsedImage[];repairFields?:string[]}){
-  const response=await fetchAiProvider(args.config.baseUrl+"/responses",{
+async function callResponses<T>(args:{operation:AiOperation;config:Extract<ServerAiConfig,{mode:"openai-compatible"}>;contract:Contract<T>;payload:unknown;images:ParsedImage[];repairFields?:string[]}){
+  const request=await fetchServerAiProviderUsage(args.config,"responses",args.operation,args.config.baseUrl+"/responses",{
     method:"POST",
     redirect:"error",
     signal:AbortSignal.timeout(args.config.timeoutMs),
@@ -241,7 +243,9 @@ async function callResponses<T>(args:{config:Extract<ServerAiConfig,{mode:"opena
       ...(directFormat(args.config,args.contract)?{text:{format:directFormat(args.config,args.contract)}}:{}),
     }),
   });
+  const response=request.response;
   const json=await response.json().catch(()=>({})) as ResponsesJson;
+  await request.observe(json);
   if(!response.ok){
     const error=Object.assign(new Error(json.error?.message||("Server AI Responses HTTP "+response.status)),{httpStatus:response.status});
     throw error;
@@ -250,12 +254,12 @@ async function callResponses<T>(args:{config:Extract<ServerAiConfig,{mode:"opena
   return parseStructuredResult(responseText(json),args.contract);
 }
 
-async function callChat<T>(args:{config:Extract<ServerAiConfig,{mode:"openai-compatible"}>;contract:Contract<T>;payload:unknown;images:ParsedImage[];repairFields?:string[]}){
+async function callChat<T>(args:{operation:AiOperation;config:Extract<ServerAiConfig,{mode:"openai-compatible"}>;contract:Contract<T>;payload:unknown;images:ParsedImage[];repairFields?:string[]}){
   // An independent multi-case Judge requires more room than providers default to.
   // Only request the larger budget for the evidence-scoring contract. This
   // remains a strict JSON + Zod check; longer output never implies acceptance.
   const isEvaluation=args.contract.schema.name==="evolve_evaluation";
-  const response=await fetchAiProvider(args.config.baseUrl+"/chat/completions",{
+  const request=await fetchServerAiProviderUsage(args.config,"chat-completions",args.operation,args.config.baseUrl+"/chat/completions",{
     method:"POST",
     redirect:"error",
     signal:AbortSignal.timeout(args.config.timeoutMs),
@@ -277,12 +281,14 @@ async function callChat<T>(args:{config:Extract<ServerAiConfig,{mode:"openai-com
       }),
     }),
   });
+  const response=request.response;
   const json=await response.json().catch(()=>({})) as ChatJson;
+  await request.observe(json);
   if(!response.ok)throw Object.assign(new Error(json.error?.message||("Server AI Chat HTTP "+response.status)),{httpStatus:response.status});
   return parseStructuredResult(chatText(json),args.contract);
 }
 
-async function structured<T>(payload:unknown,schema:Contract<T>,media?:ServerAiMedia):Promise<T>{
+async function structured<T>(operation:AiOperation,payload:unknown,schema:Contract<T>,media?:ServerAiMedia):Promise<T>{
   const config=await resolveServerAiConfig();
   if(!config){
     throw Object.assign(
@@ -292,10 +298,10 @@ async function structured<T>(payload:unknown,schema:Contract<T>,media?:ServerAiM
   }
   const images=parseServerAiImages(media);
   if(config.mode==="vercel-gateway"){
-    return callVercelGateway({config,contract:schema,payload,images});
+    return callVercelGateway({operation,config,contract:schema,payload,images});
   }
   const invoke=async(repairFields?:string[])=>{
-    const args={config,contract:schema,payload,images,repairFields};
+    const args={operation,config,contract:schema,payload,images,repairFields};
     if(config.protocol==="chat-completions")return callChat(args);
     if(config.protocol==="responses")return callResponses(args);
     try{return await callResponses(args);}
@@ -354,7 +360,7 @@ export function runServerAi(operation:"visual-judge",payload:unknown,media?:Serv
 export function runServerAi(operation:AiOperation,payload:unknown,media?:ServerAiMedia):Promise<unknown>;
 export function runServerAi(operation:ServerAiOperation,payload:unknown,media?:ServerAiMedia){
   AiOperationSchema.parse(operation);
-  return structured(payload,contract(operation,payload),media);
+  return structured(operation,payload,contract(operation,payload),media);
 }
 
 function serverAiErrorChain(error:unknown){

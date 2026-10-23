@@ -34,3 +34,4 @@ export * from "./html-native-observation-contract";
 export * from "./artifact-package-contract";
 export * from "./server-ai-connection-contract";
 export * from "./original-reference-contract";
+export * from "./ai-usage-contract";
