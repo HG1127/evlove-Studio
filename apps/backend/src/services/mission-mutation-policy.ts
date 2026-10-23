@@ -9,6 +9,14 @@ const SERVER_RELEASE_FIELDS=[
 function json(value:unknown){return JSON.stringify(value??null);}
 
 export function assertClientMissionMutationSafe(current:EvolveProject,next:EvolveProject){
+  const reset=next.baselineRun;
+  const emptyBaselineReset=Boolean(reset?.id&&reset.id!==current.baselineRun?.id&&reset.status==="idle"
+    &&reset.runs.length===0&&!reset.result&&!reset.startedAt&&!reset.completedAt&&!reset.measurementFingerprint
+    &&reset.originalReferences===undefined&&reset.referenceOnlyCriterionIds===undefined);
+  if(json(current.baselineRun?.originalReferences)!==json(next.baselineRun?.originalReferences)
+    ||json(current.baselineRun?.referenceOnlyCriterionIds)!==json(next.baselineRun?.referenceOnlyCriterionIds)){
+    if(!emptyBaselineReset)throw new Error("原版字节参照及初次 Baseline 对照标记是 server-owned，只能随全新空白 Baseline 一并清除，不能通过通用 Mission PUT 签发或改写");
+  }
   if(json(current.finalHoldout)!==json(next.finalHoldout))throw new Error("独立终验预留题集是 server-owned，不能通过通用 Mission PUT 改写");
   if(next.validationRun.independentFinal&&json(current.validationRun.independentFinal)!==json(next.validationRun.independentFinal))throw new Error("独立终验凭证是 server-owned，不能通过通用 Mission PUT 签发");
   for(const candidate of current.candidates){

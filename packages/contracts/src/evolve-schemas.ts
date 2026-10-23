@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {ProductionGoalEvidenceSchema} from "./production-goal-evidence";
+import {OriginalArtifactReferenceProofSchema} from "./original-reference-contract";
 import { GitRepositoryBindingSchema, GitTargetSnapshotBindingSchema } from "./git-target-contract";
 import {ConnectorCandidateBindingSchema,ConnectorTargetBindingSchema,ConnectorTargetSnapshotBindingSchema} from "./connector-contract";
 
@@ -557,6 +558,8 @@ export const EvaluationResultSchema = z.object({
 export type EvaluationResult = z.infer<typeof EvaluationResultSchema>;
 
 export const BaselineRunSchema = z.object({
+  originalReferences:z.array(OriginalArtifactReferenceProofSchema).optional(),
+  referenceOnlyCriterionIds:z.array(z.string().min(1)).optional(),
   measurementFingerprint: z.string().optional(),
   id: z.string(),
   status: z.enum(["idle", "running", "completed", "failed"]),

@@ -31,3 +31,4 @@ export * from "./html-execution-contract";
 
 export * from "./artifact-package-contract";
 export * from "./server-ai-connection-contract";
+export * from "./original-reference-contract";

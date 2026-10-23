@@ -45,6 +45,21 @@ async function acceptChampion(project: EvolveProject, content: string) {
 beforeEach(() => { blobs.clear(); vi.stubGlobal("crypto", webcrypto); });
 
 describe("Server current-version stored evidence", () => {
+  it("indexes complete HTML document text without confusing it with execution of embedded code",async()=>{
+    const p=project("html");
+    const actual=`<html><head><style>${".large-layout{color:red}".repeat(3000)}</style></head><body><h1>文档</h1>${Array.from({length:111},(_,i)=>`<article id="c-${i}"><h3>章节${i}</h3><p>${"前置条件、输入、操作、输出、完成检查。".repeat(9)} END-${i}</p></article>`).join("")}<script>UNEXECUTED_SCRIPT_MARKER</script></body></html>`;
+    await storeSource(p,actual);
+    const result=await runServerCurrentStoredEvidence({project:p,testCase:testCase("static-evidence")});
+    expect(result.verificationStatus).toBe("verified");
+    expect(result.artifactHash).toBe(await serverArtifactSha256(new TextEncoder().encode(actual)));
+    expect(result.output).toContain("静态文本投影");
+    expect(result.output).toContain("article:111");
+    for(let i=0;i<111;i++)expect(result.output).toContain(`END-${i}`);
+    expect(result.output).not.toContain("UNEXECUTED_SCRIPT_MARKER");
+    const behavior={...testCase("static-evidence"),evidenceScope:"product-behavior" as const};
+    expect((await runServerCurrentStoredEvidence({project:p,testCase:behavior})).verificationStatus).toBe("partial");
+  });
+
   it("reads a renamed accepted Champion's static evidence in the next current-version cycle", async () => {
     const current = project();
     await storeSource(current, "ORIGINAL SOURCE GUIDE");

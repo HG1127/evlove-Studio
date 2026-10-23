@@ -268,6 +268,30 @@ describe("custom provider protocols and JSON output",()=>{
     expect(retry.messages[0]!.content).toContain("JSON syntax");
     expect(retry.messages[0]!.content).toContain("COMPLETE syntactically valid JSON");
   });
+  it.each([1,9])("repairs a %s-case Hidden paper with the unchanged cardinality contract and exact source payload",async(count)=>{
+    const makeCase=(id:string,hidden:boolean)=>({id,title:id,input:"independent scenario "+id,expected:["observed"],tags:[],hidden,
+      criterionIds:["CONTENT"],executionMode:"artifact-runtime",evidenceScope:"product-behavior"});
+    const makeSuite=(length:number)=>({validationCases:Array.from({length:3},(_,i)=>makeCase("V"+i,false)),
+      hiddenCases:Array.from({length},(_,i)=>makeCase("F"+i,true)),summary:"independent final paper"});
+    const invalid=makeSuite(count),valid=makeSuite(count<2?2:8);
+    const fetchMock=vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({choices:[{message:{content:JSON.stringify(invalid)}}]}),{status:200}))
+      .mockResolvedValueOnce(new Response(JSON.stringify({choices:[{message:{content:JSON.stringify(valid)}}]}),{status:200}));
+    vi.stubGlobal("fetch",fetchMock);
+    const payload={original:"same exact original",instruction:"reserve before planning"};
+    const settled=await withExplicitServerAiConnection(input,()=>runServerAi("eval-suite",payload));
+    expect(settled.hiddenCases).toHaveLength(valid.hiddenCases.length);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const original=JSON.parse(String(fetchMock.mock.calls[0]![1]?.body));
+    const retry=JSON.parse(String(fetchMock.mock.calls[1]![1]?.body));
+    expect(original.messages[0].content).toContain('"minItems":2,"maxItems":8');
+    expect(retry.messages[0].content).toContain("hiddenCases:");
+    expect(retry.messages[0].content).toContain(count<2?">=2":"<=8");
+    expect(retry.messages[1].content).toBe(original.messages[1].content);
+    fetchMock.mockImplementation(async()=>new Response(JSON.stringify({choices:[{message:{content:JSON.stringify(invalid)}}]}),{status:200}));
+    await expect(withExplicitServerAiConnection(input,()=>runServerAi("eval-suite",payload)))
+      .rejects.toMatchObject({code:"AI_OUTPUT_SCHEMA_MISMATCH"});
+  });
   it("stops after one retry when schema remains invalid instead of inventing a success",async()=>{
     const invalid={choices:[{message:{content:JSON.stringify({summary:"no evidence"})}}]};
     const fetchMock=vi.fn(async()=>new Response(JSON.stringify(invalid),{status:200}));

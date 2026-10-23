@@ -267,24 +267,26 @@ describe("server campaign preparation",()=>{
     expect(outcome.project.sourceArtifacts[0]?.textContent).toBe(original);
   });
 
-  it("never presents Original-only SYS-PAIRWISE UNVERIFIED as an actionable Baseline defect to Problem Analysis",async()=>{
+  it.each(["SYS-PAIRWISE","ORIGINAL-REFERENCE"])("never presents Original-only %s as an actionable Baseline defect to Problem Analysis",async(criterionId)=>{
     const project=fixture();
+    if(criterionId!=="SYS-PAIRWISE")project.baselineRun.referenceOnlyCriterionIds=[criterionId];
     const baselinePairwise={
       testCaseId:"VC-PAIRWISE",
-      output:"UNVERIFIED: only Candidate can establish improvement over original",
-      verificationStatus:"unverified" as const,
+      output:criterionId==="SYS-PAIRWISE"?"UNVERIFIED: only Candidate can establish improvement over original"
+        :"Original document was read; Candidate preservation comparison remains unmeasured",
+      verificationStatus:criterionId==="SYS-PAIRWISE"?"unverified" as const:"verified" as const,
       latencyMs:0,cost:0,trace:[],
     };
-    project.acceptanceRubric.push({...project.acceptanceRubric[0]!,id:"SYS-PAIRWISE",
+    project.acceptanceRubric.push({...project.acceptanceRubric[0]!,id:criterionId,
       source:"system-integrity",judgeType:"pairwise",hardGate:true});
     project.evalSuite.push({...project.evalSuite[0]!,id:"VC-PAIRWISE",
-      criterionIds:["SYS-PAIRWISE"]});
+      criterionIds:[criterionId]});
     project.baselineRun.runs.push(baselinePairwise);
     project.baselineRun.result!.criterionScores!.push({
-      criterionId:"SYS-PAIRWISE",score:0,pass:false,verificationStatus:"unverified",
+      criterionId,score:0,pass:false,verificationStatus:"unverified",
       evidence:[],gaps:["original cannot be paired without new Candidate"],testCaseIds:["VC-PAIRWISE"],
     });
-    project.baselineRun.result!.unverifiedCriterionIds=["SYS-PAIRWISE"];
+    project.baselineRun.result!.unverifiedCriterionIds=[criterionId];
     // Simulate an accepted original with no actionable VERIFIED deficits.
     // Otherwise baselineRubricProblem intentionally bypasses AI entirely.
     project.baselineRun.result!.criterionScores![0]={
@@ -300,8 +302,8 @@ describe("server campaign preparation",()=>{
           comparisonOnlyDeferred:string;
         }}).baseline;
         expect(b.runs.map(x=>x.testCaseId)).not.toContain("VC-PAIRWISE");
-        expect(b.result.criterionScores.map(x=>x.criterionId)).not.toContain("SYS-PAIRWISE");
-        expect(b.result.unverifiedCriterionIds).not.toContain("SYS-PAIRWISE");
+        expect(b.result.criterionScores.map(x=>x.criterionId)).not.toContain(criterionId);
+        expect(b.result.unverifiedCriterionIds).not.toContain(criterionId);
         expect(b.comparisonOnlyDeferred).toContain("Candidate");
         return {problems:[{
           id:"P-ACTUAL",title:"可核验的原始说明缺少验证步骤",
@@ -317,7 +319,13 @@ describe("server campaign preparation",()=>{
     expect(outcome.phase).toBe("problem");
     expect(outcome.project.problems[0]?.id).toBe("P-ACTUAL");
     expect(project.baselineRun).toEqual(originalRows);
-    expect(outcome.project.baselineRun.result?.unverifiedCriterionIds).toContain("SYS-PAIRWISE");
+    expect(outcome.project.baselineRun.result?.unverifiedCriterionIds).toContain(criterionId);
+    if(criterionId!=="SYS-PAIRWISE"){
+      project.baselineRun.runs.at(-1)!.verificationStatus="unverified";
+      const unavailable=async()=>{throw Error("Missing Original execution must block before AI analysis");};
+      const blocked=await advanceServerCampaignPreparation(project,{problemAnalysis:unavailable,diagnose:unavailable,plan:unavailable});
+      expect(blocked.phase).toBe("baseline");
+    }
   });
 
   it("preserves manual execution mode instead of silently upgrading it to auto-rounds",async()=>{

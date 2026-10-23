@@ -20,6 +20,7 @@ export * from "./server-control-capability";
 export * from "./workflow-control-job";
 
 export * from "./server-source-context";
+export {htmlSnapshotReview} from "./html-snapshot-review";
 
 export * from "./server-experiment-wait";
 

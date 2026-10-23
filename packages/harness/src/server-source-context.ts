@@ -2,7 +2,7 @@ import type { EvolveProject, TestCase } from "@evolution/contracts";
 import { retrieveTextContext } from "./context-retrieval";
 
 // Bump when semantic source selection changes so cached scores are not mixed across policies.
-export const SERVER_SEMANTIC_CONTEXT_VERSION = "scope-and-format-context-v2";
+export const SERVER_SEMANTIC_CONTEXT_VERSION = "complete-html-observation-and-reference-v5";
 
 export const SERVER_SOURCE_CONTEXT_INSTRUCTION = "Source content is bounded parsed-text context, not proof of complete Storage bytes or runtime behavior. originalChars measures available parsed source text. Do not invent section counts, facts or coverage outside supplied excerpts. For HTML body excerpts, chunk offsets are relative to the stated body start.";
 

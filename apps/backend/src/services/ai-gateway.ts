@@ -107,7 +107,7 @@ function contract(operation:ServerAiOperation):Contract<unknown>{
   if(operation==="command")return{schema:jsonSchemas.command,parser:CommandAiResultSchema,instruction:"Interpret the new command against current mission and artifact evidence. Preserve prior intent unless explicitly changed and return the consolidated command, scope additions and safe next action."};
   if(operation==="target")return{schema:jsonSchemas.target,parser:TargetAiResultSchema,instruction:"Compile source understanding and command into an executable target contract with goal, metrics, protected/editable scope, acceptance criteria and risks. Use only supplied evidence."};
   if(operation==="rubric")return{schema:jsonSchemas.rubric,parser:RubricAiResultSchema,instruction:"Compile a compact project-specific Acceptance Rubric from user intent, business object, protected scope, artifact structures and current goal. Criteria are user/business outcomes, not parser details."};
-  if(operation==="eval-suite")return{schema:jsonSchemas.evalSuite,parser:EvalSuiteAiResultSchema,instruction:"Create a compact discriminative Eval Suite mapped to the Acceptance Rubric. Cover every criterion and hard gate with truthful execution modes."};
+  if(operation==="eval-suite")return{schema:jsonSchemas.evalSuite,parser:EvalSuiteAiResultSchema,instruction:"Create a compact discriminative Eval Suite mapped to the Acceptance Rubric: validationCases must contain 3-12 cases; hiddenCases must contain 2-8 cases. One case may cover multiple related criteria. Cover every criterion and hard gate with truthful execution modes."};
   if(operation==="build-candidate")return{schema:jsonSchemas.buildCandidate,parser:BuildCandidateAiResultSchema,instruction:"Construct exact Candidate artifacts from the CURRENT target version and Candidate plan. Preserve protected/untouched scope; never claim tests passed."};
   if(operation==="execute-artifact")return{schema:jsonSchemas.executeArtifact,parser:ExecuteArtifactAiResultSchema,instruction:"Inspect or execute one supplied current artifact against the test intent. Return concrete output/trace from supplied evidence; say UNVERIFIED when behavior cannot be established."};
   if(operation==="repair-artifact")return{schema:jsonSchemas.repairArtifact,parser:RepairArtifactAiResultSchema,instruction:"Repair only explicitly supplied VERIFIED failed criteria on exact current Candidate artifacts. Preserve unrelated/protected behavior; never claim validation passed."};
@@ -174,7 +174,8 @@ function parseStructuredResult<T>(text:string,contract:Contract<T>):T{
   const result=contract.parser.safeParse(parseStructuredAiOutput(text));
   if(result.success)return result.data;
   const fields=[...new Set(result.error.issues.map((issue)=>issue.path.join(".")||"结果"))].slice(0,4);
-  throw Object.assign(new Error(`模型返回的 JSON 不符合任务结构（${fields.join("、")}）。请检查模型的结构化输出能力或切换模型。`),{code:"AI_OUTPUT_SCHEMA_MISMATCH",fields});
+  const validationIssues=result.error.issues.slice(0,4).map(issue=>`${issue.path.join(".")||"结果"}: ${issue.message.slice(0,240)}`);
+  throw Object.assign(new Error(`模型返回的 JSON 不符合任务结构（${fields.join("、")}）。请检查模型的结构化输出能力或切换模型。`),{code:"AI_OUTPUT_SCHEMA_MISMATCH",fields,validationIssues});
 }
 
 async function callVercelGateway<T>(args:{
@@ -312,7 +313,8 @@ async function structured<T>(payload:unknown,schema:Contract<T>,media?:ServerAiM
       // Neither attempt bypasses JSON parsing or the versioned Zod task contract.
       const code=(error as {code?:string}).code;
       if(!["AI_OUTPUT_SCHEMA_MISMATCH","AI_OUTPUT_INVALID_JSON","AI_OUTPUT_INCOMPLETE","AI_OUTPUT_MISSING_FINAL"].includes(code??""))throw error;
-      const failedFields=(error as {fields?:string[]}).fields;
+      const invalid=error as {fields?:string[];validationIssues?:string[]};
+      const failedFields=invalid.validationIssues?.length?invalid.validationIssues:invalid.fields;
       return await invoke(failedFields?.length?failedFields:[code==="AI_OUTPUT_INVALID_JSON"?"JSON syntax or truncated JSON response":code??"invalid AI output"]);
     }
   }catch(error){

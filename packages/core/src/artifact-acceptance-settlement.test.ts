@@ -137,6 +137,18 @@ describe("artifact acceptance settlement",()=>{
     expect(result.status).toBe("unverified");
     expect(result.results.find((item)=>item.criterionId==="FORMAT")?.pass).toBe(false);
   });
+  it("never substitutes an initial Original reference for missing Candidate preservation acceptance",()=>{
+    const x=fixture();
+    x.project.id="mission";
+    x.project.baselineRun={id:"initial",status:"completed",suiteName:"Core",totalCases:0,runs:[],
+      originalReferences:[{schemaVersion:"original-artifact-reference-v1",missionId:"mission",sourceArtifactId:"source",
+        blobId:"original",sha256:"a".repeat(64),sizeBytes:100}],referenceOnlyCriterionIds:["FORMAT"]};
+    x.validation.evaluation!.criterionScores![1]={...x.validation.evaluation!.criterionScores![1]!,verificationStatus:"unverified"};
+    x.validation.evaluation!.unverifiedCriterionIds=["FORMAT"];
+    const result=settleArtifactAcceptanceFromValidation({project:x.project,candidate:x.candidate,validation:x.validation,frozenArtifacts:[x.frozen]});
+    expect(result).toMatchObject({status:"unverified",hardGatePass:false});
+    expect(result.acceptedAt).toBeUndefined();
+  });
   it("returns verified failures for targeted repair",()=>{
     const x=fixture();
     x.validation.recommendation="hold";

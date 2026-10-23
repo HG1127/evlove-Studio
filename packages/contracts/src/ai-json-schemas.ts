@@ -128,7 +128,7 @@ export const jsonSchemas = {
   },
   evalSuite: {
     name: "evolve_eval_suite",
-    schema: { type: "object", additionalProperties: false, properties: { validationCases: { type: "array", items: testCase }, hiddenCases: { type: "array", items: testCase }, summary: { type: "string" } }, required: ["validationCases", "hiddenCases", "summary"] },
+    schema: { type: "object", additionalProperties: false, properties: { validationCases: { type: "array", minItems: 3, maxItems: 12, items: testCase }, hiddenCases: { type: "array", minItems: 2, maxItems: 8, items: testCase }, summary: { type: "string" } }, required: ["validationCases", "hiddenCases", "summary"] },
   },
   problemAnalysis: {
     name: "evolve_problem_analysis",

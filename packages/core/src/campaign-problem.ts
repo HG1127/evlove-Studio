@@ -2,11 +2,13 @@ import type { EvolveProject, Problem } from "@evolution/contracts";
 import { indexScopedAcceptanceResults } from "./acceptance-result-identity";
 
 export function baselineRubricProblem(project: EvolveProject): Problem | undefined {
+  const deferred=new Set(["SYS-PAIRWISE",...(project.baselineRun.referenceOnlyCriterionIds??[])]);
   const scores = indexScopedAcceptanceResults([{
     requestedCriterionIds: project.acceptanceRubric.map((criterion) => criterion.id),
     results: project.baselineRun.result?.criterionScores ?? [],
   }]).byId;
   const ranked = project.acceptanceRubric.flatMap((criterion) => {
+    if(deferred.has(criterion.id))return [];
     const score = scores.get(criterion.id);
     if (!score || score.verificationStatus !== "verified" || score.pass) return [];
     const deficit = Math.max(0, criterion.minScore - score.score);

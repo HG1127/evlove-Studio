@@ -50,6 +50,17 @@ beforeEach(() => {
 });
 
 describe("Server frozen Artifact static evidence", () => {
+  it("retains complete large HTML document text when the accepted Champion becomes a later Baseline",async()=>{
+    const content=`<html><head><style>${".layout{color:red}".repeat(3000)}</style></head><body><h1>真实候选全文</h1><p>${"正文中的步骤、配置与回退说明。".repeat(1200)}</p><p>FINAL-CURRENT-CHAMPION-TEXT</p><script>UNEXECUTED_CODE</script></body></html>`;
+    const variant=await candidate("html",new NodeBlob([content],{type:"text/html"}) as Blob,content);
+    const run=await runServerFrozenArtifactStaticEvidence({project:project("html"),candidate:variant,testCase});
+    expect(run.verificationStatus).toBe("verified");
+    expect(run.artifactHash).toBe(variant.artifactSnapshots[0]!.frozenArtifact!.sha256);
+    expect(run.output).toContain("FINAL-CURRENT-CHAMPION-TEXT");
+    expect(run.output).toContain("静态文本投影");
+    expect(run.output).not.toContain("UNEXECUTED_CODE");
+  });
+
   it.each(["md", "docx"])("extracts a legitimately renamed %s Candidate from its exact frozen bytes", async (extension) => {
     const content = "ACTUAL RENAMED FINAL GUIDE";
     const blob = extension === "docx" ? await ooxml("word/document.xml", '<w:t>ACTUAL RENAMED FINAL GUIDE</w:t>') : new NodeBlob([content], { type: "text/markdown" }) as Blob;

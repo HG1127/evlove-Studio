@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { EvaluateAiResult, EvolveProject, TargetRunResult } from "@evolution/contracts";
 import { campaignScoringInputFingerprint, fastHash } from "@evolution/core";
 import { canReuseServerBaseline, runServerBaseline } from "./server-baseline";
@@ -55,6 +55,65 @@ function judge(): EvaluateAiResult {
 }
 
 describe("server baseline",()=>{
+  it("diagnoses a measured document deficiency after locking Original bytes without accepting the future Candidate",async()=>{
+    const p=fixture();
+    p.sourceArtifacts[0]={...p.sourceArtifacts[0]!,extension:"html",mimeType:"text/html",inputMode:"upload",storageRef:"original",size:1000};
+    p.acceptanceRubric.forEach(c=>c.weight=c.id==="CONTENT"?45:c.id==="FORMAT"?25:15);
+    p.acceptanceRubric.push({id:"PROTECT",title:"保留原版",requirement:"保留原版格式与交互",source:"protected-item",weight:10,
+      hardGate:true,judgeType:"pairwise",validationMethod:"semantic-judge",minScore:95,evidenceExpected:["原版对照"],protectedConstraint:true,
+      artifactIds:["source"],category:"protected"});
+    p.acceptanceRubric.push({...p.acceptanceRubric.at(-1)!,id:"SYS-PAIRWISE",title:"相对原版改进",source:"system-integrity",weight:5});
+    p.evalSuite[0]!.criterionIds.push("SYS-PAIRWISE");
+    p.hiddenEvalSuite[0]!.criterionIds.push("SYS-PAIRWISE");
+    p.evalSuite.push({...p.evalSuite[0]!,id:"VP",title:"保护项浏览器检查",criterionIds:["PROTECT"],executionMode:"external-runner"});
+    p.hiddenEvalSuite.push({...p.evalSuite.at(-1)!,id:"HP",hidden:true});
+    const proof={schemaVersion:"original-artifact-reference-v1",missionId:p.id,sourceArtifactId:"source",blobId:"original",sha256:"a".repeat(64),sizeBytes:1000};
+    const context={id:"source",artifactSha256:proof.sha256,content:"完整原文：缺少重试说明。",originalChars:1000,projectionChars:12,truncated:false,
+      contextRepresentation:"complete-html-static-text-projection",excludes:["scripts","styles","visual-fidelity","runtime-behavior"],originalReference:proof};
+    const executeSemanticBatch=vi.fn(async()=>{throw Error("Reading the actual document must not need an invented execution summary");});
+    const seenRubrics:string[][]=[];
+    const ports={executeSemanticBatch,buildCurrentArtifactContext:async()=>[context],
+      executeStoredEvidence:async({testCase}:{testCase:{id:string}})=>({testCaseId:testCase.id,output:"exact current file evidence",verificationStatus:"verified" as const,latencyMs:1,cost:0,trace:[]}),
+      executeExternalBatch:async()=>[{testCaseId:"VP",output:"browser observation fixture",verificationStatus:"verified" as const,latencyMs:1,cost:0,trace:[]}],
+      judge:async(payload:unknown)=>{
+        seenRubrics.push((payload as {acceptanceRubric:Array<{id:string}>}).acceptanceRubric.map(c=>c.id));
+        return {...judge(),criteria:p.acceptanceRubric.filter(c=>c.id!=="PROTECT").map(c=>({criterionId:c.id,score:c.id==="CONTENT"?82:99,
+          pass:c.id!=="CONTENT",evidence:["实际当前内容"],gaps:c.id==="CONTENT"?["缺重试说明"]:[],testCaseIds:c.id==="CONTENT"?["V1"]:c.id==="FORMAT"?["V2"]:["V3"]}))};
+      }};
+    const result=await runServerBaseline(p,ports);
+    expect(result.ready).toBe(true);expect(result.project.stage).toBe("problem");
+    expect(result.baseline.result?.criterionScores?.find(c=>c.criterionId==="CONTENT")).toMatchObject({score:82,pass:false,verificationStatus:"verified"});
+    expect(result.baseline.result?.criterionScores?.find(c=>c.criterionId==="PROTECT")?.pass).toBe(false);
+    expect(result.baseline.result?.criterionScores?.find(c=>c.criterionId==="SYS-PAIRWISE"))
+      .toMatchObject({score:0,pass:false,verificationStatus:"unverified",testCaseIds:["V1"]});
+    expect(result.baseline.result?.unverifiedCriterionIds).toContain("SYS-PAIRWISE");
+    expect(result.baseline.referenceOnlyCriterionIds).toEqual(["PROTECT"]);
+    expect(result.baseline.originalReferences).toEqual([proof]);
+    expect(seenRubrics[0]).not.toContain("PROTECT");
+    expect(seenRubrics[0]).not.toContain("SYS-PAIRWISE");
+    expect(executeSemanticBatch).not.toHaveBeenCalled();
+    const missing=await runServerBaseline(p,{...ports,buildCurrentArtifactContext:async()=>[{...context,originalReference:undefined}]});
+    expect(missing.ready).toBe(false);expect(missing.reason).toContain("PROTECT");
+    const noBrowser=await runServerBaseline(p,{...ports,executeExternalBatch:undefined});
+    expect(noBrowser.ready).toBe(false);expect(noBrowser.capabilityGaps).toContain("VP");
+  });
+
+  it("gives the independent judge the same current source context rather than only model observations",async()=>{
+    const project=fixture();
+    project.sourceArtifacts[0]={...project.sourceArtifacts[0]!,inputMode:"upload",storageRef:"actual-upload"};
+    const exact={id:"source",content:"原版完整正文：实际安装步骤；尚缺回滚操作。 END-OF-CURRENT-DOCUMENT",truncated:false,originalChars:42};
+    const observed=vi.fn(async()=>({results:[{testCaseId:"V1",output:"已观察到安装步骤，原版缺回滚操作。",trace:[]}]}));
+    const independent=vi.fn(async(payload:unknown)=>{
+      expect(payload).toMatchObject({artifactContext:[exact]});
+      expect(JSON.stringify(payload)).toContain("END-OF-CURRENT-DOCUMENT");
+      expect(JSON.stringify(payload)).not.toContain("H1");
+      return judge();
+    });
+    await runServerBaseline(project,{buildCurrentArtifactContext:async()=>[exact],executeSemanticBatch:observed,judge:independent});
+    expect(independent).toHaveBeenCalledOnce();
+    expect(observed).toHaveBeenCalledOnce();
+  });
+
   it("uses exact current Markdown defect as VERIFIED failure without sending that criterion to Judge",async()=>{
     const project=fixture();
     const text=["# 中文投资研究报告规范","## 角色","你是研究助手。",

@@ -1,5 +1,5 @@
-import type { EvolveProject, TestCase } from "@evolution/contracts";
-import { compactServerSourceText, serverSemanticContextQuery, trustedServerBaselineChampion } from "@evolution/harness";
+import {OriginalArtifactReferenceProofSchema,type OriginalArtifactReferenceProof,type EvolveProject,type TestCase} from "@evolution/contracts";
+import { compactServerSourceText, htmlSnapshotReview, serverSemanticContextQuery, trustedServerBaselineChampion } from "@evolution/harness";
 import { getServerArtifactStore } from "./artifact-runtime";
 import { serverArtifactSha256, verifyServerCandidateFrozenArtifact } from "./server-experiment-artifacts";
 import { extractServerStaticArtifactText } from "./server-static-artifact-evidence";
@@ -8,6 +8,7 @@ import { indexServerCodebaseZip, rankServerCodebaseFiles } from "./server-codeba
 const MAX_FILE_BYTES = 12_000_000;
 const MAX_TOTAL_CHARS = 56_000;
 const MAX_ARTIFACT_CHARS = 18_000;
+const MAX_HTML_TEXT_CHARS = 28_000;
 async function codebaseSemanticText(bytes: Uint8Array, project: EvolveProject) {
   const index = await indexServerCodebaseZip(bytes);
   const query = [project.goal, project.evolutionCommand, ...project.acceptanceRubric.map((criterion) => criterion.requirement)].join(" ");
@@ -42,6 +43,7 @@ export async function buildServerCurrentSemanticArtifactContext({ project, testC
     }
     let content: string;
     let sha256: string | undefined;
+    let originalReference:OriginalArtifactReferenceProof|undefined;
     const blobId = receipt?.blobId ?? (source.storageRef?.trim() || (source.inputMode === "upload" ? source.id : undefined));
     if (blobId) {
       if (snapshot && !await verifyServerCandidateFrozenArtifact(snapshot)) throw new Error(`${source.name} 的 Champion 冻结凭证与文件不一致。`);
@@ -51,6 +53,18 @@ export async function buildServerCurrentSemanticArtifactContext({ project, testC
       if (bytes.byteLength !== blob.size) throw new Error(`${source.name} 的当前文件读取大小已变化。`);
       sha256 = await serverArtifactSha256(bytes);
       if (receipt && sha256 !== receipt.sha256) throw new Error(`${source.name} 的当前 Champion Blob 已变化。`);
+      if(!snapshot&&source.role==="target"&&/^(html|htm)$/i.test(source.extension)&&store.getMetadata){
+        // A failed metadata read cannot establish a comparison reference; content observation remains separate.
+        const metadata=await store.getMetadata(blobId).catch(()=>undefined);
+        if(metadata&&(metadata.id!==blobId||metadata.sha256!==sha256||metadata.sizeBytes!==bytes.byteLength)){
+          throw new Error(`${source.name} 的原版元数据与实际文件字节不一致。`);
+        }
+        if(metadata&&metadata.id===blobId&&metadata.missionId===project.id&&metadata.kind==="source"
+          &&metadata.sha256===sha256&&metadata.sizeBytes===bytes.byteLength){
+          originalReference=OriginalArtifactReferenceProofSchema.parse({schemaVersion:"original-artifact-reference-v1",
+            missionId:project.id,sourceArtifactId:source.id,blobId,sha256,sizeBytes:bytes.byteLength});
+        }
+      }
       const extracted = source.extension.toLowerCase() === "zip"
         ? await codebaseSemanticText(bytes, project)
         : await extractServerStaticArtifactText(source.extension.toLowerCase(), bytes);
@@ -62,14 +76,20 @@ export async function buildServerCurrentSemanticArtifactContext({ project, testC
     }
     const allowance = Math.max(0, Math.min(MAX_ARTIFACT_CHARS, remaining));
     const html = /^(html|htm)$/i.test(source.extension) || /^text\/html(?:;|$)/i.test(receipt?.mimeType ?? source.mimeType);
-    const bounded = compactServerSourceText(content, query, allowance, html);
+    const review=html&&content.length>allowance?htmlSnapshotReview(content):undefined;
+    const projection=review?`${review.summary}\n正文全文（静态文本投影）：\n${review.text}\n证据边界：正文投影不包含脚本、样式、视觉和实际交互；这些必须独立验证。`:undefined;
+    const completeProjection=Boolean(projection&&projection.length<=Math.min(remaining,MAX_HTML_TEXT_CHARS));
+    const bounded = completeProjection?projection!:compactServerSourceText(content, query, allowance, html);
     remaining -= bounded.length;
     context.push({
       id: source.id, name: source.name, role: source.role, mimeType: source.mimeType,
       artifactKind: source.artifactKind, extension: source.extension, content: bounded,
       currentVersion: snapshot ? (project.searchChampion?.versionLabel ?? champion?.id) : project.version,
       snapshotHash: snapshot?.contentHash, artifactSha256: sha256,
-      originalChars: content.length, truncated: bounded !== content || source.extension.toLowerCase() === "zip",
+      ...(originalReference?{originalReference}:{}),
+      originalChars: content.length, truncated: completeProjection?false:bounded !== content || source.extension.toLowerCase() === "zip",
+      ...(completeProjection?{contextRepresentation:"complete-html-static-text-projection",projectionChars:review!.text.length,
+        excludes:["scripts","styles","visual-fidelity","runtime-behavior"]}:{}),
     });
   }
   return context;

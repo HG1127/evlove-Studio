@@ -69,8 +69,7 @@ function compactBaseline(project: EvolveProject) {
   // Problem/Diagnosis agents can hallucinate a scoring-system fault from an
   // intentional comparison-only 0 / UNVERIFIED row.
   // Do not alter stored Baseline or the final Hidden/Pairwise safety contract.
-  const pendingPairwiseIds=new Set(project.acceptanceRubric.filter(c=>c.id==="SYS-PAIRWISE")
-    .map(c=>c.id));
+  const pendingPairwiseIds=new Set(["SYS-PAIRWISE",...(project.baselineRun.referenceOnlyCriterionIds??[])]);
   const comparisonCaseIds=new Set(project.evalSuite.filter(test=>test.criterionIds.length>0
     &&test.criterionIds.every(id=>pendingPairwiseIds.has(id))).map(test=>test.id));
   const currentResult=project.baselineRun.result;
@@ -78,14 +77,14 @@ function compactBaseline(project: EvolveProject) {
     ...currentResult,
     criterionScores:currentResult.criterionScores?.filter(c=>!pendingPairwiseIds.has(c.criterionId)),
     unverifiedCriterionIds:currentResult.unverifiedCriterionIds?.filter(id=>!pendingPairwiseIds.has(id)),
-    failures:currentResult.failures.filter(line=>!/SYS-PAIRWISE/.test(line)),
+    failures:currentResult.failures.filter(line=>![...pendingPairwiseIds].some(id=>line.includes(id))),
   }:undefined;
   return {
     id:project.baselineRun.id,
     status:project.baselineRun.status,
     result,
     comparisonOnlyDeferred:comparisonCaseIds.size>0
-      ?"SYS-PAIRWISE 仅在实际 Candidate 与原始侧具备同卷证据之后核验。原版 UNVERIFIED 不代表当前产品故障。"
+      ?"原版对照仅在实际 Candidate 与原始侧具备同卷证据之后核验。Baseline 已锁定的参照或原版 UNVERIFIED 不代表产品故障。"
       :undefined,
     runs:project.baselineRun.runs.filter(run=>!comparisonCaseIds.has(run.testCaseId))
       .slice(0,16).map(run=>({
@@ -106,7 +105,7 @@ function compactCampaignArtifacts(project: EvolveProject) {
     ...(project.diagnosis?.evidence ?? []),
     problem?.title, problem?.summary, problem?.rootCause,
     project.diagnosis?.rootCause, project.diagnosis?.summary,
-    ...(project.baselineRun.result?.failures ?? []),
+    ...(compactBaseline(project).result?.failures ?? []),
     project.problemStatement, project.goal, project.evolutionCommand,
     ...project.acceptanceRubric.map((criterion) => criterion.requirement),
   ].filter(Boolean).join("\n");

@@ -5,7 +5,9 @@ import type {
   EvolveProject,
   TargetRunResult,
   TestCase,
+  OriginalArtifactReferenceProof,
 } from "@evolution/contracts";
+import {OriginalArtifactReferenceProofSchema} from "@evolution/contracts";
 import {
   baselineReadiness,
   campaignLiveObservationFresh,
@@ -18,6 +20,7 @@ import {
   rubricValidation,
   settleAiEvaluation,
   settleDeterministicEvaluation,
+  originalBaselineReferenceCriteria,
 } from "@evolution/core";
 import {
   baselineLocalEvidence,
@@ -32,6 +35,7 @@ import {
 import { indexUniqueBatchResults } from "./server-batch-results";
 import {groundedOriginalCitationDefect,groundedOriginalDocumentProtection} from "./server-grounded-baseline-defect";
 import { serverExperimentRecoveryCheckpoint } from "./server-experiment-wait";
+import {currentHtmlDocumentTextObservation} from "./server-current-document-evidence";
 
 export { trustedServerBaselineChampion, serverBaselineFingerprint } from "./server-baseline-evidence";
 
@@ -144,6 +148,7 @@ export async function runServerBaseline(
       totalCases: inputProject.evalSuite.length,
       runs: [],
       result: undefined,
+      originalReferences:undefined,referenceOnlyCriterionIds:undefined,
       measurementFingerprint: serverBaselineFingerprint(inputProject, ports.scoringRouteFingerprint),
     },
     stage: "baseline",
@@ -151,6 +156,9 @@ export async function runServerBaseline(
   };
 
   const ordered = new Map<string, TargetRunResult>();
+  let currentArtifactContext:Array<Record<string,unknown>>=[];
+  let referenceOnlyCriterionIds=new Set<string>();
+  let originalReferences:OriginalArtifactReferenceProof[]=[];
   const semanticCases: TestCase[] = [];
   const externalCases: TestCase[] = [];
   for (const testCase of project.evalSuite) {
@@ -201,12 +209,20 @@ export async function runServerBaseline(
     const semanticStarted=Date.now();
     try {
       const artifactContext=await currentSemanticArtifactContext(project,ports.buildCurrentArtifactContext,semanticCases);
+      currentArtifactContext=artifactContext;
+      const references=artifactContext.flatMap(entry=>{
+        const proof=OriginalArtifactReferenceProofSchema.safeParse(entry.originalReference);
+        return proof.success&&proof.data.sourceArtifactId===entry.id&&proof.data.sha256===entry.artifactSha256?[proof.data]:[];
+      });
+      referenceOnlyCriterionIds=new Set(originalBaselineReferenceCriteria(project,references));
+      originalReferences=references;
       for(const testCase of semanticCases){
         // Complete original bytes may directly prove a written defect or protected
         // instruction. This is evidence of document text, not Agent behavior.
         const direct=groundedOriginalCitationDefect({
           project,testCase,output:"UNVERIFIED: pre-candidate exact source evidence",artifactContext,
-        })??groundedOriginalDocumentProtection({project,testCase,artifactContext});
+        })??groundedOriginalDocumentProtection({project,testCase,artifactContext})
+          ??currentHtmlDocumentTextObservation(project,testCase,artifactContext);
         if(direct)ordered.set(testCase.id,direct);
       }
       const remaining=semanticCases.filter(testCase=>!ordered.has(testCase.id));
@@ -261,7 +277,18 @@ export async function runServerBaseline(
     return { project: nextProject, baseline, ready: false, reason, capabilityGaps: runs.map((run) => run.testCaseId) };
   }
 
-  const judgeCriteria = criteriaRequiringJudge(project.acceptanceRubric, project.evalSuite, runs);
+  const comparisonOnlyCriterionIds=new Set(["SYS-PAIRWISE",...referenceOnlyCriterionIds]);
+  // A shared case score may support an intrinsic requirement without proving
+  // a comparison whose Candidate side does not yet exist. Keep actual runs
+  // unchanged; remove only those mappings from this Baseline's settlement paper.
+  const scoringCases=project.evalSuite.map(test=>({...test,
+    criterionIds:test.criterionIds.filter(id=>!comparisonOnlyCriterionIds.has(id)),
+  }));
+  const judgeCriteria = criteriaRequiringJudge(project.acceptanceRubric, scoringCases, runs)
+    .filter(criterion=>!comparisonOnlyCriterionIds.has(criterion.id));
+  const referenceNotes=referenceOnlyCriterionIds.size
+    ?["原版对照已从不可变 Storage 字节锁定；以下保护项在初次 Baseline 只建立参照，不宣告候选通过，必须在 Candidate / Hidden / 独立终验逐项结算："+[...referenceOnlyCriterionIds].join("、")]
+    :[];
   const judgeIds = new Set(judgeCriteria.map((criterion) => criterion.id));
   const evaluableIds = new Set(
     project.evalSuite
@@ -280,14 +307,15 @@ export async function runServerBaseline(
       acceptanceRubric: effectiveCriteria,
     },
     acceptanceRubric: effectiveCriteria,
-    evaluatorInstruction: "Judge only supplied current Baseline evidence. Never cite diagnosis, plans or patches. UNVERIFIED tests are omitted and must not be invented as failures. PARTIAL evidence cannot fully satisfy a hard gate.",
+    artifactContext:currentArtifactContext,
+    evaluatorInstruction: "Judge only supplied current Baseline evidence. Independently inspect artifactContext when provided, rather than trusting an execution model's summary as source truth. Respect its representation, truncation and excluded runtime/visual scope. Never cite diagnosis, plans or patches. UNVERIFIED tests are omitted and must not be invented as failures. PARTIAL evidence cannot fully satisfy a hard gate.",
     testCases: judgeCases.map((testCase) => ({
       id: testCase.id,
       title: testCase.title,
       input: testCase.input.slice(0, 1600),
       expected: testCase.expected,
       tags: testCase.tags,
-      criterionIds: testCase.criterionIds,
+      criterionIds: testCase.criterionIds.filter(id=>judgeIds.has(id)),
       executionMode: testCase.executionMode,
       evidenceScope: testCase.evidenceScope,
     })),
@@ -308,19 +336,20 @@ export async function runServerBaseline(
     if (!judgeRuns.length || !effectiveCriteria.length) {
       evaluation = settleDeterministicEvaluation({
         criteria: project.acceptanceRubric,
-        testCases: project.evalSuite,
+        testCases: scoringCases,
         runs,
-        notes: ["Server Baseline：仅结算已获得的确定性证据；缺失语义评审的标准保持 UNVERIFIED，通用质量维度未测量。"],
+        notes: ["Server Baseline：仅结算已获得的确定性证据；缺失语义评审的标准保持 UNVERIFIED，通用质量维度未测量。",...referenceNotes],
       });
     } else {
       const judged = await ports.judge(judgePayload);
       evaluation = settleAiEvaluation({
         criteria: project.acceptanceRubric,
-        testCases: project.evalSuite,
+        testCases: scoringCases,
         runs,
         ai: judged,
         notes: [
           "Server Baseline：执行与独立 Judge 均在 Durable Workflow 后端完成。",
+          ...referenceNotes,
           ...(runs.some((run) => run.verificationStatus === "unverified")
             ? ["部分测试仍缺真实执行能力；对应 Criterion 保持 UNVERIFIED/PARTIAL，不按产品失败处理。"]
             : []),
@@ -350,12 +379,17 @@ export async function runServerBaseline(
     return { project: nextProject, baseline, ready: false, reason, capabilityGaps: ["server-judge"] };
   }
 
+  evaluation={...evaluation,criterionScores:evaluation.criterionScores?.map(score=>comparisonOnlyCriterionIds.has(score.criterionId)
+    ?{...score,gaps:["当前 Baseline 只观察原版或当前版本，尚无本次 Candidate 的双侧对照证据；保持未验证，不宣告改进或保护项通过"],
+      testCaseIds:project.evalSuite.filter(test=>test.criterionIds.includes(score.criterionId)).map(test=>test.id)}
+    :score)};
   const baseline: BaselineRun = {
     ...project.baselineRun,
     status: "completed",
     completedAt: now(),
     runs,
     result: evaluation,
+    originalReferences,referenceOnlyCriterionIds:[...referenceOnlyCriterionIds],
   };
   const runById = new Map(runs.map((run) => [run.testCaseId, run]));
   const deferrableSoft=project.evalSuite.filter(testCase=>
@@ -369,10 +403,10 @@ export async function runServerBaseline(
   });
   const criterionById = new Map((evaluation.criterionScores ?? []).map((item) => [item.criterionId, item]));
   // SYS-PAIRWISE compares the evolved Candidate with its source, so it cannot be
-  // VERIFIED before a Candidate exists. Defer only that comparison-only hard gate
-  // until Experiment/Hidden Holdout; never waive it from final acceptance.
+  // VERIFIED before a Candidate exists. An initial locked Original also supplies
+  // only the reference for scoped preservation comparisons, never a Candidate pass.
   const hardGateGaps = project.acceptanceRubric.filter((criterion) =>
-    criterion.hardGate && criterion.id !== "SYS-PAIRWISE"
+    criterion.hardGate && criterion.id !== "SYS-PAIRWISE"&&!referenceOnlyCriterionIds.has(criterion.id)
     && criterionById.get(criterion.id)?.verificationStatus !== "verified");
   const measured: EvolveProject = {
     ...project,

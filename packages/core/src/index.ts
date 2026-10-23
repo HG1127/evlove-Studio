@@ -58,3 +58,4 @@ export * from "./html-candidate-patch";
 export * from "./candidate-build-checkpoint";
 
 export * from "./candidate-metric-deltas";
+export * from "./baseline-original-reference";
