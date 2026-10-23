@@ -1,7 +1,7 @@
 import JSZip, { type JSZipObject } from "jszip";
 import * as XLSX from "xlsx";
 import type { Candidate, EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
-import { fastHash } from "@evolution/core";
+import { fastHash, isTextArtifactExtension, isZipArtifact } from "@evolution/core";
 import { getServerArtifactStore } from "./artifact-runtime";
 import { serverArtifactSha256, verifyServerCandidateFrozenArtifact } from "./server-experiment-artifacts";
 import { runServerFrozenCodebaseStaticEvidence } from "./server-static-codebase-evidence";
@@ -9,7 +9,6 @@ import { runServerFrozenCodebaseStaticEvidence } from "./server-static-codebase-
 const MAX_FILE_BYTES = 12_000_000;
 const MAX_XML_BYTES = 2_000_000;
 const MAX_OUTPUT_CHARS = 28_000;
-const TEXT_EXTENSION = /^(?:txt|md|markdown|mdx|csv|tsv|json|ya?ml|css|js|jsx|ts|tsx|html|htm|xml|svg)$/i;
 
 function unavailable(testCase: TestCase, detail: string): TargetRunResult {
   return {
@@ -97,12 +96,12 @@ function spreadsheetText(bytes: Uint8Array) {
 }
 
 export function serverStaticTextExtension(extension: string) {
-  return TEXT_EXTENSION.test(extension);
+  return isTextArtifactExtension(extension)||/^(csv|tsv)$/i.test(extension);
 }
 
 export async function extractServerStaticArtifactText(extension: string, bytes: Uint8Array): Promise<string | undefined> {
   if (bytes.byteLength > MAX_FILE_BYTES) throw new Error("冻结文件超出静态索引范围。");
-  if (TEXT_EXTENSION.test(extension)) return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  if (serverStaticTextExtension(extension)) return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   if (extension === "docx" || extension === "pptx") return officeText(bytes, extension);
   if (extension === "pdf") return pdfText(bytes);
   if (["xlsx", "xls", "ods"].includes(extension)) return spreadsheetText(bytes);
@@ -118,7 +117,7 @@ export async function runServerFrozenArtifactStaticEvidence(args: {
   const targets = project.sourceArtifacts.filter((source) => source.role === "target" && (!scope.size || scope.has(source.id)));
   if (targets.length !== 1 || (scope.size && scope.size !== 1)) return unavailable(testCase, "静态验收题没有唯一的 Target 绑定；跨成果证据需单独验证。");
   const source = targets[0]!;
-  if (source.artifactKind === "codebase" || source.extension.toLowerCase() === "zip") return runServerFrozenCodebaseStaticEvidence(args);
+  if (isZipArtifact(source)) return runServerFrozenCodebaseStaticEvidence(args);
   const snapshots = candidate.artifactSnapshots.filter((snapshot) => snapshot.sourceArtifactId === source.id);
   if (snapshots.length !== 1) return unavailable(testCase, "Candidate 没有唯一的 Target Snapshot。");
   const snapshot = snapshots[0]!;

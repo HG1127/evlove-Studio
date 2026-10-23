@@ -1,6 +1,6 @@
 import {ProjectSaveStatus} from "./project-save-status";
 
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Activity, Bot, CircleDot, Clock3, Gauge, PackageCheck, Paperclip, Rocket, Share2, TriangleAlert, Workflow } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -18,6 +18,9 @@ import { AutonomousEvolutionPanel } from "./autonomous-evolution-panel";
 import { autonomousAttention, autonomousEvolutionState } from "../runtime/autonomous-evolution";
 import { deriveAutonomousDecision, LOCAL_REVIEW_CONTRACT_VERSION } from "../runtime/autonomous-orchestrator";
 import { projectHasOnlineReleaseTarget } from "@evolution/core";
+import {requiresIsolatedHtmlServerExecution} from "../runtime/server-workflow-client";
+import {useServerMissionControlStatus} from "../runtime/use-server-mission-control";
+import {ServerMissionStatusCard} from "./server-mission-status-card";
 
 // 项目页有多个独立工作区。延后加载未打开的区域，避免材料解析、成果打包和实验控制台
 // 影响用户打开项目并确认当前进化步骤的速度。
@@ -69,10 +72,13 @@ function loadStudioView(projectId: string): StudioView | null {
 export function ProjectStudio({ project: initialProject }: { project: EvolveProject }) {
   const [search] = useSearchParams();
   const runtime = useProjectRuntime(initialProject);
+  const htmlServerTarget=useMemo(()=>requiresIsolatedHtmlServerExecution(runtime.project),[runtime.project]);
+  const serverControl=useServerMissionControlStatus(runtime.project.id,htmlServerTarget);
   const visibleProgress = runtime.status.busy ? displayProgress(runtime.status) : undefined;
   // 已完成根因诊断但尚未生成 Candidate 时，用户接下来要配置的是 plan 模型，而不是
   // 已结束的 diagnose 模型。运行中则永远以运行时上报的真实 operation 为唯一依据。
-  const nextAction = deriveNextWorkflowAction(runtime.project);
+  // Changing a tab must not re-run decision scans on an unchanged Mission.
+  const nextAction = useMemo(()=>deriveNextWorkflowAction(runtime.project),[runtime.project]);
   const modelOperation = runtime.status.busy ? runtime.status.operation : nextAction.operation;
   const modelOperations = modelOperation ? [modelOperation] : operationsForStage[runtime.stage];
   const modelScopeLabel = modelOperation
@@ -116,38 +122,38 @@ export function ProjectStudio({ project: initialProject }: { project: EvolveProj
   const hasMaterials = runtime.project.sourceArtifacts.length > 0;
   const hasUnderstanding = Boolean(runtime.project.inputUnderstanding);
   useEffect(() => {
-    if (autostart || !hasMaterials || hasUnderstanding || runtime.status.busy) return;
+    if (autostart || !hasMaterials || hasUnderstanding || runtime.status.busy || (htmlServerTarget&&serverControl.blocked)) return;
     runtime.deepenUnderstanding({ background: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autostart, hasMaterials, hasUnderstanding]);
+  }, [autostart, hasMaterials, hasUnderstanding,htmlServerTarget,serverControl.blocked]);
 
   const project = runtime.project;
-  const autonomyState = autonomousEvolutionState(project, runtime.status.busy);
-  const autonomyAttention = autonomousAttention(project);
+  const autonomyState = useMemo(()=>autonomousEvolutionState(project,runtime.status.busy),[project,runtime.status.busy]);
+  const autonomyAttention = useMemo(()=>autonomousAttention(project),[project]);
   // Runtime contract upgrades should heal old local-Judge fuse states without asking the user to
   // press another resume button. Current-version fuse states remain manual to prevent infinite loops.
   const staleJudgeFuse = project.campaign.status === "paused"
     && /本地评审自动重试已耗尽/.test(project.campaign.stopReason ?? "")
     && !(project.campaign.stopReason ?? "").includes(`[${LOCAL_REVIEW_CONTRACT_VERSION}]`);
   useEffect(() => {
-    if (!staleJudgeFuse || runtime.status.busy || staleJudgeRecoveryTriggeredRef.current || autonomyAttention) return;
+    if (!staleJudgeFuse || runtime.status.busy || staleJudgeRecoveryTriggeredRef.current || autonomyAttention || (htmlServerTarget&&serverControl.blocked)) return;
     staleJudgeRecoveryTriggeredRef.current = true;
     setView("flow");
     void runtime.runAutoPilot();
     // One migration resume per mounted project is enough; a new-version failure gets a versioned fuse.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [staleJudgeFuse, runtime.status.busy, autonomyAttention?.request?.id]);
+  }, [staleJudgeFuse, runtime.status.busy, autonomyAttention?.request?.id,htmlServerTarget,serverControl.blocked]);
   // Projects created before the offline-closure split may already have an accepted artifact but no
   // Lesson / Next Queue. Resume those machine-owned tail steps once on page load; no user click needed.
-  const tailDecision = deriveAutonomousDecision(project);
+  const tailDecision = useMemo(()=>deriveAutonomousDecision(project),[project]);
   const offlineClosurePending = !projectHasOnlineReleaseTarget(project) && (tailDecision.action === "distill" || tailDecision.action === "next-queue");
   useEffect(() => {
-    if (!offlineClosurePending || runtime.status.busy || autonomyAttention || offlineClosureRecoveryTriggeredRef.current) return;
+    if (!offlineClosurePending || runtime.status.busy || autonomyAttention || offlineClosureRecoveryTriggeredRef.current || (htmlServerTarget&&serverControl.blocked)) return;
     offlineClosureRecoveryTriggeredRef.current = true;
     setView("flow");
     void runtime.runAutoPilot();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [offlineClosurePending, runtime.status.busy, autonomyAttention?.request?.id]);
+  }, [offlineClosurePending, runtime.status.busy, autonomyAttention?.request?.id,htmlServerTarget,serverControl.blocked]);
   const openAttentionPanel = () => {
     setView("flow");
     window.setTimeout(() => {
@@ -158,7 +164,7 @@ export function ProjectStudio({ project: initialProject }: { project: EvolveProj
     }, 0);
   };
   useEffect(() => {
-    if (!autostart || autostartTriggeredRef.current) return;
+    if (!autostart || autostartTriggeredRef.current || (htmlServerTarget&&serverControl.blocked)) return;
     const current = runtime.project;
     const alreadyStarted = current.campaign.status !== "idle" || current.campaign.currentRound > 0 || current.outputArtifacts.some((artifact) => artifact.accepted);
     if (alreadyStarted || runtime.status.busy) return;
@@ -171,7 +177,7 @@ export function ProjectStudio({ project: initialProject }: { project: EvolveProj
     return () => window.clearTimeout(timer);
     // autostart is a one-shot handoff from project creation; later resume is governed by Campaign state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autostart, runtime.project.id, runtime.status.busy]);
+  }, [autostart, runtime.project.id, runtime.status.busy,htmlServerTarget,serverControl.blocked]);
   const generator = resolveProjectOperationConnections("plan", project.aiProfile)[0];
   const evaluator = resolveProjectOperationConnections("evaluate", project.aiProfile)[0];
   const copilot = resolveProjectOperationConnections("copilot", project.aiProfile)[0];
@@ -193,7 +199,7 @@ export function ProjectStudio({ project: initialProject }: { project: EvolveProj
             <div className="flex flex-wrap items-center gap-2">
               <Badge className="border-indigo-200 bg-indigo-50 text-indigo-700">{project.objectType}</Badge>
               <Badge>{project.department}</Badge>
-              <span className="flex items-center gap-1 text-xs text-slate-600"><CircleDot className="size-3" />{autonomyState === "completed" ? "进化完成" : autonomyState === "attention" ? "需要你处理" : autonomyState === "running" || autonomyState === "preparing" ? "正在自主进化" : project.campaign.status === "paused" ? "已暂停" : "等待启动"}</span>
+              <span className="flex items-center gap-1 text-xs text-slate-600"><CircleDot className="size-3" />{htmlServerTarget&&serverControl.inspection?.state==="active"?"后端已有进化任务":htmlServerTarget&&serverControl.inspection?.state==="needs-review"?"后端断点待核验":htmlServerTarget&&serverControl.inspection?.state==="completed"?"后端进化完成":htmlServerTarget&&serverControl.blocked?"正在核对后端状态":autonomyState === "completed" ? "进化完成" : autonomyState === "attention" ? "需要你处理" : autonomyState === "running" || autonomyState === "preparing" ? "正在自主进化" : project.campaign.status === "paused" ? "已暂停" : "等待启动"}</span>
               <span className="flex items-center gap-1 text-xs text-slate-400"><Activity className="size-3" />Target · {project.targetConnection.label}</span>
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-2.5">
@@ -264,13 +270,14 @@ export function ProjectStudio({ project: initialProject }: { project: EvolveProj
       {view === "runtime" && <Suspense fallback={<WorkspaceLoading label="运行记录" />}><EvolutionRunConsole runtime={runtime} /></Suspense>}
       {view === "campaign" && <Suspense fallback={<WorkspaceLoading label="自动续跑设置" />}><EvolutionCampaignCenter runtime={runtime} onOpenAttention={openAttentionPanel} /></Suspense>}
       {view === "outputs" && <Suspense fallback={<WorkspaceLoading label="成果与版本" />}><ProjectOutputsPanel runtime={runtime} /></Suspense>}
+      {htmlServerTarget&&<ServerMissionStatusCard control={serverControl} onOpenRuntime={()=>setView("runtime")}/>}
       {view === "flow" && (
         <div className="space-y-4">
-          <AutonomousEvolutionPanel runtime={runtime} onOpenSource={()=>setView("source")} onOpenOutputs={()=>setView("outputs")} onOpenAdvanced={()=>setView("campaign")} onOpenRuntime={()=>setView("runtime")} />
+          <AutonomousEvolutionPanel runtime={runtime} serverStartBlocked={serverControl.blocked} onOpenSource={()=>setView("source")} onOpenOutputs={()=>setView("outputs")} onOpenAdvanced={()=>setView("campaign")} onOpenRuntime={()=>setView("runtime")} />
           <div className="flex justify-end"><Button variant="secondary" size="sm" onClick={()=>setCopilotOpen((open)=>!open)}><Bot className="size-4" />{copilotOpen?"收起 AI 助手":"打开 AI 助手"}</Button></div>
           <div className={`grid gap-6 ${copilotOpen?"xl:grid-cols-[minmax(0,1fr)_340px]":"grid-cols-1"}`}>
             <div className="min-w-0">
-              {autonomyAttention ? <Suspense fallback={<WorkspaceLoading label="需要你处理的问题" />}><AttentionRequestPanel runtime={runtime} attention={autonomyAttention} onOpenSource={()=>setView("source")} onOpenAdvanced={()=>setView("campaign")} onOpenRuntime={()=>setView("runtime")}/></Suspense> : <details className="rounded-2xl border bg-white"><summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-600">技术人员查看：内部进化过程</summary><div className="border-t p-5"><AdaptiveStageGuide project={project} stage={runtime.stage}/><Suspense fallback={<WorkspaceLoading label="内部进化过程" />}><StagePanel runtime={runtime} /></Suspense></div></details>}
+              {autonomyAttention ? <Suspense fallback={<WorkspaceLoading label="需要你处理的问题" />}><AttentionRequestPanel runtime={runtime} attention={autonomyAttention} serverStartBlocked={htmlServerTarget&&serverControl.blocked} onOpenSource={()=>setView("source")} onOpenAdvanced={()=>setView("campaign")} onOpenRuntime={()=>setView("runtime")}/></Suspense> : <details className="rounded-2xl border bg-white"><summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-600">技术人员查看：内部进化过程</summary><div className="border-t p-5"><AdaptiveStageGuide project={project} stage={runtime.stage}/><Suspense fallback={<WorkspaceLoading label="内部进化过程" />}><StagePanel runtime={runtime} serverStartBlocked={serverControl.blocked}/></Suspense></div></details>}
             </div>
             {copilotOpen&&<Suspense fallback={<WorkspaceLoading label="AI 助手" />}><StudioAssistant runtime={runtime} /></Suspense>}
           </div>

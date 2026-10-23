@@ -2,6 +2,7 @@
 import {createHash} from "node:crypto";
 import {beforeEach,describe,expect,it,vi} from "vitest";
 import type {Candidate,EvolveProject,TargetRunResult,TestCase} from "@evolution/contracts";
+import {fastHash} from "@evolution/core";
 import {runServerMissionExperiment} from "./server-experiment";
 
 const {getBlob,runSandbox}=vi.hoisted(()=>({getBlob:vi.fn(),runSandbox:vi.fn()}));
@@ -77,7 +78,7 @@ describe("server experiment frozen Candidate ZIP readback",()=>{
     expect(result?.verificationStatus).toBe("verified");
     expect(getBlob).toHaveBeenCalledOnce();
     expect(runSandbox).toHaveBeenCalledWith(expect.objectContaining({
-      id:"mission-experiment-candidate",archive:bytes,expectedSha256:sha256,testCases:[testCase],
+      id:`mission-experiment-candidate-${fastHash([testCase])}`,archive:bytes,expectedSha256:sha256,testCases:[testCase],
     }));
   });
 

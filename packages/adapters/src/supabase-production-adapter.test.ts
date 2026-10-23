@@ -78,7 +78,7 @@ describe("supabase production adapter contracts", () => {
       delete:vi.fn(()=>deleteQuery),
     };
     const referenceQuery={
-      select:vi.fn().mockReturnThis(),contains:vi.fn().mockReturnThis(),
+      select:vi.fn().mockReturnThis(),filter:vi.fn().mockReturnThis(),
       limit:vi.fn(async()=>({data:references,error:null})),
     };
     const client={
@@ -95,7 +95,7 @@ describe("supabase production adapter contracts", () => {
     expect(bound.remove).not.toHaveBeenCalled();
     const referenced=artifactDeletionPorts(null,[{id:"evidence-1"}]);
     await expect(referenced.ports.artifacts.delete("a1")).rejects.toThrow("immutable Evidence");
-    expect(referenced.referenceQuery.contains).toHaveBeenCalledWith("artifact_refs",["a1"]);
+    expect(referenced.referenceQuery.filter).toHaveBeenCalledWith("artifact_refs","cs",JSON.stringify(["a1"]));
     expect(referenced.remove).not.toHaveBeenCalled();
   });
 

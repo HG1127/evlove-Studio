@@ -5,6 +5,8 @@ export * from "./artifact-identity";
 export * from "./test-case-result-identity";
 export * from "./stable-hash";
 export * from "./artifact-strategy";
+export * from "./format-roundtrip-policy";
+export * from "./test-target-artifact";
 export * from "./goal-readiness";
 export * from "./evidence-binding";
 export * from "./delivery-readiness";
@@ -17,6 +19,7 @@ export * from "./acceptance-rubric";
 export * from "./eval-suite-normalization";
 export * from "./html-protection-browser-steps";
 export * from "./release-target";
+export * from "./html-source-target";
 export * from "./deterministic-criterion-evidence";
 export * from "./baseline-readiness";
 export * from "./evidence-provenance";
@@ -38,6 +41,9 @@ export * from "./release-reconciliation";
 export * from "./release-outcome";
 export * from "./outcome-statistics";
 export * from "./learning-governance";
+export * from "./planning-lessons";
+export * from "./production-goal-evidence";
+export * from "./independent-final-holdout";
 
 export * from "./hidden-validation-evidence";
 
@@ -46,3 +52,9 @@ export * from "./mission-blob-references";
 export * from "./exact-edits";
 
 export * from "./html-candidate-protection";
+
+export * from "./html-candidate-patch";
+
+export * from "./candidate-build-checkpoint";
+
+export * from "./candidate-metric-deltas";

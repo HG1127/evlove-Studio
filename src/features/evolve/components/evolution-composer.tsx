@@ -22,7 +22,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input, Textarea } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import type { IntakeAiResult } from "../ai/schemas";
-import type { EvolutionJob } from "@evolution/contracts";
+import type { EvolutionJob,SourceParseStatusResponse } from "@evolution/contracts";
 import type { ArtifactRole, EvolveProject, ProjectAiProfile, SourceArtifact } from "../schemas";
 import { defaultProjectAiProfile } from "../ai/project-profile";
 import { ingestSources, runIntakeFromArtifacts } from "../runtime/api";
@@ -31,7 +31,10 @@ import {clearComposerParseSessionId,clearDismissedParseArtifacts,composerParseSe
 import { loadRecoveredParseSource, recoveredParseState } from "../runtime/server-parse-recovery";
 import {
   cancelServerParseJob,
+  canFallbackToLocalParse,
   getServerParseCapabilities,
+  getServerParseStatus,
+  parseNeedsNewGeneration,
   listServerParseJobs,
   parseJobMetadata,
   parseServerFile,
@@ -39,7 +42,9 @@ import {
   startServerParseFile,
   waitForServerParseJob,
 } from "../runtime/server-source-client";
+import {firstReadyParse} from "../runtime/first-ready-parse";
 import { saveLocalProject } from "../runtime/local-store";
+import { productionRuntimeMode } from "../runtime/production-runtime";
 import { getTemplate, recordTemplateUse } from "../runtime/template-store";
 import { assessFileReadiness } from "../sources/extract";
 import {sourceParseLabel,sourceParseState,type SourceParseState} from "../runtime/source-parse-presentation";
@@ -55,6 +60,8 @@ type PendingFile = {
   serverJobId?: string;
   recoveredJob?: EvolutionJob;
   sourceSize?: number;
+  parseDetail?: string;
+  parseQueued?: boolean;
   error?: string;
   parseState?: SourceParseState;
 };
@@ -121,6 +128,7 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
   const serverParseAvailableRef=useRef<boolean|undefined>(undefined);
   const autoCreatePendingRef = useRef(false);
   const parseJobsRef = useRef(new Map<string, Promise<SourceArtifact | undefined>>());
+  const parseControllersRef=useRef(new Map<string,AbortController>());
   const artifactsRef = useRef<SourceArtifact[]>([]);
   const intakeRef = useRef<IntakeAiResult | undefined>(undefined);
   const messagesRef = useRef<ChatLine[]>([]);
@@ -147,6 +155,7 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
     objectTypes.some((item) => item[0] === seedTemplate?.objectType) ? seedTemplate!.objectType as (typeof objectTypes)[number][0] : "auto");
   const [aiProfile] = useState<ProjectAiProfile>(defaultProjectAiProfile);
   const [busy, setBusy] = useState(false);
+  const [sendPhase,setSendPhase] = useState<"parsing"|"understanding"|undefined>();
   const [contextRefreshing, setContextRefreshing] = useState(false);
   const [error, setError] = useState<string>();
   const [intake, setIntake] = useState<IntakeAiResult>();
@@ -240,6 +249,14 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
   const canSend = command.trim().length > 0 || pastedText.trim().length > 0 || files.length > 0 || (!intake && artifacts.length > 0);
 
   const startBackgroundParse = (item: PendingFile) => {
+    parseControllersRef.current.get(item.id)?.abort();
+    const controller=new AbortController();parseControllersRef.current.set(item.id,controller);
+    const observe=(record:SourceParseStatusResponse)=>{
+      if(controller.signal.aborted)return;
+      const queued=record.job.status==="queued";
+      setFiles(current=>current.map(entry=>entry.id===item.id?{...entry,parseQueued:queued,
+        parseDetail:queued?"文件已保存，等待后台开始解析":record.resultIssue??"正在读取文件并建立索引"}:entry));
+    };
     const artifactId=item.artifactId??`artifact-${crypto.randomUUID()}`;
     setFiles((current) => current.map((entry) => entry.id === item.id ? { ...entry, artifactId, status: "parsing", error: undefined } : entry));
     const job = (async () => {
@@ -247,12 +264,12 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
         let parsed: SourceArtifact | undefined;
         let serverJobId=item.serverJobId;
         if(serverJobId){
-          parsed=await waitForServerParseJob(serverJobId,undefined,artifactId);
-        }else if(serverParseAvailableRef.current===false){
+          parsed=await waitForServerParseJob(serverJobId,controller.signal,artifactId,observe);
+        }else if(productionRuntimeMode()==="local" || serverParseAvailableRef.current===false){
           [parsed]=await ingestSources({files:[item.file],role:item.role});
         }else{
           try{
-            const started=await startServerParseFile(item.file,item.role,artifactId,parseSessionIdRef.current);
+            const started=await startServerParseFile(item.file,item.role,artifactId,parseSessionIdRef.current,controller.signal);
             serverJobId=started.jobId;
             setFiles((current)=>current.map((entry)=>entry.id===item.id
               ?{...entry,status:"parsing",serverJobId,artifactId}
@@ -261,12 +278,13 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
               void cancelServerParseJob(serverJobId,true).catch(()=>undefined);
               return undefined;
             }
-            parsed=await waitForServerParseJob(serverJobId,undefined,artifactId);
+            parsed=await waitForServerParseJob(serverJobId,controller.signal,artifactId,observe);
           }catch(cause){
-            if(!(cause instanceof ServerParseUnavailableError))throw cause;
+            if(!canFallbackToLocalParse(cause,serverJobId))throw cause;
             [parsed]=await ingestSources({files:[item.file],role:item.role});
           }
         }
+        if(controller.signal.aborted)return undefined;
         if (!parsed) throw new Error("未能读取文件");
         if(dismissedParseRef.current.has(artifactId)){
           if(serverJobId)void cancelServerParseJob(serverJobId,true).catch(()=>undefined);
@@ -280,6 +298,7 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
         if (intakeRef.current) scheduleProgressiveIntake(nextArtifacts);
         return parsed;
       } catch (cause) {
+        if(controller.signal.aborted)return undefined;
         const message = cause instanceof Error ? cause.message : "后台解析失败";
         setFiles((entries) => entries.map((entry) => entry.id === item.id ? { ...entry, status: "error", error: message } : entry));
         return undefined;
@@ -288,6 +307,7 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
     parseJobsRef.current.set(item.id, job);
     void job.finally(() => {
       if (parseJobsRef.current.get(item.id) === job) parseJobsRef.current.delete(item.id);
+      if(parseControllersRef.current.get(item.id)===controller)parseControllersRef.current.delete(item.id);
     });
     return job;
   };
@@ -322,7 +342,11 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
     setFiles((current)=>current.map((entry)=>entry.id===item.id?{...entry,status:"queued",error:undefined}:entry));
     try {
       const file=item.recoveredJob?await loadRecoveredParseSource(item.recoveredJob):item.file;
-      void startBackgroundParse({ ...item, file, recoveredJob:undefined, status: "queued", serverJobId: undefined, error: undefined });
+      // Resume the same durable Job while it is active. Only a confirmed terminal failure
+      // or permanently unreadable completed result authorizes a fresh Parse generation.
+      const status=item.serverJobId?await getServerParseStatus(item.serverJobId):undefined;
+      const serverJobId=status&&parseNeedsNewGeneration(status)?undefined:item.serverJobId;
+      void startBackgroundParse({ ...item, file, recoveredJob:undefined, status: "queued", serverJobId, error: undefined });
     } catch (cause) {
       const message=cause instanceof Error?cause.message:String(cause);
       setFiles((current)=>current.map((entry)=>entry.id===item.id?{...entry,status:"error",error:message}:entry));
@@ -331,6 +355,9 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
 
   const removePendingFile = (item: PendingFile) => {
     if(item.artifactId)dismissedParseRef.current=dismissParseArtifact(parseSessionIdRef.current,item.artifactId);
+    // Keep an in-flight upload receipt so its returned Job ID can be cancelled.
+    if(item.serverJobId)parseControllersRef.current.get(item.id)?.abort();
+    if(item.serverJobId)parseControllersRef.current.delete(item.id);
     parseJobsRef.current.delete(item.id);
     setFiles((current) => current.filter((entry) => entry.id !== item.id));
     if (item.artifactId) {
@@ -344,6 +371,7 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
 
   useEffect(() => {
     let cancelled = false;
+    const parseControllers=parseControllersRef.current;
     void (async () => {
       const available=await getServerParseCapabilities().then((capabilities)=>capabilities.available).catch(()=>false);
       serverParseAvailableRef.current=available;
@@ -369,6 +397,8 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
           serverJobId:record.job.id,
           recoveredJob:record.job,
           sourceSize:metadata.size,
+          parseQueued:record.job.status==="queued",
+          parseDetail:record.job.status==="queued"?"文件已保存，等待后台开始解析":"正在读取文件并建立索引",
           parseState:record.artifact?sourceParseState(record.artifact):undefined,
           error: record.resultIssue??record.job.error??(record.job.status==="cancelled"?"Parse 已取消":undefined),
         };
@@ -396,6 +426,8 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
     });
     return () => {
       cancelled = true;
+      for(const controller of parseControllers.values())controller.abort();
+      parseControllers.clear();
       if (progressiveTimerRef.current) window.clearTimeout(progressiveTimerRef.current);
     };
     // Recovery intentionally runs once; durable server jobs keep parsing across refreshes.
@@ -492,6 +524,7 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
     setContextRefreshing(false);
     busyRef.current = true;
     setBusy(true);
+    setSendPhase("parsing");
     setError(undefined);
     const userText = command.trim() || "请分析我上传的材料，自动理解当前内容并建立进化目标。";
     const nextMessage: ChatLine = { id: `u-${Date.now()}`, role: "user", content: userText, files: files.map((x) => x.file.name) };
@@ -507,7 +540,8 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
       // Do not block the conversation on every attachment. If nothing is ready yet, wait only
       // for the first parser result; remaining files continue in the persistent background queue.
       if (!mergedArtifacts.length && parseJobsRef.current.size) {
-        const first = await Promise.race([...parseJobsRef.current.values()].map((job) => job.catch(() => undefined)));
+        // A cancelled or failed attachment must not win the race and hide a later successful Target.
+        const first = await firstReadyParse(parseJobsRef.current.values());
         if (first) mergedArtifacts = [first];
       }
 
@@ -518,7 +552,11 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
         });
         if (pastedArtifact) mergedArtifacts = [...mergedArtifacts, pastedArtifact];
       }
+      if (!mergedArtifacts.length && files.length && !pastedText.trim()) {
+        throw new Error("上传的附件还没有一份成功完成解析；请检查失败原因并重试，已保存的后台任务不会被重复启动。");
+      }
       if (mergedArtifacts.length) replaceArtifactState(mergedArtifacts);
+      setSendPhase("understanding");
       intakeArtifactIds = new Set(mergedArtifacts.map((artifact) => artifact.id));
 
       const hadIntake = Boolean(intakeRef.current);
@@ -561,17 +599,22 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
       const hasNewerArtifacts = artifactsRef.current.some((artifact) => !intakeArtifactIds.has(artifact.id));
       if (intakeRef.current && (progressivePendingRef.current || hasNewerArtifacts)) scheduleProgressiveIntake();
       setBusy(false);
+      setSendPhase(undefined);
     }
   };
 
   const createProject = () => {
     if (!intake) return;
+    if (!artifacts.some((artifact)=>artifact.role==="target" && sourceParseState(artifact)!=="failed")) {
+      setError("请先上传并成功解析至少一份需要进化的当前成果，再创建任务。");
+      return;
+    }
     const evolutionCommand = messages.filter((m) => m.role === "user").map((m) => m.content).join("\n\n");
     const semanticCompiled = compileSemanticEvolution({ artifacts, command: evolutionCommand || intake.evolutionIntent, aiSemanticObject: intake.semanticObject, aiWorkflowStages: intake.semanticWorkflowStages });
     const semanticIds = new Set(semanticCompiled.semanticEvolution.acceptanceRubric.map((item) => item.id));
     const combinedRubric = [...semanticCompiled.semanticEvolution.acceptanceRubric, ...intake.acceptanceRubric.filter((item) => !semanticIds.has(item.id))];
     const intakeRubric = normalizeAcceptanceRubric(combinedRubric, { protectedItems: intake.protectedItems, sourceArtifacts: artifacts, semanticEvolution: semanticCompiled.semanticEvolution });
-    const intakeRubricCheck = rubricValidation(intakeRubric);
+    const intakeRubricCheck = rubricValidation(intakeRubric,artifacts);
     const id = `project-${Date.now()}`;
     const project: EvolveProject = {
       id,
@@ -694,13 +737,17 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
             </div>
           </div>)}
 
+          {busy && sendPhase === "parsing" && <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-900">
+            <strong>等待真实文件解析，尚未创建进化任务。</strong> 系统正在保存并读取上传的原始内容。若后台长期停留在排队中，请检查后端 Parse Worker 与任务连接状态；不会以未读取的文件冒充已完成理解，也不会在缺少原始证据时自动开始。
+          </div>}
+
           {busy && <div className="flex gap-2.5">
             <div className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-full bg-gradient-to-br from-indigo-600 to-violet-600 text-white"><Bot className="size-3.5" /></div>
-            <div className="flex items-center gap-2 rounded-2xl rounded-bl-md border bg-white px-4 py-3 text-sm text-slate-500 shadow-sm"><Loader2 className="size-4 animate-spin text-indigo-600" />AI 正在读取输入、理解当前版本并建立 Evolve Contract…</div>
+            <div className="flex items-center gap-2 rounded-2xl rounded-bl-md border bg-white px-4 py-3 text-sm text-slate-500 shadow-sm"><Loader2 className="size-4 animate-spin text-indigo-600" />{sendPhase === "parsing" ? "等待第一份真实文件解析成功，再开始 AI 理解…" : sendPhase === "understanding" ? "真实文件已读取，正在由 AI 建立项目目标和验收标准。模型响应可能需要较长时间，完成前不会错误启动进化。" : "正在处理实际输入…"}</div>
           </div>}
 
           {intake && !busy && <div className="rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50/60 via-white to-sky-50/40 p-4">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><div className="flex items-center gap-2 text-sm font-semibold text-slate-900"><CheckCircle2 className="size-4 text-emerald-600" />AI 已理解本次进化输入{contextRefreshing && <span className="ml-1 inline-flex items-center gap-1 text-[10px] font-medium text-indigo-500"><Loader2 className="size-3 animate-spin" />正在吸收新增材料</span>}</div><p className="mt-1 text-xs text-slate-500">识别为 {intake.detectedObjectType} · {artifacts.length} 个输入对象</p></div><Button onClick={createProject}><Sparkles className="size-4" />创建并开始进化</Button></div>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><div className="flex items-center gap-2 text-sm font-semibold text-slate-900"><CheckCircle2 className="size-4 text-emerald-600" />AI 已理解本次进化输入{contextRefreshing && <span className="ml-1 inline-flex items-center gap-1 text-[10px] font-medium text-indigo-500"><Loader2 className="size-3 animate-spin" />正在吸收新增材料</span>}</div><p className="mt-1 text-xs text-slate-500">识别为 {intake.detectedObjectType} · {artifacts.length} 个输入对象</p></div><Button onClick={createProject} disabled={!artifacts.some((artifact)=>artifact.role==="target" && sourceParseState(artifact)!=="failed") || files.some((item)=>item.status==="parsing"||item.status==="queued")}><Sparkles className="size-4" />创建并开始进化</Button></div>
             <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
               <label htmlFor="project-name" className="shrink-0 text-xs font-semibold text-slate-600">项目名称</label>
               <Input id="project-name" value={nameDraft} onChange={(e) => { setNameTouched(true); setNameDraft(e.target.value); }} placeholder={intake.projectName} className="sm:max-w-sm" />
@@ -754,8 +801,8 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
             const size=item.sourceSize??item.file.size;
             return <div key={item.id} className={cn("group flex max-w-full items-center gap-2 rounded-xl border px-2.5 py-2",failed||readiness.level==="blocked"?"border-rose-200 bg-rose-50":partial||readiness.level==="caution"?"border-amber-200 bg-amber-50":item.status==="ready"?"border-emerald-200 bg-emerald-50/50":"bg-slate-50")}>
               <div className={cn(failed||readiness.level==="blocked"?"text-rose-500":partial||readiness.level==="caution"?"text-amber-600":item.status==="ready"?"text-emerald-600":"text-slate-500")}>{active?<Loader2 className="size-4 animate-spin"/>:<FileGlyph file={item.file}/>}</div>
-              <div className="min-w-0"><div className={cn("max-w-52 truncate text-[11px] font-semibold",failed?"text-rose-700":"text-slate-700")}>{item.file.name}</div><div className={cn("text-[9px]",failed?"text-rose-500":partial?"text-amber-700":item.status==="ready"?"text-emerald-600":readiness.level==="caution"?"text-amber-600":"text-slate-400")}>{item.status==="error"?item.error:parseFailed?"已保存原文件 · 正文未能解析":partial?"已保存原文件 · 仅完成部分解析":item.status==="ready"?"已读取 · 后台解析完成":active?"正在后台读取并建立索引…":readiness.level==="ok"?formatBytes(size):`${formatBytes(size)} · ${readiness.note}`}</div></div>
-              <Badge className={failed?"border-rose-200 bg-white text-rose-700":partial?"border-amber-200 bg-white text-amber-700":item.status==="ready"?"border-emerald-200 bg-white text-emerald-700":active?"border-indigo-100 bg-white text-indigo-600":undefined}>{parseFailed?"解析异常":partial?"部分解析":item.status==="ready"?"已读取":active?"解析中":failed?"异常":roleLabels[item.role]}</Badge>
+              <div className="min-w-0"><div className={cn("max-w-52 truncate text-[11px] font-semibold",failed?"text-rose-700":"text-slate-700")}>{item.file.name}</div><div className={cn("text-[9px]",failed?"text-rose-500":partial?"text-amber-700":item.status==="ready"?"text-emerald-600":readiness.level==="caution"?"text-amber-600":"text-slate-400")}>{item.status==="error"?item.error:parseFailed?"已保存原文件 · 正文未能解析":partial?"已保存原文件 · 仅完成部分解析":item.status==="ready"?"已读取 · 后台解析完成":active?(item.parseDetail??"正在上传文件并准备解析…"):readiness.level==="ok"?formatBytes(size):`${formatBytes(size)} · ${readiness.note}`}</div></div>
+              <Badge className={failed?"border-rose-200 bg-white text-rose-700":partial?"border-amber-200 bg-white text-amber-700":item.status==="ready"?"border-emerald-200 bg-white text-emerald-700":active?"border-indigo-100 bg-white text-indigo-600":undefined}>{parseFailed?"解析异常":partial?"部分解析":item.status==="ready"?"已读取":active?(item.parseQueued?"排队中":"解析中"):failed?"异常":roleLabels[item.role]}</Badge>
               {item.status==="error"&&<button onClick={()=>{void retryPendingFile(item);}} className="rounded-lg border border-rose-200 bg-white px-2 py-1 text-[9px] font-semibold text-rose-600 hover:bg-rose-50">重试</button>}
               <button aria-label={`移除附件：${item.file.name}`} onClick={()=>removePendingFile(item)} className="grid size-6 place-items-center rounded-lg text-slate-400 hover:bg-white hover:text-rose-500"><X className="size-3"/></button>
             </div>;

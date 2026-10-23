@@ -65,3 +65,12 @@ describe("local-store 删除与迁移", () => {
     expect(settled.outputArtifacts.filter((artifact) => artifact.kind === "manifest").length).toBe(0);
   });
 });
+
+it("旧项目中的 NaN 百分比经过 JSON 变成 null 后仍能恢复并同步",()=>{
+ const project={...demoProject,id:"metric-recovery",candidates:[{...CandidateSchema.parse({id:"C1",name:"C1",change:"x"}),costDelta:NaN,speedDelta:NaN}]};
+ window.localStorage.setItem(KEY,JSON.stringify([project]));
+ const recovered=listLocalProjects()[0]!;
+ expect(recovered.id).toBe(project.id);expect(recovered.candidates.every(candidate=>Number.isFinite(candidate.costDelta)&&Number.isFinite(candidate.speedDelta))).toBe(true);
+ expect(recovered.candidates.map(candidate=>candidate.id)).toEqual(project.candidates.map(candidate=>candidate.id));
+ saveLocalProject(recovered);expect(listLocalProjects()[0]!.id).toBe(project.id);
+});

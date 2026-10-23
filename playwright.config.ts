@@ -1,10 +1,25 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// 适配 Vite: 原配置对着 `pnpm dev`(Next, 3000 端口);现在对着 vite dev server(8000, 见 vite.config.ts)。
+// Default UI tests use isolated local/demo mode: no remote writes or paid AI calls.
+// EVOLUTION_E2E_MODE=server explicitly enables integration against a server.
+const serverMode = process.env.EVOLUTION_E2E_MODE === "server";
+const port = Number(process.env.EVOLUTION_E2E_PORT ?? "8137");
+const baseURL = "http://127.0.0.1:" + port;
+
 export default defineConfig({
   testDir: "./e2e",
   timeout: 60_000,
-  use: { baseURL: "http://127.0.0.1:8000", trace: "on-first-retry" },
-  webServer: { command: "pnpm dev", url: "http://127.0.0.1:8000", reuseExistingServer: !process.env.CI },
+  use: { baseURL, trace: "on-first-retry" },
+  webServer: {
+    command: "pnpm dev --port " + port,
+    url: baseURL,
+    reuseExistingServer: false,
+    timeout: 120_000,
+    env: serverMode ? process.env : {
+      ...process.env,
+      VITE_EVOLUTION_API_URL: "",
+      VITE_EVOLVE_AI_PROVIDER: "demo",
+    },
+  },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
 });

@@ -3,6 +3,7 @@ import { VisualJudgeAiResultSchema } from "../ai/schemas";
 import type { EvolveProject } from "../schemas";
 import { TestCaseSchema } from "../schemas";
 import { httpTargetAdapter } from "../target/http-adapter";
+import {hasAmbiguousAutoProxyHtmlTarget} from "@evolution/core";
 import { getArtifactBlob } from "./artifact-blob-store";
 import {
   beginEvidenceJob,
@@ -114,6 +115,12 @@ async function registerUploadedImages(project: EvolveProject) {
   return { added, skipped };
 }
 
+/** Runner discovery is metadata, not permission to replace an uploaded Target. */
+export function canAutoAdoptDiscoveredRunner(project:EvolveProject):boolean{
+  return project.targetConnection.adapter!=="http"
+    &&!project.sourceArtifacts.some(source=>source.role==="target");
+}
+
 async function discoverRunner(project: EvolveProject, force = false) {
   if (isRunnerDetachedByUser(project.id)) return { effective: project, connection: undefined, summary: "项目已主动关闭后台 Runner" };
   const config = getRunnerGatewayConfig();
@@ -142,11 +149,12 @@ async function discoverRunner(project: EvolveProject, force = false) {
   if (result.value) testedOk = result.value.ok;
   else if (result.status === "ready") testedOk = true;
   if (!testedOk) return { effective: project, connection: undefined, summary: result.summary ?? "后台 Runner 暂不可用" };
-  const connection = project.targetConnection.adapter === "http" ? undefined : connectedTargetConnection(config, project.id);
+  const sourceOwned=project.sourceArtifacts.some(source=>source.role==="target");
+  const connection = canAutoAdoptDiscoveredRunner(project) ? connectedTargetConnection(config, project.id) : undefined;
   return {
     effective: connection ? { ...project, targetConnection: connection } : project,
     connection,
-    summary: result.summary ?? "后台 Runner 已就绪",
+    summary: sourceOwned ? "Server Target Proxy 已探测，但当前上传文件仍是原 Target；连接代理不会自动改写 Artifact 绑定。" : result.summary ?? "后台 Runner 已就绪",
   };
 }
 
@@ -324,7 +332,7 @@ async function runAutomaticEvidence(project: EvolveProject, force = false): Prom
   const connection = discovered.connection;
   messages.push(discovered.summary);
 
-  if (effective.targetConnection.adapter === "http") {
+  if (effective.targetConnection.adapter === "http" && !hasAmbiguousAutoProxyHtmlTarget(effective)) {
     const build = await runBuildEvidence(effective, force);
     if (build?.summary) messages.push(`工程验证：${build.summary}`);
 

@@ -1,11 +1,12 @@
 import type {AcceptanceCriterion,Candidate,EvolveProject,FrozenArtifact} from "@evolution/contracts";
-import {indexUniqueById} from "@evolution/core";
+import {indexUniqueById,reconcileAcceptedOfflineChampion} from "@evolution/core";
 import {runServerArtifactAcceptance,type ServerArtifactVerification} from "@evolution/harness";
 import {runServerAi} from "./ai-gateway";
 import {getServerArtifactStore} from "./artifact-runtime";
-import {materializeServerCandidateArtifacts,readServerCandidateParentText,verifyServerCandidateFrozenArtifact} from "./server-experiment-artifacts";
+import {materializeServerCandidateArtifacts,readServerCandidateParentText,readServerCandidateParentNativeStructure,verifyServerCandidateFrozenArtifact} from "./server-experiment-artifacts";
 
 import {buildServerCandidateTargetContext,requireServerCandidateOutputModes} from "./server-candidate-context";
+import {verifyServerIndependentFinalHoldout} from "./server-independent-final-holdout";
 
 export async function verifyServerFrozenCandidateArtifacts({project,candidate}:{project:EvolveProject;candidate:Candidate}):Promise<ServerArtifactVerification>{
   const targetIds=project.sourceArtifacts.filter((artifact)=>artifact.role==="target").map((artifact)=>artifact.id);
@@ -46,7 +47,9 @@ export async function repairServerArtifactCandidate(args:{
 }){
   const failedIds=new Set(args.failedCriteria.map((criterion)=>criterion.id));
   const focused = {...args.candidate, change: args.failedCriteria.map((criterion) => `${criterion.title}: ${criterion.requirement}`).join("\n")};
-  const contexts = await buildServerCandidateTargetContext(args.project, focused, (source) => readServerCandidateParentText(args.project, source, args.candidate), args.candidate);
+  const contexts = await buildServerCandidateTargetContext(args.project,focused,
+    (source)=>readServerCandidateParentText(args.project,source,args.candidate),args.candidate,
+    (source)=>readServerCandidateParentNativeStructure(args.project,source,args.candidate));
   const response=await runServerAi("repair-artifact",{
     project:{
       name:args.project.name,
@@ -87,7 +90,7 @@ export async function repairServerArtifactCandidate(args:{
         gaps:score?.gaps??[],
       };
     }),
-    instruction:"Change only the VERIFIED failed criteria above. Preserve every other artifact behavior and protected item. Return exactly one artifact for every supplied target; for unchanged excerpted text targets return one exact text-edit with identical before/after, and for other unchanged targets return their current content. For codebase/package targets return a JSON overlay {kind:'codebase',overlay:true,files:[{path,content}],deletions:[path]} containing only actual changes/deletions. For text artifacts with mutationMode text-edits, return content JSON {kind:'text-edits',edits:[{before,after,start?,end?}]}, anchored verbatim to current Candidate chunks without chunk markers or ellipses. The server applies edits to the complete tested Candidate, preserving untouched bytes. Do not rewrite a whole artifact from excerpts. The output becomes a NEW Candidate and must be re-tested on the full Hidden Holdout.",
+    instruction:"Change only the VERIFIED failed criteria above. Preserve every other artifact behavior and protected item. Return exactly one artifact for every supplied target. For an unchanged DOCX/PPTX/XLSX/XLS/ODS/CSV/TSV/ZIP target return JSON {kind:'keep-parent',sourceArtifactId:'EXACT target id'} so the server reuses the verified frozen bytes; never reconstruct native file bytes from an excerpt. For other unchanged targets return their current content; for unchanged excerpted text targets return one exact text-edit with identical before/after. For changed DOCX targets return {kind:'document',parts:[{path:'word/document.xml',textRuns:[{index:0,text:'new text'}]}]}; for PPTX return {kind:'presentation',slides:[{number:1,textRuns:[{index:0,text:'new text'}]}]}, using only real indexed paths/slides from structuredContext. For changed spreadsheets return {kind:'spreadsheet',sheets:[{name:'Existing Sheet',cells:[{address:'A1',value:'new value'}]}]} using only real Sheet/A1 locations and preserving formulas; do not fabricate calculated formula caches. Every changed native target must have actual differences. For codebase/package targets return a JSON overlay {kind:'codebase',overlay:true,files:[{path,content}],deletions:[path]} containing only actual changes/deletions. For text artifacts with mutationMode text-edits, return content JSON {kind:'text-edits',edits:[{before,after,start?,end?}]}, anchored verbatim to current Candidate chunks without chunk markers or ellipses. The server applies edits to the complete tested Candidate, preserving untouched bytes. Do not rewrite a whole artifact from excerpts. The output becomes a NEW Candidate and must be re-tested on the full Hidden Holdout.",
   });
   requireServerCandidateOutputModes(contexts, response.artifacts);
   if(response.repairedCriteria.some((id)=>!failedIds.has(id))){
@@ -119,6 +122,29 @@ export async function repairServerArtifactCandidate(args:{
   );
 }
 
+/**
+ * Restore only a previously passed offline Gate F round whose Champion
+ * projection was omitted. Re-read the same exact frozen file bytes before
+ * writing a single Mission metadata change; never rebuild or publish.
+ */
+export async function recoverServerAcceptedOfflineChampion(project:EvolveProject){
+  const recovered=reconcileAcceptedOfflineChampion(project);
+  if(!recovered?.searchChampion?.candidate)return undefined;
+  const candidate=recovered.searchChampion.candidate;
+  const check=await verifyServerFrozenCandidateArtifacts({project,candidate});
+  if(check.failed.length||check.unavailable.length
+    ||check.verified.length!==candidate.artifactSnapshots.length)return undefined;
+  const receipts=project.artifactAcceptance.frozenArtifacts??[];
+  if(check.verified.some(receipt=>!receipts.some(original=>
+    original.sourceArtifactId===receipt.sourceArtifactId
+    &&original.blobId===receipt.blobId
+    &&original.sha256===receipt.sha256
+    &&original.snapshotHash===receipt.snapshotHash
+    &&original.size===receipt.size)))return undefined;
+  return recovered;
+}
+
 export async function runServerMissionArtifactAcceptance(project:EvolveProject){
-  return runServerArtifactAcceptance(project,{verifyFrozenArtifacts:verifyServerFrozenCandidateArtifacts,repairCandidate:repairServerArtifactCandidate});
+  return runServerArtifactAcceptance(project,{verifyFrozenArtifacts:verifyServerFrozenCandidateArtifacts,repairCandidate:repairServerArtifactCandidate,
+    verifyIndependentFinal:verifyServerIndependentFinalHoldout});
 }

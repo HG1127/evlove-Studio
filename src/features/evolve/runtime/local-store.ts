@@ -1,7 +1,8 @@
+import {parseStoredEvolveProject,parseStoredEvolveProjects} from "@evolution/adapters";
 import { deliveryReadiness } from "./delivery-readiness";
 import {databaseProjects,saveDatabaseProjects,initializeProjectDatabase,missionSyncJournal,updateMissionSyncJournal} from "./project-database";
 
-import { EvolveProjectSchema, type EvolveProject, type EvaluationResult } from "../schemas";
+import { type EvolveProject, type EvaluationResult } from "../schemas";
 import { materializeChampionOutputs, maybeUpdateSearchChampion } from "./evolution-search";
 import { endRunTask, setAutoGateFlag } from "./run-manager";
 
@@ -110,7 +111,7 @@ function repairMissingChampion(project: EvolveProject) {
 function parseProjects(raw: string | null): EvolveProject[] {
   if (!raw) return [];
   try {
-    const parsed = EvolveProjectSchema.array().parse(JSON.parse(raw));
+    const parsed = parseStoredEvolveProjects(JSON.parse(raw));
     for (const project of parsed) { repairProjectScores(project); repairProjectArtifacts(project); repairMissingChampion(project); }
     return parsed;
   } catch { return []; }
@@ -150,6 +151,7 @@ export function listLocalProjects() { return readAll(); }
 export function getLocalProject(id: string) { return readAll().find((project) => project.id === id); }
 
 export function saveLocalProject(project: EvolveProject) {
+  project=parseStoredEvolveProject(project);
   const pending=missionSyncJournal().pendingDeleteIds;
   if(pending.includes(project.id))updateMissionSyncJournal((current)=>({...current,pendingDeleteIds:current.pendingDeleteIds.filter((id)=>id!==project.id)}));
   if (typeof window === "undefined") return;

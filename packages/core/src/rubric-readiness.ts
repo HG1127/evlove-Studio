@@ -1,12 +1,34 @@
-import type { AcceptanceCriterion, TestCase } from "@evolution/contracts";
+import type { AcceptanceCriterion, SourceArtifact, TestCase } from "@evolution/contracts";
 
 export function rubricWeightTotal(criteria: AcceptanceCriterion[]) {
   return Number(criteria.reduce((sum, item) => sum + item.weight, 0).toFixed(2));
 }
 
-export function rubricValidation(criteria: AcceptanceCriterion[]) {
+/** Validate criterion-to-Target identity before executing expensive verification. */
+export function rubricTargetBindingIssues(
+  criteria: AcceptanceCriterion[],
+  sources: readonly Pick<SourceArtifact,"id"|"role">[],
+): string[] {
+  const known=new Set(sources.map(source=>source.id));
+  const targets=new Set(sources.filter(source=>source.role==="target").map(source=>source.id));
+  const issues:string[]=[];
+  for(const criterion of criteria){
+    if(!criterion.artifactIds?.length)continue;
+    const unknown=[...new Set(criterion.artifactIds.filter(id=>!known.has(id)))];
+    if(unknown.length)issues.push("验收标准 "+criterion.id+" 指向不存在的 Artifact ID："+unknown.join("、")+"；请重新绑定当前成果文件。");
+    const nonTargets=[...new Set(criterion.artifactIds.filter(id=>known.has(id)&&!targets.has(id)))];
+    if(nonTargets.length)issues.push("验收标准 "+criterion.id+" 只能绑定进化对象 Target，不能以参考材料替代："+nonTargets.join("、")+"。");
+  }
+  return issues;
+}
+
+export function rubricValidation(
+  criteria: AcceptanceCriterion[],
+  sources?:readonly Pick<SourceArtifact,"id"|"role">[],
+) {
   const warnings: string[] = [];
   const weightTotal = rubricWeightTotal(criteria);
+  if(sources)warnings.push(...rubricTargetBindingIssues(criteria,sources));
   if (criteria.length < 3) warnings.push("验收标准不足 3 条");
   if (criteria.length > 12) warnings.push(`验收标准过多（${criteria.length} 条），建议压缩到 7-10 条核心标准`);
   if (Math.abs(weightTotal - 100) > 0.5) warnings.push(`权重合计 ${weightTotal}，应约等于 100`);

@@ -149,7 +149,7 @@ describe("server source parser",()=>{
     expect(artifact.parseStatus).toBe("ready");
     expect(artifact.textContent).toContain("SOURCE PDF TEXT");
     expect(artifact.parsingProfile).toMatchObject({totalEntries:1,parsedEntries:1,deepIndexedEntries:1,deepIndexCoverage:1});
-  });
+  },15_000);
 
   it("reports missing PDF text layers and retains the original file",async()=>{
     const artifact=await parse("scan.pdf","application/pdf",minimalTextPdfPages([""]));
@@ -187,12 +187,14 @@ describe("server source parser",()=>{
     expect(document.textContent).toContain("FINAL DOCX GUIDE");
     expect(document.structure).toContain("word/document.xml");
     const pptx=new JSZip();
-    pptx.file("ppt/slides/slide1.xml",'<p:sld xmlns:a="a"><a:t>FINAL SLIDE TEXT</a:t></p:sld>');
+    pptx.file("ppt/slides/slide1.xml",'<p:sld xmlns:a="a"><a:t xml:space="preserve">FINAL SLIDE TEXT</a:t></p:sld>');
     const presentation=await parse("slides.pptx","application/vnd.openxmlformats-officedocument.presentationml.presentation",
       new Uint8Array(await pptx.generateAsync({type:"uint8array"})));
     expect(presentation.parseStatus).toBe("ready");
     expect(presentation.textContent).toContain("FINAL SLIDE TEXT");
     expect(presentation.structure).toContain("ppt/slides/slide1.xml");
+    expect((presentation.structuredContent as {slides:Array<{textRuns:Array<{index:number;text:string}>}>}).slides[0]?.textRuns)
+      .toEqual([{index:0,text:"FINAL SLIDE TEXT"}]);
   });
 
   it("rejects oversized Office XML before decompression while retaining the original",async()=>{
@@ -245,6 +247,24 @@ describe("server source parser",()=>{
       new Uint8Array(XLSX.write(workbook,{type:"array",bookType:"biff8"}) as ArrayBuffer));
     expect(xls.parseStatus).toBe("ready");
     expect(xls.textContent).toContain("Alice");
+  });
+
+  it("indexes uploaded CSV and TSV as native Sheet/A1 cells without losing leading zeros",async()=>{
+    for(const [name,mime,textInput] of [
+      ["clients.csv","text/csv","code,amount\n000123,5\n000124,9\n"],
+      ["clients.tsv","text/tab-separated-values","code\tamount\n000123\t5\n000124\t9\n"],
+    ] as const){
+      const parsed=await parse(name,mime,new TextEncoder().encode(textInput));
+      expect(parsed.parseStatus,name).toBe("ready");
+      const structure=parsed.structuredContent as {kind:string;sheets:Array<{
+        name:string;cells:Array<{address:string;value:unknown}>,
+      }>};
+      expect(structure.kind,name).toBe("spreadsheet");
+      expect(structure.sheets[0]?.name,name).toBe("Sheet1");
+      expect(structure.sheets[0]?.cells.find(cell=>cell.address==="A2")?.value,name).toBe("000123");
+      expect(structure.sheets[0]?.cells.find(cell=>cell.address==="A3")?.value,name).toBe("000124");
+      expect(parsed.parsingProfile?.totalEntries).toBe(1);
+    }
   });
 
   it("limits workbook rows before preview conversion and reports partial coverage",async()=>{

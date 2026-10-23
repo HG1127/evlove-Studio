@@ -3,9 +3,10 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { nitro } from 'nitro/vite'
 import { builtinRunnerPlugin } from './runner-gateway/vite-plugin'
+import {workflowStepRuntimePlugin} from './apps/backend/build/workflow-step-runtime'
 
 export default defineConfig({
-  plugins: [nitro(), react(), builtinRunnerPlugin()],
+  plugins: [workflowStepRuntimePlugin(), nitro(), react(), builtinRunnerPlugin()],
   nitro: {
     preset: process.env.VERCEL ? 'vercel' : 'node-server',
     serverDir: './apps/backend/server',

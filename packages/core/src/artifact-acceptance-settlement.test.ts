@@ -30,6 +30,85 @@ describe("artifact acceptance settlement",()=>{
     expect(result.hardGatePass).toBe(true);
     expect(result.frozenArtifacts?.[0]?.blobId).toBe("blob");
   });
+  it("accepts an exact frozen Candidate with a verified SYS-PAIRWISE result and truthful unverified Original comparison",()=>{
+    const x=fixture();
+    x.project.acceptanceRubric.push({
+      ...x.project.acceptanceRubric[0]!,id:"SYS-PAIRWISE",title:"相对原版真实改进",
+      source:"system-integrity",weight:10,hardGate:true,minScore:85,
+      judgeType:"pairwise",validationMethod:"semantic-judge",
+    });
+    x.project.hiddenEvalSuite.push({
+      ...x.project.hiddenEvalSuite[0]!,id:"H-PAIRWISE",criterionIds:["SYS-PAIRWISE"],
+    });
+    x.validation.runs.push({
+      testCaseId:"H-PAIRWISE",output:"EXACT Original-vs-Candidate comparison",
+      latencyMs:1,cost:0,trace:[],verificationStatus:"verified",
+    });
+    x.validation.baselineRuns.push({
+      testCaseId:"H-PAIRWISE",output:"UNVERIFIED: no Candidate exists at baseline time",
+      latencyMs:0,cost:0,trace:[],verificationStatus:"unverified",
+    });
+    x.validation.baselineSuiteIds!.push("H-PAIRWISE");
+    x.validation.evaluation!.criterionScores!.push({
+      criterionId:"SYS-PAIRWISE",score:96,pass:true,verificationStatus:"verified",
+      evidence:["exact-side-by-side"],gaps:[],testCaseIds:["H-PAIRWISE"],
+    });
+    x.validation.baselineEvaluation={...x.validation.baselineEvaluation!,
+      criterionScores:x.validation.baselineEvaluation!.criterionScores!.filter((row)=>row.criterionId!=="SYS-PAIRWISE"),
+    };
+    // Changing the rubric changes the exact evidence contract and its fingerprint.
+    x.validation.evidenceFingerprint=evidenceFingerprint(x.project,x.candidate);
+    const accepted=settleArtifactAcceptanceFromValidation({
+      project:x.project,candidate:x.candidate,validation:x.validation,frozenArtifacts:[x.frozen],
+    });
+    expect(accepted.status).toBe("passed");
+    expect(accepted.hardGatePass).toBe(true);
+    expect(accepted.pairwiseScore).toBe(96);
+    const unverified={...x.validation,runs:x.validation.runs.map((r)=>r.testCaseId==="H-PAIRWISE"
+      ?{...r,verificationStatus:"unverified" as const}:r)};
+    expect(settleArtifactAcceptanceFromValidation({
+      project:x.project,candidate:x.candidate,validation:unverified,frozenArtifacts:[x.frozen],
+    }).status).toBe("unverified");
+  });
+  it("passes Gate F on real Candidate soft proof when Original soft observation is UNKNOWN but hard same-paper evidence is verified",()=>{
+    const x=fixture();
+    x.project.acceptanceRubric.push({
+      ...x.project.acceptanceRubric[0]!,id:"SYS-PAIRWISE",title:"相对原版真实改进",
+      source:"system-integrity",weight:8,hardGate:true,minScore:85,
+      judgeType:"pairwise",validationMethod:"semantic-judge",
+    });
+    x.project.acceptanceRubric.push({
+      ...x.project.acceptanceRubric[0]!,id:"SOFT-NEW",title:"新增可操作性",
+      source:"source-understanding",weight:7,hardGate:false,minScore:65,
+      judgeType:"llm",validationMethod:"semantic-judge",
+    });
+    for(const [id,criterionId,score] of [["H-PAIR","SYS-PAIRWISE",96],["H-SOFT","SOFT-NEW",94]] as const){
+      x.project.hiddenEvalSuite.push({...x.project.hiddenEvalSuite[0]!,id,criterionIds:[criterionId]});
+      x.validation.runs.push({testCaseId:id,output:"frozen Candidate observed",
+        latencyMs:1,cost:0,trace:[],verificationStatus:"verified"});
+      x.validation.baselineRuns.push({testCaseId:id,output:"original capability not observed",
+        latencyMs:1,cost:0,trace:[],verificationStatus:"unverified"});
+      x.validation.baselineSuiteIds!.push(id);
+      x.validation.evaluation!.criterionScores!.push({
+        criterionId,score,pass:true,verificationStatus:"verified",
+        evidence:["candidate current snapshot"],gaps:[],testCaseIds:[id],
+      });
+    }
+    x.validation.evaluation!.unverifiedCriterionIds=[];
+    x.validation.evidenceFingerprint=evidenceFingerprint(x.project,x.candidate);
+    const accepted=settleArtifactAcceptanceFromValidation({
+      project:x.project,candidate:x.candidate,validation:x.validation,frozenArtifacts:[x.frozen],
+    });
+    expect(accepted).toMatchObject({status:"passed",hardGatePass:true,pairwiseScore:96});
+    expect(accepted.acceptedAt).toBeDefined();
+    // The original's soft evidence is still unverified in the immutable receipt.
+    expect(x.validation.baselineRuns.find(r=>r.testCaseId==="H-SOFT")?.verificationStatus).toBe("unverified");
+    const unavailable={...x.validation,evaluation:{...x.validation.evaluation!,
+      criterionScores:x.validation.evaluation!.criterionScores!.filter(r=>r.criterionId!=="SYS-PAIRWISE")}};
+    expect(settleArtifactAcceptanceFromValidation({
+      project:x.project,candidate:x.candidate,validation:unavailable,frozenArtifacts:[x.frozen],
+    }).status).toBe("unverified");
+  });
   it("keeps a missing same-paper baseline unverified rather than calling the product failed",()=>{
     const x=fixture();
     x.validation.baselineRuns=[];

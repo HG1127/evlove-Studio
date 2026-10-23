@@ -246,4 +246,19 @@ describe("HTTP production adapter",()=>{
     await expect(ports.missions.list()).rejects.toThrow("Duplicate missions page item mission-repeat");
     await expect(ports.jobs.list()).rejects.toThrow("Duplicate jobs page item job-repeat");
   });
+  it("bounds an Artifact upload that never responds so the outbox can retain the bytes",async()=>{
+    const controller=new AbortController();
+    const timeout=vi.spyOn(AbortSignal,"timeout").mockReturnValue(controller.signal);
+    try{
+      vi.stubGlobal("fetch",vi.fn(async(_url:string,init:RequestInit)=>new Promise<Response>((_resolve,reject)=>{
+        expect(init.signal).toBe(controller.signal);
+        init.signal?.addEventListener("abort",()=>reject(init.signal?.reason),{once:true});
+      })));
+      const request=createHttpProductionPorts("/api/evolution").artifacts.put("frozen-id",new Blob(["exact bytes"]));
+      const check=expect(request).rejects.toThrow("upload deadline");
+      controller.abort(new Error("upload deadline"));await check;
+      expect(timeout).toHaveBeenCalledWith(30000);
+    }finally{timeout.mockRestore();}
+  });
+
 });

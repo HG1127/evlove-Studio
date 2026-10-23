@@ -6,7 +6,7 @@ import {
   type ArtifactRole,
   type SourceArtifact,
 } from "@evolution/contracts";
-import {describeArtifact} from "@evolution/core";
+import {describeArtifact,isTextArtifactExtension,TEXT_ARTIFACT_EXTENSIONS} from "@evolution/core";
 import {assertServerZipEntryBudget,safeServerZipPath,serverZipCrc32} from "./server-codebase-zip-index";
 
 const MAX_TEXT_CHARS=160_000;
@@ -146,6 +146,7 @@ function inferKind(name:string,mimeType:string,structure:string[]):ArtifactKind{
   if(["xlsx","xls","ods","csv","tsv"].includes(ext))return "spreadsheet";
   if(CODE_EXTS.has(ext))return "codebase";
   if(["json","yaml","yml"].includes(ext)&&/workflow|pipeline|dag|flow/i.test(name))return "workflow";
+  if(ext==="svg")return "generic";
   if(mimeType.startsWith("image/"))return "image";
   if(mimeType.startsWith("audio/")||mimeType.startsWith("video/"))return "media";
   if(/prompt|instruction|system-prompt/i.test(name))return "prompt";
@@ -185,7 +186,9 @@ async function parsePptx(buffer:Uint8Array){
   const chunks:string[]=[];
   for(const path of slides){
     const xml=await readOfficeXml(zip.file(path)!,budget);
-    const textRuns=[...xml.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)].map((match,index)=>({index,text:xmlUnescape(match[1]??"")}));
+    // PowerPoint may add xml:space or other attributes to <a:t>; keep the
+    // exact renderer-compatible run indexes rather than dropping such text.
+    const textRuns=[...xml.matchAll(/<a:t(?:\s[^>]*)?>([\s\S]*?)<\/a:t>/g)].map((match,index)=>({index,text:xmlUnescape(match[1]??"")}));
     const number=Number(path.match(/slide(\d+)/)?.[1]??rows.length+1);
     rows.push({number,path,textRuns});
     const text=textRuns.map((run)=>run.text).filter(Boolean).join("\n").trim();
@@ -198,7 +201,7 @@ async function parsePptx(buffer:Uint8Array){
 
 async function parseSpreadsheet(buffer:Uint8Array,ext:string){
   if(!buffer.byteLength||buffer.byteLength>MAX_SPREADSHEET_FILE_BYTES)throw new Error("工作簿文件超出 Server Native 解析范围");
-  if(ext==="xlsx"){
+  if(ext==="xlsx"||ext==="ods"){
     const zip=await loadOfficeZip(buffer);
     let xmlBytes=0;
     for(const entry of Object.values(zip.files) as JSZipObject[]){
@@ -210,7 +213,9 @@ async function parseSpreadsheet(buffer:Uint8Array,ext:string){
       xmlBytes+=size!;
     }
   }
-  const workbook=XLSX.read(buffer,{type:"array",cellFormula:true,cellDates:true,sheetRows:MAX_SPREADSHEET_ROWS+1});
+  const delimited=ext==="csv"||ext==="tsv";
+  const workbook=XLSX.read(buffer,{type:"array",cellFormula:true,cellDates:true,
+    raw:delimited,FS:ext==="tsv"?"\t":undefined,sheetRows:MAX_SPREADSHEET_ROWS+1});
   if(!workbook.SheetNames.length)throw new Error("工作簿没有工作表");
   const sheets:Array<{name:string;csv:string;rows:Array<Array<string|number|boolean|Date|null>>;cells:Array<{address:string;value:unknown;formula?:string;type?:string;format?:string|number}>}>=[];
   const warnings:string[]=[];
@@ -324,7 +329,7 @@ async function parseZip(buffer:Uint8Array){
   for(const file of files){
     if(IGNORED_ZIP_PATH.test(file.name))continue;
     const ext=extension(file.name);
-    if(!TEXT_EXTS.has(ext)&&!["package.json","pyproject.toml","go.mod","cargo.toml"].some((name)=>file.name.toLowerCase().endsWith(name)))continue;
+    if(!isTextArtifactExtension(ext)&&!TEXT_EXTS.has(ext)&&!["package.json","pyproject.toml","go.mod","cargo.toml"].some((name)=>file.name.toLowerCase().endsWith(name)))continue;
     eligibleEntries+=1;
     if(entries.length>=MAX_ZIP_TEXT_FILES||totalChars>=MAX_ZIP_TOTAL_CHARS){omittedEntries+=1;continue;}
     const data=(file as JSZipObject&{_data?:{uncompressedSize?:number;crc32?:number}})._data;
@@ -394,10 +399,10 @@ export async function parseServerSource(args:{
       ({text,structure,structuredContent}=await parseDocx(buffer));
     }else if(ext==="pptx"){
       ({text,structure,structuredContent}=await parsePptx(buffer));
-    }else if(["xlsx","xls"].includes(ext)){
+    }else if(["xlsx","xls","ods","csv","tsv"].includes(ext)){
       const parsed=await parseSpreadsheet(buffer,ext);
       ({text,structure,structuredContent}=parsed);stats=parsed.stats;warnings.push(...parsed.warnings);
-    }else if(["odt","ods","odp"].includes(ext)){
+    }else if(["odt","odp"].includes(ext)){
       ({text,structure,structuredContent}=await parseOpenDocument(buffer,ext));
     }else if(ext==="rtf"){
       ({text,structure,structuredContent}=parseRtf(buffer));
@@ -409,7 +414,7 @@ export async function parseServerSource(args:{
       const parsed=await parseZip(buffer);
       ({text,structure,structuredContent}=parsed);stats=parsed.stats;warnings.push(...parsed.warnings);
     }else{
-      const knownText=TEXT_EXTS.has(ext)||args.mimeType.startsWith("text/");
+      const knownText=isTextArtifactExtension(ext)||TEXT_EXTS.has(ext)||args.mimeType.startsWith("text/");
       if(knownText||!binaryLike(decode(buffer))){
         const validText=new TextDecoder("utf-8",{fatal:true}).decode(buffer);
         textWasTruncated=validText.length>MAX_TEXT_CHARS;
@@ -431,11 +436,11 @@ export async function parseServerSource(args:{
     stats={...stats,totalEntries:1,indexedEntries:1,parsedEntries:1,eligibleEntries:1,deepIndexedEntries:0};
   }
   const artifactKind=inferKind(args.name,args.mimeType,structure);
-  const parseStatus=args.mimeType.startsWith("image/")?"image":text?"ready":warnings.length?"unsupported":"binary";
+  const parseStatus=args.mimeType.startsWith("image/")&&ext!=="svg"?"image":text?"ready":warnings.length?"unsupported":"binary";
   const artifactDescriptor=describeArtifact({
     name:args.name,mimeType:args.mimeType,extension:ext,artifactKind,structure,structuredContent,
   });
-  const bounded=boundedPreview||ext==="zip"||ext==="pdf"||ext==="xlsx"||ext==="xls";
+  const bounded=boundedPreview||ext==="zip"||ext==="pdf"||["xlsx","xls","ods","csv","tsv"].includes(ext);
   const parsedEntries=bounded?stats.parsedEntries:stats.parsedEntries||(text?1:0);
   const totalEntries=bounded?stats.totalEntries:stats.totalEntries||(text?1:0);
   const eligibleEntries=bounded?stats.eligibleEntries:stats.eligibleEntries||parsedEntries;
@@ -487,7 +492,6 @@ export async function parseServerSource(args:{
 }
 
 export const SERVER_SOURCE_PARSE_EXTENSIONS=[
-  "txt","md","mdx","html","htm","json","yaml","yml","xml","csv","tsv",
-  "js","jsx","ts","tsx","mjs","cjs","py","go","rs","java","kt","php","sql","vue","svelte",
+  ...TEXT_ARTIFACT_EXTENSIONS,"csv","tsv",
   "docx","pptx","xlsx","xls","odt","ods","odp","rtf","pdf","zip",
 ];

@@ -3,6 +3,7 @@ import {reusableHoldoutBaseline} from "./baseline-readiness";
 import {hasAuthoritativeHiddenRelease,hasFullHiddenMeasurement} from "./hidden-validation-evidence";
 import {hasExactFrozenArtifactSet} from "./artifact-identity";
 import {evidenceFingerprint} from "./evidence-binding";
+import {independentFinalReadiness} from "./independent-final-holdout";
 
 function clamp(value:number,min=0,max=100){return Math.max(min,Math.min(max,value));}
 
@@ -43,6 +44,7 @@ export function updateSearchChampion(args:{
   selectedAt?:string;
 }){
   if(!args.winner||args.artifactAcceptance?.status!=="passed")return {champion:args.current,changed:false,improvement:0};
+  if(!independentFinalReadiness(args.project,args.winner,args.validation).ready)return {champion:args.current,changed:false,improvement:0};
   if(!args.artifactAcceptance.hardGatePass||args.artifactAcceptance.candidateId!==args.winner.id)return {champion:args.current,changed:false,improvement:0};
   const binding=evidenceFingerprint(args.project,args.winner);
   if(args.validation.evidenceFingerprint!==binding
@@ -50,7 +52,7 @@ export function updateSearchChampion(args:{
     ||!hasExactFrozenArtifactSet(args.project,args.winner,args.artifactAcceptance)){
     return {champion:args.current,changed:false,improvement:0};
   }
-  if(!hasAuthoritativeHiddenRelease(args.validation,args.winner.id,args.project.hiddenEvalSuite)){
+  if(!hasAuthoritativeHiddenRelease(args.validation,args.winner.id,args.project.hiddenEvalSuite,args.project.acceptanceRubric)){
     const candidateMeasured=hasFullHiddenMeasurement(args.validation,args.winner.id,args.project.hiddenEvalSuite)
       &&args.validation.runs.every((run)=>run.verificationStatus==="verified")
       &&args.validation.recommendation==="release"
@@ -100,5 +102,69 @@ export function updateSearchChampion(args:{
     } satisfies SearchChampion,
     changed:true,
     improvement,
+  };
+}
+
+/**
+ * An interrupted or older Gate F policy may leave a passed offline round with
+ * no Champion. Repair only the existing verified projection, never the Artifact.
+ * Composition MUST read back the exact frozen Blob before persisting this result.
+ */
+export function reconcileAcceptedOfflineChampion(
+  project:EvolveProject,
+  at:string=new Date().toISOString(),
+):EvolveProject|undefined {
+  const campaign=project.campaign,acceptance=project.artifactAcceptance,validation=project.validationRun;
+  if(project.targetConnection.adapter!=="artifact"||project.searchChampion
+    ||project.release.status!=="idle"||project.outputArtifacts.length>0
+    ||project.stage!=="validation"||campaign.currentRound<1||campaign.checkpoint
+    ||acceptance.status!=="passed"||!acceptance.hardGatePass||!acceptance.acceptedAt
+    ||validation.status!=="completed"||validation.validationMode!=="full"
+    ||validation.recommendation!=="release"
+    ||(campaign.status!=="paused"&&campaign.status!=="idle"))return undefined;
+  // A safety, capability or authorization pause must NOT be silently resumed.
+  if(campaign.status==="paused"
+    &&!/^已达到设定的最大进化轮数 \d+$/.test(campaign.stopReason??"")
+    &&!/^连续 \d+ 轮没有达到最小提升/.test(campaign.stopReason??""))return undefined;
+  const candidateId=acceptance.candidateId;
+  const winner=project.candidates.filter(c=>c.id===candidateId);
+  if(!candidateId||winner.length!==1
+    ||validation.candidateId!==candidateId
+    ||project.experimentRun.status!=="completed"
+    ||project.experimentRun.winnerId!==candidateId
+    ||project.roundHistory.filter(record=>record.round===campaign.currentRound&&record.winnerCandidateId===candidateId).length!==1
+    ||project.sourceArtifacts.filter(s=>s.role==="target").length!==winner[0]!.artifactSnapshots.length)return undefined;
+  const candidate=winner[0]!;
+  if(candidate.artifactBuildStatus!=="ready"
+    ||validation.evidenceFingerprint!==evidenceFingerprint(project,candidate)
+    ||acceptance.evidenceFingerprint!==evidenceFingerprint(project,candidate)
+    ||!hasExactFrozenArtifactSet(project,candidate,acceptance)
+    ||!hasAuthoritativeHiddenRelease(validation,candidate.id,project.hiddenEvalSuite,project.acceptanceRubric))return undefined;
+  const changed=updateSearchChampion({
+    project,winner:candidate,round:campaign.currentRound,
+    validation,artifactAcceptance:acceptance,
+    baseline:campaign.rootBaseline??project.baselineRun.result,
+    parentVersionId:project.version,minImprovement:campaign.stopCriteria.minImprovement,
+    liveTarget:false,hiddenSuite:project.hiddenEvalSuite,selectedAt:acceptance.acceptedAt,
+  });
+  if(!changed.changed||!changed.champion?.candidate||changed.champion.candidate.id!==candidate.id)return undefined;
+  const champion=changed.champion;
+  return {
+    ...project,
+    searchChampion:champion,
+    searchAppliedPatches:champion.patches,
+    evolutionArchive:project.evolutionArchive.map(record=>
+      record.id==="archive-r"+campaign.currentRound+"-"+candidate.id+"-gate-f"
+        ?{...record,kind:"champion" as const,score:champion.score,
+          reason:"同一轮 Gate F 已通过，复核冻结文件后恢复遗漏的 Search Champion 投影"}
+        :record),
+    roundHistory:project.roundHistory.map(record=>
+      record.round===campaign.currentRound&&record.winnerCandidateId===candidate.id
+        ?{...record,championChanged:true,globalChampionId:champion.id,
+          winnerScore:champion.score,improvement:Number(changed.improvement.toFixed(2)),
+          summary:"基于原 Hidden Holdout / Gate F 证据恢复 Search Champion；未生成或发布文件"}
+        :record),
+    campaign:{...campaign,status:"running",stopReason:undefined,noImprovementRounds:0},
+    updatedAt:at,
   };
 }

@@ -1,6 +1,7 @@
 import type {EvolveProject} from "@evolution/contracts";
 import {projectHasOnlineReleaseTarget} from "./release-target";
 import {projectHasStableHealthyProductionOutcome} from "./release-outcome";
+import {productionGoalReadiness} from "./production-goal-evidence";
 
 /** Final state transition after package + learning/queue (and live release decision when applicable). */
 export function completeAutonomousMission(project:EvolveProject,args:{at:string;reason:string}):EvolveProject{
@@ -8,6 +9,8 @@ export function completeAutonomousMission(project:EvolveProject,args:{at:string;
   if(online&&!projectHasStableHealthyProductionOutcome(project,{now:Date.parse(args.at)})){
     throw new Error("Production Outcome 尚未形成新鲜且稳定的连续健康证据，不能完成线上自主闭环");
   }
+  const goal=productionGoalReadiness(project,Date.parse(args.at));
+  if(online&&!goal.ready)throw new Error(goal.reason);
   return {
     ...project,
     stage:"learning",
@@ -15,7 +18,7 @@ export function completeAutonomousMission(project:EvolveProject,args:{at:string;
       ...project.campaign,
       status:"completed",
       completedAt:args.at,
-      stopReason:args.reason,
+      stopReason:online&&project.release.status==="rolled-back"?goal.reason:args.reason,
       checkpoint:undefined,
       schedule:{...project.campaign.schedule,enabled:false,nextRunAt:undefined},
     },

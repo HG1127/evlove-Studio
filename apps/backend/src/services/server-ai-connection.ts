@@ -38,7 +38,7 @@ function directConfig(input:ServerAiConnectionPut):ServerAiConfig{
 
 export async function getServerAiConnectionStatus(){
   if(!vaultEncryptionConfigured())return ServerAiConnectionStatusSchema.parse({
-    storageConfigured:false,configured:false,message:"后端模型保存服务尚未配置；当前浏览器的连接仍可独立使用。",
+    storageConfigured:false,configured:false,message:"后端模型加密保存尚未启用；当前仍可测试所选模型。服务端配置完成后，请重新检查保存状态。",
   });
   const metadata=await getVaultSecretMetadata(VAULT_ID);
   if(!metadata)return ServerAiConnectionStatusSchema.parse({

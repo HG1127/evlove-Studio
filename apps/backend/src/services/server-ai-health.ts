@@ -105,7 +105,7 @@ export async function probeServerAiRuntime(
           runtimeVerified:true,
           status:"error",
           reasonCode:"runtime-error",
-          message:`Server AI Runtime Probe 失败：${safeDetail}`,
+          message:`后端模型测试未通过：${safeDetail}`,
         });
     }
     if(!options.isolated)probeCache={key,at:Date.now(),value:health};

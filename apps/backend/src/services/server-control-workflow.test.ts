@@ -5,11 +5,11 @@ import { buildServerHarnessPlan, serverControlCapabilityWaitPlan, type ServerHar
 import {demoProject} from "../../../../src/features/evolve/data/mock-project";
 import { executeServerControlStep, planMissionStep } from "../../../../workflows/evolution-mission/steps";
 
-const mocks = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn(), jobGet: vi.fn(), put: vi.fn(), append: vi.fn(), probe: vi.fn(), ai: vi.fn() }));
+const mocks = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn(), jobGet: vi.fn(), put: vi.fn(), append: vi.fn(), probe: vi.fn(), passive: vi.fn(), ai: vi.fn() }));
 vi.mock("./production-runtime", () => ({ getServerProductionRuntime: () => ({
   missions: { get: mocks.get, save: mocks.save }, jobs: { get: mocks.jobGet, put: mocks.put }, events: { append: mocks.append },
 }) }));
-vi.mock("./server-ai-health", () => ({ probeServerAiRuntime: mocks.probe }));
+vi.mock("./server-ai-health", () => ({ probeServerAiRuntime: mocks.probe, getPassiveServerAiHealth: mocks.passive }));
 vi.mock("./ai-gateway", async (original) => ({ ...await original<typeof import("./ai-gateway")>(), runServerAi: mocks.ai }));
 vi.mock("../server-env", async (original) => ({ ...await original<typeof import("../server-env")>(), serverAiConfigured: () => true }));
 
@@ -29,6 +29,8 @@ beforeEach(() => {
   mocks.get.mockResolvedValue(structuredClone(mission));
   mocks.jobGet.mockResolvedValue(job);
   mocks.probe.mockResolvedValue({ ready: false, status: "unavailable", reasonCode: "customer-verification-required" });
+  mocks.passive.mockResolvedValue({ configured: true, ready: false, status: "not-checked" });
+  mocks.ai.mockRejectedValue(Object.assign(new Error("provider health temporarily unavailable"), { status: 503 }));
 });
 describe("Durable Workflow AI capability wait", () => {
   it("persists a resumable wait with the actual current stage and unchanged evidence", async () => {
@@ -43,7 +45,9 @@ describe("Durable Workflow AI capability wait", () => {
     expect(saved.attentionRequests[0]).toMatchObject({ type: "capability", status: "pending" });
     expect(mocks.put).toHaveBeenCalledWith(expect.objectContaining({ status: "waiting", generation: 1, checkpointId: "checkpoint" }));
     expect(mocks.append).toHaveBeenCalledWith(expect.objectContaining({ type: "AttentionRequired", checkpointId: "checkpoint" }));
-    expect(mocks.ai).not.toHaveBeenCalled();
+    // A real task, not an unrelated expensive health probe, establishes availability.
+    expect(mocks.ai).toHaveBeenCalledOnce();
+    expect(mocks.probe).not.toHaveBeenCalled();
   });
   it.each(["cancelled", "completed", "failed", "partial"])("does not reopen a %s control Job", async (status) => {
     mocks.jobGet.mockResolvedValue({ ...job, status });

@@ -7,7 +7,8 @@ import { CHECKPOINT_PHASE_LABELS, getRunActivity, type ProjectRuntime } from "..
 import { buildSearchMemory } from "../runtime/search-memory";
 import { autonomousAttention } from "../runtime/autonomous-evolution";
 import { campaignMetricTargetStatus, campaignScheduleIssue, estimateNextRoundCost } from "../runtime/evolution-search";
-import { projectHasOnlineReleaseTarget } from "@evolution/core";
+import { projectHasOnlineReleaseTarget,hasAmbiguousAutoProxyHtmlTarget } from "@evolution/core";
+import {requiresIsolatedHtmlServerExecution} from "../runtime/server-workflow-client";
 
 const selectClass = "h-9 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none transition focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100";
 const inputClass = selectClass;
@@ -66,6 +67,14 @@ export function EvolutionCampaignCenter({ runtime, onOpenAttention }: { runtime:
   const scheduleIssue = campaign.schedule.enabled ? undefined : campaignScheduleIssue({ ...campaign.schedule, enabled: true });
   const championDeliverableReady = Boolean(champion?.candidate?.artifactSnapshots.length && champion.validation?.status === "completed" && champion.validation.recommendation === "release" && champion.artifactAcceptance?.status === "passed" && champion.artifactAcceptance.hardGatePass);
   const onlineReleaseTarget = projectHasOnlineReleaseTarget(project);
+  const htmlServerRequired=requiresIsolatedHtmlServerExecution(project);
+  const htmlAutoProxyMismatch=hasAmbiguousAutoProxyHtmlTarget(project);
+  const canRestoreHtmlBinding=htmlAutoProxyMismatch&&!runtime.status.busy
+    &&!["running","scheduled"].includes(project.campaign.status)
+    &&!project.campaign.schedule.enabled
+    &&project.candidates.length===0&&project.roundHistory.length===0
+    &&project.outputArtifacts.length===0&&project.release.status==="idle"
+    &&project.releaseTarget?.status!=="connected";
   const productionReleaseReady = onlineReleaseTarget && championDeliverableReady;
   const archiveCounts = useMemo(() => ({
     champion: project.evolutionArchive.filter((item) => item.kind === "champion").length,
@@ -112,7 +121,7 @@ export function EvolutionCampaignCenter({ runtime, onOpenAttention }: { runtime:
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-sm font-bold"><Sparkles className="size-4" />自动驾驶 · 当前运行环境自主执行</div>
-            <p className="mt-1.5 max-w-2xl text-[11px] leading-5 text-indigo-100">点一次，系统自动完成「深度理解输入 → 验收标准 → 专属考卷 → 多轮进化搜索 → 打包最佳成果」。当前版本仍由浏览器执行：刷新/重新打开后可从已保存断点恢复，但关闭浏览器期间不会继续计算。</p>
+            <p className="mt-1.5 max-w-2xl text-[11px] leading-5 text-indigo-100">{htmlServerRequired ? "HTML 进化必须由已授权的 Server Sandbox + Chromium 执行并留存真实证据。授权未就绪时会明确阻断，不允许浏览器本地模拟进化。" : "点一次，系统将自动推进理解、验收、搜索和成果打包；本地模式需要保持浏览器运行，Durable Workflow 则在后端执行。"}</p>
             <div className="mt-3 flex flex-wrap gap-1.5">
               {[
                 { label: "材料已接入", done: project.sourceArtifacts.length > 0 },
@@ -219,8 +228,10 @@ export function EvolutionCampaignCenter({ runtime, onOpenAttention }: { runtime:
       </div>
 
       <div className="flex flex-wrap gap-2">
-        <Button disabled={runtime.status.busy || campaign.status === "completed" || campaign.status === "stopped"} onClick={() => void runtime.runCampaignRound()}><Play className="size-4" />运行下一轮</Button>
-        <Button disabled={runtime.status.busy || campaign.status === "completed" || campaign.status === "stopped"} variant="secondary" onClick={() => void runtime.runCampaign()}><FastForward className="size-4" />自动运行到停止条件</Button>
+        <Button disabled={htmlServerRequired || runtime.status.busy || campaign.status === "completed" || campaign.status === "stopped"} title={htmlServerRequired?"HTML 手动轮次需要 Server Sandbox 真实执行；请使用上方自动驾驶并先完成授权":undefined} onClick={() => void runtime.runCampaignRound()}><Play className="size-4" />运行下一轮</Button>
+        <Button disabled={htmlServerRequired || runtime.status.busy || campaign.status === "completed" || campaign.status === "stopped"} title={htmlServerRequired?"HTML Campaign 必须由后端 Durable Workflow 执行，不能本地手动循环":undefined} variant="secondary" onClick={() => void runtime.runCampaign()}><FastForward className="size-4" />自动运行到停止条件</Button>
+        {htmlAutoProxyMismatch&&<div role="status" className="w-full rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900"><b>发现旧版 Target 自动绑定错误</b><p className="mt-1">你上传的 HTML 文件被后台 Target Proxy 探测错误标记成了 HTTP 连接。这不代表 HTML 已运行，也不能继续使用 HTTP Runner 作为该文件的隔离浏览器证据。</p>{canRestoreHtmlBinding?<Button size="sm" className="mt-2" variant="secondary" onClick={()=>runtime.setTargetConnection({adapter:"artifact",connectionId:"restored-artifact-"+project.id,status:"connected",label:"HTML Artifact Runtime"})}>恢复 HTML 文件 Target</Button>:<p className="mt-1">该项目已有运行或验收历史，为避免改变旧证据身份，请复制为新的 HTML Artifact Mission 再继续。</p>}</div>}
+        {htmlServerRequired&&<p className="text-xs text-amber-700">HTML 本地轮次与本地验证已禁用；请在闭环完整性中授权 Sandbox 后使用上方自动驾驶。</p>}
         <Button disabled={campaign.status !== "running" && campaign.status !== "scheduled"} variant="secondary" onClick={runtime.pauseCampaign}><CirclePause className="size-4" />暂停</Button>
         <Button variant="secondary" disabled={!campaign.schedule.enabled && (settingsLocked || campaign.status === "paused" || campaign.status === "completed" || campaign.status === "stopped" || Boolean(scheduleIssue))} title={!campaign.schedule.enabled && scheduleIssue ? scheduleIssue : undefined} onClick={() => runtime.scheduleCampaign(!campaign.schedule.enabled)}><AlarmClock className="size-4" />{campaign.schedule.enabled ? "取消定时" : "启用定时"}</Button>
         <Button variant="secondary" disabled={!championDeliverableReady} title={!championDeliverableReady ? "只有通过 Hidden Validation + Gate F 且存在已测试成果快照的 Search Champion 才能生成正式成果包" : undefined} onClick={() => runtime.materializeOutputs()}><Download className="size-4" />生成最佳版本成果包</Button>

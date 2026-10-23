@@ -28,6 +28,7 @@ const previous=new Map<string,string|undefined>();
 let rows:Map<string,Record<string,unknown>>;
 let providerCalls:Array<{url:string;init:RequestInit;body:Record<string,unknown>}>;
 let databaseWrites:number;
+let providerContent:string;
 
 function installBoundaries(){
   vi.stubGlobal("fetch",vi.fn(async(raw:RequestInfo|URL,init:RequestInit={})=>{
@@ -58,7 +59,7 @@ function installBoundaries(){
     expect(url.pathname).toBe("/v1/chat/completions");
     const body=JSON.parse(String(init.body));
     providerCalls.push({url:address,init,body});
-    return new Response(JSON.stringify({choices:[{message:{content:JSON.stringify(understanding)}}]}),{status:200});
+    return new Response(JSON.stringify({choices:[{message:{content:providerContent}}]}),{status:200});
   }));
 }
 
@@ -69,7 +70,7 @@ beforeEach(()=>{
     EVOLUTION_WORKSPACE_ID:"workspace-test",EVOLUTION_VAULT_MASTER_KEY:master,EVOLUTION_VAULT_KEY_ID:"test-key",
     VERCEL:"1",EVOLUTION_AI_GATEWAY_ENABLED:"true",
   });
-  rows=new Map();providerCalls=[];databaseWrites=0;
+  rows=new Map();providerCalls=[];databaseWrites=0;providerContent=JSON.stringify(understanding);
   governance.permission.mockReset().mockResolvedValue({id:"admin",role:"admin",workspaceId:"workspace-test"});
   resetServerAiRuntimeProbeCache();installBoundaries();
 });
@@ -101,6 +102,13 @@ describe("browser configuration → API → encrypted Vault → backend model co
     expect(JSON.parse(messages.find(item=>item.role==="user")!.content).artifacts).toEqual([]);
     expect((await resolveServerAiConfig())?.model).toBe(input.model);
     expect((await readServerAiConnection()).connection?.model).toBe(input.model);
+  });
+
+  it("passes a draft probe with a MiniMax-style reasoning envelope without persisting the draft",async()=>{
+    providerContent=`<think>Prepare requested structure.</think>\n\`\`\`json\n${JSON.stringify(understanding)}\n\`\`\``;
+    expect(await testServerAiConnection(input)).toMatchObject({ready:true,runtimeVerified:true,status:"ready"});
+    expect(databaseWrites).toBe(0);
+    expect(providerCalls).toHaveLength(1);
   });
 
   it("denies configuration before touching encrypted storage or a model",async()=>{

@@ -1,3 +1,5 @@
+import {runCandidateBuildAi} from "./candidate-build-ai";
+import {htmlElementRange,incompleteHtmlCandidatePatches,isZipArtifact,isTextArtifactExtension} from "@evolution/core";
 import { evidenceFingerprint } from "./evidence-binding";
 import { acceptanceArtifacts as coreAcceptanceArtifacts, indexScopedAcceptanceResults } from "@evolution/core";
 import { htmlCandidateGuard } from "./html-candidate-guard";
@@ -6,7 +8,8 @@ import {
   BuildCandidateAiResultSchema,
   RubricAiResultSchema,
 } from "../ai/schemas";
-import { runEvolveAi } from "../ai/service";
+import { runEvolveAi, type AiAttemptNotice } from "../ai/service";
+import {getActiveAbortSignal} from "./abort-scope";
 import { buildCandidateDeterministically, normalizeCandidateArtifactOutputs } from "./candidate-builder";
 import { composeCandidateOnSearchChampion, projectAtSearchChampion, searchBaseCandidate } from "./search-base";
 import { integritySignals, outlineFromText, retrieveTextContext } from "./context-retrieval";
@@ -65,7 +68,7 @@ function artifactIntegrity(original: SourceArtifact | undefined, snapshot: Candi
     const invalid=parts.filter((part)=>!String(part.path??"").trim()||!Array.isArray(part.textRuns)).length;
     return {...generic,structured:true,structuredKind:"docx",structuredUnits:parts.length,emptyStructuredUnits:missing.length+invalid,suspiciouslyShort:false,empty:parts.length===0||missing.length>0||invalid>0,newPlaceholderMarkers:generic.newPlaceholderMarkers};
   }
-  if(original.artifactKind==="codebase"){
+  if(original.artifactKind==="codebase"&&isZipArtifact(original)){
     const data=parseJsonObject(snapshot.content); const files=Array.isArray(data?.files)?data!.files as Array<Record<string,unknown>>:[];
     const invalid=files.filter((file)=>!String(file.path??"").trim()||!String(file.content??"").trim()).length;
     return {...generic, structured:true, structuredKind:"codebase", structuredUnits:files.length, emptyStructuredUnits:invalid, suspiciouslyShort:false, empty:files.length===0||invalid>0, newPlaceholderMarkers:generic.newPlaceholderMarkers};
@@ -173,7 +176,7 @@ function candidateRubric(project: EvolveProject, candidate: Candidate) {
 
 
 export async function ensureAcceptanceRubric(project: EvolveProject, options?: { force?: boolean }): Promise<AcceptanceCriterion[]> {
-  if (!options?.force && project.acceptanceRubric.length >= 3 && rubricValidation(project.acceptanceRubric).ready) return normalizeAcceptanceRubric(project.acceptanceRubric, project);
+  if (!options?.force && project.acceptanceRubric.length >= 3 && rubricValidation(project.acceptanceRubric,project.sourceArtifacts).ready) return normalizeAcceptanceRubric(project.acceptanceRubric, project);
   const result = RubricAiResultSchema.parse(await runEvolveAi("rubric", {
     project: {
       name: project.name,
@@ -216,6 +219,11 @@ async function prepareActualFiles(project: EvolveProject, candidate: Candidate):
   if (noNewMutation) throw new Error(parent ? "候选与当前 Search Champion 完全相同，没有产生新的可验证变异。" : "候选没有产生实际内容变化，请调整改进方案；未修改的原版不能作为进化成果。");
   for (const snapshot of snapshots) {
     const source = targets.find((t) => t.id === snapshot.sourceArtifactId)!;
+    if(snapshot.frozenArtifact){
+      await readFrozenArtifact(snapshot.frozenArtifact,snapshot.content);
+      prepared.push({...snapshot,name:snapshot.frozenArtifact.name,mimeType:snapshot.frozenArtifact.mimeType,contentHash:snapshot.frozenArtifact.snapshotHash});
+      continue;
+    }
     const built = await buildDownloadBlob(source, snapshot);
     const verified = await verifyGeneratedArtifact(source, snapshot, built.blob);
     const frozenArtifact = await freezeArtifact({sourceArtifactId:source.id,content:snapshot.content,blob:built.blob,name:built.name,...verified});
@@ -226,7 +234,21 @@ async function prepareActualFiles(project: EvolveProject, candidate: Candidate):
   return {...candidate,artifactSnapshots:prepared,artifactBuildStatus:"ready",artifactBuildSummary:`${prepared.length} 份实际文件已生成并完成结构核对；继续验证用户目标。`};
 }
 
-export async function buildCandidateArtifacts(project: EvolveProject, candidate: Candidate): Promise<Candidate> {
+export async function buildCandidateArtifacts(project: EvolveProject, candidate: Candidate, options?: {onProgress?:(detail:string,route?:Pick<AiAttemptNotice,"provider"|"model">)=>void}): Promise<Candidate> {
+  const deadline=AbortSignal.timeout(180_000);
+  const activeSignal=getActiveAbortSignal();
+  const signal=activeSignal?AbortSignal.any([activeSignal,deadline]):deadline;
+  try{return await buildCandidateArtifactsWithinBudget(project,candidate,signal,options);}
+  catch(error){
+    if(activeSignal?.aborted)throw error;
+    if(deadline.aborted)throw new Error("本候选构造超过 180 秒等待预算，已保留已完成的文件。可重试或切换模型。",{cause:error});
+    throw error;
+  }
+}
+
+async function buildCandidateArtifactsWithinBudget(project:EvolveProject,candidate:Candidate,signal:AbortSignal,options?:{onProgress?:(detail:string,route?:Pick<AiAttemptNotice,"provider"|"model">)=>void}):Promise<Candidate>{
+  const progress=(detail:string,route?:Pick<AiAttemptNotice,"provider"|"model">)=>{signal.throwIfAborted();options?.onProgress?.(detail,route);};
+  progress("读取当前版本并定位修改");
   // Candidate mutation reads from the accepted Search Champion when one exists, but final file
   // construction/guards still bind to the immutable original project for end-to-end traceability.
   const baseProject = projectAtSearchChampion(project);
@@ -235,26 +257,30 @@ export async function buildCandidateArtifacts(project: EvolveProject, candidate:
 
   let preflightFailure: string | undefined;
   if (candidate.artifactBuildStatus === "ready" && candidate.artifactSnapshots.length) {
-    try { return await prepareActualFiles(project, composeCandidateOnSearchChampion(project, candidate)); }
+    try { progress("复用已保存的候选文件并核对版本",{provider:"本地",model:"已冻结文件，无需模型生成"});return await prepareActualFiles(project, composeCandidateOnSearchChampion(project, candidate)); }
     catch (error) { if (!(error instanceof Error) || !error.message.startsWith("HTML 候选前置检查失败")) throw error; preflightFailure = error.message; }
   }
+
+  const incompletePatches=incompleteHtmlCandidatePatches(candidate,targets);
+  if(incompletePatches.length)throw new Error(`该方案的 ${incompletePatches.join("、")} 修改包含“保持原有其余内容不变”等省略占位，未提供完整可执行 HTML。请重新生成此方案，或取消勾选它后验证其他方案；已生成的候选文件会保留。`);
 
   // Fast path: exact heading/full-section patches are applied to the CURRENT champion snapshot,
   // not repeatedly to V1. Structured deltas are composed with the parent before materialization.
   const deterministic = buildCandidateDeterministically(candidate, targets);
   if (deterministic && !preflightFailure) {
     const cumulative = composeCandidateOnSearchChampion(project, { ...candidate, artifactSnapshots: deterministic.snapshots, artifactBuildStatus: "ready", artifactBuildSummary: deterministic.summary });
-    try { return await prepareActualFiles(project, cumulative); }
+    try { progress("应用本地修改并保存实际文件",{provider:"本地",model:"精确补丁，无需模型生成"});return await prepareActualFiles(project, cumulative); }
     catch (error) { if (!(error instanceof Error) || !error.message.startsWith("HTML 候选前置检查失败")) throw error; preflightFailure = error.message; }
   }
 
   // Slow path only when patch cannot be applied deterministically. Put common current-version
   // source context before candidate-specific data to improve provider prefix-cache hit rate.
+  progress("检索构造所需的源文件片段");
   const query = `${candidate.title || candidate.name} ${candidate.change} ${candidate.patches.map((patch) => `${patch.target} ${patch.rationale}`).join(" ")} ${project.evolutionCommand}`;
   // A long text target used to send the same source twice (8k overview + 18k adaptive excerpt),
   // often together with the entire project graph. This made small HTML edits a large generation
   // request and exhausted slower reasoning models before they could emit the JSON blueprint.
-  const largeTextTarget = targets.some((artifact) => /^(html?|xhtml|md|markdown|txt|css|js|ts|tsx|jsx|json|yaml|yml|svg)$/i.test(artifact.extension) && (artifact.textContent?.length ?? 0) > 32000);
+  const largeTextTarget = targets.some((artifact) => isTextArtifactExtension(artifact.extension) && (artifact.textContent?.length ?? 0) > 32000);
   const targetContexts = await Promise.all(targets.map(async (artifact) => ({
     ...sourceForAi(artifact, query, largeTextTarget ? 0 : 8000),
     adaptiveContext: await retrieveArtifactContext(artifact, query, largeTextTarget ? 12000 : 18000),
@@ -274,6 +300,14 @@ export async function buildCandidateArtifacts(project: EvolveProject, candidate:
       const start = text ? source.indexOf(text) : -1;
       return start >= 0 && source.indexOf(text, start + 1) < 0 ? [{ start, end: start + text.length, text }] : [];
     }).slice(0, 8);
+    let budget=20_000;
+    for(const patch of candidate.patches.filter(patch=>!patch.artifactId||patch.artifactId===artifact.id)){
+      const id=/^#([a-zA-Z_][\w:.-]*)(?:\s+(?:section|article|div|main))?$/.exec(patch.target.trim())?.[1];
+      const range=id&&/^(html?|xhtml)$/i.test(artifact.extension)?htmlElementRange(source,id):undefined;
+      if(!range||range.end-range.start>budget||anchors.some(anchor=>anchor.start===range.start))continue;
+      const text=source.slice(range.start,range.end);budget-=text.length;
+      anchors.push({start:range.start,end:range.end,text});
+    }
     return { sourceArtifactId: artifact.id, anchors };
   });
   const basePayload = {
@@ -308,15 +342,19 @@ export async function buildCandidateArtifacts(project: EvolveProject, candidate:
     }));
     return prepareActualFiles(project, composeCandidateOnSearchChampion(project, { ...candidate, artifactSnapshots: snapshots, artifactBuildStatus: "ready", artifactBuildSummary: result.summary }));
   };
-  const first = BuildCandidateAiResultSchema.parse(await runEvolveAi("build-candidate", basePayload));
+  progress("等待模型构造局部修改（本候选总时限 180 秒）");
+  const notice=(route:AiAttemptNotice)=>options?.onProgress?.(`模型重试：${route.model} · ${route.message}`,route);
+  const first = BuildCandidateAiResultSchema.parse(await runCandidateBuildAi(basePayload,signal,notice));
   try {
+    progress("核对结构并保存实际文件");
     return await prepareResult(first, "initial");
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     // Missing local source/blob or a required external renderer cannot be repaired by asking the
     // model to rewrite content. All other content/anchor/shape failures get one targeted retry.
     if (/已取消|持久保存|原始文件不可用|需要外部|Renderer|需要原生|无法连接/.test(reason)) throw error;
-    const recovery = BuildCandidateAiResultSchema.parse(await runEvolveAi("build-candidate", {
+    progress("根据具体构造问题修复局部修改");
+    const recovery = BuildCandidateAiResultSchema.parse(await runCandidateBuildAi({
       ...basePayload,
       recovery: {
         attempt: 1,
@@ -324,8 +362,8 @@ export async function buildCandidateArtifacts(project: EvolveProject, candidate:
         previousOutput: first.artifacts.map((artifact) => ({ sourceArtifactId: artifact.sourceArtifactId, content: artifact.content.slice(0, 12000), notes: artifact.notes })),
         instruction: "Repair the failed artifact construction, not the product goal. Return one artifact for every target and no extras. For a text-edits failure, choose a longer unique before block copied verbatim from targetArtifacts/adaptiveContext or anchorHints; never copy [chunk ...] markers. Keep the intended after content and use verified zero-based offsets when available. For an HTML duplicate-ID or overlapping-edit failure, use html-edits against the ORIGINAL unique targetId. Return only inserted children for prepend/append. Combine all changes to the same section in one edit. Do not rewrite the complete document during recovery.",
       },
-    }));
-    try { return await prepareResult(recovery, "recovery"); }
+    },signal,notice));
+    try { progress("核对修复并保存实际文件");return await prepareResult(recovery, "recovery"); }
     catch (recoveryError) {
       const recoveryReason = recoveryError instanceof Error ? recoveryError.message : String(recoveryError);
       throw new Error(`${candidate.title || candidate.name} 的实际文件构造失败：首次 ${reason}；自动修复后 ${recoveryReason}`, { cause: recoveryError });

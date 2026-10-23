@@ -3,7 +3,8 @@ import { citesHistoricalEvidence } from "@evolution/core";
 
 import { compactServerSourceText, serverSemanticContextQuery } from "./server-source-context";
 
-const TEXT_ROUNDTRIP = /^(txt|md|markdown|mdx|csv|json|yaml|yml|css|js|jsx|ts|tsx|html|htm)$/i;
+// CSV/TSV Candidate contents are Sheet/Cell JSON deltas, never literal file text.
+const TEXT_ROUNDTRIP = /^(txt|md|markdown|mdx|css|js|jsx|ts|tsx|html|htm)$/i;
 
 export function unavailableExperimentRun(testCase: TestCase, detail: string): TargetRunResult {
   return {

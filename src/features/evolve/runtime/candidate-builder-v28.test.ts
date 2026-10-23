@@ -42,4 +42,13 @@ describe("V2.8 candidate fast paths", () => {
     expect(policy.batchSize).toBe(5);
     expect(policy.batchArtifactRuntime).toBe(true);
   });
+  it("treats an HTML ID target as an element even when navigation links contain it",()=>{
+    const source='<html><body><a href="#slide-15">Jump</a><article id="slide-15">Original<div>nested</div></article><footer>Keep</footer></body></html>';
+    const artifact={id:"html",name:"sop.html",extension:"html",mimeType:"text/html",artifactKind:"document",textContent:source} as SourceArtifact;
+    const candidate=CandidateSchema.parse({id:"C-id",name:"Clear steps",change:"Clarify",patches:[{id:"p",component:"prompt",operation:"update",target:"#slide-15",content:'<!-- plan --><article id="slide-15">Clear<div>nested</div></article>',rationale:"Element target"}]});
+    const built=buildCandidateDeterministically(candidate,[artifact]);
+    expect(built?.snapshots[0]?.content).toContain('<a href="#slide-15">Jump</a>');
+    expect(built?.snapshots[0]?.content).toContain('<article id="slide-15">Clear<div>nested</div></article>');
+  });
+
 });

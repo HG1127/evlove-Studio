@@ -57,8 +57,12 @@ export async function getOutcomeAnalyticsHealth(){
   }
 }
 
-export async function analyzeMissionOutcome(input:{missionId:string;candidateId:string}){
-  const samples=await readOutcomeSamples({...input,limit:20_000,requireComplete:true});
+export async function analyzeMissionOutcome(input:{missionId:string;candidateId:string;deploymentId?:string;stableDeploymentId?:string;telemetryOnly?:boolean}){
+  const stored=await readOutcomeSamples({missionId:input.missionId,candidateId:input.candidateId,limit:20_000,requireComplete:true});
+  const samples=stored.filter(sample=>
+    (!input.telemetryOnly||sample.source.startsWith("outcome-telemetry:"))
+    &&(!input.deploymentId||sample.arm!=="candidate"||sample.deploymentId===input.deploymentId)
+    &&(!input.stableDeploymentId||sample.arm!=="stable"||sample.deploymentId===input.stableDeploymentId));
   const telemetry=getOutcomeTelemetryConfigState();
   return analyzeOutcomeSamples({
     ...input,

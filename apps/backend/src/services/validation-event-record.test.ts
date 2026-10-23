@@ -21,7 +21,7 @@ describe("persisted Validation Event identity",()=>{
     const request=vi.fn(async(path:string)=>{expect(path).toContain("events?");return [eventRow(event)];});
     expect(await readServerValidationRecord(request,result.id)).toEqual({event,result});
     const query=new URL("https://example.supabase.co/rest/v1/"+request.mock.calls[0][0]).searchParams;
-    expect(query.get("id")).toBe('eq."validation-result:validation:one"');
+    expect(query.get("id")).toBe('eq.validation-result:validation:one');
     expect(query.get("limit")).toBe("1");
   });
 

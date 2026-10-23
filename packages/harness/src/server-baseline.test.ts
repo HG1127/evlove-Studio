@@ -55,6 +55,92 @@ function judge(): EvaluateAiResult {
 }
 
 describe("server baseline",()=>{
+  it("uses exact current Markdown defect as VERIFIED failure without sending that criterion to Judge",async()=>{
+    const project=fixture();
+    const text=["# 中文投资研究报告规范","## 角色","你是研究助手。",
+      "## 当前缺陷","历史版本容易写出没有证据来源的核心论点。","## 边界","不得编造事实。"].join("\n");
+    project.sourceArtifacts=[{...project.sourceArtifacts[0]!,textContent:text,
+      textExcerpt:text,size:new TextEncoder().encode(text).byteLength}];
+    project.evolutionCommand="重要结论必须绑定可核验出处";
+    project.acceptanceRubric[0]={...project.acceptanceRubric[0]!,id:"USER-PRIMARY-INTENT",requirement:"重要结论绑定可核验来源"};
+    project.evalSuite[0]={...project.evalSuite[0]!,criterionIds:["USER-PRIMARY-INTENT"]};
+    project.hiddenEvalSuite[0]={...project.hiddenEvalSuite[0]!,criterionIds:["USER-PRIMARY-INTENT"]};
+    let modelCalls=0,judgeCalls=0;
+    const ports={executeSemanticBatch:async()=>{modelCalls++;throw new Error("No model response");},
+      judge:async(payload:unknown)=>{
+        judgeCalls++;
+        const scoped=payload as {acceptanceRubric:Array<{id:string}>};
+        expect(scoped.acceptanceRubric.map(c=>c.id)).not.toContain("USER-PRIMARY-INTENT");
+        return {...judge(),cases:[{testCaseId:"V3",accuracy:98,evidence:98,completeness:98,reason:"当前正文可读取"}],
+          criteria:[{criterionId:"STRUCTURE",score:98,pass:true,evidence:["V3 实际正文"],gaps:[],testCaseIds:["V3"]}]};
+      }};
+    const measured=await runServerBaseline(project,ports);
+    expect(modelCalls).toBe(0);
+    expect(judgeCalls).toBe(1); // The independent structure criterion still requires Judge.
+    expect(measured.ready).toBe(true);
+    expect(measured.project.stage).toBe("problem");
+    expect(measured.baseline.runs.find(r=>r.testCaseId==="V1")).toMatchObject({
+      verificationStatus:"verified",trace:[{stage:"baseline-exact-source-negative-evidence",status:"pass"}],
+    });
+    expect(measured.baseline.result?.criterionScores?.find(c=>c.criterionId==="USER-PRIMARY-INTENT"))
+      .toMatchObject({score:0,pass:false,verificationStatus:"verified"});
+    const incomplete="# 中文投资研究报告规范\n## 角色\n请引用来源。";
+    const ungrounded={...project,sourceArtifacts:[{...project.sourceArtifacts[0]!,textContent:incomplete,
+      textExcerpt:incomplete,size:new TextEncoder().encode(incomplete).byteLength}]};
+    const blocked=await runServerBaseline(ungrounded,ports);
+    expect(blocked.ready).toBe(false);
+    expect(blocked.baseline.result?.criterionScores?.find(c=>c.criterionId==="USER-PRIMARY-INTENT")?.verificationStatus).toBe("unverified");
+  });
+
+  it("defers a source-inspected UNKNOWN soft objective while preserving exact original hard evidence",async()=>{
+    const project=fixture();
+    project.evalSuite[2]={...project.evalSuite[2]!,executionMode:"artifact-runtime"};
+    const runner=async({testCases}:{testCases:Array<{id:string}>})=>({
+      results:testCases.map(testCase=>testCase.id==="V3"
+        ?{testCaseId:testCase.id,output:"UNVERIFIED - 原版没有具体核验步骤",
+          trace:[{id:"source-inspection",stage:"inspect",status:"fail" as const,summary:"原文未定义步骤"}]}
+        :{testCaseId:testCase.id,output:"当前说明包含安装步骤但验证与回滚不足",trace:[]}),
+    });
+    const ports={executeSemanticBatch:runner,judge:async()=>judge()};
+    const result=await runServerBaseline(project,ports);
+    expect(result.ready).toBe(true);
+    expect(result.project.stage).toBe("problem");
+    expect(result.project.baselineRun.runs.find(run=>run.testCaseId==="V3")?.verificationStatus).toBe("unverified");
+    expect(result.project.baselineRun.result?.criterionScores?.find(row=>row.criterionId==="STRUCTURE"))
+      .toMatchObject({verificationStatus:"unverified",pass:false});
+    expect(result.project.baselineRun.result?.criterionScores?.find(row=>row.criterionId==="CONTENT"))
+      .toMatchObject({verificationStatus:"verified",pass:false});
+    expect(result.reason).toContain("原版非强制题仍为 UNVERIFIED");
+    expect(result.capabilityGaps).toEqual([]);
+    expect(canReuseServerBaseline(result.project)).toBe(true);
+
+    const hard=fixture();
+    hard.evalSuite[2]={...hard.evalSuite[2]!,executionMode:"artifact-runtime"};
+    hard.acceptanceRubric[2]={...hard.acceptanceRubric[2]!,hardGate:true};
+    hard.hiddenEvalSuite.push({...hard.hiddenEvalSuite[0]!,id:"H3",criterionIds:["STRUCTURE"]});
+    const mustBlock=await runServerBaseline(hard,ports);
+    expect(mustBlock.ready).toBe(false);
+    expect(mustBlock.reason).toContain("STRUCTURE");
+    expect(mustBlock.project.campaign.status).toBe("paused");
+
+    const mixed=fixture();
+    mixed.evalSuite[2]={...mixed.evalSuite[2]!,criterionIds:["STRUCTURE","CONTENT"],executionMode:"artifact-runtime"};
+    const noMixedWaiver=await runServerBaseline(mixed,ports);
+    expect(noMixedWaiver.ready).toBe(false);
+
+    const noReceipt=await runServerBaseline(project,{
+      ...ports,
+      executeSemanticBatch:async({testCases})=>({
+        results:testCases.filter(t=>t.id!=="V3").map(t=>({
+          testCaseId:t.id,output:"观察到安装步骤，但验证与回滚不足",trace:[],
+        })),
+      }),
+    });
+    expect(noReceipt.ready).toBe(false);
+    expect(noReceipt.capabilityGaps).toContain("V3");
+    expect(noReceipt.baseline.runs.find(r=>r.testCaseId==="V3")?.verificationStatus).toBe("unverified");
+  });
+
   it("settles a proven format-only Baseline without requiring an AI provider",async()=>{
     const project=fixture();
     project.acceptanceRubric=[
@@ -179,6 +265,27 @@ describe("server baseline",()=>{
     expect(canReuseServerBaseline({ ...outcome.project, sourceArtifacts: [{ ...outcome.project.sourceArtifacts[0]!, name: "renamed.md" }] })).toBe(false);
     expect(canReuseServerBaseline({ ...outcome.project, targetConnection: { ...outcome.project.targetConnection, status: "error", label: "Renamed" } })).toBe(true);
     expect(canReuseServerBaseline({ ...outcome.project, baselineRun: { ...outcome.baseline, measurementFingerprint: undefined } })).toBe(false);
+  });
+
+  it("defers comparison-only SYS-PAIRWISE until Candidate Holdout while preserving other hard gates",async()=>{
+    const project=fixture();
+    project.acceptanceRubric=[
+      {...project.acceptanceRubric[0]!,weight:50},
+      {...project.acceptanceRubric[1]!,weight:30},
+      {...project.acceptanceRubric[2]!,weight:10},
+      {id:"SYS-PAIRWISE",title:"相对原版真实改进",requirement:"候选必须相对原版真实改进",source:"system-integrity",weight:10,hardGate:true,judgeType:"pairwise",validationMethod:"semantic-judge",minScore:85,evidenceExpected:["Original vs Evolved"],protectedConstraint:false,artifactIds:[],category:"outcome"},
+    ];
+    const pairCase={id:"V-PAIRWISE",title:"相对原版比较",input:"候选是否优于原版",expected:["真实提升"],tags:[],hidden:false,criterionIds:["SYS-PAIRWISE"],executionMode:"artifact-runtime" as const,evidenceScope:"product-behavior" as const};
+    project.evalSuite.push(pairCase);
+    project.hiddenEvalSuite.push({...pairCase,id:"H-PAIRWISE",hidden:true});
+    const outcome=await runServerBaseline(project,{
+      executeSemanticBatch:async({testCases})=>({results:testCases.map((testCase)=>({testCaseId:testCase.id,output:"当前说明包含安装步骤，但验证与回滚说明不足。",trace:[]}))}),
+      judge:async()=>judge(),
+    });
+    expect(outcome.ready).toBe(true);
+    expect(outcome.project.stage).toBe("problem");
+    expect(outcome.baseline.result?.criterionScores?.find((item)=>item.criterionId==="SYS-PAIRWISE")?.verificationStatus).not.toBe("verified");
+    expect(outcome.project.campaign.checkpoint).toMatchObject({round:1,completedPhase:"baseline"});
   });
 
   it("remeasures live Target observations in each new Campaign round while reusing a same-round checkpoint", async () => {

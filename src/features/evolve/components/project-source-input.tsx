@@ -194,7 +194,7 @@ export function ProjectSourceInput({ runtime, onAutoRunStart }: { runtime: Proje
       const compiled = compileSemanticEvolution({ artifacts: sourceArtifacts, command: current.evolutionCommand });
       const semanticIds = new Set(compiled.semanticEvolution.acceptanceRubric.map((item)=>item.id));
       const acceptanceRubric = normalizeAcceptanceRubric([...compiled.semanticEvolution.acceptanceRubric, ...current.acceptanceRubric.filter((item)=>!semanticIds.has(item.id))], { protectedItems: current.protectedItems, sourceArtifacts, semanticEvolution: compiled.semanticEvolution });
-      const check = rubricValidation(acceptanceRubric);
+      const check = rubricValidation(acceptanceRubric,sourceArtifacts);
       return { ...resetDownstream({ ...current, sourceArtifacts, artifactGraph: compiled.artifactGraph, semanticEvolution: { ...compiled.semanticEvolution, acceptanceRubric }, acceptanceRubric }, {invalidateUnderstanding:true}), sourceArtifacts, artifactGraph: compiled.artifactGraph, semanticEvolution: { ...compiled.semanticEvolution, acceptanceRubric }, acceptanceRubric, acceptanceRubricState: { ...current.acceptanceRubricState, status: check.ready ? "ready" : "invalid", summary: `已按“${compiled.semanticEvolution.semanticObject.label}”重新编译动态验收标准`, weightTotal: check.weightTotal, warnings: check.warnings, compiledAt: now(), version: current.acceptanceRubricState.version + 1 } };
     });
     runtime.setStage("target");
@@ -247,7 +247,7 @@ export function ProjectSourceInput({ runtime, onAutoRunStart }: { runtime: Proje
           const semanticIds = new Set(compiled.semanticEvolution.acceptanceRubric.map((item)=>item.id));
           const combined = [...compiled.semanticEvolution.acceptanceRubric, ...result.intake.acceptanceRubric.filter((item)=>!semanticIds.has(item.id))];
           const acceptanceRubric = normalizeAcceptanceRubric(combined, { protectedItems: result.intake.protectedItems, sourceArtifacts, semanticEvolution: compiled.semanticEvolution });
-          const check = rubricValidation(acceptanceRubric);
+          const check = rubricValidation(acceptanceRubric,sourceArtifacts);
           return {
             ...resetDownstream(current, {invalidateUnderstanding:true}),
             name: result.intake.projectName || current.name, objectType: result.intake.detectedObjectType, goal: result.intake.goal, evolutionCommand,
@@ -284,7 +284,7 @@ export function ProjectSourceInput({ runtime, onAutoRunStart }: { runtime: Proje
           return {
             ...base,
             evolutionCommand: result.updatedCommand,
-            ...(compiled ? { artifactGraph: compiled.artifactGraph, semanticEvolution: { ...compiled.semanticEvolution, acceptanceRubric }, acceptanceRubric, acceptanceRubricState: { ...current.acceptanceRubricState, status: rubricValidation(acceptanceRubric).ready ? "ready" : "invalid", summary: `已按“${compiled.semanticEvolution.semanticObject.label}”重新编译动态验收标准`, version: current.acceptanceRubricState.version + 1, compiledAt: now(), weightTotal: rubricValidation(acceptanceRubric).weightTotal, warnings: rubricValidation(acceptanceRubric).warnings } } : {}),
+            ...(compiled ? { artifactGraph: compiled.artifactGraph, semanticEvolution: { ...compiled.semanticEvolution, acceptanceRubric }, acceptanceRubric, acceptanceRubricState: { ...current.acceptanceRubricState, status: rubricValidation(acceptanceRubric,current.sourceArtifacts).ready ? "ready" : "invalid", summary: `已按“${compiled.semanticEvolution.semanticObject.label}”重新编译动态验收标准`, version: current.acceptanceRubricState.version + 1, compiledAt: now(), weightTotal: rubricValidation(acceptanceRubric,current.sourceArtifacts).weightTotal, warnings: rubricValidation(acceptanceRubric,current.sourceArtifacts).warnings } } : {}),
             commandHistory: [
               ...current.commandHistory,
               { id: `cmd-u-${Date.now()}`, role: "user", content: userMessage, artifactIds: [], createdAt: now() },

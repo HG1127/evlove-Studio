@@ -12,12 +12,14 @@ export function AutonomousEvolutionPanel({
   onOpenOutputs,
   onOpenAdvanced,
   onOpenRuntime,
+  serverStartBlocked=false,
 }: {
   runtime: ProjectRuntime;
   onOpenSource: () => void;
   onOpenOutputs: () => void;
   onOpenAdvanced: () => void;
   onOpenRuntime: () => void;
+  serverStartBlocked?:boolean;
 }) {
   const project = runtime.project;
   const state = autonomousEvolutionState(project, runtime.status.busy);
@@ -66,7 +68,7 @@ export function AutonomousEvolutionPanel({
       </div>
       <div className="flex shrink-0 flex-wrap gap-2">
         {state === "waiting-input" && <Button onClick={onOpenSource}>输入任务</Button>}
-        {(state === "ready" || state === "preparing") && !runtime.status.busy && <Button onClick={() => void runtime.runAutoPilot()}><Play className="size-4" />{project.campaign.status === "paused" ? "继续自主进化" : "开始自主进化"}</Button>}
+        {(state === "ready" || state === "preparing") && !runtime.status.busy && <Button disabled={serverStartBlocked} title={serverStartBlocked?"先核对本页的真实后端 Workflow；禁止重复启动":undefined} onClick={() => void runtime.runAutoPilot()}><Play className="size-4" />{project.campaign.status === "paused" ? "继续自主进化" : "开始自主进化"}</Button>}
         {state === "running" && <Button variant="secondary" onClick={runtime.pauseCampaign}><CirclePause className="size-4" />暂停</Button>}
         {state === "attention" && canRetryStoredServerExperiment(project) && <ServerExperimentRetry key={project.id + ":" + project.updatedAt} project={project} busy={runtime.status.busy} onOpenRuntime={onOpenRuntime}/> }
         {state === "attention" && !canRetryStoredServerExperiment(project) && <Button onClick={resolveAttention}><AlertTriangle className="size-4" />{attention?.request?.diagnosticCode === "local-evidence-incomplete" ? "查看证据详情" : "处理这个问题"}</Button>}

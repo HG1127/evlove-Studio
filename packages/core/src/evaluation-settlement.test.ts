@@ -5,7 +5,7 @@ import {
   type TargetRunResult,
   type TestCase,
 } from "@evolution/contracts";
-import { deriveCriterionScores, settleAiEvaluation, settleDeterministicEvaluation } from "./evaluation-settlement";
+import { criteriaRequiringJudge, deriveCriterionScores, settleAiEvaluation, settleDeterministicEvaluation } from "./evaluation-settlement";
 
 const criterion = (id: string, validationMethod: "semantic-judge" | "format-roundtrip" = "semantic-judge") =>
   AcceptanceCriterionSchema.parse({ id, title: id, requirement: `${id} must pass`, hardGate: true, minScore: 80, validationMethod });
@@ -73,6 +73,40 @@ describe("evaluation result identity", () => {
   });
 });
 
+
+describe("baseline source-negative scoring precedence",()=>{
+  const c={...criterion("USER-PRIMARY-INTENT"),source:"user-command" as const,hardGate:true};
+  const t=testCase("H-NEGATIVE",c.id);
+  const documented={
+    ...run(t.id,"VERIFIED DOCUMENTED BASELINE DEFECT (not product success)\\nExact original citation: 重要结论没有证据来源"),
+    trace:[{id:"source-quote",stage:"baseline-exact-source-negative-evidence",summary:"完整原文缺陷",status:"pass" as const,detail:"Source exact quote matched"}],
+  };
+  it("keeps a direct, source-grounded absence as VERIFIED FAIL even if the Judge awards 100",()=>{
+    const result=deriveCriterionScores([c],[t],[],[documented],[judgement(c.id,t.id,100)]);
+    expect(result.criterionScores[0]).toMatchObject({score:0,pass:false,verificationStatus:"verified"});
+    expect(result.criterionScores[0]!.evidence.join(" ")).toContain("Exact original citation");
+  });
+  it("does not charge an LLM Judge for exact, fully documented baseline failure",()=>{
+    expect(criteriaRequiringJudge([c],[t],[documented])).toEqual([]);
+    expect(criteriaRequiringJudge([c],[t],[documented,{...documented}])).toEqual([c]);
+  });
+  it("does not override a candidate without the exact negative-evidence trace",()=>{
+    const candidate=deriveCriterionScores([c],[t],[],[run(t.id)],[judgement(c.id,t.id,100)]);
+    expect(candidate.criterionScores[0]).toMatchObject({score:100,pass:true,verificationStatus:"verified"});
+  });
+  it("does not trust legacy VERIFIED rows that omit source output or trace",()=>{
+    const incomplete={testCaseId:t.id,verificationStatus:"verified"} as TargetRunResult;
+    const noBytes=deriveCriterionScores([c],[t],[],[incomplete],[judgement(c.id,t.id,100)]);
+    expect(noBytes.criterionScores[0]).toMatchObject({pass:false,verificationStatus:"unverified"});
+    const missingTrace={...run(t.id,"VERIFIED DOCUMENTED BASELINE DEFECT (not product success)"),trace:undefined} as unknown as TargetRunResult;
+    const noTrace=deriveCriterionScores([c],[t],[],[missingTrace],[judgement(c.id,t.id,100)]);
+    expect(noTrace.criterionScores[0]).toMatchObject({pass:false,verificationStatus:"unverified"});
+  });
+  it("still fails closed on duplicated original runs",()=>{
+    const result=deriveCriterionScores([c],[t],[],[documented,{...documented}],[judgement(c.id,t.id,100)]);
+    expect(result.criterionScores[0]).toMatchObject({pass:false,verificationStatus:"unverified"});
+  });
+});
 
 describe("generated HTML protection coverage", () => {
   it.each([true, false])("keeps search-only proof partial even when the Judge awards 100 (hardGate=%s)", (hardGate) => {

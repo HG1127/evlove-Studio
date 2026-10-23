@@ -13,6 +13,7 @@ import { analyzeCodeFile } from "./code-analysis";
 import { buildRepositoryIntelligence } from "./repository-intelligence";
 import { parseWithExternalGateway, type ParserGatewayConfig } from "./parser-gateway";
 import type { ParsingProfile } from "../schemas";
+import {isTextArtifactExtension} from "@evolution/core";
 
 // Office/压缩包解析库体积较大。它们属于“用户真的上传对应格式后才需要”的能力，
 // 因此不随项目工作台和普通文本上传一起下载。
@@ -67,7 +68,7 @@ function looksText(name: string, mime: string) {
   const extension = ext(name);
   // 扩展名声明是已知二进制格式时，绝不能按文本解码（docx 的 MIME 含 "xml" 就是历史踩坑点）。
   if (BINARY_EXTENSIONS.has(extension)) return false;
-  if (TEXT_EXTENSIONS.has(extension)) return true;
+  if (isTextArtifactExtension(extension)||TEXT_EXTENSIONS.has(extension)) return true;
   if (mime.startsWith("text/")) return true;
   // 精确的 JSON/XML MIME；不用 includes，避免 openxmlformats 这类误判。
   if (mime === "application/json" || mime.endsWith("+json")) return true;
@@ -183,6 +184,7 @@ function artifactKindFrom(name: string, mime: string, structure: string[] = [], 
   if (/prompt|system[-_ ]?instruction|assistant[-_ ]?instruction/i.test(name) || (["txt","md","json","yaml","yml"].includes(extension) && /(?:^|\n)\s*(system|role|instructions?|输出格式|禁止事项|你是|you are)\s*[:：]/i.test(sample))) return "prompt" as const;
   if (/knowledge|knowledgebase|knowledge-base|kb|corpus|语料|知识库/i.test(name)) return "knowledge" as const;
   if (["doc","docx","odt","pdf","rtf","md","mdx","txt","html","htm"].includes(extension)) return "document" as const;
+  if (extension==="svg")return "generic" as const;
   if (mime.startsWith("image/")) return "image" as const;
   if (mime.startsWith("audio/") || mime.startsWith("video/") || ["mp3","wav","ogg","m4a","mp4","mov","avi","webm"].includes(extension)) return "media" as const;
   return "generic" as const;
@@ -379,7 +381,14 @@ async function extractZipContainer(buffer: SourceBuffer) {
 /** .docx：同时抽取可读文本与 OOXML 文本 run，后续可在原 DOCX package 上同格式物化。 */
 async function extractDocx(buffer: SourceBuffer) {
   let mammothText = "";
-  try { mammothText = (await (await loadMammoth()).extractRawText({ arrayBuffer: toArrayBuffer(buffer) })).value; } catch { /* OOXML 仍可继续解析 */ }
+  // Mammoth's browser ArrayBuffer adapter is not the Node implementation.
+  // In the parsing Worker and server-side tests use indexed OOXML directly;
+  // attempting the incompatible Node adapter can emit an unhandled rejection.
+  const browserMammoth = typeof window !== "undefined" && typeof process === "undefined";
+  if(browserMammoth){
+    try { mammothText = (await (await loadMammoth()).extractRawText({ arrayBuffer: toArrayBuffer(buffer) })).value; }
+    catch { /* Deterministic OOXML indexed parser is the fallback. */ }
+  }
   const JSZip = await loadZip();
   const zip = await JSZip.loadAsync(buffer);
   const paths = ["word/document.xml", ...Object.keys(zip.files).filter((name) => /^word\/(footnotes|endnotes|header\d*|footer\d*)\.xml$/.test(name))];
@@ -397,7 +406,7 @@ async function extractDocx(buffer: SourceBuffer) {
   const fallback = chunks.join("\n\n");
   const text = mammothText.trim() || fallback;
   if (!text.trim()) throw new Error("docx 中未找到可解析的正文内容");
-  return { text, structure: parts.map((part) => part.path), structuredContent: { kind: "document", subtype: "docx", parts }, viaFallback: !mammothText.trim() };
+  return { text, structure: parts.map((part) => part.path), structuredContent: { kind: "document", subtype: "docx", parts }, viaFallback: browserMammoth && !mammothText.trim() };
 }
 
 /** .pptx：逐页抽取文字，同时保留 slide path 与 a:t run 顺序，后续可在原 PPTX 上物化新文本。 */
@@ -409,7 +418,8 @@ async function extractPptx(buffer: SourceBuffer) {
   const structuredSlides: Array<{ number: number; path: string; textRuns: Array<{ index: number; text: string }> }> = [];
   for (const name of slides) {
     const xml = await zip.file(name)!.async("string");
-    const runs = [...xml.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)].map((match,index)=>({ index, text: xmlUnescape(match[1] ?? "") }));
+    // Mirror Server OOXML run positions, including xml:space attributes.
+    const runs = [...xml.matchAll(/<a:t(?:\s[^>]*)?>([\s\S]*?)<\/a:t>/g)].map((match,index)=>({ index, text: xmlUnescape(match[1] ?? "") }));
     const number = Number(name.match(/slide(\d+)/)?.[1] ?? structuredSlides.length+1);
     structuredSlides.push({ number, path: name, textRuns: runs });
     const text = runs.map((run)=>run.text).filter(Boolean).join("\n").trim();
@@ -433,9 +443,11 @@ async function extractOpenDocument(buffer: SourceBuffer) {
   return { text };
 }
 
-async function extractSpreadsheet(buffer: SourceBuffer) {
+async function extractSpreadsheet(buffer: SourceBuffer,extension="") {
   const XLSX = await loadSpreadsheet();
-  const workbook = XLSX.read(toArrayBuffer(buffer), { type: "array", cellFormula: true, cellStyles: true, cellDates: true, bookVBA: true });
+  const delimited=extension==="csv"||extension==="tsv";
+  const workbook = XLSX.read(toArrayBuffer(buffer), { type: "array", cellFormula: true, cellStyles: true, cellDates: true, bookVBA: true,
+    raw:delimited,FS:extension==="tsv"?"\t":undefined });
   const sheets = workbook.SheetNames.slice(0, 20).map((name) => {
     const sheet = workbook.Sheets[name];
     const csv = sheet ? XLSX.utils.sheet_to_csv(sheet).slice(0, 24000) : "";
@@ -485,17 +497,29 @@ function tryDecodeText(buffer: SourceBuffer) {
 /** 上传前按扩展名/MIME 预判能否解析，让用户在选择文件时就看到风险，而不是解析完才知道。 */
 export function assessFileReadiness(name: string, mime: string): { level: "ok" | "caution" | "blocked"; note: string } {
   const extension = ext(name);
+  if(extension==="svg")return {level:"ok",note:"支持 SVG 源码修改与独立 XML 语法校验；最终视觉效果仍需浏览器验证。"};
   if (mime.startsWith("image/") || ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico"].includes(extension)) {
-    return { level: "ok", note: "图片可进入视觉理解；同格式视觉重绘需要图像 Renderer 插件" };
+    return { level: "caution", note: "图片可以用于视觉理解和提出修改方案，但当前没有同格式图像编辑 Renderer；不能直接完成图片进化交付。" };
   }
   if (mime.startsWith("audio/") || mime.startsWith("video/") || ["mp3","wav","ogg","m4a","mp4","mov","avi","webm"].includes(extension)) {
     return { level: "caution", note: "已识别为音视频成果；可建立专属验收标准，但转写/剪辑/同格式导出需要媒体 Renderer 插件" };
   }
-  if (extension === "doc" || extension === "ppt" || extension === "xls") {
+  if (extension === "pdf" || mime === "application/pdf") {
+    return { level: "caution", note: "PDF 可读取、理解和分析，但暂缺同格式版式重排 Renderer；不能把文字摘要当成已进化 PDF。建议提供可编辑 DOCX 源文件。" };
+  }
+  if (["rtf", "odt", "odp"].includes(extension)) {
+    return { level: "caution", note: "该格式可以尝试读取，但缺少可靠原格式写入器；建议转为 DOCX/PPTX/TXT 再做完整进化与验收。" };
+  }
+  if (extension === "doc" || extension === "ppt") {
     return { level: "caution", note: "老版 Office 二进制格式，只能尽量抽取文字，建议先另存为 docx / pptx / xlsx" };
   }
+  if (extension === "docx")return {level:"ok",note:"支持在原 DOCX 中修改已定位的文字 run，保留未修改样式和媒体；新增复杂页面仍需专用 Renderer。"};
+  if (extension === "pptx")return {level:"ok",note:"支持在原 PPTX 中逐页回写已有文本，保留图片与版式对象；新增图表/页面布局仍需视觉渲染能力。"};
+  if (["xlsx", "xls", "ods"].includes(extension))return {level:extension === "xlsx"?"ok":"caution",note:"支持按原表格坐标更新数据和公式，但公式重算、复杂图表/宏及外部连接仍需 Office 验证。"};
+  if (["csv", "tsv"].includes(extension))return {level:"ok",note:"支持从完整原数据精确修改单元格并校验未修改行列；CSV/TSV 不支持可执行公式。"};
+  if (extension === "zip")return {level:"ok",note:"可按 ZIP 内文件精确修改并保留未修改条目；工程构建与测试需要隔离 Runner。"};
   if (looksText(name, mime)) return { level: "ok", note: "" };
-  if (["pdf", "docx", "xlsx", "pptx", "odt", "ods", "odp", "zip"].includes(extension) || mime.includes("openxmlformats") || mime.includes("opendocument") || mime === "application/pdf") {
+  if (mime.includes("openxmlformats") || mime.includes("opendocument")) {
     return { level: "ok", note: "" };
   }
   if (BINARY_EXTENSIONS.has(extension)) return { level: "blocked", note: "该格式无法读取内容，只会保存文件信息；可补充文字说明或转成文本格式" };
@@ -515,13 +539,13 @@ export async function extractSource(args: { name: string; mimeType: string; buff
   let structuredContent: unknown;
   let zipParseStats: { totalEntries:number; indexedEntries:number; parsedEntries:number; eligibleEntries:number; deepIndexedEntries:number; codeFiles:number; documentFiles:number; officeFiles:number; imageFiles:number; parseOkCode:number; indexedSymbols:number; internalImports:number; resolvedInternalImports:number; criticalEntries:number; inspectedCriticalEntries:number; selectedChars:number; summaryChars:number } | undefined;
   const magic = magicOf(buffer);
-  const isOfficeByExt = ["doc", "docx", "xls", "xlsx", "ppt", "pptx"].includes(extension);
+  const isOfficeByExt = ["doc", "docx", "xls", "xlsx", "ods", "csv", "tsv", "ppt", "pptx"].includes(extension);
   const looksOfficeMime = mimeType.includes("openxmlformats") || mimeType === "application/msword" || mimeType.includes("excel") || mimeType.includes("presentationml") || mimeType.includes("msword");
 
   if (isOfficeByExt || looksOfficeMime) {
     // 以扩展名/MIME 声明为入口，再以魔数核实真实格式，两边不符时给出可操作的提示。
     const docxLike = extension === "docx" || mimeType.includes("wordprocessingml");
-    const xlsxLike = extension === "xlsx" || mimeType.includes("spreadsheet") || mimeType.includes("excel");
+    const xlsxLike = ["xlsx","ods","csv","tsv"].includes(extension) || mimeType.includes("spreadsheet") || mimeType.includes("excel");
     const pptxLike = extension === "pptx" || mimeType.includes("presentationml");
     try {
       if (docxLike || (!xlsxLike && !pptxLike && magic === "zip")) {
@@ -531,7 +555,7 @@ export async function extractSource(args: { name: string; mimeType: string; buff
         structuredContent = result.structuredContent;
         if (result.viaFallback) warnings.push("Word 标准解析器未能完整解析，已改从 DOCX OOXML 文本 run 读取正文；图片/复杂排版只保留原包，不做语义重建。");
       } else if (xlsxLike || extension === "xls") {
-        const sheet = await extractSpreadsheet(buffer);
+        const sheet = await extractSpreadsheet(buffer,extension);
         text = sheet.text;
         structure = sheet.structure;
         structuredContent = sheet.structuredContent;

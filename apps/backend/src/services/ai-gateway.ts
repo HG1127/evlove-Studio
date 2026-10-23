@@ -1,4 +1,5 @@
 import type { ZodType } from "zod";
+import { aiProviderTransportFailure,fetchAiProvider,parseStructuredAiOutput } from "@evolution/adapters";
 import { createHash } from "node:crypto";
 import {
   AiOperationSchema,
@@ -136,7 +137,7 @@ type ResponsesJson={
   error?:{message?:string}|null;
 };
 type ChatJson={
-  choices?:Array<{message?:{content?:string|Array<{type?:string;text?:string}>}}>;
+  choices?:Array<{finish_reason?:string|null;message?:{content?:string|Array<{type?:string;text?:string}>;reasoning_content?:string}}>;
   error?:{message?:string}|null;
 };
 
@@ -149,13 +150,31 @@ function responseText(json:ResponsesJson){
 }
 
 function chatText(json:ChatJson){
-  const value=json.choices?.[0]?.message?.content;
+  const choice=json.choices?.[0];
+  if(choice?.finish_reason==="length"){
+    throw Object.assign(new Error("模型回复达到输出长度上限，结果被截断。请缩小任务范围或切换模型后重试。"),{code:"AI_OUTPUT_INCOMPLETE"});
+  }
+  if(choice?.finish_reason==="content_filter"){
+    throw new Error("模型服务拦截了回复，未返回完整 JSON 结果。");
+  }
+  const value=choice?.message?.content;
   if(typeof value==="string"&&value.trim())return value;
   if(Array.isArray(value)){
-    const joined=value.map((item)=>item.text??"").join("").trim();
+    const joined=value.filter((item)=>!item.type||item.type==="text"||item.type==="output_text")
+      .map((item)=>item.text??"").join("").trim();
     if(joined)return joined;
   }
-  throw new Error("Server AI chat response missing content");
+  if(choice?.message?.reasoning_content?.trim()){
+    throw Object.assign(new Error("模型只返回了推理内容，没有最终 JSON 结果。请重试或切换模型。"),{code:"AI_OUTPUT_MISSING_FINAL"});
+  }
+  throw new Error("模型未返回最终 JSON 结果，请检查模型与接口协议。");
+}
+
+function parseStructuredResult<T>(text:string,contract:Contract<T>):T{
+  const result=contract.parser.safeParse(parseStructuredAiOutput(text));
+  if(result.success)return result.data;
+  const fields=[...new Set(result.error.issues.map((issue)=>issue.path.join(".")||"结果"))].slice(0,4);
+  throw Object.assign(new Error(`模型返回的 JSON 不符合任务结构（${fields.join("、")}）。请检查模型的结构化输出能力或切换模型。`),{code:"AI_OUTPUT_SCHEMA_MISMATCH",fields});
 }
 
 async function callVercelGateway<T>(args:{
@@ -187,8 +206,9 @@ async function callVercelGateway<T>(args:{
   return args.contract.parser.parse(generated.output);
 }
 
-function directSystem<T>(config:Extract<ServerAiConfig,{mode:"openai-compatible"}>,contract:Contract<T>){
-  const base=SYSTEM+"\n\nTask: "+contract.instruction;
+function directSystem<T>(config:Extract<ServerAiConfig,{mode:"openai-compatible"}>,contract:Contract<T>,repairFields?:string[]){
+  const repair=repairFields ? "\nPREVIOUS OUTPUT INVALID: "+(repairFields.join(", ")||"required fields")+". Generate a COMPLETE syntactically valid JSON object, concise strings, no Markdown or commentary, and include ALL required fields with correct types. Recompute from the same evidence; never invent source facts or verification." : "";
+  const base=SYSTEM+"\n\nTask: "+contract.instruction+repair;
   return config.responseFormat&&config.responseFormat!=="json-schema"
     ?base+"\nReturn JSON matching this exact schema:\n"+JSON.stringify(contract.schema.schema)
     :base;
@@ -200,8 +220,8 @@ function directFormat<T>(config:Extract<ServerAiConfig,{mode:"openai-compatible"
   return {type:"json_schema" as const,name:contract.schema.name,strict:true,schema:contract.schema.schema};
 }
 
-async function callResponses<T>(args:{config:Extract<ServerAiConfig,{mode:"openai-compatible"}>;contract:Contract<T>;payload:unknown;images:ParsedImage[]}){
-  const response=await fetch(args.config.baseUrl+"/responses",{
+async function callResponses<T>(args:{config:Extract<ServerAiConfig,{mode:"openai-compatible"}>;contract:Contract<T>;payload:unknown;images:ParsedImage[];repairFields?:string[]}){
+  const response=await fetchAiProvider(args.config.baseUrl+"/responses",{
     method:"POST",
     redirect:"error",
     signal:AbortSignal.timeout(args.config.timeoutMs),
@@ -210,7 +230,7 @@ async function callResponses<T>(args:{config:Extract<ServerAiConfig,{mode:"opena
       model:args.config.model,
       store:false,
       input:[
-        {role:"system",content:[{type:"input_text",text:directSystem(args.config,args.contract)}]},
+        {role:"system",content:[{type:"input_text",text:directSystem(args.config,args.contract,args.repairFields)}]},
         {role:"user",content:[
           {type:"input_text",text:JSON.stringify(args.payload)},
           ...args.images.map((image)=>({type:"input_image",image_url:image.dataUrl})),
@@ -226,19 +246,24 @@ async function callResponses<T>(args:{config:Extract<ServerAiConfig,{mode:"opena
     throw error;
   }
   if(json.status&&json.status!=="completed")throw new Error("Server AI response status: "+json.status);
-  return args.contract.parser.parse(JSON.parse(responseText(json)));
+  return parseStructuredResult(responseText(json),args.contract);
 }
 
-async function callChat<T>(args:{config:Extract<ServerAiConfig,{mode:"openai-compatible"}>;contract:Contract<T>;payload:unknown;images:ParsedImage[]}){
-  const response=await fetch(args.config.baseUrl+"/chat/completions",{
+async function callChat<T>(args:{config:Extract<ServerAiConfig,{mode:"openai-compatible"}>;contract:Contract<T>;payload:unknown;images:ParsedImage[];repairFields?:string[]}){
+  // An independent multi-case Judge requires more room than providers default to.
+  // Only request the larger budget for the evidence-scoring contract. This
+  // remains a strict JSON + Zod check; longer output never implies acceptance.
+  const isEvaluation=args.contract.schema.name==="evolve_evaluation";
+  const response=await fetchAiProvider(args.config.baseUrl+"/chat/completions",{
     method:"POST",
     redirect:"error",
     signal:AbortSignal.timeout(args.config.timeoutMs),
     headers:{Authorization:"Bearer "+args.config.apiKey,"Content-Type":"application/json"},
     body:JSON.stringify({
       model:args.config.model,
+      ...(isEvaluation?{max_tokens:8192}:{}),
       messages:[
-        {role:"system",content:directSystem(args.config,args.contract)},
+        {role:"system",content:directSystem(args.config,args.contract,args.repairFields)},
         {role:"user",content:args.images.length?[
           {type:"text",text:JSON.stringify(args.payload)},
           ...args.images.map((image)=>({type:"image_url",image_url:{url:image.dataUrl}})),
@@ -253,7 +278,7 @@ async function callChat<T>(args:{config:Extract<ServerAiConfig,{mode:"openai-com
   });
   const json=await response.json().catch(()=>({})) as ChatJson;
   if(!response.ok)throw Object.assign(new Error(json.error?.message||("Server AI Chat HTTP "+response.status)),{httpStatus:response.status});
-  return args.contract.parser.parse(JSON.parse(chatText(json)));
+  return parseStructuredResult(chatText(json),args.contract);
 }
 
 async function structured<T>(payload:unknown,schema:Contract<T>,media?:ServerAiMedia):Promise<T>{
@@ -268,20 +293,35 @@ async function structured<T>(payload:unknown,schema:Contract<T>,media?:ServerAiM
   if(config.mode==="vercel-gateway"){
     return callVercelGateway({config,contract:schema,payload,images});
   }
-  try{
-    if(config.protocol==="chat-completions")return await callChat({config,contract:schema,payload,images});
-    if(config.protocol==="responses")return await callResponses({config,contract:schema,payload,images});
-    try{
-      return await callResponses({config,contract:schema,payload,images});
-    }catch(error){
+  const invoke=async(repairFields?:string[])=>{
+    const args={config,contract:schema,payload,images,repairFields};
+    if(config.protocol==="chat-completions")return callChat(args);
+    if(config.protocol==="responses")return callResponses(args);
+    try{return await callResponses(args);}
+    catch(error){
       const status=(error as {httpStatus?:number}).httpStatus;
       if(status!==404&&status!==405&&status!==400)throw error;
-      return await callChat({config,contract:schema,payload,images});
+      return callChat(args);
+    }
+  };
+  try{
+    try{return await invoke();}
+    catch(error){
+      // Generation is side-effect-free. Retry once for malformed/partial AI output only.
+      // Provider auth, billing, network and arbitrary execution failures do not get retried.
+      // Neither attempt bypasses JSON parsing or the versioned Zod task contract.
+      const code=(error as {code?:string}).code;
+      if(!["AI_OUTPUT_SCHEMA_MISMATCH","AI_OUTPUT_INVALID_JSON","AI_OUTPUT_INCOMPLETE","AI_OUTPUT_MISSING_FINAL"].includes(code??""))throw error;
+      const failedFields=(error as {fields?:string[]}).fields;
+      return await invoke(failedFields?.length?failedFields:[code==="AI_OUTPUT_INVALID_JSON"?"JSON syntax or truncated JSON response":code??"invalid AI output"]);
     }
   }catch(error){
     const original=error as {message?:string;httpStatus?:number;code?:string};
-    const message=(original.message??String(error)).replaceAll(config.apiKey,"[REDACTED]");
-    throw Object.assign(new Error(message),{httpStatus:original.httpStatus,code:original.code});
+    const transportFailure=aiProviderTransportFailure(error);
+    const message=(transportFailure?serverAiUnavailableMessage(transportFailure):(original.message??String(error))).replaceAll(config.apiKey,"[REDACTED]");
+    const code=transportFailure==="provider-timeout"?"SERVER_AI_PROVIDER_TIMEOUT"
+      :transportFailure==="provider-network-error"?"SERVER_AI_PROVIDER_NETWORK_ERROR":original.code;
+    throw Object.assign(new Error(message),{httpStatus:original.httpStatus,code});
   }
 }
 
@@ -339,10 +379,12 @@ export function serverAiUnavailableReason(error:unknown):string|undefined{
   if(statuses.some((status)=>status===401||status===402||status===403))return "provider-auth-or-billing";
   if(statuses.some((status)=>status===429)||/rate.?limit|quota|insufficient (?:credit|balance)|billing/.test(text))return "provider-rate-limit";
   if(statuses.some((status)=>status===502||status===503||status===504))return "provider-unavailable";
-  return undefined;
+  return aiProviderTransportFailure(error);
 }
 
 export function serverAiUnavailableMessage(reasonCode:string){
+  if(reasonCode==="provider-network-error")return "后端暂时无法连接模型服务，已保留当前任务。请重试，或检查网络、接口地址和代理设置。";
+  if(reasonCode==="provider-timeout")return "模型服务未在等待时间内返回完整结果，已保留当前任务。请缩小任务范围或切换模型后重试。";
   if(reasonCode==="customer-verification-required")return "Vercel AI Gateway 已配置，但团队尚未完成信用卡/账户验证；请改用真实 BYOK，或之后完成 Vercel AI Gateway 计费验证。";
   if(reasonCode==="provider-auth-or-billing")return "Server AI Provider 鉴权或计费不可用；请检查服务端 Provider 配置，或改用真实 BYOK。";
   if(reasonCode==="provider-rate-limit")return "Server AI Provider 当前额度/频率受限；请稍后重试或改用真实 BYOK。";

@@ -1,5 +1,6 @@
 import {describe,expect,it} from "vitest";
 import type {EvolveProject,Lesson} from "@evolution/contracts";
+import {withMeasuredProductionGoal} from "@evolution/testkit";
 import {
   appendReleaseObservation,
   applyProductionLearningGovernance,
@@ -12,7 +13,7 @@ import {
 
 function baseProject():EvolveProject{
   const observedAt="2026-09-20T15:00:00.000Z";
-  return {
+  return withMeasuredProductionGoal({
     id:"mission-learning",
     releaseTarget:{provider:"vercel",mode:"preview-promote",status:"connected",label:"Vercel"},
     targetConnection:{adapter:"artifact",connectionId:"artifact",status:"connected",label:"Artifact"},
@@ -31,7 +32,7 @@ function baseProject():EvolveProject{
     validationRun:{id:"validation-c1"},
     lessons:[],
     nextQueue:[],
-  } as unknown as EvolveProject;
+  } as unknown as EvolveProject);
 }
 
 function skill(project:EvolveProject):Lesson{
@@ -42,6 +43,11 @@ function skill(project:EvolveProject):Lesson{
 }
 
 describe("production learning governance",()=>{
+  it("does not mint a Verified Skill from offline acceptance",()=>{
+    const p=baseProject();p.releaseTarget={provider:"none",mode:"progressive",status:"not-configured",label:"offline",healthPath:"/"};
+    const result=attachLessonGovernance(p,{id:"offline",title:"offline",summary:"useful",reusable:true,effect:"improved",limit:"offline",trigger:[],method:[],validatedOn:[],status:"verified-skill"});
+    expect(result.status).toBe("lesson");
+  });
   it("attaches active governance only when production evidence is stable healthy",()=>{
     const project=baseProject();
     const lesson=skill(project);

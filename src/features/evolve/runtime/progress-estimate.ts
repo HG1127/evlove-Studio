@@ -21,7 +21,7 @@ export function displayProgress(status: RuntimeStatus): DisplayProgress {
   const total = status.total ?? 0;
   if (total > 1 || done > 0) {
     const percent = Math.min(100, Math.max(0, status.percent ?? Math.round(done / Math.max(total, 1) * 100)));
-    return { percent, estimated: false, caption: `${done}/${total} 项完成`, etaSeconds: status.etaSeconds };
+    return { percent, estimated: false, caption: /候选文件/.test(status.phase??"")?`${done}/${total} 个方案已处理`:`${done}/${total} 项完成`, etaSeconds: status.etaSeconds };
   }
 
   const elapsed = Math.max(0, status.elapsedSeconds ?? 0);

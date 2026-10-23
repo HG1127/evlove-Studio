@@ -4,6 +4,7 @@ import {EvolutionJobCreateRequestSchema,EvolutionJobSchema,PRODUCTION_SCHEMA_VER
 import {createServerJobIdempotent,getServerProductionRuntime,JobStateConflictError} from "../../../src/services/production-runtime";
 import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 import {requireServerDataPlaneAvailable} from "../../../src/services/data-plane-guard";
+import {requiresSandboxHtmlSourceExecution} from "@evolution/core";
 
 export default defineEventHandler(async(event)=>{
   await requireGovernedEvolutionPermission(event,"mission.execute");
@@ -11,8 +12,16 @@ export default defineEventHandler(async(event)=>{
   const parsed=EvolutionJobCreateRequestSchema.safeParse(await readBody(event));
   if(!parsed.success)throw createError({statusCode:400,statusMessage:parsed.error.message});
   const input=parsed.data;
-  if(input.missionId&&!await getServerProductionRuntime().missions.get(input.missionId)){
+  const mission=input.missionId?await getServerProductionRuntime().missions.get(input.missionId):undefined;
+  if(input.missionId&&!mission){
     throw createError({statusCode:404,statusMessage:"Mission not found"});
+  }
+  // Generic Job creation does not start a Workflow or acquire the per-Mission
+  // transaction lock. HTML Campaigns must only enter through the governed
+  // start endpoint, otherwise they could leave a competing queued receipt.
+  if(input.type==="campaign"&&mission&&requiresSandboxHtmlSourceExecution(mission)){
+    throw createError({statusCode:409,statusMessage:
+      "HTML Campaign 请使用 /api/evolution/start；通用 Job 创建入口不能绕过 Mission 原子启动保护"});
   }
   const now=new Date().toISOString();
   const job=EvolutionJobSchema.parse({

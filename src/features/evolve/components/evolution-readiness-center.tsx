@@ -35,10 +35,10 @@ import {
 } from "../runtime/system-readiness";
 import { deriveWorkflowSteps } from "../runtime/workflow-engine";
 import { getRunnerGatewayConfig, testRunnerGateway } from "../runtime/target-runner-config";
-import { PRODUCTION_BOUNDARIES, PRODUCTION_SCHEMA_VERSIONS, PRODUCTION_PORTS, type ConnectorRegistryCapabilities, type EvidenceLedgerHealth, type EvolutionBackendHealth, type EvolutionWorkflowCapabilities, type GitTargetCapabilities, type OrganizationCapabilityHealth, type OutcomeAnalyticsHealth, type PublicReadinessSnapshot, type SandboxBrowserHealth, type SandboxHealth, type VercelReleaseCapabilities, type VercelReleaseHealth } from "@evolution/contracts";
+import { PRODUCTION_BOUNDARIES, PRODUCTION_SCHEMA_VERSIONS, PRODUCTION_PORTS, type ConnectorRegistryCapabilities, type EvidenceLedgerHealth, type EvolutionBackendHealth, type EvolutionWorkflowCapabilities, type GitTargetCapabilities, type OrganizationCapabilityHealth, type OutcomeAnalyticsHealth, type PublicReadinessSnapshot, type SandboxBrowserHealth, type SandboxHealth, type SandboxAuthorizationDiagnostic, type VercelReleaseCapabilities, type VercelReleaseHealth } from "@evolution/contracts";
 import { productionRuntimeMode } from "../runtime/production-runtime";
 import { productionSyncStatus } from "../runtime/production-sync";
-import { checkPublicReadiness, checkServerBackendHealth, checkServerBrowserHealth, checkServerSandboxHealth, getServerWorkflowCapabilities } from "../runtime/server-workflow-client";
+import { checkPublicReadiness, checkServerBackendHealth, checkServerBrowserHealth, checkServerSandboxHealth, getServerSandboxAuthorizationDiagnostic, getServerWorkflowCapabilities } from "../runtime/server-workflow-client";
 import { checkServerVercelReleaseHealth, getServerVercelReleaseCapabilities } from "../runtime/server-release-client";
 import { getServerGitTargetCapabilities } from "../runtime/server-git-client";
 import { getServerOrganizationCapabilityHealth } from "../runtime/server-capability-client";
@@ -59,7 +59,7 @@ function readRunnerCapabilities(): RunnerCapabilitySnapshot | undefined {
 }
 
 function workflowCapabilityMessage(capabilities: EvolutionWorkflowCapabilities) {
-  if (capabilities.fullAuto) return "Durable Workflow 已具备离线 + 线上完整 AutoPilot 接管能力";
+  if (capabilities.fullAuto) return "通用 Durable Workflow 已满足当前配置条件；HTML/Codebase 仍须按 Target 执行真实 Sandbox、Browser 和验收探针才能标记运行可用。";
   const serverAiDetail=!capabilities.serverAiVerified&&capabilities.backend.serverAiMessage
     ? `Server AI：${capabilities.backend.serverAiMessage}`
     : "";
@@ -120,6 +120,7 @@ export function EvolutionReadinessCenter() {
   const [backendHealthCheck,setBackendHealthCheck]=useState<{busy:boolean;message:string;health?:EvolutionBackendHealth}>({busy:false,message:""});
   const [publicReadinessCheck,setPublicReadinessCheck]=useState<{busy:boolean;message:string;snapshot?:PublicReadinessSnapshot}>({busy:false,message:""});
   const [sandboxCheck, setSandboxCheck] = useState<{ busy: boolean; message: string; health?: SandboxHealth }>({ busy: false, message: "" });
+  const [sandboxAuthCheck,setSandboxAuthCheck]=useState<{busy:boolean;diagnostic?:SandboxAuthorizationDiagnostic;message:string}>({busy:false,message:""});
   const [browserCheck, setBrowserCheck] = useState<{ busy: boolean; message: string; health?: SandboxBrowserHealth }>({ busy: false, message: "" });
   const [releaseCheck, setReleaseCheck] = useState<{ busy: boolean; message: string; capabilities?: VercelReleaseCapabilities; health?: VercelReleaseHealth }>({ busy: false, message: "" });
   const [gitCheck,setGitCheck]=useState<{busy:boolean;message:string;capabilities?:GitTargetCapabilities}>({busy:false,message:""});
@@ -199,7 +200,11 @@ export function EvolutionReadinessCenter() {
   const serverAiVerified=Boolean(workflowCheck.capabilities?.serverAiVerified||backendHealthCheck.health?.serverAi.runtimeVerified);
   const serverAiRuntimeStatus=workflowCheck.capabilities?.backend.serverAiRuntimeStatus??backendHealthCheck.health?.serverAi.runtimeStatus;
   const p04Ready = Boolean(sandboxCheck.health?.ready&&sandboxCheck.health.policy.codeReady);
-  const p04BrowserReady = Boolean(browserCheck.health?.ready);
+  const p04BrowserReady = Boolean(browserCheck.health?.ready&&browserCheck.health.previewHealthy&&browserCheck.health.browserStepsVerified&&browserCheck.health.browserStepsExecuted>0);
+  const htmlServerBrowserReady=Boolean(p04Ready&&p04BrowserReady);
+  const htmlLocalSmoke=Boolean(runner?.htmlBrowser&&runner?.e2e);
+  const sandboxAuthBlocked=Boolean(sandboxAuthCheck.diagnostic
+    &&!["unverified","access-token-unverified"].includes(sandboxAuthCheck.diagnostic.state));
   const connectorCount=connectorCheck.capabilities?.connectorCount??0;
   const connectorFullCount=connectorCheck.capabilities?.fullLifecycleCount??0;
   const connectorConfigured=Boolean(connectorCount>0||publicReadiness?.connectors.configured);
@@ -218,7 +223,7 @@ export function EvolutionReadinessCenter() {
     : BACKEND_REQUIREMENTS.filter((item) => item.priority === backendPriority);
   const targetCoverage = [
     { target: "文件 / Office / HTML Artifact", state: backendHealthCheck.health?.artifactRenderer.configured ? "ready" : "partial", read: "✓", snapshot: "✓", mutate: "✓", validate: backendHealthCheck.health?.artifactRenderer.configured ? "Server Render + Reopen Verify" : "Browser Verify", deploy: backendHealthCheck.health?.artifactRenderer.configured ? "Artifact Store" : "本地交付", observe: "结构/Hash Evidence", rollback: "✓", gap: backendHealthCheck.health?.artifactRenderer.configured ? "PDF/设计类保持 external-required；视觉/公式重算继续补强" : "Server Renderer 等待 Artifact Store/Data Plane" },
-    { target: "HTML / Web 页面", state: p04BrowserReady || (runner?.htmlBrowser && runner?.e2e) ? "ready" : "partial", read: "✓", snapshot: "✓", mutate: "✓", validate: p04BrowserReady ? "Chromium Steps" : runner?.e2e ? "✓" : "部分", deploy: p04BrowserReady ? "Sandbox Preview" : "Preview", observe: p04BrowserReady ? "真实交互" : runner?.screenshots ? "✓" : "部分", rollback: "✓", gap: p04BrowserReady ? "Route Matrix / 视觉审查继续扩展" : "工程级 Preview / Browser Runtime" },
+    { target: "HTML / Web 页面", state: htmlServerBrowserReady ? "ready" : htmlLocalSmoke ? "partial" : "backend", read: "✓", snapshot: "✓", mutate: "✓", validate: htmlServerBrowserReady ? "Sandbox Chromium Steps" : htmlLocalSmoke ? "仅本地 E2E" : "服务端未验证", deploy: htmlServerBrowserReady ? "Sandbox Preview" : "等待 Sandbox", observe: htmlServerBrowserReady ? "已验证交互" : "无服务端交互证据", rollback: "✓", gap: htmlServerBrowserReady ? "Browser Runtime 已就绪；完整 Mission 仍需单独执行" : sandboxCheck.health&&!sandboxCheck.health.ready ? "Vercel Sandbox 未就绪："+sandboxCheck.message : "需获得授权并完成 Sandbox + Chromium Browser Steps 健康检查；本地 E2E 不能替代" },
     { target: "ZIP / Codebase", state: p04BrowserReady ? "partial" : p04Ready ? "partial" : runner?.build ? "partial" : "backend", read: "✓", snapshot: "✓", mutate: "✓", validate: p04BrowserReady ? "Build/Test + Browser" : p04Ready ? "Sandbox Build/Test" : runner?.build ? "Build" : "静态", deploy: p04BrowserReady ? "Sandbox Preview" : "待 Preview", observe: p04BrowserReady ? "Browser Steps / E2E" : p04Ready ? "执行证据" : "待后端", rollback: "ZIP", gap: p04BrowserReady ? "Git exact-commit Source 已接通；继续扩展更多 Production runtime profile" : p04Ready ? "Browser Runtime / Preview" : "Sandbox + Preview Runtime" },
     { target: "Production Release Provider", state: releaseWriteReady || runner?.release ? "ready" : releaseReadReady ? "partial" : "backend", read: "连接", snapshot: "Exact identity", mutate: "Deploy", validate: "Preview/Canary Gate", deploy: releaseWriteReady || runner?.release ? "✓" : "只读", observe: releaseReadReady || runner?.release ? "Health / Outcome" : "待后端", rollback: releaseWriteReady || runner?.release ? "✓" : "待配置", gap: releaseWriteReady || runner?.release ? "Vercel / HTTP / Full-Lifecycle Connector 可进入统一 Durable Release" : releaseReadReady ? "生产观测已接通；写能力仍待配置" : "Deploy / Observe / Rollback / Telemetry" },
     { target: "Git Repository", state: gitReady ? "ready" : gitConfigured ? "partial" : "backend", read: gitConfigured ? "GitHub API" : "待配置", snapshot: gitConfigured ? "Commit/Tree SHA" : "待配置", mutate: gitConfigured ? "Branch/Commit" : "待配置", validate: gitConfigured ? "Check Runs" : "待配置", deploy: gitConfigured ? "PR/Merge" : "待配置", observe: gitReady ? "Webhook" : gitConfigured ? "Polling" : "待配置", rollback: gitConfigured ? "Audit Commit" : "待配置", gap: gitReady ? "Git-native 生命周期已接通" : gitConfigured ? "补 EVOLUTION_GITHUB_WEBHOOK_SECRET 与仓库 Webhook" : "配置 GitHub Token + Repo allowlist" },
@@ -266,6 +271,17 @@ export function EvolutionReadinessCenter() {
       if(active)setPublicReadinessCheck({busy:false,message:error instanceof Error?error.message:String(error)});
     });
     return ()=>{active=false;};
+  },[]);
+
+  useEffect(()=>{
+    let active=true;
+    queueMicrotask(()=>{if(active)setSandboxAuthCheck({busy:true,message:"正在被动读取本地 OIDC 配置；不启动 Sandbox…"});});
+    void getServerSandboxAuthorizationDiagnostic().then(diagnostic=>{
+      if(active)setSandboxAuthCheck({busy:false,diagnostic,message:diagnostic.message});
+    }).catch(error=>{
+      if(active)setSandboxAuthCheck({busy:false,message:error instanceof Error?error.message:String(error)});
+    });
+    return ()=>{active=false};
   },[]);
 
   useEffect(() => {
@@ -413,6 +429,50 @@ export function EvolutionReadinessCenter() {
       .catch((error) => setBrowserCheck({ busy: false, message: error instanceof Error ? error.message : String(error) }));
   };
 
+  // An explicit operator action, not a passive page-load probe: this may
+  // create billable Sandbox resources. Only attempt Chromium after Sandbox
+  // itself has actually passed, otherwise do not start an expensive Snapshot.
+  const refreshSandboxAuthorization=()=>{
+    setSandboxAuthCheck({busy:true,message:"正在被动核对凭证有效期与项目范围…"});
+    void getServerSandboxAuthorizationDiagnostic().then(diagnostic=>
+      setSandboxAuthCheck({busy:false,diagnostic,message:diagnostic.message})
+    ).catch(error=>setSandboxAuthCheck({
+      busy:false,message:error instanceof Error?error.message:String(error),
+    }));
+  };
+
+  const refreshHtmlRuntime = () => {
+    if(sandboxCheck.busy||browserCheck.busy||sandboxAuthCheck.busy)return;
+    setSandboxCheck({busy:true,message:"正在检查 Sandbox 授权…"});
+    setBrowserCheck({busy:false,message:"等待 Sandbox 真实验证，暂不启动 Chromium…"});
+    // Refresh the free/passive OIDC check on EVERY user click. A previously
+    // expired token may have been renewed since this page was mounted.
+    void getServerSandboxAuthorizationDiagnostic().then(async diagnostic=>{
+      setSandboxAuthCheck({busy:false,diagnostic,message:diagnostic.message});
+      if(!["unverified","access-token-unverified"].includes(diagnostic.state)){
+        setSandboxCheck({busy:false,message:diagnostic.message});
+        setBrowserCheck({busy:false,message:"凭证配置阻断；不会启动云端 Sandbox 或 Browser。"});
+        return;
+      }
+      const health=await checkServerSandboxHealth();
+      setSandboxCheck({busy:false,health,message:health.message});
+      if(!health.ready||!health.policy.codeReady){
+        setBrowserCheck({busy:false,message:"Sandbox 尚未就绪；不会尝试启动 Chromium。请检查 Vercel 项目授权。"});
+        return;
+      }
+      setBrowserCheck({busy:true,message:"Sandbox 已就绪，正在验证真实 Chromium Browser Steps…"});
+      try{
+        const browser=await checkServerBrowserHealth();
+        setBrowserCheck({busy:false,health:browser,message:browser.message});
+      }catch(error){
+        setBrowserCheck({busy:false,message:error instanceof Error?error.message:String(error)});
+      }
+    }).catch(error=>{
+      setSandboxCheck({busy:false,message:error instanceof Error?error.message:String(error)});
+      setBrowserCheck({busy:false,message:"授权检测失败，未启动 Chromium。"});
+    });
+  };
+
   const refreshRelease = () => {
     setReleaseCheck((current) => ({ ...current, busy: true, message: "正在重新检测 Production Release…" }));
     void Promise.all([getServerVercelReleaseCapabilities(), checkServerVercelReleaseHealth()]).then(([capabilities, health]) => {
@@ -515,7 +575,26 @@ export function EvolutionReadinessCenter() {
     {activeTab === "harness" && <HarnessInspector project={latestProject} />}
 
     {activeTab === "targets" && <section>
-      <div className="mb-3 flex flex-wrap items-end justify-between gap-3"><div><h2 className="font-semibold">Target Adapter Coverage</h2><p className="mt-1 text-xs text-slate-500">“支持一个对象”必须看完整生命周期，而不是只看能不能读。最终目标统一覆盖 Read → Snapshot → Mutate → Validate → Deploy → Observe → Rollback。</p>{gitCheck.message&&<p className="mt-1 text-[10px] text-slate-400">{gitCheck.message}</p>}</div><Button size="sm" variant="secondary" onClick={refreshGit} disabled={gitCheck.busy}><RefreshCcw className={`size-3.5 ${gitCheck.busy ? "animate-spin" : ""}`} />检测 Git Target</Button></div>
+      <div className="mb-3 flex flex-wrap items-end justify-between gap-3"><div><h2 className="font-semibold">Target Adapter Coverage</h2><p className="mt-1 text-xs text-slate-500">“支持一个对象”必须看完整生命周期，而不是只看能不能读。最终目标统一覆盖 Read → Snapshot → Mutate → Validate → Deploy → Observe → Rollback。</p><p className="mt-1 text-xs text-slate-500">HTML 服务端状态：{htmlServerBrowserReady ? "已通过真实 Sandbox + Chromium Browser Steps" : sandboxCheck.health&&!sandboxCheck.health.ready ? sandboxCheck.message : browserCheck.health&&!browserCheck.health.ready ? browserCheck.message : "尚未取得真实服务端 Browser Runtime 执行凭证；本地 Playwright 回归不能替代。"}</p>{gitCheck.message&&<p className="mt-1 text-[10px] text-slate-400">{gitCheck.message}</p>}</div><div className="flex flex-wrap gap-2"><Button size="sm" variant="secondary" onClick={refreshSandboxAuthorization} disabled={sandboxAuthCheck.busy}><RefreshCcw className={`size-3.5 ${sandboxAuthCheck.busy ? "animate-spin" : ""}`} />检查授权配置</Button><Button size="sm" variant="secondary" onClick={refreshHtmlRuntime} disabled={sandboxCheck.busy||browserCheck.busy||sandboxAuthCheck.busy}><RefreshCcw className={`size-3.5 ${sandboxCheck.busy||browserCheck.busy ? "animate-spin" : ""}`} />验证云端 Browser</Button><Button size="sm" variant="secondary" onClick={refreshGit} disabled={gitCheck.busy}><RefreshCcw className={`size-3.5 ${gitCheck.busy ? "animate-spin" : ""}`} />检测 Git Target</Button></div></div>
+      <div role="status" className={`mb-3 rounded-xl border p-3 text-xs leading-5 ${sandboxAuthBlocked?"border-amber-300 bg-amber-50 text-amber-950":"border-slate-200 bg-slate-50 text-slate-700"}`}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <b>Vercel Sandbox 授权检查（只读、不产生云端费用）</b>
+          <span className="font-medium">{sandboxAuthCheck.diagnostic?.state==="expired"?"OIDC 已过期":
+            sandboxAuthCheck.diagnostic?.state==="scope-mismatch"?"项目或团队不匹配":
+            sandboxAuthCheck.diagnostic?.state==="invalid"?"凭证无效":
+            sandboxAuthCheck.diagnostic?.state==="not-yet-valid"?"凭证尚未生效":
+            sandboxAuthCheck.diagnostic?.state==="missing-local-oidc"?"本地未配置 OIDC":
+            sandboxAuthCheck.diagnostic?.state==="access-token-incomplete"?"Access Token 配置不完整":
+            sandboxAuthCheck.diagnostic?.state==="access-token-unverified"?"Access Token 配置完整，等待云端验证":
+            sandboxAuthCheck.diagnostic?"仅配置已检查，云端权限仍待验证":"尚未取得被动配置状态"}</span>
+        </div>
+        <p className="mt-1">{sandboxAuthCheck.message||"等待被动读取本地凭证状态。"}</p>
+        {browserCheck.message&&<p className="mt-1">Browser 执行状态：{browserCheck.message}</p>}
+        {sandboxAuthCheck.diagnostic?.expiresAt&&<p className="mt-1">凭证过期时间（UTC）：{sandboxAuthCheck.diagnostic.expiresAt}</p>}
+        {sandboxAuthCheck.diagnostic?.nextAction&&<p className="mt-2 font-medium">恢复路径：{sandboxAuthCheck.diagnostic.nextAction}</p>}
+        {sandboxAuthBlocked&&<p className="mt-2">此阶段不会创建 Sandbox VM、Chromium Snapshot 或 Mission Job。更新授权后先点击“检查授权配置”，再验证云端 Browser。</p>}
+        {!sandboxAuthBlocked&&<p className="mt-2">凭证配置无明显阻断不代表已经取得 Vercel 访问权限；只有真正的 Sandbox + Browser Steps 健康测试通过，才能进入 HTML Mission。</p>}
+      </div>
       <Card className="overflow-hidden">
         <CardContent className="p-0">
           <div className="overflow-x-auto">

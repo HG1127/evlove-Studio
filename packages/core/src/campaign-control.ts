@@ -42,7 +42,7 @@ export function campaignMetricTargetStatus(project: EvolveProject) {
 
 export function estimateRoundCost(project: EvolveProject) {
   const visible = project.evalSuite.length;
-  const hidden = project.hiddenEvalSuite.length;
+  const hidden = project.hiddenEvalSuite.length+(project.finalHoldout?.suite.length??0);
   const candidates = Math.max(1, project.selectedCandidateIds.length || project.campaign.candidateCount);
   const average = project.baselineRun.result?.averageCost ?? 0.03;
   return Number((average * (visible * candidates + hidden * 2)).toFixed(4));
@@ -50,7 +50,7 @@ export function estimateRoundCost(project: EvolveProject) {
 
 export function estimateNextRoundCost(project: EvolveProject) {
   const visible = project.evalSuite.length;
-  const hidden = project.hiddenEvalSuite.length;
+  const hidden = project.hiddenEvalSuite.length+(project.finalHoldout?.suite.length??0);
   const configured = Math.max(1, project.campaign.candidateCount);
   const candidates = project.campaign.searchMode === "focused" ? Math.min(2, configured) : configured;
   const average = project.baselineRun.result?.averageCost ?? 0.03;

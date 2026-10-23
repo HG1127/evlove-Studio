@@ -13,6 +13,14 @@ export class EventIdempotencyConflictError extends Error{
   }
 }
 
+export class EventReadbackError extends Error{
+  readonly code="EVENT_READBACK_UNAVAILABLE";
+  constructor(readonly eventId:string){
+    super("事件提交后暂时无法确认写入结果，请稍后重试。");
+    this.name="EventReadbackError";
+  }
+}
+
 export class EventEvidenceMirrorError extends Error{
   readonly code="EVENT_EVIDENCE_MIRROR_FAILED";
   constructor(readonly eventId:string,cause:unknown){
@@ -53,8 +61,8 @@ function identity(event:EvolutionEvent){
 }
 
 function filterValue(value:string){
-  // PostgREST reserved characters require a quoted literal, including Event ID colons.
-  return encodeURIComponent(JSON.stringify(value));
+  // Standalone eq values are literal text. Quotes here become part of the ID.
+  return encodeURIComponent(value);
 }
 
 export async function readServerEventById(request:(path:string)=>Promise<unknown>,id:string){
@@ -86,7 +94,7 @@ export async function appendServerEvent(
     body:JSON.stringify(eventRow(event)),
   });
   const persisted=await readServerEventById(request,event.id);
-  if(!persisted)throw new Error("Persisted Event could not be read back");
+  if(!persisted)throw new EventReadbackError(event.id);
   if(identity(persisted)!==identity(event))throw new EventIdempotencyConflictError(event.id);
   try{await mirror(persisted);}
   catch(error){

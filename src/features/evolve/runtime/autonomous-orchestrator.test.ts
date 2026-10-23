@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import {withMeasuredProductionGoal} from "@evolution/testkit";
 import { demoProject } from "../data/mock-project";
 import { CandidateArtifactSnapshotSchema, CandidateSchema } from "../schemas";
 import { evidenceFingerprint } from "./evidence-binding";
@@ -483,6 +484,7 @@ describe("autonomous orchestrator", () => {
     const binding = evidenceFingerprint(base, candidate);
     base.validationRun.evidenceFingerprint = binding;
     base.artifactAcceptance.evidenceFingerprint = binding;
+    Object.assign(base,withMeasuredProductionGoal(base));
     expect(deriveAutonomousDecision(base).action).toBe("distill");
 
     base.lessons=[{id:"lesson",title:"经验",summary:"有效",reusable:true,effect:"改善",limit:"离线",trigger:[],method:[],validatedOn:["offline"],status:"lesson"}];
@@ -557,6 +559,7 @@ describe("autonomous orchestrator", () => {
       id:"prod-h2",at:secondHealthyAt,source:"reconcile",action:"reconcile",candidateId:candidate.id,deploymentId:"dpl-preview",
       evidenceMode:"live",environment:"production",healthy:true,observationStatus:"healthy",reason:"refresh health",
     }]};
+    Object.assign(base,withMeasuredProductionGoal(base));
     expect(deriveAutonomousDecision(base).action).toBe("distill");
     const stablePlan=buildServerHarnessPlan(base);
     const sameObservedAt=base.release.observedAt;

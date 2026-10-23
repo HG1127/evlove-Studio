@@ -7,22 +7,15 @@ import {
   type ProductionRuntimePorts,
 } from "@evolution/contracts";
 import {z} from "zod";
+import {httpApiErrorDetail} from "./http-error";
 
 function baseUrl(value:string){return value.replace(/\/+$/,"");}
-function safeErrorDetail(value:unknown){
-  if(!value||typeof value!=="object"||Array.isArray(value))return undefined;
-  const record=value as Record<string,unknown>;
-  for(const key of ["statusMessage","message","error"]){
-    const detail=record[key];
-    if(typeof detail==="string"&&detail.trim())return detail.trim().slice(0,300);
-  }
-  return undefined;
-}
+
 async function httpError(res:Response,context:string){
   let detail:string|undefined;
   try{
     const contentType=res.headers.get("content-type")??"";
-    if(contentType.includes("json"))detail=safeErrorDetail(await res.clone().json());
+    if(contentType.includes("json"))detail=httpApiErrorDetail(await res.clone().json());
     else{
       const text=(await res.clone().text()).trim();
       if(text)detail=text.slice(0,300);
@@ -160,9 +153,9 @@ export function createHttpProductionPorts(apiUrl:string):ProductionRuntimePorts{
       },
     },
     artifacts:{
-      put:async(id,blob)=>{const res=await fetch(`${root}/artifacts/${encodeURIComponent(id)}`,{method:"PUT",headers:{"Content-Type":blob.type||"application/octet-stream"},body:blob});const receipt=await json(res,ArtifactWriteReceiptSchema.parse);assertReceiptIdentity(receipt.artifactId,id,"Artifact upload");if(receipt.size!==blob.size)throw new Error("Artifact upload receipt size mismatch");},
-      get:async(id)=>{const res=await fetch(`${root}/artifacts/${encodeURIComponent(id)}`);if(res.status===404)return undefined;await expectOk(res,"Artifact get failed");return res.blob();},
-      delete:async(id)=>{const res=await fetch(`${root}/artifacts/${encodeURIComponent(id)}`,{method:"DELETE"});if(res.status!==404){const receipt=await json(res,ArtifactDeleteReceiptSchema.parse);assertReceiptIdentity(receipt.artifactId,id,"Artifact delete");}},
+      put:async(id,blob)=>{const res=await fetch(`${root}/artifacts/${encodeURIComponent(id)}`,{method:"PUT",signal:AbortSignal.timeout(30_000),headers:{"Content-Type":blob.type||"application/octet-stream"},body:blob});const receipt=await json(res,ArtifactWriteReceiptSchema.parse);assertReceiptIdentity(receipt.artifactId,id,"Artifact upload");if(receipt.size!==blob.size)throw new Error("Artifact upload receipt size mismatch");},
+      get:async(id)=>{const res=await fetch(`${root}/artifacts/${encodeURIComponent(id)}`,{signal:AbortSignal.timeout(30_000)});if(res.status===404)return undefined;await expectOk(res,"Artifact get failed");return res.blob();},
+      delete:async(id)=>{const res=await fetch(`${root}/artifacts/${encodeURIComponent(id)}`,{method:"DELETE",signal:AbortSignal.timeout(30_000)});if(res.status!==404){const receipt=await json(res,ArtifactDeleteReceiptSchema.parse);assertReceiptIdentity(receipt.artifactId,id,"Artifact delete");}},
     },
   };
 }

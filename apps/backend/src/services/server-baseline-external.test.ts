@@ -2,6 +2,7 @@
 import {createHash} from "node:crypto";
 import {beforeEach,describe,expect,it,vi} from "vitest";
 import type {EvolveProject,TargetRunResult,TestCase} from "@evolution/contracts";
+import {fastHash} from "@evolution/core";
 import {executeServerBaselineExternal} from "./server-baseline";
 
 const {getBlob,runSandbox}=vi.hoisted(()=>({getBlob:vi.fn(),runSandbox:vi.fn()}));
@@ -41,7 +42,7 @@ describe("server baseline frozen ZIP readback",()=>{
     expect(result?.verificationStatus).toBe("verified");
     expect(getBlob).toHaveBeenCalledOnce();
     expect(getBlob).toHaveBeenCalledWith("raw-zip");
-    expect(runSandbox).toHaveBeenCalledWith(expect.objectContaining({id:"mission-baseline-source",archive:bytes,testCases:[testCase]}));
+    expect(runSandbox).toHaveBeenCalledWith(expect.objectContaining({id:`mission-baseline-source-${fastHash([testCase])}`,archive:bytes,testCases:[testCase]}));
   });
 
   it("does not substitute the source metadata ID for a missing storageRef blob",async()=>{
@@ -83,7 +84,7 @@ describe("server baseline frozen ZIP readback",()=>{
     expect(getBlob).toHaveBeenCalledWith("frozen-zip");
     expect(runSandbox).toHaveBeenCalledOnce();
     expect(runSandbox).toHaveBeenCalledWith(expect.objectContaining({
-      id:"mission-baseline-candidate",expectedSha256:sha256,archive:bytes,testCases:[testCase],
+      id:`mission-baseline-candidate-${fastHash([testCase])}`,expectedSha256:sha256,archive:bytes,testCases:[testCase],
     }));
   });
 });

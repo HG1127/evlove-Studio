@@ -1,5 +1,6 @@
+import {parseStoredEvolveProjects} from "@evolution/adapters";
 import { z } from "zod";
-import { EvolveProjectSchema, type EvolveProject } from "../schemas";
+import { type EvolveProject } from "../schemas";
 import { repairLegacyFrozenCandidateIdentities } from "./legacy-frozen-identity";
 
 const MissionSyncJournalSchema = z.object({
@@ -17,7 +18,17 @@ let latest: { projects: EvolveProject[]; journal: MissionSyncJournal } | undefin
 let writing = false;
 let unsaved = false;
 export const PROJECT_SAVE_EVENT = "evolve-project-save-status";
-export function databaseProjects() { return cache; }
+function invalidCandidateDeltas(projects:EvolveProject[]){
+  return projects.some(project=>{
+    const candidates=[...project.candidates,...project.evolutionArchive.map(entry=>entry.candidate),...(project.searchChampion?.candidate?[project.searchChampion.candidate]:[])];
+    return candidates.some(candidate=>!Number.isFinite(candidate.costDelta)||!Number.isFinite(candidate.speedDelta));
+  });
+}
+export function databaseProjects() {
+  // HMR can leave an older in-memory projection alive; repair it once before the next sync.
+  if(cache&&invalidCandidateDeltas(cache))saveDatabaseProjects(cache);
+  return cache;
+}
 
 function readLegacyJournal(): MissionSyncJournal {
   if (typeof window === "undefined") return { knownRemoteIds: [], pendingDeleteIds: [] };
@@ -99,7 +110,7 @@ export async function initializeProjectDatabase(legacy: EvolveProject[]) {
     read<unknown>("mission-sync-journal"),
   ]);
   database = db;
-  cache = await Promise.all(EvolveProjectSchema.array().parse(stored ?? legacy).map((project) => repairLegacyFrozenCandidateIdentities(project)));
+  cache = await Promise.all(parseStoredEvolveProjects(stored ?? legacy).map((project) => repairLegacyFrozenCandidateIdentities(project)));
   journal = storedJournal === undefined ? readLegacyJournal() : MissionSyncJournalSchema.parse(storedJournal);
   // Persist both together so a delete intent cannot be separated from the browser projection.
   await writeDatabase(cache, journal);
@@ -107,8 +118,8 @@ export async function initializeProjectDatabase(legacy: EvolveProject[]) {
 }
 
 export function saveDatabaseProjects(projects: EvolveProject[]) {
-  cache = projects;
-  queueDatabaseWrite(projects);
+  cache = invalidCandidateDeltas(projects)?parseStoredEvolveProjects(projects):projects;
+  queueDatabaseWrite(cache);
 }
 
 export function flushProjectDatabase() { return pending; }

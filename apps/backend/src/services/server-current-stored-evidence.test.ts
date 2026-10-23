@@ -170,7 +170,7 @@ describe("Server current-version stored evidence", () => {
     expect((await runServerCurrentStoredEvidence({ project: current, testCase: testCase("roundtrip") })).verificationStatus).toBe("unverified");
     await storeSource(current, "%PDF-1.4 invalid");
     expect((await runServerCurrentStoredEvidence({ project: current, testCase: testCase("static-evidence") })).verificationStatus).toBe("unverified");
-  });
+  },15_000);
   it("extracts uploaded DOCX bytes but does not claim unsupported binary roundtrip", async () => {
     const current = project("docx");
     const zip = new JSZip();

@@ -28,7 +28,7 @@ describe("Parse Job recovery pages",()=>{
       after:{createdAt:at,id:"parse-a"},
     });
     const url=new URL("https://example.supabase.co/rest/v1/"+paths[0]);
-    expect(url.searchParams.get("metadata->>sessionId")).toBe('eq."session/a,b"');
+    expect(url.searchParams.get("metadata->>sessionId")).toBe('eq.session/a,b');
     expect(url.searchParams.get("or")).toContain('id.lt."parse-a"');
     expect(url.searchParams.get("order")).toBe("created_at.desc,id.desc");
   });

@@ -2,6 +2,7 @@
 import {createHash} from "node:crypto";
 import {beforeEach,describe,expect,it,vi} from "vitest";
 import type {Candidate,EvolveProject,TargetRunResult,TestCase} from "@evolution/contracts";
+import {fastHash} from "@evolution/core";
 import {runServerMissionHoldout} from "./server-holdout";
 
 const {getBlob,runSandbox}=vi.hoisted(()=>({getBlob:vi.fn(),runSandbox:vi.fn()}));
@@ -117,7 +118,7 @@ describe("server hidden holdout frozen ZIP readback",()=>{
     expect(result?.verificationStatus).toBe("verified");
     expect(getBlob).toHaveBeenCalledOnce();
     expect(runSandbox).toHaveBeenCalledWith(expect.objectContaining({
-      id:"mission-holdout-baseline-candidate",archive:bytes,expectedSha256:sha256,testCases:[testCase],
+      id:`mission-holdout-baseline-candidate-${fastHash([testCase])}`,archive:bytes,expectedSha256:sha256,testCases:[testCase],
     }));
   });
 
@@ -130,7 +131,7 @@ describe("server hidden holdout frozen ZIP readback",()=>{
     expect(result?.verificationStatus).toBe("verified");
     expect(getBlob).toHaveBeenCalledOnce();
     expect(runSandbox).toHaveBeenCalledWith(expect.objectContaining({
-      id:"mission-holdout-candidate",archive:bytes,expectedSha256:sha256,testCases:[testCase],
+      id:`mission-holdout-candidate-${fastHash([testCase])}`,archive:bytes,expectedSha256:sha256,testCases:[testCase],
     }));
   });
 });

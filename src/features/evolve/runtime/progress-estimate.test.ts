@@ -15,4 +15,8 @@ describe("displayProgress", () => {
       percent: 38, estimated: false, caption: "3/8 项完成", etaSeconds: undefined,
     });
   });
+  it("counts processed Candidates without claiming every build succeeded",()=>{
+    expect(displayProgress({busy:true,phase:"生成实际候选文件 · 已记录构造失败原因",done:2,total:2}).caption).toBe("2/2 个方案已处理");
+  });
+
 });

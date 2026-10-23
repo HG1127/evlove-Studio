@@ -163,7 +163,7 @@ describe("Evidence Ledger signed export/archive",()=>{
     expect(query.get("limit")).toBe("1");
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const identityQuery=new URL(String(fetchMock.mock.calls[1][0])).searchParams;
-    expect(identityQuery.get("id")).toBe('eq."health-probe:no-such-event-ledger"');
+    expect(identityQuery.get("id")).toBe('eq.health-probe:no-such-event-ledger');
     expect(identityQuery.get("limit")).toBe("1");
   });
 

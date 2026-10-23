@@ -3,12 +3,18 @@ import type {EvolveProject} from "@evolution/contracts";
 const SERVER_RELEASE_FIELDS=[
   "status","candidateId","trafficPercent","healthy","kpis","evidenceMode","observationStatus",
   "stableDeploymentId","deploymentId","artifactHash","artifactHashes","environment","observedAt",
-  "sampleSize","windowMinutes","recovery","observations","history",
+  "sampleSize","windowMinutes","recovery","observations","history","goalEvidence",
 ] as const satisfies ReadonlyArray<keyof EvolveProject["release"]>;
 
 function json(value:unknown){return JSON.stringify(value??null);}
 
 export function assertClientMissionMutationSafe(current:EvolveProject,next:EvolveProject){
+  if(json(current.finalHoldout)!==json(next.finalHoldout))throw new Error("独立终验预留题集是 server-owned，不能通过通用 Mission PUT 改写");
+  if(next.validationRun.independentFinal&&json(current.validationRun.independentFinal)!==json(next.validationRun.independentFinal))throw new Error("独立终验凭证是 server-owned，不能通过通用 Mission PUT 签发");
+  for(const candidate of current.candidates){
+    const updated=next.candidates.find(item=>item.id===candidate.id);
+    if(candidate.finalHoldoutPaperHash&&updated&&candidate.finalHoldoutPaperHash!==updated.finalHoldoutPaperHash)throw new Error("候选的独立终验绑定是 server-owned，不能移除或替换");
+  }
   const currentGate=current.gates.find((gate)=>gate.id==="release-ready");
   const nextGate=next.gates.find((gate)=>gate.id==="release-ready");
   if(json(currentGate)!==json(nextGate)){

@@ -1,5 +1,6 @@
 import JSZip from "jszip";
 import { APIError, Sandbox, Snapshot, type NetworkPolicy, type SandboxRegion } from "@vercel/sandbox";
+import {getExplicitSandboxCredentials,sandboxCredentialIssue} from "./vercel-sandbox-credentials";
 import {
   SandboxBrowserHealthSchema,
   SandboxHealthSchema,
@@ -18,6 +19,7 @@ import {
   type TargetRunResult,
   type TestCase,
 } from "@evolution/contracts";
+import {classifySandboxBrowserWithScripts,classifySandboxCaseFailure,classifySandboxExecutionEvidence,sandboxCaseScriptTrace,sandboxExecutedScripts,selectSandboxScriptPlan} from "./sandbox-execution-evidence";
 
 const ROOT="/vercel/sandbox";
 const MAX_LOG_CHARS=20_000;
@@ -269,16 +271,16 @@ async function ensureBrowserRuntimeSnapshot(){
       persistent:true,
       tags:{product:"evolution-os",purpose:"browser-runtime",version:BROWSER_RUNTIME_VERSION},
     };
-    let base=await Sandbox.getOrCreate(runtimeOptions);
+    let base=await Sandbox.getOrCreate({...getExplicitSandboxCredentials(),...runtimeOptions});
     if(base.currentSnapshotId){
       try{
-        await Snapshot.get({snapshotId:base.currentSnapshotId});
+        await Snapshot.get({...getExplicitSandboxCredentials(),snapshotId:base.currentSnapshotId});
         return base.currentSnapshotId;
       }catch(error){
         if(!(error instanceof APIError&&error.response.status===404))throw error;
         // This named cache contains only trusted runtime files, never Mission bytes.
         await base.delete({deleteOrphanSnapshots:false});
-        base=await Sandbox.getOrCreate(runtimeOptions);
+        base=await Sandbox.getOrCreate({...getExplicitSandboxCredentials(),...runtimeOptions});
       }
     }
 
@@ -433,6 +435,7 @@ export async function runVercelSandboxValidation(
 
   try{
     sandbox=await Sandbox.create({
+      ...getExplicitSandboxCredentials(),
       name:request.id?("evo-"+request.id.replace(/[^a-zA-Z0-9-_]/g,"-").slice(0,48)):undefined,
       image:UNIVERSAL_RUNTIME_IMAGE,
       timeout:request.timeoutMs,
@@ -566,10 +569,13 @@ function packageManagerFor(files:Set<string>,root:string,pkg:PackageJsonShape){
 }
 
 function scriptCommand(manager:string,name:string,cwd:string):SandboxCommand{
-  if(manager==="pnpm")return{id:"script-"+name,phase:name.includes("e2e")?"e2e":name==="build"?"build":"test",command:"corepack",args:["pnpm","run",name],cwd,env:{CI:"1"},timeoutMs:name.includes("e2e")?300_000:180_000};
-  if(manager==="yarn")return{id:"script-"+name,phase:name.includes("e2e")?"e2e":name==="build"?"build":"test",command:"corepack",args:["yarn","run",name],cwd,env:{CI:"1"},timeoutMs:name.includes("e2e")?300_000:180_000};
-  if(manager==="bun")return{id:"script-"+name,phase:name.includes("e2e")?"e2e":name==="build"?"build":"test",command:"bun",args:["run",name],cwd,env:{CI:"1"},timeoutMs:name.includes("e2e")?300_000:180_000};
-  return{id:"script-"+name,phase:name.includes("e2e")?"e2e":name==="build"?"build":"test",command:"npm",args:["run",name],cwd,env:{CI:"1"},timeoutMs:name.includes("e2e")?300_000:180_000};
+  const typecheck=["typecheck","type-check","check-types","check:types","tsc"].includes(name);
+  const phase:SandboxCommand["phase"]=name.includes("e2e")?"e2e":name==="build"?"build":typecheck?"typecheck":"test";
+  const timeoutMs=name.includes("e2e")?300_000:180_000;
+  if(manager==="pnpm")return{id:"script-"+name,phase,command:"corepack",args:["pnpm","run",name],cwd,env:{CI:"1"},timeoutMs};
+  if(manager==="yarn")return{id:"script-"+name,phase,command:"corepack",args:["yarn","run",name],cwd,env:{CI:"1"},timeoutMs};
+  if(manager==="bun")return{id:"script-"+name,phase,command:"bun",args:["run",name],cwd,env:{CI:"1"},timeoutMs};
+  return{id:"script-"+name,phase,command:"npm",args:["run",name],cwd,env:{CI:"1"},timeoutMs};
 }
 
 function installCommand(manager:string,cwd:string,files:Set<string>,root:string,pkg:PackageJsonShape):SandboxCommand{
@@ -583,16 +589,6 @@ function installCommand(manager:string,cwd:string,files:Set<string>,root:string,
   return{id:"install",phase:"install",command:"npm",args:[files.has(at("package-lock.json"))?"ci":"install"],cwd,env:{CI:"1"},timeoutMs:300_000};
 }
 
-function testIntent(testCase:TestCase){
-  const text=[testCase.title,testCase.input,...testCase.expected,...testCase.tags].join(" ");
-  return{
-    build:/\b(build|compile|bundle|type.?check)\b|构建|编译|类型检查/i.test(text),
-    test:/\b(test|spec|unit|integration|e2e)\b|测试|用例|集成/i.test(text),
-    e2e:/\be2e\b|end.?to.?end|端到端|浏览器/i.test(text),
-    browser:Boolean(testCase.browserSteps?.length),
-  };
-}
-
 function resultFromSandbox(args:{
   testCase:TestCase;
   artifactHash:string;
@@ -600,48 +596,39 @@ function resultFromSandbox(args:{
   packageRoot:string;
   manager:string;
   buildRan:boolean;
+  typecheckRan:boolean;
   testRan:boolean;
+  integrationRan:boolean;
   e2eRan:boolean;
-  error?:string;
 }):TargetRunResult{
-  const intent=testIntent(args.testCase);
-  const failed=args.steps.find((step)=>step.exitCode!==0
-    && (step.phase!=="e2e"||args.testCase.evidenceScope==="product-behavior"||intent.e2e));
+  const failure=classifySandboxCaseFailure({testCase:args.testCase,steps:args.steps});
   const log=args.steps.map((step)=>[
     "["+step.phase+"] "+step.command+" -> exit "+step.exitCode,
     step.stdout.trim()?step.stdout.trim():"",
     step.stderr.trim()?step.stderr.trim():"",
   ].filter(Boolean).join("\n")).join("\n\n");
-  if(failed||args.error){
-    const reason=args.error??(failed?.phase+" command failed");
+  if(failure){
+    const reason=failure.reason;
     return{
       testCaseId:args.testCase.id,
-      output:"SANDBOX EXECUTION FAILED\n"+reason+(log?"\n\n"+log:""),
+      output:(failure.verificationStatus==="failed"?"SANDBOX CASE FAILED":"SANDBOX CASE NOT VERIFIED")+"\n"+reason+(log?"\n\n"+log:""),
       latencyMs:args.steps.reduce((sum,item)=>sum+(item.durationMs??0),0),
       cost:0,
       artifactHash:args.artifactHash,
-      verificationStatus:"failed",
-      error:reason,
-      trace:args.steps.map((step)=>({id:"sandbox-"+step.id,stage:"sandbox-"+step.phase,summary:step.command,status:step.exitCode===0?"pass":"fail",detail:"Vercel Sandbox · "+args.manager+" · "+args.packageRoot})),
+      verificationStatus:failure.verificationStatus,
+      ...(failure.verificationStatus==="failed"?{error:reason}:{}),
+      trace:[
+        ...args.steps.map((step)=>({id:"sandbox-"+step.id,stage:"sandbox-"+step.phase,summary:step.command,status:step.exitCode===0?"pass" as const:"fail" as const,detail:"Vercel Sandbox · "+args.manager+" · "+args.packageRoot})),
+        ...sandboxCaseScriptTrace(args.testCase,args.steps,args.artifactHash),
+      ],
     };
   }
 
-  let verificationStatus:TargetRunResult["verificationStatus"]="partial";
-  let proof="已在隔离 Sandbox 完成真实依赖安装";
-  if(args.testCase.evidenceScope==="implementation"){
-    const requestedSatisfied=(!intent.build||args.buildRan)&&(!intent.test||args.testRan||args.e2eRan);
-    const anyExecution=args.buildRan||args.testRan||args.e2eRan;
-    verificationStatus=requestedSatisfied&&anyExecution?"verified":"partial";
-    proof=verificationStatus==="verified"
-      ?"实现级 Build/Test 证据已真实执行并通过"
-      :"工程可安装，但当前脚本不足以完全证明该实现级验收项";
-  }else if(intent.browser){
-    verificationStatus="unverified";
-    proof="工程 Build/Test 已真实执行，但本题包含指定 Browser Steps；当前 Sandbox 还没有执行这些逐步浏览器动作";
-  }else if(args.e2eRan){
-    verificationStatus="partial";
-    proof="工程自带 E2E 脚本已通过，但未证明该项目专属 TestCase 与脚本逐项绑定";
-  }
+  const {verificationStatus,proof}=classifySandboxExecutionEvidence({
+    testCase:args.testCase,buildRan:args.buildRan,typecheckRan:args.typecheckRan,
+    testRan:args.testRan,integrationRan:args.integrationRan,e2eRan:args.e2eRan,
+    passedScriptNames:sandboxExecutedScripts(args.steps).passed,
+  });
 
   return{
     testCaseId:args.testCase.id,
@@ -660,6 +647,7 @@ function resultFromSandbox(args:{
     trace:[
       {id:"sandbox-artifact",stage:"sandbox-artifact",summary:"冻结 ZIP 已按 SHA-256 绑定进入 Vercel Sandbox",status:"pass",detail:args.artifactHash},
       ...args.steps.map((step)=>({id:"sandbox-"+step.id,stage:"sandbox-"+step.phase,summary:step.command,status:step.exitCode===0?"pass" as const:"fail" as const,detail:"Vercel Sandbox · "+args.manager+" · "+args.packageRoot})),
+      ...sandboxCaseScriptTrace(args.testCase,args.steps,args.artifactHash),
     ],
   };
 }
@@ -672,12 +660,15 @@ function resultFromBrowserEvidence(args:{
   packageRoot:string;
   manager:string;
   previewUrlObserved?:string;
+  scriptEvidence:{buildRan:boolean;typecheckRan:boolean;testRan:boolean;integrationRan:boolean;e2eRan:boolean};
 }):TargetRunResult{
   const e2eFailure=args.steps.find((step)=>step.phase==="e2e"&&step.exitCode!==0);
-  const verificationStatus:TargetRunResult["verificationStatus"]=
-    args.browser.verificationStatus==="verified"&&e2eFailure
-      ?"partial"
-      : args.browser.verificationStatus;
+  const {verificationStatus,missing}=classifySandboxBrowserWithScripts({
+    testCase:args.testCase,browserStatus:args.browser.verificationStatus,
+    ...args.scriptEvidence,e2eFailed:Boolean(e2eFailure),
+    passedScriptNames:sandboxExecutedScripts(args.steps).passed,
+    failedScriptNames:sandboxExecutedScripts(args.steps).failed,
+  });
   const log=args.steps.map((step)=>[
     "["+step.phase+"] "+step.command+" -> exit "+step.exitCode,
     step.stdout.trim()?step.stdout.trim():"",
@@ -689,6 +680,7 @@ function resultFromBrowserEvidence(args:{
       ?"Blocked external resources: "+args.browser.blockedResources.join("；")
       :"Blocked external resources: none",
     e2eFailure?"Project E2E also reported a failure; exact Browser Steps are retained as separate evidence.":"",
+    missing.length?"Required scripts not proven: "+missing.join(", "):"",
   ].filter(Boolean).join("\n");
   return{
     testCaseId:args.testCase.id,
@@ -711,6 +703,7 @@ function resultFromBrowserEvidence(args:{
       {id:"sandbox-artifact",stage:"sandbox-artifact",summary:"冻结 ZIP 已按 SHA-256 绑定进入 Vercel Sandbox",status:"pass",detail:args.artifactHash},
       ...(args.previewUrlObserved?[{id:"sandbox-preview",stage:"preview",summary:"真实 Preview 已启动",status:"pass" as const,detail:args.previewUrlObserved}]:[]),
       ...args.steps.map((step)=>({id:"sandbox-"+step.id,stage:"sandbox-"+step.phase,summary:step.command,status:step.exitCode===0?"pass" as const:"fail" as const,detail:"Vercel Sandbox · "+args.manager+" · "+args.packageRoot})),
+      ...sandboxCaseScriptTrace(args.testCase,args.steps,args.artifactHash),
       ...args.browser.trace,
     ],
   };
@@ -773,14 +766,13 @@ export async function runVercelSandboxCodebaseValidation(args:{
   const cwd=root?ROOT+"/"+root:ROOT;
   const manager=packageManagerFor(paths,root,pkg);
   const scripts=pkg.scripts??{};
-  const scriptsToRun:string[]=[];
-  if(typeof scripts.build==="string")scriptsToRun.push("build");
-  if(typeof scripts.test==="string"&&!/no test specified/i.test(scripts.test))scriptsToRun.push("test");
-  const needsBehavior=args.testCases.some((testCase)=>testCase.evidenceScope==="product-behavior"||testCase.executionMode==="visual-review"||Boolean(testCase.browserSteps?.length));
+  const scriptPlan=selectSandboxScriptPlan(scripts,args.testCases);
+  const scriptsToRun=scriptPlan.scriptsToRun;
+  const needsBehavior=scriptPlan.needsBehavior;
+  const typecheckName=scriptPlan.typecheckScript;
+  const integrationName=scriptPlan.integrationScript;
   const browserCases=args.testCases.filter((testCase)=>testCase.executionMode==="visual-review"||Boolean(testCase.browserSteps?.length));
-  const e2eName=needsBehavior
-    ? (typeof scripts["test:e2e"]==="string"?"test:e2e":typeof scripts.e2e==="string"?"e2e":typeof scripts.integration==="string"?"integration":undefined)
-    : undefined;
+  const e2eName=scriptPlan.e2eScript;
   const needsBrowserRuntime=browserCases.length>0||Boolean(e2eName);
 
   let browserSnapshotId:string|undefined;
@@ -794,12 +786,12 @@ export async function runVercelSandboxCodebaseValidation(args:{
   const steps:SandboxStepResult[]=[];
   let preview:Awaited<ReturnType<typeof startCodebasePreview>>|undefined;
   let browserEvidence:BrowserCaseEvidence[]=[];
-  let e2eAttempted=false;
   try{
     const baseName=args.id?args.id.replace(/[^a-zA-Z0-9-_]/g,"-").slice(0,34):"target";
     const name="evo-"+baseName+"-"+crypto.randomUUID().slice(0,8);
     sandbox=browserSnapshotId
       ? await Sandbox.create({
+      ...getExplicitSandboxCredentials(),
         name,
         source:{type:"snapshot",snapshotId:browserSnapshotId},
         timeout:10*60_000,
@@ -810,6 +802,7 @@ export async function runVercelSandboxCodebaseValidation(args:{
         persistent:false,
       })
       : await Sandbox.create({
+      ...getExplicitSandboxCredentials(),
         name,
         image:UNIVERSAL_RUNTIME_IMAGE,
         timeout:10*60_000,
@@ -842,7 +835,6 @@ export async function runVercelSandboxCodebaseValidation(args:{
       catch(error){preview={healthy:false as const,reason:error instanceof Error?error.message:String(error),label:"preview-runtime"};}
 
       if(e2eName){
-        e2eAttempted=true;
         const command=scriptCommand(manager,e2eName,cwd);
         const step=await runStep(sandbox,{
           ...command,
@@ -882,32 +874,38 @@ export async function runVercelSandboxCodebaseValidation(args:{
       const message=baseFailure
         ? "Build/Test 未通过，未进入浏览器验证"
         : browserRuntimeError??"Browser Runtime 尚未可用";
-      browserEvidence=browserCases.map((testCase)=>({
-        testCaseId:testCase.id,
-        verificationStatus:baseFailure?"failed":"unverified",
-        error:baseFailure?message:undefined,
-        assertions:0,blockedResources:[],latencyMs:0,
-        trace:[{id:"browser-runtime",stage:"browser-runtime",status:baseFailure?"fail":"warning",summary:message}],
-      }));
+      browserEvidence=browserCases.map((testCase)=>{
+        const failure=classifySandboxCaseFailure({testCase,steps});
+        const status=failure?.verificationStatus??"unverified";
+        return{
+          testCaseId:testCase.id,
+          verificationStatus:status,
+          error:status==="failed"?failure?.reason:undefined,
+          assertions:0,blockedResources:[],latencyMs:0,
+          trace:[{id:"browser-runtime",stage:"browser-runtime",status:status==="failed"?"fail" as const:"warning" as const,summary:failure?.reason??message}],
+        };
+      });
     }
 
     const buildRan=steps.some((step)=>step.id==="script-build"&&step.exitCode===0);
+    const typecheckRan=Boolean(typecheckName&&steps.some((step)=>step.id==="script-"+typecheckName&&step.exitCode===0));
     const testRan=steps.some((step)=>step.id==="script-test"&&step.exitCode===0);
+    const integrationRan=Boolean(integrationName&&steps.some((step)=>step.id==="script-"+integrationName&&step.exitCode===0));
     const e2eRan=steps.some((step)=>step.phase==="e2e"&&step.exitCode===0);
-    const baseError=steps.find((step)=>step.phase!=="e2e"&&step.exitCode!==0)?.phase;
     const browserById=new Map(browserEvidence.map((item)=>[item.testCaseId,item]));
     const results=args.testCases.map((testCase)=>{
       const browser=browserById.get(testCase.id);
       if(browser)return resultFromBrowserEvidence({
         testCase,browser,artifactHash,steps,packageRoot:root||".",manager,
         previewUrlObserved:preview?.healthy?preview.externalUrl:undefined,
+        scriptEvidence:{buildRan,typecheckRan,testRan,integrationRan,e2eRan},
       });
       return resultFromSandbox({
-        testCase,artifactHash,steps,packageRoot:root||".",manager,buildRan,testRan,e2eRan,
-        error:baseError?baseError+" failed":undefined,
+        testCase,artifactHash,steps,packageRoot:root||".",manager,buildRan,typecheckRan,testRan,integrationRan,e2eRan,
       });
     });
-    const scriptsRun=[...scriptsToRun,...(e2eAttempted&&e2eName?[e2eName]:[])];
+    // Only report commands actually attempted, never scripts merely planned.
+    const scriptsRun=sandboxExecutedScripts(steps).attempted;
     const browserStepsExecuted=browserEvidence.reduce((sum,item)=>sum+item.trace.filter((trace)=>trace.stage==="browser-step").length,0);
     return SandboxTargetBatchResponseSchema.parse({
       results,packageRoot:root||".",packageManager:manager,scriptsRun,
@@ -919,16 +917,22 @@ export async function runVercelSandboxCodebaseValidation(args:{
     });
   }catch(error){
     const message=error instanceof Error?error.message:String(error);
-    const results=args.testCases.map((testCase)=>({
-      testCaseId:testCase.id,
-      output:"SANDBOX EXECUTION ERROR\n"+message,
-      latencyMs:Date.now()-started,cost:0,artifactHash,
-      verificationStatus:isUnavailableError(error)?"unverified" as const:"failed" as const,
-      error:message,
-      trace:steps.map((step)=>({id:"sandbox-"+step.id,stage:"sandbox-"+step.phase,summary:step.command,status:step.exitCode===0?"pass" as const:"fail" as const})),
-    }));
+    const results=args.testCases.map((testCase)=>{
+      const failure=classifySandboxCaseFailure({testCase,steps,error:message});
+      return{
+        testCaseId:testCase.id,
+        output:(failure?.verificationStatus==="failed"?"SANDBOX CASE FAILED":isUnavailableError(error)?"SANDBOX UNAVAILABLE":"SANDBOX EXECUTION UNVERIFIED")+"\n"+(failure?.reason??message),
+        latencyMs:Date.now()-started,cost:0,artifactHash,
+        verificationStatus:failure?.verificationStatus??"unverified",
+        ...(failure?.verificationStatus==="failed"?{error:failure.reason}:{}),
+        trace:[
+          ...steps.map((step)=>({id:"sandbox-"+step.id,stage:"sandbox-"+step.phase,summary:step.command,status:step.exitCode===0?"pass" as const:"fail" as const})),
+          ...sandboxCaseScriptTrace(testCase,steps,artifactHash),
+        ],
+      };
+    });
     return SandboxTargetBatchResponseSchema.parse({
-      results,scriptsRun:[...scriptsToRun,...(e2eAttempted&&e2eName?[e2eName]:[])],artifactHash,
+      results,scriptsRun:sandboxExecutedScripts(steps).attempted,artifactHash,
       previewUrlObserved:preview?.healthy?preview.externalUrl:undefined,
       previewHealthy:needsBehavior?Boolean(preview?.healthy):undefined,
       browserStepsExecuted:browserEvidence.reduce((sum,item)=>sum+item.trace.filter((trace)=>trace.stage==="browser-step").length,0),
@@ -941,9 +945,16 @@ export async function runVercelSandboxCodebaseValidation(args:{
 
 export async function checkVercelSandboxHealth():Promise<SandboxHealth>{
   const started=Date.now();
+  // Definitively expired or mismatched OIDC must not launch a metered VM.
+  const issue=sandboxCredentialIssue();
+  if(issue)return SandboxHealthSchema.parse({
+    ready:false,message:issue.code+" · "+issue.message,
+    latencyMs:0,policy:getVercelSandboxPolicyCapabilities(),
+  });
   let sandbox:(Sandbox&AsyncDisposable)|undefined;
   try{
     sandbox=await Sandbox.create({
+      ...getExplicitSandboxCredentials(),
       image:UNIVERSAL_RUNTIME_IMAGE,
       timeout:30_000,
       resources:{vcpus:SANDBOX_MIN_VCPUS},
@@ -984,10 +995,17 @@ export async function checkVercelSandboxHealth():Promise<SandboxHealth>{
 
 export async function checkVercelSandboxBrowserHealth():Promise<SandboxBrowserHealth>{
   const started=Date.now();
+  const issue=sandboxCredentialIssue();
+  if(issue)return SandboxBrowserHealthSchema.parse({
+    ready:false,message:issue.code+" · "+issue.message,
+    latencyMs:0,snapshotCached:false,previewHealthy:false,
+    browserStepsVerified:false,browserStepsExecuted:0,
+  });
   let sandbox:(Sandbox&AsyncDisposable)|undefined;
   try{
     const snapshotId=await ensureBrowserRuntimeSnapshot();
     sandbox=await Sandbox.create({
+      ...getExplicitSandboxCredentials(),
       source:{type:"snapshot",snapshotId},
       timeout:90_000,
       resources:{vcpus:SANDBOX_MIN_VCPUS},

@@ -6,7 +6,7 @@ function filterValue(value:string){
 }
 
 function query(missionId:string|undefined,limit:number,cursor?:EventCursor){
-  const mission=missionId?"&mission_id=eq."+filterValue(missionId):"";
+  const mission=missionId?"&mission_id=eq."+encodeURIComponent(missionId):"";
   const after=cursor
     ?"&or=(at.lt."+filterValue(cursor.at)
       +",and(at.eq."+filterValue(cursor.at)+",id.lt."+filterValue(cursor.id)+"))"

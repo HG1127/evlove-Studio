@@ -142,6 +142,65 @@ describe("custom provider protocols and JSON output",()=>{
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it.each(["chat-completions","responses"] as const)("accepts final JSON after reasoning and fences via %s",async(protocol)=>{
+    const content=`<think>Ignore this intermediate {"invented":"pass"}.</think>\n\`\`\`json\n${JSON.stringify(result)}\n\`\`\``;
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(protocol==="responses"
+      ?{status:"completed",output_text:content}
+      :{choices:[{finish_reason:"stop",message:{content}}]}),{status:200})));
+    expect(await withExplicitServerAiConnection({...input,protocol},()=>runServerAi("visual-judge",{}))).toEqual(result);
+  });
+
+  it("uses final text parts and excludes a separate reasoning part",async()=>{
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({choices:[{message:{
+      content:[{type:"reasoning",text:'{"invented":"pass"}'},{type:"text",text:JSON.stringify(result)}],
+      reasoning_content:'{"invented":"pass"}',
+    }}]}),{status:200})));
+    expect(await withExplicitServerAiConnection(input,()=>runServerAi("visual-judge",{}))).toEqual(result);
+  });
+
+  it("reserves enough output tokens for multi-case independent evaluation, without weakening JSON validation",async()=>{
+    const judgement={
+      accuracy:90,evidence:88,riskCoverage:87,completeness:89,safety:"PASS",notes:[],failures:[],
+      cases:[{testCaseId:"V1",accuracy:90,evidence:88,completeness:89,reason:"实体原文可核验"}],
+      criteria:[{criterionId:"CONTENT",score:90,pass:true,evidence:["V1: frozen source"],gaps:[],testCaseIds:["V1"]}],
+    };
+    const requests:Array<Record<string,unknown>>=[];
+    const fetchMock=vi.fn(async(_url:string|URL|Request,init?:RequestInit)=>{
+      requests.push(JSON.parse(String(init?.body)) as Record<string,unknown>);
+      return new Response(JSON.stringify({choices:[{finish_reason:"stop",message:{content:JSON.stringify(judgement)}}]}),{status:200});
+    });
+    vi.stubGlobal("fetch",fetchMock);
+    expect(await withExplicitServerAiConnection(input,()=>runServerAi("evaluate",{mode:"server-candidate"}))).toEqual(judgement);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.max_tokens).toBe(8192);
+    expect(requests[0]?.response_format).toEqual({type:"json_object"});
+    await withExplicitServerAiConnection(input,()=>runServerAi("visual-judge",{})).catch(()=>undefined);
+    expect(requests[1]?.max_tokens).toBeUndefined();
+  });
+  it("rejects a length-limited reply even when its JSON happens to parse",async()=>{
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({choices:[{
+      finish_reason:"length",message:{content:JSON.stringify(result)},
+    }]}),{status:200})));
+    await expect(withExplicitServerAiConnection(input,()=>runServerAi("visual-judge",{})))
+      .rejects.toMatchObject({code:"AI_OUTPUT_INCOMPLETE"});
+  });
+
+  it("reports reasoning-only replies without attempting to accept them",async()=>{
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({choices:[{message:{
+      content:"",reasoning_content:JSON.stringify(result),
+    }}]}),{status:200})));
+    await expect(withExplicitServerAiConnection(input,()=>runServerAi("visual-judge",{})))
+      .rejects.toMatchObject({code:"AI_OUTPUT_MISSING_FINAL"});
+  });
+
+  it("continues validating the task schema after removing reasoning wrappers",async()=>{
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({choices:[{message:{
+      content:'<think>Work complete.</think> {"invented":"pass"}',
+    }}]}),{status:200})));
+    await expect(withExplicitServerAiConnection(input,()=>runServerAi("visual-judge",{})))
+      .rejects.toMatchObject({code:"AI_OUTPUT_SCHEMA_MISMATCH"});
+  });
+
   it("never accepts a malformed provider result even in prompt-only JSON mode",async()=>{
     vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({
       choices:[{message:{content:JSON.stringify({invented:"pass"})}}],
@@ -172,4 +231,69 @@ describe("custom provider protocols and JSON output",()=>{
     expect(await withExplicitServerAiConnection({...input,protocol:"responses"},()=>serverAiScoringRouteFingerprint())).not.toBe(identity);
     expect(await withExplicitServerAiConnection({...input,responseFormat:"prompt-json"},()=>serverAiScoringRouteFingerprint())).not.toBe(identity);
   });
+  it("recovers a transient network failure using the configured provider",async()=>{
+    const fetchMock=vi.fn().mockRejectedValueOnce(new TypeError("fetch failed",{cause:{code:"ECONNRESET"}}))
+      .mockResolvedValueOnce(new Response(JSON.stringify({choices:[{message:{content:JSON.stringify(result)}}]}),{status:200}));
+    vi.stubGlobal("fetch",fetchMock);
+    expect(await withExplicitServerAiConnection(input,()=>runServerAi("visual-judge",{}))).toEqual(result);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0]).toEqual(fetchMock.mock.calls[1]);
+  });
+  it("repairs a missing structured field with exactly one grounded schema retry",async()=>{
+    const first={choices:[{message:{content:JSON.stringify({summary:"missing scores",findings:[]})}}]};
+    const valid={choices:[{message:{content:JSON.stringify(result)}}]};
+    const fetchMock=vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(first),{status:200}))
+      .mockResolvedValueOnce(new Response(JSON.stringify(valid),{status:200}));
+    vi.stubGlobal("fetch",fetchMock);
+    const settled=await withExplicitServerAiConnection(input,()=>runServerAi("visual-judge",{}));
+    expect(settled).toEqual(result);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const original=JSON.parse(String(fetchMock.mock.calls[0]![1]?.body)) as {messages:Array<{content:string}>};
+    const retry=JSON.parse(String(fetchMock.mock.calls[1]![1]?.body)) as {messages:Array<{content:string}>};
+    expect(retry.messages[0]!.content).toContain("PREVIOUS OUTPUT INVALID");
+    expect(retry.messages[0]!.content).toContain("scores");
+    expect(retry.messages[1]!.content).toBe(original.messages[1]!.content);
+  });
+  it("retries malformed final JSON once with concise, schema-bound instructions",async()=>{
+    const broken={choices:[{message:{content:'{"scores":'}}]};
+    const valid={choices:[{message:{content:JSON.stringify(result)}}]};
+    const fetchMock=vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(broken),{status:200}))
+      .mockResolvedValueOnce(new Response(JSON.stringify(valid),{status:200}));
+    vi.stubGlobal("fetch",fetchMock);
+    expect(await withExplicitServerAiConnection(input,()=>runServerAi("visual-judge",{}))).toEqual(result);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const retry=JSON.parse(String(fetchMock.mock.calls[1]![1]?.body)) as {messages:Array<{content:string}>};
+    expect(retry.messages[0]!.content).toContain("JSON syntax");
+    expect(retry.messages[0]!.content).toContain("COMPLETE syntactically valid JSON");
+  });
+  it("stops after one retry when schema remains invalid instead of inventing a success",async()=>{
+    const invalid={choices:[{message:{content:JSON.stringify({summary:"no evidence"})}}]};
+    const fetchMock=vi.fn(async()=>new Response(JSON.stringify(invalid),{status:200}));
+    vi.stubGlobal("fetch",fetchMock);
+    await expect(withExplicitServerAiConnection(input,()=>runServerAi("visual-judge",{})))
+      .rejects.toMatchObject({code:"AI_OUTPUT_SCHEMA_MISMATCH"});
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+  it("preserves network classification without exposing native causes or credentials",async()=>{
+    const fetchMock=vi.fn().mockRejectedValue(new TypeError("fetch failed "+input.apiKey,{cause:{code:"ECONNRESET"}}));
+    vi.stubGlobal("fetch",fetchMock);
+    const error=await withExplicitServerAiConnection(input,()=>runServerAi("visual-judge",{})).catch((value:unknown)=>value);
+    expect(error).toMatchObject({code:"SERVER_AI_PROVIDER_NETWORK_ERROR"});
+    expect(serverAiUnavailableReason(error)).toBe("provider-network-error");
+    expect((error as Error).message).toContain("无法连接模型服务");
+    expect((error as Error).message).not.toContain(input.apiKey);
+    expect(error).not.toHaveProperty("cause");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+  it("preserves a nested provider timeout and avoids extending its deadline",async()=>{
+    const fetchMock=vi.fn().mockRejectedValue(new TypeError("fetch failed",{cause:{code:"UND_ERR_CONNECT_TIMEOUT"}}));
+    vi.stubGlobal("fetch",fetchMock);
+    const error=await withExplicitServerAiConnection(input,()=>runServerAi("visual-judge",{})).catch((value:unknown)=>value);
+    expect(error).toMatchObject({code:"SERVER_AI_PROVIDER_TIMEOUT"});
+    expect(serverAiUnavailableReason(error)).toBe("provider-timeout");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
 });

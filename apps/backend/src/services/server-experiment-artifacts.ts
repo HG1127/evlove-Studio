@@ -1,4 +1,5 @@
 import JSZip from "jszip";
+import {z} from "zod";
 import {
   CandidateSchema,
   type Candidate,
@@ -8,12 +9,14 @@ import {
   type SourceArtifact,
 } from "@evolution/contracts";
 import { trustedServerBaselineChampion } from "@evolution/harness";
-import { applyExactEdits } from "@evolution/core";
-import { buildServerCandidateTargetContext, buildServerExactCandidateArtifacts, isServerTextEditBlueprint, requireServerCandidateOutputModes, SERVER_TEXT_FAMILY as TEXT_FAMILY } from "./server-candidate-context";
+import { applyExactEdits, isTextArtifactExtension, isZipArtifact } from "@evolution/core";
+import { buildServerCandidateTargetContext, buildServerExactCandidateArtifacts, isServerTextEditBlueprint, requireServerCandidateOutputModes } from "./server-candidate-context";
 import { runServerAi } from "./ai-gateway";
 import { checkServerHtmlCandidateProtection } from "./server-html-candidate-protection";
 import { getServerArtifactStore } from "./artifact-runtime";
 import { renderSnapshot, verifyRendered } from "./server-artifact-renderer";
+import {parseServerSource} from "./server-source-parser";
+import {validateStructuredTextFormat} from "@evolution/adapters";
 
 type CodebaseOverlay = { files: Array<{ path: string; content: string }>; deletions: string[] };
 
@@ -124,6 +127,24 @@ async function currentBaseBlob(project: EvolveProject, source: SourceArtifact, p
   return blob;
 }
 
+/** Reindex the current native frozen parent, not only its last sparse edit.
+ * The exact current Blob is SHA/size verified before any extracted field can
+ * become a coordinate for the next Candidate or targeted repair. */
+export async function readServerCandidateParentNativeStructure(
+  project:EvolveProject,source:SourceArtifact,parentCandidate?:Candidate,
+){
+  const blob=await currentBaseBlob(project,source,parentCandidate);
+  const binding=resolveServerExperimentParentBinding(project,source,parentCandidate);
+  const parsed=await parseServerSource({
+    artifactId:source.id,name:source.name,mimeType:source.mimeType,size:blob.size,
+    role:source.role,blob,storageRef:binding.blobId!,
+  });
+  if(parsed.parseStatus!=="ready"||!parsed.structuredContent){
+    throw new Error(`${source.name} 当前冻结父代无法重新建立原生索引；不得使用过期上传预览。`);
+  }
+  return parsed;
+}
+
 /** Decode the actual current text file; parsed upload indexes cannot be a mutation base. */
 export async function readServerCandidateParentText(project: EvolveProject, source: SourceArtifact, parentCandidate?: Candidate) {
   const parent = currentParentSnapshot(project, source.id, parentCandidate);
@@ -183,7 +204,10 @@ export async function verifyServerCandidateFrozenArtifact(snapshot: CandidateArt
   const bytes = await blob.arrayBuffer();
   if (await serverArtifactSha256(bytes) !== receipt.sha256) return false;
   const extension = receipt.name.split(".").pop()?.toLowerCase() ?? "";
-  if (TEXT_FAMILY.test(extension)) {
+  // CSV/TSV are native table overlays. Their Candidate Snapshot is a
+  // Sheet/Cell JSON mutation plan (or keep-parent receipt), *not* the literal
+  // file bytes. Compare the verified frozen blob hash/size above instead.
+  if (isTextArtifactExtension(extension)) {
     try {
       if (new TextDecoder("utf-8", { fatal: true }).decode(bytes) !== snapshot.content) return false;
     } catch {
@@ -235,11 +259,11 @@ async function materializeCodebase(project: EvolveProject, source: SourceArtifac
 
 async function materializeText(source: SourceArtifact, snapshot: CandidateArtifactSnapshot) {
   const extension = source.extension.toLowerCase();
-  if (!TEXT_FAMILY.test(extension || source.name.split(".").pop() || "")) {
+  if (!isTextArtifactExtension(extension || source.name.split(".").pop() || "")) {
     throw new Error(`${source.name} 暂无 Server 原格式 Materializer；不会把 AI 文本冒充 ${source.extension || "二进制"} 成果。`);
   }
   if (!snapshot.content.trim()) throw new Error(`${source.name} Candidate 内容为空。`);
-  if (extension === "json") JSON.parse(snapshot.content);
+  validateStructuredTextFormat({extension,content:snapshot.content});
   if (/^html?$/.test(extension)
     && (!/<html\b/i.test(snapshot.content) || !/<body\b/i.test(snapshot.content) || !/<\/html\s*>/i.test(snapshot.content))) {
     throw new Error(`${source.name} Candidate HTML 缺少完整 html/body 容器。`);
@@ -260,12 +284,12 @@ async function buildSnapshotFile(
   materializationContent = snapshot.content,
   parentCandidate?: Candidate,
 ) {
-  const code = source.artifactKind === "codebase"
-    || source.extension.toLowerCase() === "zip"
-    || source.artifactDescriptor?.family === "codebase"
-    || source.artifactDescriptor?.family === "package";
+  const code = isZipArtifact(source);
   const office = source.artifactDescriptor?.adapterId === "document-docx-ooxml"
     || source.artifactDescriptor?.adapterId === "presentation-pptx-ooxml"
+    // Old uploaded Office artifacts can predate the V2 descriptor; route them
+    // to the real package renderer, never through a text materializer.
+    || ["docx","pptx"].includes(source.extension.toLowerCase())
     || source.artifactDescriptor?.family === "spreadsheet"
     || source.artifactKind === "spreadsheet";
   let built: {blob:Blob;checks:string[];limitations:string[]};
@@ -285,6 +309,20 @@ async function buildSnapshotFile(
   return built;
 }
 
+const KeepParentBlueprint=z.object({
+  kind:z.literal("keep-parent"),
+  sourceArtifactId:z.string().min(1),
+}).strict();
+function parseKeepParent(content:string){
+  let parsed:unknown;
+  try{parsed=JSON.parse(content);}catch{return undefined;}
+  if(!parsed||typeof parsed!=="object"||!("kind" in parsed)||parsed.kind!=="keep-parent")return undefined;
+  return KeepParentBlueprint.parse(parsed);
+}
+function canPreserveNativeArtifact(source:SourceArtifact){
+  return ["docx","pptx","xlsx","xls","ods","csv","tsv","zip"].includes(source.extension.toLowerCase());
+}
+
 export async function materializeServerCandidateArtifacts(
   project:EvolveProject,
   candidate:Candidate,
@@ -301,12 +339,43 @@ export async function materializeServerCandidateArtifacts(
   // Validate and materialize the entire set before persisting any Candidate bytes.
   for(const [index,source] of targets.entries()){
     const artifact=bySource.get(source.id)!;
-    const code=source.artifactKind==="codebase"
-      ||source.extension.toLowerCase()==="zip"
-      ||source.artifactDescriptor?.family==="codebase"
-      ||source.artifactDescriptor?.family==="package";
-    const text=!code&&TEXT_FAMILY.test(source.extension);
+    const outputExtension=(artifact.name||source.name).split(".").pop()?.toLowerCase();
+    if(source.extension&&outputExtension!==source.extension.toLowerCase()){
+      throw new Error(`${source.name} Candidate 必须保留原文件扩展名，不能冒充其他格式。`);
+    }
+    const code=isZipArtifact(source);
+    const spreadsheet=source.artifactKind==="spreadsheet"||source.artifactDescriptor?.family==="spreadsheet"
+      ||["csv","tsv","xlsx","xls","ods"].includes(source.extension.toLowerCase());
+    const text=!code&&!spreadsheet&&isTextArtifactExtension(source.extension);
     const parent=currentParentSnapshot(project,source.id,parentCandidate);
+    const keep=parseKeepParent(artifact.content);
+    if(keep){
+      if(!canPreserveNativeArtifact(source)||keep.sourceArtifactId!==source.id){
+        throw new Error(`${source.name} 仅允许为当前原生文件返回绑定 Source ID 的 keep-parent；不能用文字标记伪造原文件。`);
+      }
+      if(parent){
+        if(!await verifyServerCandidateFrozenArtifact(parent))throw new Error(`${source.name} 的父代冻结 Artifact 身份不一致，不能保留旧字节。`);
+        prepared.push({source,snapshot:{...parent,id:`server-candidate-${candidate.id}-${source.id}-${index}`},unchanged:true});
+        continue;
+      }
+      const original=await currentBaseBlob(project,source,parentCandidate);
+      if(source.size>0&&original.size!==source.size)throw new Error(`${source.name} 原文件大小发生变化，不能作为未修改结果冻结。`);
+      if(["docx","pptx","zip"].includes(source.extension.toLowerCase())){
+        await JSZip.loadAsync(new Uint8Array(await original.arrayBuffer()),{checkCRC32:true});
+      }
+      const marker=JSON.stringify(keep);
+      const snapshot:CandidateArtifactSnapshot={
+        id:`server-candidate-${candidate.id}-${source.id}-${index}`,
+        sourceArtifactId:source.id,name:source.name,mimeType:original.type||source.mimeType,
+        content:marker,contentHash:await sha256Text(marker),buildMode:"deterministic",
+        notes:["该 Target 不在本轮修改范围；冻结原始 Blob 的精确字节而非 AI 摘要。"],
+        createdAt:new Date().toISOString(),
+      };
+      prepared.push({source,snapshot,unchanged:true,built:{
+        blob:original,checks:["原始字节复用","源文件 SHA-256 冻结","本轮无未授权修改"],limitations:[],
+      }});
+      continue;
+    }
     const parentText=text
       ?await readServerCandidateParentText(project,source,parentCandidate)
       :parent?.content??source.textContent??"";
@@ -370,7 +439,9 @@ export async function buildServerExperimentCandidate(project: EvolveProject, can
   if (!targets.length) throw new Error("Mission 没有 Target Source Artifact。");
   const planned = await buildServerExactCandidateArtifacts(project, candidate, (source) => readServerCandidateParentText(project, source));
   if (planned) return materializeServerCandidateArtifacts(project, candidate, planned, "精确方案已应用到完整父代文件；AI Artifact Builder 未调用。");
-  const contexts = await buildServerCandidateTargetContext(project, candidate, (source) => readServerCandidateParentText(project, source));
+  const contexts = await buildServerCandidateTargetContext(project,candidate,
+    (source)=>readServerCandidateParentText(project,source),undefined,
+    (source)=>readServerCandidateParentNativeStructure(project,source));
   const response = await runServerAi("build-candidate", {
     project: {
       name: project.name,
@@ -396,7 +467,7 @@ export async function buildServerExperimentCandidate(project: EvolveProject, can
       risks: candidate.risks,
       designRationale: candidate.designRationale,
     },
-    outputInstruction: "Return exactly one artifact for every currentTargets item. For a text target with mutationMode text-edits, return content as JSON {kind:'text-edits',edits:[{before,after,start?,end?}]}. Copy before verbatim from the provided current source chunks, without chunk markers or ellipses; offsets are zero-based and end is exclusive. The server applies those edits to the complete current file and preserves every untouched byte. Never regenerate a whole file from truncated context. For an unchanged text Target, return one exact text-edit with identical before/after using a unique verbatim anchor; preserve that file rather than inventing another change. For other text/html/md/json targets return the COMPLETE evolved file. For codebase/package return content as JSON {kind:'codebase',overlay:true,files:[{path,content}],deletions:[path]} with actual changed/deleted files only; never return prose or fake test results. sourceArtifactId must exactly match currentTargets.id.",
+    outputInstruction: "Return exactly one artifact for every currentTargets item. For a text target with mutationMode text-edits, return content as JSON {kind:'text-edits',edits:[{before,after,start?,end?}]}. Copy before verbatim from the provided current source chunks, without chunk markers or ellipses; offsets are zero-based and end is exclusive. The server applies those edits to the complete current file and preserves every untouched byte. Never regenerate a whole file from truncated context. For an unchanged text Target, return one exact text-edit with identical before/after using a unique verbatim anchor; preserve that file rather than inventing another change. For standalone source files (including code-file/CSS/Python/TypeScript) and other text/html/md/json/jsonl/yaml/xml/svg targets return the COMPLETE evolved file; never return a ZIP overlay for a single source file. For ZIP codebase/package targets only return content as JSON {kind:'codebase',overlay:true,files:[{path,content}],deletions:[path]} with actual changed/deleted files only; never return prose or fake test results. For a DOCX target, return content as JSON {kind:'document',subtype:'docx',parts:[{path:'word/document.xml',textRuns:[{index:0,text:'replacement'}]}]}; for a PPTX target use JSON {kind:'presentation',slides:[{number:1,textRuns:[{index:0,text:'replacement'}]}]}; use ONLY real part paths, slide numbers and zero-based run indexes shown in structuredContext. Include only the locations actually changed; preserve all other runs, slides, layout and binary assets via original-package overlay. For an XLSX/XLS/ODS/CSV/TSV target, return JSON {kind:'spreadsheet',sheets:[{name:'Existing Sheet',cells:[{address:'A1',value:'replacement'}]}]}; use real sheet names and existing A1 positions shown in structuredContext, update only desired cells and never reconstruct an entire partial sheet from preview rows. For XLSX formulas include formula:'A1*2' only when required; do not fabricate computed values or verification. CSV/TSV cannot preserve executable formulas. Each actual change must differ from the current accepted Champion, and any unmentioned content remains unchanged. If a DOCX/PPTX/spreadsheet/ZIP Target is intentionally UNCHANGED in this Candidate, return content JSON {kind:'keep-parent',sourceArtifactId:'EXACT currentTargets.id'} for that Target only. The Server then verifies and freezes its existing Source/Champion bytes; do not pretend a no-op was a successful mutation. A Candidate with ALL Targets unchanged is rejected. Do not output PDF/image/audio/video binaries as JSON or text; those targets need an external renderer and remain blocked. sourceArtifactId must exactly match currentTargets.id.",
   });
   requireServerCandidateOutputModes(contexts, response.artifacts);
   return materializeServerCandidateArtifacts(project,candidate,response.artifacts,response.summary);

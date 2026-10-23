@@ -129,7 +129,8 @@ describe("server HTML protection before frozen Artifact writes", () => {
     const args = fixture();
     Object.assign(args.source, { inputMode: "paste", extension: "htm", name: "tutorial.htm", textContent: args.content });
     blobs.clear();
-    await expect(materializeServerCandidateArtifacts(args.project, args.candidate, outputs(html(section("slide-52"))), "test")).rejects.toThrow(/slide-51/);
+    const output=outputs(html(section("slide-52"))).map(item=>({...item,name:"tutorial-evolved.htm"}));
+    await expect(materializeServerCandidateArtifacts(args.project, args.candidate, output, "test")).rejects.toThrow(/slide-51/);
     expect(put).not.toHaveBeenCalled();
   });
 

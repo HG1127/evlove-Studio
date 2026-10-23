@@ -162,7 +162,7 @@ describe("immutable evidence ledger",()=>{
     expect(verify(event,{...mirrored,chainHash:"f".repeat(64)})).toBe(false);
     expect(verify(event,{...mirrored,signature:"f".repeat(64)})).toBe(false);
     expect(paths).toHaveLength(2);
-    expect(paths[1]).toContain("id=eq.%22event-ledger-evt-retry%22");
+    expect(paths[1]).toContain("id=eq.event-ledger-evt-retry");
   });
 
   it("refuses an Event mirror ID occupied by different Evidence",async()=>{

@@ -1,3 +1,4 @@
+import {applyHtmlCandidatePatch,isTextArtifactExtension} from "@evolution/core";
 import { applyHtmlLocalEdits } from "./html-local-edits";
 import type { Candidate, CandidateArtifactSnapshot, CandidatePatch, SourceArtifact } from "../schemas";
 import { applyExactEdits } from "./exact-edits";
@@ -63,6 +64,10 @@ function escapeHtml(value: string) {
  * deterministic and keeps scripts/styles/metadata that were outside the model context.
  */
 function applyHtmlAddPatch(source: string, patch: CandidatePatch) {
+  const anchored=applyHtmlCandidatePatch(source,patch);
+  if(anchored!==undefined)return {text:anchored,applied:true};
+  // A selector expresses a local boundary; never move a missing/ambiguous target to the body.
+  if(patch.target.trim().startsWith("#"))return {text:source,applied:false,reason:"HTML target or complete replacement is not unique"};
   if (patch.operation !== "add") return { text: source, applied: false, reason: "not an HTML add" };
   if (!/<html\b/i.test(source) || !/<body\b/i.test(source) || !/<\/body\s*>/i.test(source) || !/<\/html\s*>/i.test(source)) {
     return { text: source, applied: false, reason: "source is not a complete HTML document" };
@@ -175,7 +180,7 @@ function normalizedArtifactName(value: string) {
 }
 
 function applyCandidateOutput(source: SourceArtifact, current: string, output: CandidateArtifactOutput) {
-  const isText = /^(html?|xhtml|md|markdown|txt|css|js|ts|tsx|jsx|json|yaml|yml|svg)$/i.test(source.extension);
+  const isText = isTextArtifactExtension(source.extension)||source.extension.toLowerCase()==="xhtml";
   let content = output.content;
   if (isText && /^\s*\{/.test(content)) {
     let kind: unknown;
@@ -325,15 +330,15 @@ export function buildCandidateDeterministically(candidate: Candidate, targets: S
     // Other structured/binary artifacts must keep their editable structure. Flattened extracted text
     // is only diagnostic context; do not create a fake text artifact for PPTX/DOCX/XLSX.
     const adapter = artifact.artifactDescriptor?.adapterId ?? "";
-    const extension = artifact.extension.toLowerCase();
-    if (adapter === "presentation-pptx-ooxml" || adapter === "document-docx-ooxml" || artifact.artifactDescriptor?.preservationMode === "external-required" || (artifact.artifactKind === "spreadsheet" && !["csv", "tsv"].includes(extension))) return undefined;
+    if (adapter === "presentation-pptx-ooxml" || adapter === "document-docx-ooxml" || artifact.artifactDescriptor?.preservationMode === "external-required" || artifact.artifactKind === "spreadsheet") return undefined;
     let text = artifact.textContent!;
     const patches = candidate.patches.filter((patch) => !patch.artifactId || patch.artifactId === artifact.id);
     for (const patch of patches) {
       const isJson = /json/i.test(artifact.mimeType) || /\.json$/i.test(artifact.name);
       const jsonResult = isJson ? applyJsonPatch(text, patch) : { text, applied: false, reason: "not JSON" };
-      const exactResult = !jsonResult.applied ? applyExactTextPatch(text, patch) : jsonResult;
       const isHtml = /^(html?|xhtml)$/i.test(artifact.extension) || /html/i.test(artifact.mimeType);
+      // An ID selector can also appear in a navigation href; replacing that occurrence corrupts markup.
+      const exactResult = !jsonResult.applied && !(isHtml && patch.target.trim().startsWith("#")) ? applyExactTextPatch(text, patch) : jsonResult;
       const htmlResult = !jsonResult.applied && !exactResult.applied && isHtml ? applyHtmlAddPatch(text, patch) : exactResult;
       const isMarkdown = /\.(md|markdown)$/i.test(artifact.name) || /markdown/i.test(artifact.mimeType);
       const headingResult = !jsonResult.applied && !exactResult.applied && !htmlResult.applied && isMarkdown ? applyHeadingPatch(text, patch) : htmlResult;

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { EvolveProject } from "@evolution/contracts";
+import {CandidateSchema,TestCaseSchema,type EvolveProject} from "@evolution/contracts";
 import { campaignScoringInputFingerprint } from "@evolution/core";
+import {integrateDistilledLesson} from "@evolution/core";
 import { advanceServerCampaignPreparation } from "./server-campaign-preparation";
 
 function fixture(): EvolveProject {
@@ -33,6 +34,43 @@ function fixture(): EvolveProject {
 }
 
 describe("server campaign preparation",()=>{
+  it("reserves the final paper before planning and never includes it in the mutation payload",async()=>{
+    const project=fixture();project.diagnosis={problemId:"P",rootCause:"gap",summary:"gap",affectedComponent:"source",confidence:0.9,evidence:["流程缺口"],evidenceRefs:[],counterEvidence:[],falsifier:"no gap",suggestedScopes:["code"],trace:[]};
+    project.campaign.checkpoint={round:1,completedPhase:"diagnose",at:project.updatedAt};
+    const never=async()=>{throw Error("completed phase");};
+    let reserved=0,planned=0;
+    const ports={problemAnalysis:never,diagnose:never,reserveFinalHoldout:async(payload:unknown)=>{
+      reserved++;expect(JSON.stringify(payload)).not.toContain("candidate-BLIND");
+      return [TestCaseSchema.parse({id:"F1",title:"final",input:"BLIND_SCENARIO",expected:["different edge"],hidden:true,criterionIds:["CONTENT"]})];
+    },plan:async(payload:unknown)=>{
+      planned++;expect(JSON.stringify(payload)).not.toContain("BLIND_SCENARIO");
+      return {candidates:[CandidateSchema.parse({id:"candidate-BLIND",name:"repair",change:"real change",designRationale:{sourceEvidence:["流程缺口"],mechanism:"close gap"}})],recommendedCandidateIds:["candidate-BLIND"],summary:"planned",experimentDesign:[]};
+    }};
+    const reservedOutcome=await advanceServerCampaignPreparation(project,ports);
+    expect(reserved).toBe(1);expect(planned).toBe(0);expect(reservedOutcome.project.candidates).toHaveLength(0);
+    const plannedOutcome=await advanceServerCampaignPreparation(reservedOutcome.project,ports);
+    expect(reserved).toBe(1);expect(planned).toBe(1);
+    expect(plannedOutcome.project.candidates[0]?.finalHoldoutPaperHash).toBe(reservedOutcome.project.finalHoldout?.paperHash);
+  });
+  it("feeds newly integrated learning and the selected next-round problem into real planning",async()=>{
+    const project=fixture();
+    const makeLesson=(id:string)=>({id,title:id,summary:"observed",reusable:true,effect:"improved",limit:"same context",status:"lesson" as const,trigger:[],method:[],validatedOn:[]});
+    project.lessons=Array.from({length:6},(_,i)=>makeLesson("old-"+i));
+    project.lessons=integrateDistilledLesson(project,makeLesson("newest")).lessons;
+    project.problemStatement="Selected Next Queue issue";
+    project.diagnosis={problemId:"P",rootCause:"gap",summary:"gap",affectedComponent:"source",confidence:0.9,evidence:["流程缺口"],evidenceRefs:[],counterEvidence:[],falsifier:"no gap",suggestedScopes:["code"],trace:[]};
+    project.campaign.checkpoint={round:1,completedPhase:"diagnose",at:project.updatedAt};
+    let called=false;
+    const never=async()=>{throw Error("completed phase");};
+    await advanceServerCampaignPreparation(project,{problemAnalysis:never,diagnose:never,plan:async payload=>{
+      called=true;
+      expect(payload).toMatchObject({project:{problemStatement:"Selected Next Queue issue"}});
+      const lessons=(payload as {existingLessons:Array<{id:string}>}).existingLessons;
+      expect(lessons).toHaveLength(6);expect(lessons[0]!.id).toBe("newest");
+      return {candidates:[],recommendedCandidateIds:[],summary:"context checked",experimentDesign:[]};
+    }});
+    expect(called).toBe(true);
+  });
   it("shows the selected diagnosis source late in a large file to the Plan model",async()=>{
     const project=fixture();
     const quote="退款审批 REFUND_APPROVAL_CASE 必须由主管批准并保留流水编号。";
@@ -159,6 +197,127 @@ describe("server campaign preparation",()=>{
     expect(third.project.campaign.checkpoint).toMatchObject({round:1,completedPhase:"plan"});
     expect(third.project.gates.find((gate)=>gate.id==="experiment-ready")?.status).toBe("approved");
     expect(third.project.candidates[0]?.status).toBe("draft");
+  });
+
+  it("plans Round 2 from the exact S1 Champion rather than stale original source or repeated Candidate ID",async()=>{
+    const project=fixture();
+    const original=project.sourceArtifacts[0]!.textContent!;
+    const s1="# S1 冻结方案\\n升级后的研究规范补齐引用机制，但仍缺操作清单。";
+    const championCandidate={
+      id:"candidate-002",name:"S1",artifactBuildStatus:"ready",
+      artifactSnapshots:[{
+        id:"s1-snapshot",sourceArtifactId:"source",content:s1,name:"s1.md",
+        mimeType:"text/markdown",contentHash:"frozen-s1",
+        frozenArtifact:{sourceArtifactId:"source",blobId:"frozen-s1",sha256:"a".repeat(64),size:s1.length,snapshotHash:"frozen-s1"},
+      }],
+    };
+    project.searchChampion={id:"champion-r1-candidate-002",versionLabel:"S1",
+      round:1,score:72,candidate:championCandidate,patches:[],
+      reason:"第一轮已经过独立评估",validation:{status:"completed",recommendation:"release"},
+      artifactAcceptance:{status:"passed",candidateId:"candidate-002"},
+    } as unknown as NonNullable<EvolveProject["searchChampion"]>;
+    project.campaign={...project.campaign,status:"running",currentRound:1,
+      stopCriteria:{...project.campaign.stopCriteria,stopWhenAcceptanceMet:false,maxRounds:3,patienceRounds:3},
+      scoringInputFingerprint:campaignScoringInputFingerprint(project),
+      checkpoint:{round:2,completedPhase:"diagnose",at:project.updatedAt}};
+    project.roundHistory=[{round:1,winnerCandidateId:"candidate-002"} as EvolveProject["roundHistory"][number]];
+    project.candidates=[championCandidate as EvolveProject["candidates"][number]];
+    project.problems=[{id:"P",title:"S1 操作清单缺失",summary:"缺少逐条执行说明",impact:80,
+      severity:"high",status:"recommended",confidence:0.9,
+      rootCause:"缺少核验操作步骤",evidence:["仍缺操作清单"]} as EvolveProject["problems"][number]];
+    project.selectedProblemId="P";
+    project.diagnosis={problemId:"P",rootCause:"缺少执行级检查",summary:"补全清单",
+      affectedComponent:"source",confidence:0.9,evidence:["仍缺操作清单"],
+      evidenceRefs:[],counterEvidence:[],falsifier:"仍没有操作清单",
+      suggestedScopes:["prompt"],trace:[]} as EvolveProject["diagnosis"];
+    const never=async()=>{throw new Error("Existing phase must not rerun");};
+    const outcome=await advanceServerCampaignPreparation(project,{
+      problemAnalysis:never,diagnose:never,
+      plan:async(payload)=>{
+        const data=payload as {project:{sourceArtifacts:Array<{id:string;content:string;contentSource:string}>};
+          search:{baseVersionId:string;champion:{versionLabel:string;id:string}}};
+        expect(data.project.sourceArtifacts[0]).toMatchObject({
+          id:"source",content:s1,contentSource:"search-champion:S1",
+        });
+        expect(data.project.sourceArtifacts[0]?.content).not.toBe(original);
+        expect(data.search.baseVersionId).toBe("S1");
+        expect(data.search.champion).toMatchObject({id:"champion-r1-candidate-002",versionLabel:"S1"});
+        return {candidates:[{
+          id:"candidate-002",name:"第二轮补齐清单",change:"补齐执行清单",
+          hypothesis:"增加操作清单可提升质量",
+          patches:[{id:"p2",component:"prompt" as const,operation:"update" as const,target:"source",
+            artifactId:"source",content:"逐条核验",rationale:"提高可操作性"}],
+          riskLevel:"low" as const,expectedImpact:"增强可操作性",risks:[],
+          accuracy:0,evidence:0,riskCoverage:0,costDelta:0,speedDelta:0,
+          safety:"REVIEW" as const,recommended:true,status:"draft" as const,
+          notes:[],addressesAdvice:[],artifactSnapshots:[],
+          artifactBuildStatus:"idle" as const,
+          designRationale:{sourceEvidence:["仍缺操作清单"],
+            commandAlignment:"让内容更完整",mechanism:"补齐操作清单 -> 按步核查 -> 可验证改善",
+            coveredCriteria:["内容闭环"],protectedCompliance:"保留原事实",falsifier:"清单不可执行"},
+        }],recommendedCandidateIds:["candidate-002"],summary:"续写 S1",
+        experimentDesign:["同卷基线比较"]};
+      },
+    });
+    expect(outcome).toMatchObject({control:"continue",phase:"experiment",candidateCount:1});
+    expect(outcome.project.campaign.checkpoint).toMatchObject({round:2,completedPhase:"plan"});
+    expect(outcome.project.candidates.map(c=>c.id)).toEqual(["r2-candidate-002"]);
+    expect(outcome.project.searchChampion?.candidate?.id).toBe("candidate-002");
+    expect(outcome.project.roundHistory[0]?.winnerCandidateId).toBe("candidate-002");
+    expect(outcome.project.sourceArtifacts[0]?.textContent).toBe(original);
+  });
+
+  it("never presents Original-only SYS-PAIRWISE UNVERIFIED as an actionable Baseline defect to Problem Analysis",async()=>{
+    const project=fixture();
+    const baselinePairwise={
+      testCaseId:"VC-PAIRWISE",
+      output:"UNVERIFIED: only Candidate can establish improvement over original",
+      verificationStatus:"unverified" as const,
+      latencyMs:0,cost:0,trace:[],
+    };
+    project.acceptanceRubric.push({...project.acceptanceRubric[0]!,id:"SYS-PAIRWISE",
+      source:"system-integrity",judgeType:"pairwise",hardGate:true});
+    project.evalSuite.push({...project.evalSuite[0]!,id:"VC-PAIRWISE",
+      criterionIds:["SYS-PAIRWISE"]});
+    project.baselineRun.runs.push(baselinePairwise);
+    project.baselineRun.result!.criterionScores!.push({
+      criterionId:"SYS-PAIRWISE",score:0,pass:false,verificationStatus:"unverified",
+      evidence:[],gaps:["original cannot be paired without new Candidate"],testCaseIds:["VC-PAIRWISE"],
+    });
+    project.baselineRun.result!.unverifiedCriterionIds=["SYS-PAIRWISE"];
+    // Simulate an accepted original with no actionable VERIFIED deficits.
+    // Otherwise baselineRubricProblem intentionally bypasses AI entirely.
+    project.baselineRun.result!.criterionScores![0]={
+      ...project.baselineRun.result!.criterionScores![0]!,
+      score:95,pass:true,gaps:[],
+    };
+    const originalRows=structuredClone(project.baselineRun);
+    const outcome=await advanceServerCampaignPreparation(project,{
+      problemAnalysis:async(payload)=>{
+        const b=(payload as {baseline:{
+          result:{criterionScores:Array<{criterionId:string}>;unverifiedCriterionIds:string[]};
+          runs:Array<{testCaseId:string}>;
+          comparisonOnlyDeferred:string;
+        }}).baseline;
+        expect(b.runs.map(x=>x.testCaseId)).not.toContain("VC-PAIRWISE");
+        expect(b.result.criterionScores.map(x=>x.criterionId)).not.toContain("SYS-PAIRWISE");
+        expect(b.result.unverifiedCriterionIds).not.toContain("SYS-PAIRWISE");
+        expect(b.comparisonOnlyDeferred).toContain("Candidate");
+        return {problems:[{
+          id:"P-ACTUAL",title:"可核验的原始说明缺少验证步骤",
+          impact:75,severity:"high" as const,status:"recommended" as const,
+          summary:"真实文本缺少验证和回滚说明",rootCause:"步骤不完整",
+          evidence:["当前文本存在流程缺口"],evidenceRefs:[],
+          confidence:0.9,affectedComponent:"source",
+        }],recommendedProblemId:"P-ACTUAL",summary:"基于真实文档"};
+      },
+      diagnose:async()=>{throw new Error("Not reached");},
+      plan:async()=>{throw new Error("Not reached");},
+    });
+    expect(outcome.phase).toBe("problem");
+    expect(outcome.project.problems[0]?.id).toBe("P-ACTUAL");
+    expect(project.baselineRun).toEqual(originalRows);
+    expect(outcome.project.baselineRun.result?.unverifiedCriterionIds).toContain("SYS-PAIRWISE");
   });
 
   it("preserves manual execution mode instead of silently upgrading it to auto-rounds",async()=>{

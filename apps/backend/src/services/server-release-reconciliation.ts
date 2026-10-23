@@ -7,6 +7,7 @@ import {observeConnectorReleaseReality} from "./connector-release";
 import {observeVercelReleaseReality} from "./vercel-release";
 import {recordConnectorReleaseOutcomeObservation,recordHttpReleaseOutcomeObservation,recordReleaseOutcomeObservation} from "./release-outcome-telemetry";
 import {captureReleaseOutcomeTelemetry,skippedReleaseOutcomeTelemetry} from "./release-outcome-status";
+import {refreshServerProductionGoalEvidence} from "./server-production-goal-evidence";
 
 export async function runServerMissionReleaseReconciliation(project:EvolveProject){
   if(projectUsesConnectorRelease(project)){
@@ -18,6 +19,7 @@ export async function runServerMissionReleaseReconciliation(project:EvolveProjec
       :skippedReleaseOutcomeTelemetry();
     return{
       ...outcome,
+      project:await refreshServerProductionGoalEvidence(outcome.project),
       provider:"connector" as const,
       outcomeTelemetry,
       previewReady:outcome.disposition!=="manual-check"&&outcome.observation?.effectiveAction==="shadow"&&outcome.observation.healthy===true,
@@ -53,6 +55,7 @@ export async function runServerMissionReleaseReconciliation(project:EvolveProjec
       :skippedReleaseOutcomeTelemetry();
     return{
       ...outcome,
+      project:await refreshServerProductionGoalEvidence(outcome.project),
       provider:"http" as const,
       outcomeTelemetry,
       previewReady:outcome.disposition!=="manual-check"&&outcome.observation?.effectiveAction==="shadow"&&outcome.observation.healthy===true,
@@ -82,6 +85,7 @@ export async function runServerMissionReleaseReconciliation(project:EvolveProjec
     :skippedReleaseOutcomeTelemetry();
   return{
     ...outcome,
+    project:await refreshServerProductionGoalEvidence(outcome.project),
     provider:"vercel" as const,
     outcomeTelemetry,
     observedAt:outcome.observation.checkedAt,

@@ -4,7 +4,7 @@ import {mockEvent} from "nitro/h3";
 import {createEvolutionEvent} from "@evolution/contracts";
 import {EventEvidenceIdentityConflictError} from "./evidence-ledger";
 import route from "../../server/api/evolution/events.post";
-import {EventEvidenceMirrorError,EventIdempotencyConflictError} from "./event-persistence";
+import {EventEvidenceMirrorError,EventIdempotencyConflictError,EventReadbackError} from "./event-persistence";
 
 const append=vi.hoisted(()=>vi.fn());
 vi.mock("./security-policy",()=>({requireGovernedEvolutionPermission:vi.fn(async()=>undefined)}));
@@ -41,7 +41,15 @@ describe("Event POST retry semantics",()=>{
     append.mockRejectedValue(new EventEvidenceMirrorError(event.id,new Error("private")));
     await expect(route(request())).rejects.toMatchObject({
       statusCode:503,
-      statusMessage:"Event persisted; Evidence mirror failed. Retry the same Event ID.",
+      statusMessage:"Event Evidence mirror unavailable",
+      data:{code:"EVENT_EVIDENCE_MIRROR_FAILED",message:expect.stringContaining("同一事件 ID")},
     });
   });
+  it("reports an unconfirmed readback as retryable without exposing private details",async()=>{
+    append.mockRejectedValue(new EventReadbackError(event.id));
+    await expect(route(request())).rejects.toMatchObject({
+      statusCode:503,data:{code:"EVENT_READBACK_UNAVAILABLE",message:expect.stringContaining("重试")},
+    });
+  });
+
 });

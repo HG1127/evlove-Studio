@@ -38,7 +38,7 @@ describe.runIf(live)("Vercel Sandbox live browser regression",()=>{
       title:"真实 Preview 浏览器交互",
       input:"点击保存并确认状态变化",
       expected:["点击保存后显示已保存"],
-      tags:["browser","e2e"],
+      tags:["browser","npm-script:build","npm-script:test"],
       hidden:false,
       criterionIds:[],
       executionMode:"external-runner",

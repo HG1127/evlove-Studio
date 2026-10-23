@@ -1,7 +1,7 @@
 import {afterEach,describe,expect,it,vi} from "vitest";
 import {demoProject} from "../data/mock-project";
 import type {EvolveProject} from "../schemas";
-import {checkPublicReadiness,getServerEvolutionWorkflowStatus,getServerWorkflowCapabilities,shouldUseServerAutoPilot,startServerEvolutionWorkflow} from "./server-workflow-client";
+import {checkPublicReadiness,getServerEvolutionWorkflowStatus,getServerWorkflowCapabilities,requiresIsolatedHtmlServerExecution,shouldUseServerAutoPilot,startServerEvolutionWorkflow} from "./server-workflow-client";
 
 const capabilities={
   available:true,
@@ -65,6 +65,38 @@ describe("server workflow routing",()=>{
     expect(await checkPublicReadiness()).toEqual(snapshot);
   });
 
+  it("distinguishes unsafe executable HTML from ordinary Markdown and reference-only HTML",()=>{
+    const base={...demoProject,
+      targetConnection:{adapter:"artifact",connectionId:"artifact",status:"connected",label:"Artifact"},
+    } as EvolveProject;
+    expect(requiresIsolatedHtmlServerExecution(base)).toBe(false);
+    const htmlSource={...demoProject.sourceArtifacts[0]!,extension:"html",mimeType:"text/html"};
+    const mixed={...base,sourceArtifacts:[htmlSource,...demoProject.sourceArtifacts.slice(1)]};
+    expect(requiresIsolatedHtmlServerExecution(mixed)).toBe(true);
+    expect(requiresIsolatedHtmlServerExecution({
+      ...base,sourceArtifacts:[{...htmlSource,role:"reference"}],
+    })).toBe(false);
+    expect(requiresIsolatedHtmlServerExecution({
+      ...mixed,targetConnection:{...base.targetConnection,adapter:"git"},
+    })).toBe(false);
+  });
+
+  it("shows the operator the authorized HTML Sandbox remediation returned by the server",async()=>{
+    const fetchMock=vi.fn(async()=>new Response(JSON.stringify({
+      statusMessage:"HTML Sandbox 尚未实际就绪，进化任务尚未启动",
+      data:{code:"HTML_SANDBOX_NOT_READY",
+        action:"为此 Vercel 项目完成 Sandbox 授权并重新检测"},
+    }),{status:503,headers:{"Content-Type":"application/json"}}));
+    vi.stubGlobal("fetch",fetchMock);
+    await expect(startServerEvolutionWorkflow("html-mission",{
+      idempotencyKey:"original-request",
+    })).rejects.toThrow(
+      /HTML Sandbox 尚未实际就绪.*处理方式：为此 Vercel 项目完成 Sandbox 授权并重新检测/);
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith(
+      "/api/evolution/start",
+      expect.objectContaining({method:"POST"}),
+    );
+  });
   it("passes scheduledFor through the durable workflow start request",async()=>{
     const fetchMock=vi.fn(async(url:RequestInfo|URL,init?:RequestInit)=>{
       expect(String(url)).toContain("/api/evolution/start");

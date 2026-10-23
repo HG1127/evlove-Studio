@@ -10,7 +10,7 @@ export const SandboxFileSchema=z.object({
 });
 export type SandboxFile=z.infer<typeof SandboxFileSchema>;
 
-export const SandboxCommandPhaseSchema=z.enum(["install","build","test","e2e"]);
+export const SandboxCommandPhaseSchema=z.enum(["install","build","typecheck","test","e2e"]);
 export type SandboxCommandPhase=z.infer<typeof SandboxCommandPhaseSchema>;
 
 export const SandboxCommandSchema=z.object({

@@ -1,6 +1,7 @@
 import {createHash} from "node:crypto";
 import type {Candidate,EvolveProject,TargetRunFile,TargetRunResult,TestCase} from "@evolution/contracts";
 import {trustedServerBaselineChampion} from "@evolution/harness";
+import {isZipArtifact,resolveTestTargetArtifact} from "@evolution/core";
 import {getServerArtifactStore} from "./artifact-runtime";
 import {runHttpTarget} from "./http-target-gateway";
 import {attachServerVisualEvidence} from "./server-visual-evidence";
@@ -22,31 +23,14 @@ function digest(bytes:Uint8Array|string){
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-function targetArtifacts(project:EvolveProject){
-  return project.sourceArtifacts.filter((artifact)=>artifact.role==="target");
-}
-
 type TargetArtifact=EvolveProject["sourceArtifacts"][number];
 
 export function resolveServerTestTargetArtifact(project:EvolveProject,testCase:TestCase):TargetArtifact|undefined{
-  const targets=targetArtifacts(project);
-  if(!targets.length)return undefined;
-  const criteria=new Set(testCase.criterionIds);
-  const scopedIds=new Set((project.acceptanceRubric??[])
-    .filter((criterion)=>criteria.has(criterion.id))
-    .flatMap((criterion)=>criterion.artifactIds));
-  const selected=scopedIds.size?targets.filter((artifact)=>scopedIds.has(artifact.id)):targets;
-  if(selected.length!==1){
-    throw new Error(`Test Case ${testCase.id} 没有唯一的 Target Artifact 绑定，不能选用首个 Source。`);
-  }
-  return selected[0];
+  return resolveTestTargetArtifact(project,testCase);
 }
 
 function isArchiveTarget(artifact:TargetArtifact){
-  return artifact.extension.toLowerCase()==="zip"
-    ||artifact.artifactKind==="codebase"
-    ||artifact.artifactDescriptor?.family==="codebase"
-    ||artifact.artifactDescriptor?.family==="package";
+  return isZipArtifact(artifact);
 }
 
 function exactCurrentCandidate(project:EvolveProject){

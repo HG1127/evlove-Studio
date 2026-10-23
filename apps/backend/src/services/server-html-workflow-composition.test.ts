@@ -8,7 +8,7 @@ vi.mock("@evolution/harness", async (importOriginal) => ({ ...await importOrigin
 vi.mock("./server-html-artifact-execution", () => ({ runServerHtmlArtifactBatch: html, serverHtmlArtifactTargetEnabled: () => true }));
 vi.mock("./server-http-target-execution", () => ({ serverHttpTargetEnabled: () => false }));
 vi.mock("./connector-target-source", () => ({ serverConnectorTargetEnabled: () => false }));
-const project = { id: "html-mission", sourceArtifacts: [] } as unknown as EvolveProject;
+const project = { id: "html-mission", sourceArtifacts: [{id:"html",role:"target",extension:"html"}], acceptanceRubric:[] } as unknown as EvolveProject;
 const candidate = CandidateSchema.parse({ id: "tested-candidate", name: "HTML Candidate", change: "Improve HTML" });
 const testCases = [TestCaseSchema.parse({ id: "H1", title: "Hidden behavior", input: "inspect", expected: ["actual"], hidden: true, executionMode: "external-runner", browserSteps: [{ action: "visible", selector: "#actual" }] })];
 type CurrentPort = { executeExternalBatch: (args: { project: EvolveProject; testCases: TestCase[] }) => Promise<TargetRunResult[]> };

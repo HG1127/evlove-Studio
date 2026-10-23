@@ -12,6 +12,7 @@ import {
   listServerJobPage,
   listRecentServerParseJobs,
   listServerActiveJobs,
+  listServerActiveMissionCampaignJobs,
   listServerMissionEnvelopePage,
   listServerMissionEnvelopes,
   ActiveJobQueryError,
@@ -82,6 +83,27 @@ describe("server Mission revision CAS",()=>{
     expect(fetch).toHaveBeenCalledTimes(6);
   });
 
+  it("finds a legacy active Campaign without parse-job crowding or key-prefix filtering",async()=>{
+    const legacy=EvolutionJobSchema.parse({...baseJob,
+      id:"legacy-html-campaign",missionId:"mission-html",status:"waiting",
+      idempotencyKey:"old-runtime-key:legacy",updatedAt:at,
+    });
+    const paths:URL[]=[];
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
+      const url=new URL(String(input));
+      paths.push(url);
+      expect(url.pathname).toMatch(/\/jobs$/);
+      expect(url.searchParams.get("mission_id")).toBe("eq.mission-html");
+      expect(url.searchParams.get("type")).toBe("eq.campaign");
+      expect(url.searchParams.has("idempotency_key")).toBe(false);
+      const rows=url.searchParams.get("status")==="eq.waiting"&&!url.searchParams.has("or")
+        ?[jobRow(legacy)]:[];
+      return new Response(JSON.stringify(rows),{status:200});
+    }));
+    const active=await listServerActiveMissionCampaignJobs("mission-html",100);
+    expect(active.map(item=>item.id)).toEqual(["legacy-html-campaign"]);
+    expect(paths).toHaveLength(4);
+  });
   it("fills Event list requests across short Supabase pages",async()=>{
     const ids=["event-z","event-y"];
     const paths:URL[]=[];
@@ -89,7 +111,7 @@ describe("server Mission revision CAS",()=>{
       const url=new URL(String(input));
       paths.push(url);
       expect(url.pathname).toMatch(/\/events$/);
-      expect(url.searchParams.get("mission_id")).toBe('eq."mission/a"');
+      expect(url.searchParams.get("mission_id")).toBe('eq.mission/a');
       const id=ids[paths.length-1];
       return new Response(JSON.stringify(id?[{
         id,mission_id:"mission/a",schema_version:"event-v1",type:"MissionUpdated",
@@ -383,6 +405,53 @@ describe("server Mission revision CAS",()=>{
     expect(fetch).toHaveBeenCalledOnce();
   });
 
+  it("uses the Mission-atomic RPC only for guarded HTML Campaign creation",async()=>{
+    const guarded=EvolutionJobSchema.parse({...baseJob,id:"workflow-control-guarded",
+      status:"queued",generation:1,
+      idempotencyKey:`workflow-control:${demoProject.id}:first-request`,
+    });
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
+      expect(String(input)).toContain("/rpc/create_evolution_html_campaign_control");
+      const body=JSON.parse(String(init?.body)) as {p_job:EvolutionJob;p_allow_single_waiting_retry:boolean};
+      expect(body).toEqual({p_job:guarded,p_allow_single_waiting_retry:false});
+      return new Response(JSON.stringify([{applied:true,reason:"created",job:jobRow(guarded)}]),{status:200});
+    }));
+    expect(await createServerJobIdempotentReceipt(guarded,{
+      kind:"html-campaign",allowSingleWaitingRetry:false,
+    })).toEqual({job:guarded,reused:false});
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+  it("reports a different active Campaign returned by the atomic RPC without starting a Job",async()=>{
+    const guarded=EvolutionJobSchema.parse({...baseJob,id:"workflow-control-new",
+      status:"queued",generation:1,
+      idempotencyKey:`workflow-control:${demoProject.id}:second-request`,
+    });
+    const earlier=EvolutionJobSchema.parse({...guarded,id:"workflow-control-existing",
+      status:"running",idempotencyKey:`workflow-control:${demoProject.id}:first-request`,
+    });
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
+      expect(String(input)).toContain("/rpc/create_evolution_html_campaign_control");
+      return new Response(JSON.stringify([{applied:false,reason:"mission-active",job:jobRow(earlier)}]),{status:200});
+    }));
+    await expect(createServerJobIdempotentReceipt(guarded,{
+      kind:"html-campaign",allowSingleWaitingRetry:false,
+    })).rejects.toMatchObject({reason:"mission-active",current:{id:earlier.id}});
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+  it("does not fall back to the unguarded RPC when the HTML migration is missing",async()=>{
+    const guarded=EvolutionJobSchema.parse({...baseJob,id:"workflow-control-new",
+      status:"queued",generation:1,
+      idempotencyKey:`workflow-control:${demoProject.id}:start`,
+    });
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
+      expect(String(input)).toContain("/rpc/create_evolution_html_campaign_control");
+      return new Response('{"code":"PGRST202","message":"Function not found"}',{status:404});
+    }));
+    await expect(createServerJobIdempotentReceipt(guarded,{
+      kind:"html-campaign",allowSingleWaitingRetry:false,
+    })).rejects.toThrow();
+    expect(fetch).toHaveBeenCalledOnce();
+  });
   it("distinguishes an idempotent Workflow start replay from a new Job",async()=>{
     const prior=EvolutionJobSchema.parse({...baseJob,id:"workflow-control-prior",outputRef:"run-prior"});
     vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
@@ -493,8 +562,8 @@ describe("server Mission revision CAS",()=>{
     vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
       const url=new URL(String(input));
       expect(url.searchParams.get("type")).toBe("eq.parse");
-      expect(url.searchParams.get("updated_at")).toBe('gte."2026-09-17T00:00:00.000Z"');
-      expect(url.searchParams.get("metadata->>sessionId")).toBe('eq."session/1"');
+      expect(url.searchParams.get("updated_at")).toBe('gte.2026-09-17T00:00:00.000Z');
+      expect(url.searchParams.get("metadata->>sessionId")).toBe('eq.session/1');
       expect(url.searchParams.get("order")).toBe("created_at.desc,id.desc");
       return new Response(JSON.stringify(url.searchParams.has("or")?[]:[jobRow(parse)]),{status:200});
     }));

@@ -16,6 +16,7 @@ import {
   unavailableBaselineRun,
 } from "./server-baseline-evidence";
 import { indexUniqueBatchResults } from "./server-batch-results";
+import { groundedOriginalCitationDefect, groundedOriginalDocumentProtection } from "./server-grounded-baseline-defect";
 
 export type ServerCurrentArtifactPorts = {
   executeSemanticBatch(args: {
@@ -77,8 +78,9 @@ export async function executeServerCurrentArtifactSuite(
   }
   if(semanticCases.length){
     const started=Date.now();
+    let artifactContext:Array<Record<string,unknown>>|undefined;
     try{
-      const artifactContext=await currentSemanticArtifactContext(project,ports.buildCurrentArtifactContext,semanticCases);
+      artifactContext=await currentSemanticArtifactContext(project,ports.buildCurrentArtifactContext,semanticCases);
       const result=await ports.executeSemanticBatch({project,testCases:semanticCases,artifactContext});
       const {byId,duplicateIds}=indexUniqueBatchResults(result.results);
       const latency=Math.max(1,Math.round((Date.now()-started)/Math.max(1,semanticCases.length)));
@@ -86,7 +88,8 @@ export async function executeServerCurrentArtifactSuite(
         const item=byId.get(testCase.id);
         ordered.set(testCase.id,duplicateIds.has(testCase.id)
           ?unavailableBaselineRun(testCase,"Server AI Batch 对本题返回了重复结果，证据身份不明确。")
-          :item?{
+          :item ? groundedOriginalCitationDefect({project,testCase,output:item.output,artifactContext})
+            ?? groundedOriginalDocumentProtection({project,testCase,artifactContext}) ?? {
           testCaseId:testCase.id,output:item.output,latencyMs:latency,cost:0,
           verificationStatus:artifactContext.some((artifact)=>artifact.truncated)&&semanticEvidenceStatus(item.output)==="verified"?"partial":semanticEvidenceStatus(item.output),
           trace:[{id:`server-current-semantic-${testCase.id}`,stage:"AI 语义核查",summary:"Server AI 读取当前版本并定位同卷证据",status:"info",detail:"仅提供当前成果观察；独立 Judge 负责 Rubric 结算。"},...item.trace],
@@ -94,7 +97,16 @@ export async function executeServerCurrentArtifactSuite(
       }
     }catch(error){
       const message=error instanceof Error?error.message:String(error);
-      for(const testCase of semanticCases)ordered.set(testCase.id,unavailableBaselineRun(testCase,`Server AI Artifact Runtime 未完成：${message}`));
+      for(const testCase of semanticCases){
+        // Only exact, complete, directly pasted document text may provide a
+        // deterministic negative observation or written protection instruction.
+        // A provider's invalid JSON never turns a behavioral/remote test into success.
+        const grounded=artifactContext && (
+          groundedOriginalCitationDefect({project,testCase,output:"UNVERIFIED: batch provider failed",artifactContext})
+          ?? groundedOriginalDocumentProtection({project,testCase,artifactContext})
+        );
+        ordered.set(testCase.id,grounded??unavailableBaselineRun(testCase,`Server AI Artifact Runtime 未完成：${message}`));
+      }
     }
   }
   return testCases.map((testCase)=>ordered.get(testCase.id)??unavailableBaselineRun(testCase,"当前版本同卷执行未返回结果。"));

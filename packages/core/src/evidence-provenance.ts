@@ -69,9 +69,26 @@ function structuredEvidence(artifact: EvolveProject["sourceArtifacts"][number]) 
   return candidates;
 }
 
+/**
+ * Model narratives often cite internal projections using dotted key paths
+ * (e.g. baseline.archive[0].score=70). Those are NOT claims about the actual
+ * Source/Runner bytes. A substring such as "Gate F" in a test output must never
+ * falsely VERIFY a different statement about archived metadata.
+ *
+ * Projection provenance requires a dedicated, versioned Mission/Event receipt;
+ * this Source/Test resolver deliberately returns UNRESOLVED instead.
+ */
+function requiresProjectionReceipt(claim:string):boolean {
+  return /^\s*(?:baseline|previousRounds|roundHistory|evolutionArchive|archive|campaign|validationRun|experimentRun|searchChampion)\s*(?:\.|\[)/i.test(claim);
+}
+
 /** Resolve model-written evidence into machine-checkable project locations. */
 export function resolveEvidenceRefs(project: EvolveProject, claims: string[]): EvidenceRef[] {
   return claims.map((claim, index) => {
+    if(requiresProjectionReceipt(claim))return {
+      id:`evidence-${index}-${rawFastHash(claim)}`,claim,kind:"unresolved" as const,
+      verified:false,
+    };
     const runCandidates = project.baselineRun.runs.flatMap((run) => [
       { run, text: run.output, traceId: undefined as string | undefined },
       ...run.trace.map((trace) => ({ run, text: `${trace.summary} ${trace.detail ?? ""}`, traceId: trace.id })),

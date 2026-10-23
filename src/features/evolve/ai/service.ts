@@ -285,7 +285,7 @@ export function reasoningEffortForOperation(operation: AiOperation, payload: unk
   return simpleDocument ? "medium" : base;
 }
 
-export async function runEvolveAi(operation: AiOperation, payload: unknown, media?: OpenAIMedia, onAttemptNotice?: (notice: AiAttemptNotice) => void, options?: { forceRefresh?: boolean; requireLive?: boolean; validateResult?: (result: unknown) => void }): Promise<unknown> {
+export async function runEvolveAi(operation: AiOperation, payload: unknown, media?: OpenAIMedia, onAttemptNotice?: (notice: AiAttemptNotice) => void, options?: { forceRefresh?: boolean; requireLive?: boolean; validateResult?: (result: unknown) => void; signal?: AbortSignal }): Promise<unknown> {
   const config = schemaFor(operation);
   const profile = OPERATION_PROFILES[operation];
   const projectProfile = findProjectAiProfile(payload);
@@ -309,7 +309,8 @@ export async function runEvolveAi(operation: AiOperation, payload: unknown, medi
   const reasoningEffort = reasoningEffortForOperation(operation, payload);
 
   if (routedCandidates.length) {
-    const activeSignal=getActiveAbortSignal();
+    const runSignal=getActiveAbortSignal();
+    const activeSignal=options?.signal?(runSignal?AbortSignal.any([runSignal,options.signal]):options.signal):runSignal;
     const schemaRetryTimeoutMs = profile.schemaRetries > 0
       ? Math.min(36_000, Math.max(15_000, Math.round(profile.timeoutMs * 0.4)))
       : undefined;

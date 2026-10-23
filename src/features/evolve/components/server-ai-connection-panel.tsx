@@ -40,6 +40,18 @@ export function ServerAiConnectionPanel({selected}:{selected?:ProviderConnection
   }):undefined;
   const input=draft?.success?draft.data:undefined;
 
+  async function refreshStatus(){
+    setBusy(true);
+    setMessage("");
+    try{
+      const value=await readServerAiConnection();
+      setStatus(value);
+      setMessage(value.storageConfigured?"后端模型保存服务已就绪，可以保存所选连接。":value.message);
+    }catch(error){
+      setMessage(error instanceof Error?error.message:"无法读取后端模型配置。");
+    }finally{setBusy(false);}
+  }
+
   async function act(action:"save"|"test"){
     if(!input)return;
     setBusy(true);
@@ -51,7 +63,11 @@ export function ServerAiConnectionPanel({selected}:{selected?:ProviderConnection
         setMessage(value.message+" 保存不代表模型已测通，请再点击“测试后端调用”。");
       }else{
         const value=await testServerAiConnection(input);
-        setMessage(value.ready?"后端真实模型调用通过；可将此连接保存为后端默认模型。":value.message);
+        setMessage(value.ready
+          ?status?.storageConfigured===false
+            ?"后端真实模型调用通过。加密保存服务启用后，可设为后台任务的默认模型。"
+            :"后端真实模型调用通过；可将此连接保存为后端默认模型。"
+          :value.message);
       }
     }catch(error){
       setMessage(error instanceof Error?error.message:"后端模型操作未完成。");
@@ -81,7 +97,10 @@ export function ServerAiConnectionPanel({selected}:{selected?:ProviderConnection
         <Button variant="secondary" disabled={busy||!input} onClick={()=>void act("test")}>测试后端调用</Button>
       </div>:<p className="text-xs text-slate-500">请先添加或选择“自定义中转（OpenAI 格式）”连接，填写 API Key、Base URL 和模型名。</p>}
       {selected&&compatible&&!input&&<p className="text-xs text-amber-700">请补齐 API Key、有效 Base URL 和完整模型 ID。</p>}
-      {status?.storageConfigured===false&&<p className="text-xs text-amber-700">{status.message}</p>}
+      {status?.storageConfigured===false&&<div className="flex flex-wrap items-center gap-2">
+        <p className="text-xs text-amber-700">{status.message}</p>
+        <Button variant="secondary" size="sm" disabled={busy} onClick={()=>void refreshStatus()}>重新检查保存状态</Button>
+      </div>}
       {message&&<p role="status" className="rounded-lg bg-slate-50 p-3 text-sm">{message}</p>}
       <p className="text-xs text-slate-500">后端密钥加密保存，不会通过配置查询返回。切换后端模型会改变后续评测的模型身份，已有评测仍保留原证据。</p>
     </CardContent>

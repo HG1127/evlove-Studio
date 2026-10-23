@@ -4,6 +4,7 @@ import {
   productionOutcomeTrend,
 } from "./release-outcome";
 import {projectHasOnlineReleaseTarget} from "./release-target";
+import {productionGoalReadiness} from "./production-goal-evidence";
 
 export type LearningGovernanceResult={
   lessons:Lesson[];
@@ -79,7 +80,7 @@ function sameReleaseBinding(lesson:Lesson,project:EvolveProject){
 function needsRedistillFromLessons(project:EvolveProject,lessons:Lesson[],now:number){
   const freshness=productionOutcomeFreshness(project,{now});
   const trend=productionOutcomeTrend(project,{now});
-  if(project.release.status!=="promoted"||freshness.status!=="fresh"||trend.status!=="stable-healthy")return false;
+  if(project.release.status!=="promoted"||freshness.status!=="fresh"||trend.status!=="stable-healthy"||!productionGoalReadiness(project,now).improved)return false;
   const bound=lessons.filter((lesson)=>lesson.governance&&sameReleaseBinding(lesson,project));
   if(bound.some((lesson)=>lesson.status==="verified-skill"&&lesson.governance?.status==="active"))return false;
   const degraded=bound.filter((lesson)=>lesson.governance?.status==="degraded"||lesson.governance?.status==="revoked");
@@ -211,7 +212,7 @@ export function governProductionLessons(
         }),
       };
     }
-    if(project.release.status==="promoted"&&trend.status==="stable-healthy"&&freshness.status==="fresh"){
+    if(project.release.status==="promoted"&&trend.status==="stable-healthy"&&freshness.status==="fresh"&&productionGoalReadiness(project,now).improved){
       const active=lesson.status==="verified-skill";
       const previouslyInvalid=lesson.governance.status==="degraded"||lesson.governance.status==="revoked";
       const nextGovernance=transitionGovernance(lesson,{
@@ -239,7 +240,7 @@ export function governProductionLessons(
         governance:transitionGovernance(lesson,{
           ...lesson.governance,
           status:severe?"revoked" as const:"degraded" as const,
-          reason:`Production Outcome 不再满足 Verified Skill 门槛：${trend.reason}`,
+          reason:`Production Outcome 不再满足 Verified Skill 门槛：${trend.reason} ${productionGoalReadiness(project,now).reason}`,
           outcomeTrend:trend.status,
           observedAt:project.release.observedAt,
           updatedAt:at,
@@ -257,6 +258,7 @@ export function governProductionLessons(
     ||trend.status==="flapping"
     ||trend.status==="healthy-insufficient"
     ||trend.status==="unknown"
+    ||!productionGoalReadiness(project,now).ready
     ||needsRedistill;
   if(needsFollowup){
     const priority=rolledBack||trend.status==="degrading"||trend.status==="flapping"?"P0":"P1";
@@ -264,7 +266,7 @@ export function governProductionLessons(
       ?"当前 Production 已 Rollback；重新验证线上稳定性与触发原因后，再恢复 Skill 复用资格。"
       :needsRedistill
         ?"Production Outcome 已恢复稳定，但此前降级/撤销的 Skill 必须重新 Distill 并获得新证据后才能恢复复用资格。"
-      :`${freshness.reason} ${trend.reason}`;
+      :`${freshness.reason} ${trend.reason} ${productionGoalReadiness(project,now).reason}`;
     const updatedQueue=upsertQueue(nextQueue,queueItem(project,reason,priority));
     if(updatedQueue!==nextQueue||JSON.stringify(updatedQueue)!==JSON.stringify(nextQueue))changed=true;
     nextQueue=updatedQueue;
@@ -291,14 +293,16 @@ export function attachLessonGovernance(
 ):Lesson{
   const at=options?.at??new Date().toISOString();
   const provenance=lesson.provenance??buildLessonProvenance(project,at,options?.supersedesLessonIds??[]);
-  if(!projectHasOnlineReleaseTarget(project))return {...lesson,provenance};
+  if(!projectHasOnlineReleaseTarget(project))return {...lesson,status:lesson.status==="verified-skill"?"lesson":lesson.status,provenance};
   const trend=productionOutcomeTrend(project,{now:Date.parse(at)});
-  const status=lesson.status==="verified-skill"&&project.release.status==="promoted"&&trend.status==="stable-healthy"?"active":"pending";
+  const goal=productionGoalReadiness(project,Date.parse(at));
+  if(lesson.status==="verified-skill"&&!goal.improved)lesson={...lesson,status:"lesson",reusable:false};
+  const status=lesson.status==="verified-skill"&&project.release.status==="promoted"&&trend.status==="stable-healthy"&&goal.improved?"active":"pending";
   const reason=lesson.status==="verified-skill"&&project.release.status==="promoted"&&trend.status==="stable-healthy"
     ?trend.reason
     :project.release.status==="rolled-back"
       ?"当前 Release 已 Rollback，不能把本轮方法升级为 Verified Skill。"
-      :`等待稳定 Production Outcome：${trend.reason}`;
+      :`等待稳定 Production Outcome：${trend.reason} ${goal.reason}`;
   return {
     ...lesson,
     provenance,

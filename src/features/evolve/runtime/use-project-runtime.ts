@@ -1,3 +1,6 @@
+import {candidateMetricDeltas,selectPlanningLessons,productionGoalReadiness} from "@evolution/core";
+import {parseStoredEvolveProject} from "@evolution/adapters";
+import {checkpointCandidateBuild} from "@evolution/core";
 import { campaignObservesLiveTarget, campaignRootBaselineForMeasurement, materializeAcceptedCandidatePackage, campaignScoringInputBlocker, campaignScoringInputFingerprint, applyProductionLearningGovernance, applyReleaseResultToProject, beginReleaseCycle, completeAutonomousMission, experimentNeedsEvidenceRepair, buildExperimentGapAdvicePayload, buildGapAdvicePayload, fallbackExperimentAdvice, integrateDistilledLesson, mergeGovernedNextQueue, nextDurableReleaseAction, prepareCampaignRetry, productionOutcomeFreshness, productionOutcomeTrend, projectHasStableHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, projectUsesConnectorRelease, projectUsesHttpRelease, projectUsesVercelRelease, transitionReleaseTarget } from "@evolution/core";
 import { deliveryReadiness } from "./delivery-readiness";
 
@@ -64,7 +67,7 @@ import { evolutionHarness, type HarnessPlan } from "./evolution-harness";
 import { artifactRepairNeedsRecovery, deriveAttentionRequest, createHarnessActionExecutor, isLocalBaselineEvidencePause, isLocalBaselineJudgePause, isLocalDemoBaselinePause } from "@evolution/harness";
 import { getProductionRuntime, productionRuntimeMode } from "./production-runtime";
 import { localProductionPorts } from "./local-production-adapters";
-import { shouldUseServerAutoPilot, startServerEvolutionWorkflow } from "./server-workflow-client";
+import { requiresIsolatedHtmlServerExecution, shouldUseServerAutoPilot, startServerEvolutionWorkflow } from "./server-workflow-client";
 import { flushProductionMissionSync } from "./production-sync";
 import { classifyRuntimeFailure, retryDelayMs } from "./failure-router";
 import { reconcileServerRelease } from "./server-release-client";
@@ -140,7 +143,7 @@ function gapPlanContext(project: EvolveProject) {
 }
 
 function rubricSuiteState(project: EvolveProject, evalSuite: TestCase[], hiddenEvalSuite: TestCase[]) {
-  const validation = rubricValidation(project.acceptanceRubric);
+  const validation = rubricValidation(project.acceptanceRubric,project.sourceArtifacts);
   const coverage = rubricSuiteCoverage(project.acceptanceRubric, evalSuite, hiddenEvalSuite);
   const hiddenHard = coverage.hiddenHardGateMissing.map((criterion) => criterion.id);
   const uncoveredCriterionIds = [...new Set([...coverage.uncovered, ...hiddenHard])];
@@ -295,7 +298,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
     // Make confirmation immediately visible to the next async action. React may
     // defer a state updater; persistence must not run inside that updater either.
     const next = typeof updater === "function" ? updater(projectRef.current) : updater;
-    const withTimestamp = { ...next, updatedAt: now() };
+    const withTimestamp = { ...parseStoredEvolveProject(next), updatedAt: now() };
     projectRef.current = withTimestamp;
     saveLocalProject(withTimestamp);
     setProjectState(withTimestamp);
@@ -316,13 +319,15 @@ export function useProjectRuntime(initialProject: EvolveProject) {
     }));
   }, [commit, projectId, status.busy, status.error]);
 
-  const backgroundEvidenceKey = automaticEvidenceKey(project);
+  // Avoid serializing large BrowserStep collections for unrelated UI clicks.
+  const backgroundEvidenceKey = useMemo(()=>automaticEvidenceKey(project),[project]);
   useEffect(() => {
     let mounted = true;
     const snapshot = projectRef.current;
     void ensureAutomaticEvidence(snapshot).then((result) => {
       if (!mounted || !result.connection) return;
       commit((current) => current.targetConnection.adapter === result.connection!.adapter
+        || current.sourceArtifacts.some(source=>source.role==="target")
         ? current
         : { ...current, targetConnection: result.connection! });
     }).catch(() => {
@@ -425,7 +430,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
   const approveGate = useCallback((id: GateId, note?: string) => {
     let blocked: string | undefined;
     if (id === "target-ready") {
-      const rubricState = rubricValidation(project.acceptanceRubric);
+      const rubricState = rubricValidation(project.acceptanceRubric,project.sourceArtifacts);
       if (!goalReadiness(project).ready) blocked = goalReadiness(project).blockers.join("；");
       else if (!project.goal || project.metrics.length < 2) blocked = "目标与验收指标还不完整";
       else if (project.acceptanceRubricState.status !== "ready" || !rubricState.ready) blocked = `Project-specific Acceptance Rubric 尚未 Ready：${rubricState.warnings.join("；") || "请先 AI 编译并确认验收标准"}`;
@@ -463,7 +468,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
 
   const compileAcceptanceRubric = useCallback(async (force = false) => {
     const criteria = await run("AI 编译 Acceptance Rubric", async () => { reportProgress("等待 Acceptance Designer 返回",0,1,"定义验收标准","rubric"); const result=await ensureAcceptanceRubric(projectRef.current,{force}); reportProgress("Acceptance Rubric 已生成",1,1,"定义验收标准","rubric"); return result; });
-    const validation = rubricValidation(criteria);
+    const validation = rubricValidation(criteria,projectRef.current.sourceArtifacts);
     const compiledAt = now();
     commit((current) => {
       // Rubric is part of the Evolve Contract. Recompiling it invalidates every downstream
@@ -492,7 +497,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
 
   const setRubricCriteria = useCallback((criteria: AcceptanceCriterion[], summary: string) => {
     const normalized = criteria;
-    const validation = rubricValidation(normalized);
+    const validation = rubricValidation(normalized,projectRef.current.sourceArtifacts);
     commit((current) => {
       const base = (current.baselineRun.status !== "idle" || current.evalSuite.length || current.candidates.length || current.gates.find((gate) => gate.id === "target-ready")?.status === "approved")
         ? resetDownstream(current)
@@ -584,7 +589,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
 
   const generateEvalSuite = useCallback(async () => {
     const currentProject = projectRef.current;
-    const rubricCheck = rubricValidation(currentProject.acceptanceRubric);
+    const rubricCheck = rubricValidation(currentProject.acceptanceRubric,currentProject.sourceArtifacts);
     if (!rubricCheck.ready) {
       throw new Error(`请先完成 Project-specific Acceptance Rubric：${rubricCheck.warnings.join("；") || "Rubric 尚未 Ready"}`);
     }
@@ -873,8 +878,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
             accuracy: evaluation.accuracy,
             evidence: evaluation.evidence,
             riskCoverage: evaluation.riskCoverage,
-            costDelta: current.baselineRun.result ? Number((((evaluation.averageCost / current.baselineRun.result.averageCost) - 1) * 100).toFixed(1)) : 0,
-            speedDelta: current.baselineRun.result ? Number(((1 - evaluation.averageLatencyMs / current.baselineRun.result.averageLatencyMs) * 100).toFixed(1)) : 0,
+            ...candidateMetricDeltas(evaluation,(experiment.comparisonBaseline??current.baselineRun).result),
             safety: evaluation.safety,
             recommended: experiment.winnerId === candidate.id,
             status: experiment.winnerId === candidate.id ? "winner" : resultRecord?.experimentStage === "screened" ? "queued" : evaluation.safety === "FAIL" ? "failed" : "passed",
@@ -940,13 +944,13 @@ export function useProjectRuntime(initialProject: EvolveProject) {
     const candidates = project.candidates.filter((candidate) => project.selectedCandidateIds.includes(candidate.id));
     if (candidates.length === 0) throw new Error("至少选择一个 Candidate");
     const operationForPhase = (phase?: string): import("../ai/schemas").AiOperation => {
-      if (/构造/.test(phase ?? "")) return "build-candidate";
+      if (/构造|候选文件/.test(phase ?? "")) return "build-candidate";
       if (/预筛.*Judge|快速预筛/.test(phase ?? "")) return /Judge/.test(phase ?? "") ? "evaluate-population" : "execute-artifact-batch";
       if (/完整实验/.test(phase ?? "")) return project.experimentPolicy.batchArtifactRuntime ? "execute-artifact-batch" : "execute-artifact";
       return "evaluate";
     };
     try {
-      const experiment = await run("运行 Candidate 实验", () => runExperiment(project, candidates, (done, total, phase) => reportProgress(`${phase ?? "运行 Candidate 实验"}`, done, total, phase, operationForPhase(phase))));
+      const experiment = await run("运行 Candidate 实验", () => runExperiment(project, candidates, (done, total, phase, route) => reportProgress(`${phase ?? "运行 Candidate 实验"}`, done, total, phase, operationForPhase(phase),route),{onCandidateBuilt:(built)=>commit(current=>checkpointCandidateBuild(current,project,built))}));
       applyExperiment(experiment);
       if (!experiment.winnerId && !experiment.pendingEvidenceCandidateId) {
         const aiAdvice = await generateExperimentAdvice(experiment);
@@ -1063,6 +1067,12 @@ export function useProjectRuntime(initialProject: EvolveProject) {
   }, [commit]);
 
   const executeValidation = useCallback(async () => {
+    if(requiresIsolatedHtmlServerExecution(projectRef.current)){
+      const message="HTML Target 必须通过授权的 Server Sandbox + Chromium Browser Steps 执行，不允许从本地手动 Campaign 或验证入口执行。请先完成云端 Browser Health，再使用自主进化工作流。";
+      setStatus({busy:false,error:message});
+      pushActivity("本地 HTML 执行已阻断 · "+message,undefined,projectId);
+      return undefined;
+    }
     const current = projectRef.current;
     const currentCandidateId = current.experimentRun.winnerId ?? current.experimentRun.pendingEvidenceCandidateId;
     const currentWinner = current.candidates.find((candidate) => candidate.id === currentCandidateId);
@@ -1072,7 +1082,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
     }
     try {
       const checkpoint = repairValidationCheckpoint(current, currentWinner);
-      const validation = checkpoint ?? await run("运行 Hidden Validation", () => runValidation(current, currentWinner, (done, total, phase) => reportProgress(`${phase ?? "运行 Hidden Validation"}`, done, total, phase, "evaluate")));
+      const validation = checkpoint ?? await run("运行 Hidden Validation", () => runValidation(current, currentWinner, (done, total, phase) => reportProgress(`${phase ?? "运行 Hidden Validation"}`, done, total, phase, "evaluate"), { forceJudgeRefresh: true }));
       const loopProject = projectRef.current;
       const loopCandidate = loopProject.candidates.find((candidate) => candidate.id === currentWinner.id) ?? currentWinner;
       const loop = await run(validation.recommendation === "release" ? "Gate F · Artifact Acceptance" : "失败项自动修复与复验", () => runArtifactAcceptanceLoop({
@@ -1087,7 +1097,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
       markValidationFailed(currentWinner.id, error instanceof Error ? error.message : "验证/成果验收运行失败");
       return undefined;
     }
-  }, [applyArtifactValidated, markValidationFailed, reportProgress, run, setStatus]);
+  }, [applyArtifactValidated, markValidationFailed, reportProgress, run, setStatus, projectId]);
 
   const retryFailedValidation = useCallback(async () => {
     if (!winner) throw new Error("没有可验证的 Winner");
@@ -1192,7 +1202,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
     const hasLiveDecision = projectHasLiveReleaseDecision(current);
     const releaseFreshness = productionOutcomeFreshness(current);
     const releaseTrend = productionOutcomeTrend(current);
-    const hasStableLiveOutcome = hasLiveDecision && current.release.status === "promoted" && projectHasStableHealthyProductionOutcome(current);
+    const hasStableLiveOutcome = hasLiveDecision && current.release.status === "promoted" && projectHasStableHealthyProductionOutcome(current)&&productionGoalReadiness(current).improved;
     const hasOfflineAcceptance = !projectHasOnlineReleaseTarget(current)
       && current.artifactAcceptance.status === "passed"
       && current.artifactAcceptance.candidateId === currentWinner.id;
@@ -1237,7 +1247,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
           goal: current.goal,
           desiredOutcome: current.desiredOutcome,
           problems: current.problems.slice(0, 12).map((item) => ({ id: item.id, title: item.title, impact: item.impact, severity: item.severity, status: item.status, summary: item.summary })),
-          lessons: current.lessons.slice(0, 8),
+          lessons: selectPlanningLessons(current.lessons,8),
           validation: { recommendation: current.validationRun.recommendation, summary: current.validationRun.summary, failedChecks: current.validationRun.checks.filter((item) => item.status === "fail").slice(0, 8) },
           artifactAcceptance: { status: current.artifactAcceptance.status, score: current.artifactAcceptance.overallScore, summary: current.artifactAcceptance.summary },
           release: { status: current.release.status, evidenceMode: current.release.evidenceMode, healthy: current.release.healthy, kpis: current.release.kpis.slice(0, 8) },
@@ -1514,6 +1524,20 @@ export function useProjectRuntime(initialProject: EvolveProject) {
           }));
           pushActivity(`Durable Scheduler 已接管：${new Date(nextRunAt).toLocaleString()}`, undefined, projectId);
         } catch (error) {
+          if(requiresIsolatedHtmlServerExecution(projectRef.current)){
+            const detail=error instanceof Error?error.message:String(error);
+            const message="HTML Browser Runtime 尚未具备真实授权与执行能力，禁止回退到浏览器定时模拟："+detail;
+            commit((state)=>state.campaign.schedule.nextRunAt!==nextRunAt?state:({
+              ...state,campaign:{
+                ...state.campaign,status:"paused",stopReason:message,
+                schedule:{...state.campaign.schedule,enabled:false,nextRunAt:undefined,
+                  durableRunId:undefined,durableJobId:undefined,durableScheduledFor:undefined},
+              },
+            }));
+            setStatus({busy:false,error:message});
+            pushActivity("Durable Scheduler 未能武装，HTML 任务已暂停："+detail,undefined,projectId);
+            return;
+          }
           pushActivity(`Durable Scheduler 未能武装，保留浏览器定时兜底：${error instanceof Error ? error.message : String(error)}`, undefined, projectId);
         }
       })();
@@ -1522,6 +1546,12 @@ export function useProjectRuntime(initialProject: EvolveProject) {
   }, [commit, projectId, setStatus, status.busy]);
 
   const runCampaignRound = useCallback(async () => {
+    if(requiresIsolatedHtmlServerExecution(projectRef.current)){
+      const message="HTML Target 必须通过授权的 Server Sandbox + Chromium Browser Steps 执行，不允许从本地手动 Campaign 或验证入口执行。请先完成云端 Browser Health，再使用自主进化工作流。";
+      setStatus({busy:false,error:message});
+      pushActivity("本地 HTML 执行已阻断 · "+message,undefined,projectId);
+      return undefined;
+    }
     return run("运行一轮 Evolution Search", async () => {
       let working = projectRef.current;
       const settleBeforeRound = (reason: string, forcePause = false) => {
@@ -1589,7 +1619,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
       };
       const parentVersionId = working.searchChampion?.versionLabel ?? working.version;
       const persist = (next: EvolveProject) => {
-        const stamped = { ...next, updatedAt: now() };
+        const stamped = { ...parseStoredEvolveProject(next), updatedAt: now() };
         projectRef.current = stamped;
         setProjectState(stamped);
         saveLocalProject(stamped);
@@ -1732,7 +1762,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
         const searchMemory = buildSearchMemory(working);
         const planParsed = PlanAiResultSchema.parse(await runProjectAi("plan", buildFocusedPlanPayload({ ...working, diagnosis }, {
           diagnosis,
-          existingLessons: working.lessons,
+          existingLessons: selectPlanningLessons(working.lessons),
           searchChampion: working.searchChampion,
           archive: working.evolutionArchive.slice(-32),
           parentPool,
@@ -1779,7 +1809,11 @@ export function useProjectRuntime(initialProject: EvolveProject) {
         phaseDone(`Round ${round} 断点续跑 · 复用已完成的沙箱实验`);
       } else {
         phaseDone(`Round ${round} 方案生成完成（${candidates.length} 个候选）· 运行沙箱实验`);
-        experiment = await runExperiment(working, candidates);
+        const buildBase=working;
+        experiment = await runExperiment(working, candidates, (done,total,phase,route)=>reportProgress(phase??"运行候选实验",done,total,phase,/候选文件|构造/.test(phase??"")?"build-candidate":"evaluate",route),{onCandidateBuilt:(built)=>{
+          working=checkpointCandidateBuild(working,buildBase,built);
+          commit(current=>checkpointCandidateBuild(current,buildBase,built));
+        }});
         const resultMap = new Map(experiment.candidateResults.map((item) => [item.candidateId, item.evaluation]));
         const scoredCandidates = working.candidates.map((candidate) => {
           const evaluation = resultMap.get(candidate.id);
@@ -1793,8 +1827,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
             accuracy: evaluation.accuracy,
             evidence: evaluation.evidence,
             riskCoverage: evaluation.riskCoverage,
-            costDelta: baseline.result ? Number((((evaluation.averageCost / baseline.result.averageCost) - 1) * 100).toFixed(1)) : 0,
-            speedDelta: baseline.result ? Number(((1 - evaluation.averageLatencyMs / baseline.result.averageLatencyMs) * 100).toFixed(1)) : 0,
+            ...candidateMetricDeltas(evaluation,(experiment.comparisonBaseline??baseline).result),
             safety: evaluation.safety,
             recommended: (experiment.winnerId ?? experiment.pendingEvidenceCandidateId) === candidate.id,
             status: experiment.winnerId === candidate.id ? "winner" as const : evaluation.safety === "FAIL" ? "failed" as const : "passed" as const,
@@ -2097,9 +2130,15 @@ export function useProjectRuntime(initialProject: EvolveProject) {
       setStage("baseline");
       return { round, stopped: false, champion: working.searchChampion };
     });
-  }, [commit, generateEvalSuite, projectId, run, runProjectAi]);
+  }, [commit, generateEvalSuite, projectId, reportProgress, run, runProjectAi, setStatus]);
 
   const runCampaign = useCallback(async () => {
+    if(requiresIsolatedHtmlServerExecution(projectRef.current)){
+      const message="HTML Target 必须通过授权的 Server Sandbox + Chromium Browser Steps 执行，不允许从本地手动 Campaign 或验证入口执行。请先完成云端 Browser Health，再使用自主进化工作流。";
+      setStatus({busy:false,error:message});
+      pushActivity("本地 HTML 执行已阻断 · "+message,undefined,projectId);
+      return undefined;
+    }
     const scoringBlocker = campaignScoringInputBlocker(projectRef.current) ?? campaignScoringRouteBlocker(projectRef.current);
     if (scoringBlocker) {
       commit((current) => ({ ...current, campaign: { ...current.campaign, status: "paused", stopReason: scoringBlocker, schedule: { ...current.campaign.schedule, enabled: false, nextRunAt: undefined } } }));
@@ -2156,7 +2195,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
     pushActivity(endedPaused
       ? "Campaign 已暂停 · 断点已保存，可从断点继续"
       : `Campaign 自动运行结束 · 当前状态 ${projectRef.current.campaign.status}`, undefined, projectId);
-  }, [commit, materializeOutputs, projectId, runCampaignRound]);
+  }, [commit, materializeOutputs, projectId, runCampaignRound, setStatus]);
 
   const finishAutonomousSuccess = useCallback(async () => {
     const current = projectRef.current;
@@ -2200,7 +2239,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
         pushActivity(`Server Workflow ${started.reused?"已复用":"已启动"} · runId=${started.runId}`, undefined, projectId);
         return;
       } catch (error) {
-        if(requiresRemoteMaterialization()){
+        if(requiresRemoteMaterialization()||requiresIsolatedHtmlServerExecution(cur())){
           const message=`Remote Target 必须先由 Server Durable Workflow 锁定并物化 exact snapshot：${error instanceof Error ? error.message : String(error)}`;
           setStatus({busy:false,error:message});
           pushActivity(`Server Workflow 启动失败 · 禁止把 Remote Target 回退到本地 Harness：${message}`,undefined,projectId);
@@ -2209,8 +2248,8 @@ export function useProjectRuntime(initialProject: EvolveProject) {
         pushActivity(`Server Workflow 启动失败，安全回退本地 Harness：${error instanceof Error ? error.message : String(error)}`, undefined, projectId);
       }
     }
-    if(requiresRemoteMaterialization()){
-      const message=productionRuntimeMode()==="local"
+    if(requiresRemoteMaterialization()||requiresIsolatedHtmlServerExecution(cur())){
+      const message=requiresIsolatedHtmlServerExecution(cur()) ? "HTML Target 必须通过授权的 Server Sandbox 与 Chromium Browser Steps，不能用本地 Harness 模拟成功。请进入闭环完整性检测云端 Browser。" : productionRuntimeMode()==="local"
         ?"Git / Connector Remote Target 需要 Server Runtime 才能锁定 exact snapshot；本地模式不会猜测或复制远端状态。"
         :"当前 Server 能力尚不足以物化这个 Remote Target；请检查 Git/Connector 配置与 Durable Workflow capability。";
       setStatus({busy:false,error:message});
@@ -2400,7 +2439,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
   const resumeAutonomousEvolution = useCallback(async () => {
     if (status.busy) return false;
     const current = projectRef.current;
-    if (isLocalBaselineJudgePause(current) && !getAiProviderStatus("evaluate", { aiProfile: current.aiProfile }).live) {
+    if (productionRuntimeMode()==="local" && isLocalBaselineJudgePause(current) && !getAiProviderStatus("evaluate", { aiProfile: current.aiProfile }).live) {
       const message = isLocalDemoBaselinePause(current)
         ? "当前基线仍只有演示评审。请先在「AI 模型与连接」配置并测试真实评审模型，再重新测量 Baseline。"
         : "Baseline 评审连接仍不可用。请先在「AI 模型与连接」配置并测试真实评审模型，再从断点重测。";

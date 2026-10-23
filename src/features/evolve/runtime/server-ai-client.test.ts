@@ -64,4 +64,14 @@ describe("server AI degraded fallback classification",()=>{
     await expect(runServerAiOperation("gap-advice",{project:{}}))
       .rejects.toThrow("Server AI response operation mismatch");
   });
+  it.each([503,502])("shows the public H3 data reason for HTTP %s and keeps fallback precise",async(status)=>{
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({
+      message:"HTTPError",data:{code:status===503?"SERVER_AI_UNAVAILABLE":"AI_OUTPUT_SCHEMA_MISMATCH",message:"具体错误原因，请重试。"},
+    }),{status})));
+    const request=runServerAiOperation("plan",{project:{}});
+    await expect(request).rejects.toThrow("具体错误原因，请重试。");
+    if(status===503)await expect(request).rejects.toBeInstanceOf(ServerAiUnavailableError);
+    else await expect(request).rejects.not.toBeInstanceOf(ServerAiUnavailableError);
+  });
+
 });

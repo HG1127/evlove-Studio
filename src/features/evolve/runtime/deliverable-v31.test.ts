@@ -46,10 +46,35 @@ describe("实际文件验证与冻结", () => {
   it("缺失段落、超出范围或重复的文字索引不能静默成功", async () => {
     const zip = new JSZip(); zip.file("word/document.xml",'<w:t xmlns:w="urn:test">原文</w:t>');
     await putArtifactBlob("s",new Blob([new Uint8Array(await zip.generateAsync({type:"uint8array"}))]));
-    await expect(buildDownloadBlob(source("docx"),snapshot(JSON.stringify({parts:[{path:"missing",textRuns:["新版"]}]})))).rejects.toThrow("原文件没有");
+    await expect(buildDownloadBlob(source("docx"),snapshot(JSON.stringify({parts:[{path:"missing",textRuns:["新版"]}]})))).rejects.toThrow(/DOCX part|原文件没有/);
     for (const runs of [[{index:9,text:"新版"}],[{index:0,text:"甲"},{index:0,text:"乙"}]]) {
       await expect(buildDownloadBlob(source("docx"),snapshot(JSON.stringify({parts:[{path:"word/document.xml",textRuns:runs}]})))).rejects.toThrow("文本位置无效");
     }
+  });
+  it("DOCX 原样文本或未经授权的内部部件不能被当作进化结果",async()=>{
+    const zip=new JSZip();
+    zip.file("word/document.xml",'<w:document><w:t>原文</w:t></w:document>');
+    zip.file("word/settings.xml",'<w:settings><w:t>受保护</w:t></w:settings>');
+    await putArtifactBlob("s",new Blob([new Uint8Array(await zip.generateAsync({type:"uint8array"}))]));
+    await expect(buildDownloadBlob(source("docx"),snapshot(JSON.stringify({parts:[{
+      path:"word/document.xml",textRuns:[{index:0,text:"原文"}],
+    }]})))).rejects.toThrow(/没有发生真实文本修改/);
+    await expect(buildDownloadBlob(source("docx"),snapshot(JSON.stringify({parts:[{
+      path:"word/settings.xml",textRuns:[{index:0,text:"越权"}],
+    }]})))).rejects.toThrow(/DOCX part/);
+  });
+  it("PPTX 只能对有效页码进行真实文本变更并保留图片",async()=>{
+    const zip=new JSZip();
+    zip.file("ppt/slides/slide1.xml",'<p:sld xmlns:p="urn:p" xmlns:a="urn:a"><a:t>原版</a:t></p:sld>');
+    zip.file("ppt/media/image.png",new Uint8Array([8,7,6]));
+    await putArtifactBlob("s",new Blob([new Uint8Array(await zip.generateAsync({type:"uint8array"}))]));
+    const modified=snapshot(JSON.stringify({slides:[{number:1,textRuns:[{index:0,text:"新版"}]}]}));
+    const result=await buildDownloadBlob(source("pptx"),modified);
+    const rebuilt=await JSZip.loadAsync(new Uint8Array(await result.blob.arrayBuffer()),{checkCRC32:true});
+    expect(await rebuilt.file("ppt/slides/slide1.xml")!.async("string")).toContain("<a:t>新版</a:t>");
+    expect(Array.from(await rebuilt.file("ppt/media/image.png")!.async("uint8array"))).toEqual([8,7,6]);
+    await expect(buildDownloadBlob(source("pptx"),snapshot(JSON.stringify({slides:[{number:1,textRuns:[{index:0,text:"原版"}]}]}))))
+      .rejects.toThrow(/没有发生真实文本修改/);
   });
   it("不能将纯文本伪装成 ODT 原格式", async () => {
     await expect(buildDownloadBlob({...source("odt"),artifactKind:"document"},snapshot("新内容"))).rejects.toThrow("当前需要外部");

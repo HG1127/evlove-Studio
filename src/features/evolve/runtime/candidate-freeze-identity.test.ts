@@ -4,14 +4,15 @@ import { webcrypto } from "node:crypto";
 import { CandidateSchema } from "@evolution/contracts";
 import { demoProject } from "../data/mock-project";
 import { buildCandidateArtifacts } from "./artifact-quality";
+import {putArtifactBlob} from "./artifact-blob-store";
 import { prepareBrowserHttpRunHtml } from "../target/http-run-file";
 
 const blobs = vi.hoisted(() => new Map<string, Blob>());
 vi.mock("./artifact-blob-store", () => ({
   getArtifactBlob: async (id: string) => blobs.get(id),
-  putArtifactBlob: async (id: string, blob: Blob) => { blobs.set(id, blob); },
+  putArtifactBlob: vi.fn(async (id: string, blob: Blob) => { blobs.set(id, blob); }),
 }));
-beforeEach(() => { blobs.clear(); vi.stubGlobal("Blob", NodeBlob); vi.stubGlobal("crypto", webcrypto); });
+beforeEach(() => { vi.clearAllMocks();blobs.clear(); vi.stubGlobal("Blob", NodeBlob); vi.stubGlobal("crypto", webcrypto); });
 
 describe("Candidate frozen file identity", () => {
   it("binds the built HTML snapshot to its frozen receipt before the real Runner reads it", async () => {
@@ -27,6 +28,10 @@ describe("Candidate frozen file identity", () => {
     const snapshot = built.artifactSnapshots[0]!;
     expect(snapshot).toMatchObject({ name: "sop-evolved.html", mimeType: "text/html",
       contentHash: snapshot.frozenArtifact?.snapshotHash });
+    const savedCount=vi.mocked(putArtifactBlob).mock.calls.length;
+    const reused=await buildCandidateArtifacts(project,built);
+    expect(vi.mocked(putArtifactBlob)).toHaveBeenCalledTimes(savedCount);
+    expect(reused.artifactSnapshots[0]?.frozenArtifact).toEqual(snapshot.frozenArtifact);
     const result = await prepareBrowserHttpRunHtml(source, built);
     expect(result.artifact).toEqual({ name: "sop-evolved.html", content: evolved });
     expect(result.sha256).toBe(snapshot.frozenArtifact?.sha256);

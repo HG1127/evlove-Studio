@@ -1,9 +1,9 @@
 import type { EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
-import { campaignScoringInputFingerprint, citesHistoricalEvidence, fastHash } from "@evolution/core";
+import { campaignScoringInputFingerprint, citesHistoricalEvidence, fastHash, isTextArtifactExtension, isZipArtifact, requiresIndependentFormatValidation } from "@evolution/core";
 
 import { compactServerSourceText, serverSemanticContextQuery, SERVER_SEMANTIC_CONTEXT_VERSION } from "./server-source-context";
 
-const TEXT_ROUNDTRIP = /^(txt|md|markdown|csv|json|yaml|yml|css|js|jsx|ts|tsx)$/i;
+// Delimited files are structured spreadsheets, not text snapshots that prove format.
 
 export function trustedServerBaselineChampion(project: EvolveProject) {
   const champion = project.searchChampion;
@@ -17,10 +17,8 @@ export function trustedServerBaselineChampion(project: EvolveProject) {
 function structuredFamily(artifact: EvolveProject["sourceArtifacts"][number]) {
   return artifact.artifactKind === "presentation"
     || artifact.artifactKind === "spreadsheet"
-    || artifact.artifactKind === "codebase"
+    || isZipArtifact(artifact)
     || artifact.artifactDescriptor?.adapterId === "document-docx-ooxml"
-    || artifact.artifactDescriptor?.family === "codebase"
-    || artifact.artifactDescriptor?.family === "package"
     || artifact.artifactDescriptor?.family === "spreadsheet";
 }
 
@@ -157,6 +155,8 @@ export function baselineLocalEvidence(project: EvolveProject, testCase: TestCase
     return unavailableBaselineRun(testCase, "需要人工验收证据，Server Baseline 不会用 AI 模拟替代。");
   }
   if (testCase.executionMode === "roundtrip") {
+    if(testCase.evidenceScope==="product-behavior")return unavailableBaselineRun(testCase,
+      "格式往返不能证明实际产品行为；请使用独立 Runner。");
     const started = Date.now();
     const targets = project.sourceArtifacts.filter((artifact) => artifact.role === "target");
     const currentTexts = targets.map((artifact) => ({
@@ -167,7 +167,8 @@ export function baselineLocalEvidence(project: EvolveProject, testCase: TestCase
     if (
       currentTexts.length
       && currentTexts.every(({ artifact, content }) => !structuredFamily(artifact)
-        && TEXT_ROUNDTRIP.test(artifact.extension || artifact.name.split(".").pop() || "")
+        && isTextArtifactExtension(artifact.extension)
+        && !requiresIndependentFormatValidation(artifact.extension)
         && content.length > 0)
     ) {
       const details = currentTexts.map(({ artifact, snapshot, content }) => {

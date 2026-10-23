@@ -1,6 +1,6 @@
 import {describe,expect,it,vi} from "vitest";
-import type {Candidate,EvolveProject} from "@evolution/contracts";
-import {campaignGoalSatisfied,campaignStopReason,completeAutonomousMission,evidenceFingerprint,materializeAcceptedChampionPackage} from "@evolution/core";
+import {InputUnderstandingSchema,type Candidate,type EvolveProject} from "@evolution/contracts";
+import {campaignGoalSatisfied,campaignStopReason,completeAutonomousMission,evidenceFingerprint,materializeAcceptedChampionPackage,reconcileAcceptedOfflineChampion} from "@evolution/core";
 import {runServerArtifactAcceptance} from "./server-artifact-acceptance";
 import {buildServerHarnessPlan} from "./server-plan";
 
@@ -57,6 +57,162 @@ describe("server artifact acceptance",()=>{
     const completed=completeAutonomousMission(queued,{at:"2026-09-20T14:32:00.000Z",reason:completePlan.decision.reason});
     expect(completed.campaign.status).toBe("completed");
     expect(completed.campaign.checkpoint).toBeUndefined();
+  });
+
+  it("continues multi-round evolution after a verified S1 Champion when stopWhenAcceptanceMet=false",async()=>{
+    const x=fixture(true);
+    x.project.inputUnderstanding=InputUnderstandingSchema.parse({status:"ready",confidence:0.95});
+    // Use a complete, three-criterion contract rather than the deliberately
+    // minimal one-criterion unit fixture; the Planner must be allowed to advance.
+    const content=x.project.acceptanceRubric[0]!;
+    x.project.acceptanceRubric=[
+      {...content,weight:60},
+      {...content,id:"PROTECT",source:"protected-item",protectedConstraint:true,weight:20},
+      {...content,id:"SYS-INTEGRITY",source:"system-integrity",protectedConstraint:true,weight:20},
+    ];
+    const ids=x.project.acceptanceRubric.map(c=>c.id);
+    x.project.evalSuite[0]={...x.project.evalSuite[0]!,criterionIds:ids};
+    x.project.hiddenEvalSuite[0]={...x.project.hiddenEvalSuite[0]!,criterionIds:ids};
+    x.project.validationRun.evaluation!.criterionScores=ids.map(criterionId=>({
+      criterionId,score:92,pass:true,verificationStatus:"verified",
+      evidence:["H1 frozen observed"],gaps:[],testCaseIds:["H1"],
+    }));
+    x.project.validationRun.evidenceFingerprint=evidenceFingerprint(x.project,x.candidate);
+    x.project.campaign.stopCriteria={
+      ...x.project.campaign.stopCriteria,
+      stopWhenAcceptanceMet:false,maxRounds:2,patienceRounds:3,stopWhenMetricTargetsMet:false,
+    };
+    const accepted=await runServerArtifactAcceptance(x.project,{
+      verifyFrozenArtifacts:async()=>({verified:[x.frozen],unavailable:[],failed:[]}),
+      repairCandidate:async()=>{throw new Error("unexpected repair");},
+    },{now:()=> "2026-09-20T14:30:00.000Z"});
+    expect(accepted.accepted).toBe(true);
+    const first=accepted.project;
+    expect(first.searchChampion?.versionLabel).toBe("S1");
+    expect(first.roundHistory).toHaveLength(1);
+    expect(first.campaign.currentRound).toBe(1);
+    expect(campaignStopReason(first)).toBeUndefined();
+    expect(buildServerHarnessPlan(first).decision.action).toBe("run-campaign");
+    // A stale temporary checkpoint cannot accidentally package a candidate
+    // before the full second Hidden and Gate F have run.
+    const active={...first,campaign:{...first.campaign,
+      checkpoint:{round:2,completedPhase:"problem" as const,at:first.updatedAt}}};
+    expect(buildServerHarnessPlan(active).decision.action).not.toBe("package");
+    // Boundaries stop the exploration and package only the already accepted
+    // frozen Champion. This does not create a new version or rewrite its SHA.
+    const exhausted={...first,campaign:{...first.campaign,currentRound:2}};
+    expect(buildServerHarnessPlan(exhausted).decision.action).toBe("package");
+    const patience={...first,campaign:{...first.campaign,noImprovementRounds:3}};
+    expect(buildServerHarnessPlan(patience).decision.action).toBe("package");
+    const evidencePause={...first,campaign:{...first.campaign,status:"paused" as const,
+      stopReason:"[server-campaign-holdout-evidence-pending] missing evidence"}};
+    expect(buildServerHarnessPlan(evidencePause).decision.action).not.toBe("package");
+    const explicitStop={...first,campaign:{...first.campaign,stopCriteria:{
+      ...first.campaign.stopCriteria,stopWhenAcceptanceMet:true,
+    }}};
+    expect(buildServerHarnessPlan(explicitStop).decision.action).toBe("package");
+    expect(first.searchChampion?.candidate?.artifactSnapshots).toEqual(x.candidate.artifactSnapshots);
+  });
+
+  it("after an unpromoted Round 2, delivers the existing exact S1 package once then continues learning",async()=>{
+    const x=fixture(true);
+    const accepted=await runServerArtifactAcceptance(x.project,{
+      verifyFrozenArtifacts:async()=>({verified:[x.frozen],unavailable:[],failed:[]}),
+      repairCandidate:async()=>{throw new Error("No repair");},
+    },{now:()=>"2026-09-20T14:30:00.000Z"});
+    const first=accepted.project;
+    const secondAttempt={
+      ...first,
+      stage:"learning" as const,
+      campaign:{...first.campaign,currentRound:2,status:"running" as const,
+        stopCriteria:{...first.campaign.stopCriteria,maxRounds:2,patienceRounds:3,stopWhenAcceptanceMet:false}},
+      experimentRun:{...first.experimentRun,status:"completed" as const,
+        winnerId:undefined,candidateResults:[]},
+      validationRun:{...first.validationRun,status:"idle" as const,candidateId:undefined,
+        evaluation:undefined,runs:[],baselineRuns:[]},
+      roundHistory:[...first.roundHistory,{...first.roundHistory[0]!,id:"round-2-declined",
+        round:2,winnerCandidateId:undefined,championChanged:false,globalChampionId:first.searchChampion?.id,
+        summary:"Round 2 未产生可晋级 Candidate，保留第一轮 Champion"}],
+    } as EvolveProject;
+    const generated=materializeAcceptedChampionPackage(secondAttempt,"2026-09-20T15:00:00.000Z");
+    expect(generated.filter(row=>row.kind==="primary"&&row.accepted)).toHaveLength(1);
+    const packaged={...secondAttempt,outputArtifacts:generated};
+    expect(packaged.searchChampion?.candidate?.id).toBe("C1");
+    expect(packaged.validationRun.status).toBe("idle");
+    expect(buildServerHarnessPlan(packaged).decision.action).toBe("distill");
+    expect(buildServerHarnessPlan(packaged).decision.reason).toContain("离线");
+    const corrupted={...packaged,outputArtifacts:generated.map(item=>
+      item.kind==="primary"?{...item,content:"modified after Gate F"}:item)};
+    const rejected=buildServerHarnessPlan(corrupted).decision;
+    expect(rejected.action).toBe("wait-human");
+    expect(rejected.reason).toContain("不一致");
+    const wrongCandidate={...packaged,outputArtifacts:generated.map(item=>
+      item.kind==="primary"?{...item,candidateId:"C2"}:item)};
+    expect(buildServerHarnessPlan(wrongCandidate).decision.action).toBe("wait-human");
+    expect(first.searchChampion?.candidate?.artifactSnapshots).toEqual(x.candidate.artifactSnapshots);
+  });
+
+  it("recovers an orphaned accepted first Champion without another round or altering frozen evidence",async()=>{
+    const x=fixture(true);
+    const accepted=await runServerArtifactAcceptance(x.project,{
+      verifyFrozenArtifacts:async()=>({verified:[x.frozen],unavailable:[],failed:[]}),
+      repairCandidate:async()=>{throw new Error("no repair");},
+    },{now:()=> "2026-09-20T14:30:00.000Z"});
+    expect(accepted.accepted).toBe(true);
+    const previous=accepted.project;
+    const orphan:EvolveProject={
+      ...previous,
+      searchChampion:undefined,
+      searchAppliedPatches:[],
+      campaign:{...previous.campaign,status:"paused",
+        stopReason:"已达到设定的最大进化轮数 1",noImprovementRounds:1},
+      roundHistory:previous.roundHistory.map(item=>({...item,
+        championChanged:false,globalChampionId:undefined,winnerScore:undefined})),
+      evolutionArchive:previous.evolutionArchive.map(item=>({...item,kind:"elite" as const})),
+    };
+    expect(buildServerHarnessPlan(orphan).decision.action).toBe("run-campaign");
+    expect(buildServerHarnessPlan(orphan).decision.reason).toContain("Search Champion");
+    const repaired=reconcileAcceptedOfflineChampion(orphan,"2026-09-20T14:32:00.000Z");
+    expect(repaired?.searchChampion?.candidate?.id).toBe("C1");
+    expect(repaired?.campaign.currentRound).toBe(1);
+    expect(repaired?.campaign.noImprovementRounds).toBe(0);
+    expect(repaired?.validationRun).toEqual(orphan.validationRun);
+    expect(repaired?.artifactAcceptance).toEqual(orphan.artifactAcceptance);
+    expect(repaired?.candidates).toEqual(orphan.candidates);
+    expect(repaired?.roundHistory[0]).toMatchObject({championChanged:true,winnerCandidateId:"C1"});
+    expect(campaignGoalSatisfied(repaired!)).toBe(true);
+    expect(buildServerHarnessPlan(repaired!).decision.action).toBe("package");
+    const packageItems=materializeAcceptedChampionPackage(repaired!);
+    expect(packageItems.filter(item=>item.kind==="primary")).toHaveLength(1);
+    expect(packageItems.every(item=>item.accepted)).toBe(true);
+    // Unsafe releases, changed inputs and invalid frozen receipts must never reconcile.
+    expect(reconcileAcceptedOfflineChampion({...orphan,release:{...orphan.release,status:"shadow"}})).toBeUndefined();
+    expect(reconcileAcceptedOfflineChampion({...orphan,goal:"modified after validation"})).toBeUndefined();
+    expect(reconcileAcceptedOfflineChampion({...orphan,campaign:{...orphan.campaign,stopReason:"Safety Hard Gate failed"}})).toBeUndefined();
+    expect(reconcileAcceptedOfflineChampion({...orphan,artifactAcceptance:{...orphan.artifactAcceptance,frozenArtifacts:[]}})).toBeUndefined();
+    expect(reconcileAcceptedOfflineChampion({...orphan,validationRun:{...orphan.validationRun,candidateId:"different"}})).toBeUndefined();
+  });
+
+  it("resumes the frozen Gate F checkpoint before generic revalidate when a governed retry is armed",()=>{
+    const x=fixture(true);
+    const project={
+      ...x.project,
+      stage:"validation" as const,
+      inputUnderstanding:InputUnderstandingSchema.parse({status:"ready",confidence:0.95}),
+      artifactAcceptance:{...x.project.artifactAcceptance,status:"unverified" as const,
+        hardGatePass:true,summary:"Previous Gate F policy required all original soft observations"},
+      campaign:{...x.project.campaign,status:"idle" as const,stopReason:undefined,
+        checkpoint:{round:1,completedPhase:"validation" as const,at:"2026-09-20T14:00:00.000Z"}},
+    };
+    const decision=buildServerHarnessPlan(project).decision;
+    expect(decision.action).toBe("run-campaign");
+    expect(decision.reason).toContain("Artifact Acceptance");
+    // A persistent pause must still require an explicit retry, not auto-resume.
+    const paused={...project,campaign:{...project.campaign,status:"paused" as const,
+      stopReason:"[server-campaign-artifact-acceptance-evidence-pending] Missing proof"}};
+    expect(buildServerHarnessPlan(paused).decision.action).not.toBe("run-campaign");
+    const changed={...project,validationRun:{...project.validationRun,candidateId:"another"}};
+    expect(buildServerHarnessPlan(changed).decision.action).not.toBe("run-campaign");
   });
 
   it("pauses a later live Target round instead of settling without paired Hidden evidence",async()=>{

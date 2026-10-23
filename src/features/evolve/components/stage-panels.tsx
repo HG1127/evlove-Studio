@@ -1,5 +1,5 @@
 import { BaselineRetryAction } from "./baseline-retry-action";
-import { experimentNeedsEvidenceRepair, computeGapAnalysis, buildGapAdvicePayload, evidenceRouteForCriterion, productionOutcomeFreshness, productionOutcomeTrend, projectHasOnlineReleaseTarget, releaseAuditTimeline, type GapAnalysis } from "@evolution/core";
+import { experimentNeedsEvidenceRepair, computeGapAnalysis, buildGapAdvicePayload, evidenceRouteForCriterion, productionOutcomeFreshness, productionOutcomeTrend, projectHasOnlineReleaseTarget, releaseAuditTimeline, requiresSandboxHtmlSourceExecution, type GapAnalysis } from "@evolution/core";
 import { compileUserEvolutionSteps, preferredInternalStage, stepForStage, workflowStepState } from "../runtime/real-evolution-workflow";
 
 import {
@@ -216,7 +216,7 @@ function InputUnderstandingCard({ runtime }: { runtime: ProjectRuntime }) {
   </CardContent></Card>;
 }
 
-function TargetPanel({ runtime }: { runtime: ProjectRuntime }) {
+function TargetPanel({ runtime,serverStartBlocked=false }: { runtime: ProjectRuntime;serverStartBlocked?:boolean }) {
   const p = runtime.project;
   const approved = runtime.gate("target-ready")?.status === "approved";
   const replaceRef = useRef<HTMLInputElement>(null);
@@ -286,7 +286,7 @@ function TargetPanel({ runtime }: { runtime: ProjectRuntime }) {
   return <div className="space-y-4">
     {replaceNote && <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-700">{replaceNote}</div>}
     <input ref={replaceRef} type="file" className="hidden" onChange={(e) => { const picked = e.target.files?.[0]; if (picked && replaceId) void replaceArtifact(replaceId, picked); e.currentTarget.value = ""; }} />
-    <GoalConfirmationCard runtime={runtime} />
+    <GoalConfirmationCard runtime={runtime} serverStartBlocked={serverStartBlocked}/>
     {approved ? <details className="rounded-2xl border bg-white p-4"><summary className="cursor-pointer text-sm font-semibold text-slate-700">查看 AI 理解与已确认口径</summary><div className="mt-3"><InputUnderstandingCard runtime={runtime} /></div></details> : <InputUnderstandingCard runtime={runtime} />}
     <details className="rounded-2xl border bg-white p-4"><summary className="cursor-pointer text-sm font-semibold text-slate-700">调整原始要求、修改边界和验收标准</summary><div className="mt-4 space-y-4">
     <Card><CardContent className="pt-5"><div className="grid gap-4 lg:grid-cols-[.9fr_1.1fr]"><div className="rounded-2xl border bg-slate-50 p-4"><div className="text-[10px] font-bold uppercase tracking-[.12em] text-slate-400">你的原始要求</div>
@@ -747,7 +747,10 @@ function PendingEvidenceCard({ runtime, criterion }: { runtime: ProjectRuntime; 
   const p = runtime.project;
   const winner = runtime.winner;
   const route = evidenceRouteForCriterion(p, criterion);
+  const score = p.validationRun.evaluation?.criterionScores?.find((item) => item.criterionId === criterion.id);
+  const pendingDetails = score?.gaps.filter((gap) => gap.trim()).slice(0, 2) ?? [];
   const htmlTarget = p.sourceArtifacts.some((artifact) => artifact.role === "target" && /^(html|htm)$/i.test(artifact.extension));
+  const htmlBrowserRequired=requiresSandboxHtmlSourceExecution(p);
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -784,6 +787,10 @@ function PendingEvidenceCard({ runtime, criterion }: { runtime: ProjectRuntime; 
     }
   };
   const connectRunner = async () => {
+    if(htmlBrowserRequired){
+      setError("上传的 HTML Target 必须先获得 Vercel Sandbox + Chromium Browser Steps 真实授权；不能用通用 HTTP Runner 替换原始文件身份。");
+      return;
+    }
     setBusy(true); setError("");
     try {
       const config = getRunnerGatewayConfig();
@@ -798,9 +805,15 @@ function PendingEvidenceCard({ runtime, criterion }: { runtime: ProjectRuntime; 
   const routeLabel = route === "visual" ? "看截图确认" : route === "manual" ? "真人验收" : route === "runner" ? "真实运行 / E2E" : route === "capability" ? "暂缺可验证证据" : "系统重新检查";
   return <div className="rounded-2xl border bg-white p-4">
     <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"><div><div className="flex flex-wrap items-center gap-2"><span className="font-semibold text-slate-900">{criterion.title}</span><Badge className="border-amber-200 bg-amber-50 text-amber-700">{routeLabel}</Badge>{criterion.hardGate&&<Badge>关键要求</Badge>}</div><p className="mt-1 text-xs leading-5 text-slate-500">{criterion.requirement}</p></div>{saved&&<Badge className={saved.verdict==="pass"?"border-emerald-200 bg-emerald-50 text-emerald-700":"border-rose-200 bg-rose-50 text-rose-700"}>已记录：{saved.verdict==="pass"?"通过":"未通过"}</Badge>}</div>
+    {pendingDetails.length > 0 && <div className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900"><b>本次未完成原因：</b>{pendingDetails.join("；")}</div>}
     {route === "visual" && <div className="mt-3 rounded-xl border border-indigo-100 bg-indigo-50/40 p-3"><div className="flex items-start gap-2"><Camera className="mt-0.5 size-4 shrink-0 text-indigo-600"/><div className="text-xs leading-5 text-slate-600"><b>怎么验证：</b>上传当前新版的实际截图，看这一条视觉要求是否满足。截图只证明画面，不会替代点击、保存、上传等 E2E 行为验证。</div></div><input ref={inputRef} type="file" accept="image/*" multiple className="hidden" onChange={(event)=>{ const files=[...(event.target.files??[])]; event.currentTarget.value=""; if(!files.length)return; if(!winner||!relevantSnapshot?.contentHash){setError("当前新版还没有可绑定的成果指纹，请先重新验收一次。");return;} setBusy(true);setError("");void addVisualEvidence(p.id,files,{artifactHash:relevantSnapshot.contentHash,sourceArtifactId:relevantSnapshot.sourceArtifactId,candidateId:winner.id,origin:"upload"}).catch((cause)=>setError(cause instanceof Error?cause.message:String(cause))).finally(()=>setBusy(false)); }}/><div className="mt-3 flex flex-wrap items-center gap-2"><Button size="sm" variant="secondary" disabled={busy||!winner} onClick={()=>inputRef.current?.click()}><Camera className="size-3.5"/>上传当前版本截图</Button><span className="text-[11px] text-slate-500">当前已绑定 {screenshotIds.length} 张</span></div></div>}
     {(route === "visual" || route === "manual") && <div className="mt-3"><textarea className="min-h-20 w-full rounded-xl border bg-white px-3 py-2 text-xs leading-5 outline-none focus:border-indigo-300" placeholder={route==="visual"?"写下你实际看到的结果，例如：主操作突出，信息层级清楚；或具体指出哪里仍不达标。":"填写实际验收结果和依据，不能只写“通过”。"} value={note} onChange={(event)=>setNote(event.target.value)}/><div className="mt-2 flex flex-wrap justify-end gap-2"><Button size="sm" variant="secondary" disabled={busy||!note.trim()||(route==="visual"&&screenshotIds.length===0)} onClick={()=>saveDecision("fail")}>确认未通过</Button><Button size="sm" disabled={busy||!note.trim()||(route==="visual"&&screenshotIds.length===0)} onClick={()=>saveDecision("pass")}><Check className="size-3.5"/>确认这一项通过</Button></div><p className="mt-2 text-[11px] leading-4 text-slate-400">确认只对当前新版和当前成果指纹有效；新版内容变化后必须重新验证。</p></div>}
-    {route === "runner" && <div className="mt-3 rounded-xl border border-sky-100 bg-sky-50/50 p-3"><div className="flex items-start gap-2"><PlugZap className="mt-0.5 size-4 shrink-0 text-sky-600"/><div className="text-xs leading-5 text-slate-600"><b>怎么验证：</b>这条要求涉及真实点击、运行、上传、保存或端到端行为，截图不能证明。需要由 Target Runner 实际执行。</div></div><div className="mt-3 flex flex-wrap gap-2">{p.targetConnection.adapter==="http"?<Button size="sm" disabled={runtime.validationRequestQueued} onClick={revalidateAndResume}><Play className="size-3.5"/>{runtime.validationRequestQueued?"已排队重新验收":"用真实 Runner 验收并继续"}</Button>:<Button size="sm" disabled={busy} onClick={()=>void connectRunner()}><PlugZap className="size-3.5"/>{busy?"正在检测…":"检测并连接 Runner"}</Button>}<a href="#/settings" className="inline-flex h-8 items-center rounded-lg border bg-white px-3 text-xs font-medium text-slate-600 hover:bg-slate-50">Runner 设置</a></div>{p.targetConnection.adapter==="http"&&<p className="mt-2 text-[11px] text-emerald-700">Runner 已连接；当前提示来自上一轮验收结果，点击后才会用真实执行证据重新结算。</p>}</div>}
+    {route === "runner" && htmlBrowserRequired && <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900">
+      <b>需要已授权的 HTML Sandbox 浏览器执行</b>
+      <p className="mt-1">当前要求包含真实点击或浏览器行为。截图与 HTTP Target Proxy 都不能证明上传 HTML 文件的完整互动；必须在隔离 Chromium 中执行 Browser Steps 并绑定冻结版本。</p>
+      <a href="#/readiness" className="mt-3 inline-flex h-8 items-center rounded-lg border border-amber-300 bg-white px-3 font-semibold text-amber-900 hover:bg-amber-100">检查 Sandbox 与 Browser 授权</a>
+    </div>}
+    {route === "runner" && !htmlBrowserRequired && <div className="mt-3 rounded-xl border border-sky-100 bg-sky-50/50 p-3"><div className="flex items-start gap-2"><PlugZap className="mt-0.5 size-4 shrink-0 text-sky-600"/><div className="text-xs leading-5 text-slate-600"><b>怎么验证：</b>这条要求涉及真实点击、运行、上传、保存或端到端行为，截图不能证明。需要由 Target Runner 实际执行。</div></div><div className="mt-3 flex flex-wrap gap-2">{p.targetConnection.adapter==="http"?<Button size="sm" disabled={runtime.validationRequestQueued} onClick={revalidateAndResume}><Play className="size-3.5"/>{runtime.validationRequestQueued?"已排队重新验收":"用真实 Runner 验收并继续"}</Button>:<Button size="sm" disabled={busy} onClick={()=>void connectRunner()}><PlugZap className="size-3.5"/>{busy?"正在检测…":"检测并连接 Runner"}</Button>}<a href="#/settings" className="inline-flex h-8 items-center rounded-lg border bg-white px-3 text-xs font-medium text-slate-600 hover:bg-slate-50">Runner 设置</a></div>{p.targetConnection.adapter==="http"&&<p className="mt-2 text-[11px] text-emerald-700">Runner 已连接；当前提示来自上一轮验收结果，点击后才会用真实执行证据重新结算。</p>}</div>}
     {route === "local" && <div className="mt-3 flex flex-col gap-2 rounded-xl border border-slate-100 bg-slate-50 p-3 sm:flex-row sm:items-center sm:justify-between"><p className="text-xs leading-5 text-slate-600">这条要求不需要人工截图。系统可以按它自己的验证方式重新检查结构、格式 Roundtrip 或当前成果内容。</p><Button size="sm" variant="secondary" disabled={runtime.validationRequestQueued} onClick={revalidateAndResume}><RefreshCcw className="size-3.5"/>{runtime.validationRequestQueued?"已排队重新验收":runtime.status.busy?"当前任务结束后自动验收":"重新检查并继续"}</Button></div>}
     {route === "capability" && <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900">当前验收项缺少可读取的完整目标内容或对应格式的执行能力。{htmlTarget&&"HTML 可直接检查，但需要保存完整 Candidate 文件。"}请检查第 1 步的文件解析状态和目标关联；真实操作类要求请连接 Runner；原文件内容丢失时请重新上传。</div>}
     {saved&&<div className="mt-3 rounded-lg border border-emerald-100 bg-emerald-50/60 px-3 py-2 text-xs leading-5 text-emerald-800">已记录证据：{saved.note}。系统会自动重新验收；通过则继续到成果，不通过则自动进入下一轮改进。</div>}
@@ -810,8 +823,9 @@ function PendingEvidenceCard({ runtime, criterion }: { runtime: ProjectRuntime; 
 
 export function PendingEvidencePanel({ runtime, criteria }: { runtime: ProjectRuntime; criteria: AcceptanceCriterion[] }) {
   if (!criteria.length) return null;
+  const localOnly = criteria.every((criterion) => evidenceRouteForCriterion(runtime.project, criterion) === "local");
   const feedback = runtime.status.error ?? (!runtime.validationRequestQueued && /验收|验证|复验/.test(runtime.status.message ?? "") ? runtime.status.message : undefined);
-  return <div className="rounded-2xl border border-amber-200 bg-amber-50/50 p-4"><div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"><div><div className="font-semibold text-amber-950">还差 {criteria.length} 项验证，不是成果失败</div><p className="mt-1 text-sm leading-6 text-amber-900/75">每条要求下面都说明了验证方式或当前缺失的能力。缺截图就上传截图；需要真实操作就连接 Runner；能由系统检查的会直接重新检查。补证完成后系统会自动复验并继续。</p></div><Button size="sm" variant="secondary" disabled={runtime.status.busy||runtime.validationRequestQueued} onClick={()=>{void runtime.revalidateAndContinue();}}><RefreshCcw className="size-3.5"/>{runtime.validationRequestQueued?"已排队":"复验并继续"}</Button></div>{feedback&&<p role="status" className={`mt-3 rounded-xl border px-3 py-2 text-xs leading-5 ${runtime.status.error?"border-rose-200 bg-rose-50 text-rose-800":"border-sky-200 bg-sky-50 text-sky-800"}`}>{feedback}</p>}<div className="mt-4 grid gap-3 xl:grid-cols-2">{criteria.map((criterion)=><PendingEvidenceCard key={criterion.id} runtime={runtime} criterion={criterion}/>)}</div></div>;
+  return <div className="rounded-2xl border border-amber-200 bg-amber-50/50 p-4"><div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"><div><div className="font-semibold text-amber-950">{localOnly ? `还有 ${criteria.length} 项系统检查未完成` : `还差 ${criteria.length} 项验证`}</div><p className="mt-1 text-sm leading-6 text-amber-900/75">{localOnly ? "系统会读取当前成果并取得新的独立评审，复用已经核验的文件证据。每项下方显示本次未完成原因；检查通过后继续，已证实的问题会进入修复。" : "每条要求下方说明了验证方式和本次缺口。补齐对应截图、验收结论或真实执行证据后，系统会复验并继续。"}</p></div><Button size="sm" variant="secondary" disabled={runtime.status.busy||runtime.validationRequestQueued} onClick={()=>{void runtime.revalidateAndContinue();}}><RefreshCcw className="size-3.5"/>{runtime.validationRequestQueued?"已排队":"复验并继续"}</Button></div>{feedback&&<p role="status" className={`mt-3 rounded-xl border px-3 py-2 text-xs leading-5 ${runtime.status.error?"border-rose-200 bg-rose-50 text-rose-800":"border-sky-200 bg-sky-50 text-sky-800"}`}>{feedback}</p>}<div className="mt-4 grid gap-3 xl:grid-cols-2">{criteria.map((criterion)=><PendingEvidenceCard key={criterion.id} runtime={runtime} criterion={criterion}/>)}</div></div>;
 }
 
 function ValidationPanel({ runtime }: { runtime: ProjectRuntime }) {
@@ -1139,7 +1153,7 @@ function BaselineRecovery({ runtime }: { runtime: ProjectRuntime }) {
   </div>;
 }
 
-export function StagePanel({ runtime }: { runtime: ProjectRuntime }) {
+export function StagePanel({ runtime,serverStartBlocked=false }: { runtime: ProjectRuntime;serverStartBlocked?:boolean }) {
   const step = stepForStage(runtime.project, runtime.stage);
   const state = workflowStepState(runtime.project, step.id);
   if (state.status === "locked") {
@@ -1148,7 +1162,7 @@ export function StagePanel({ runtime }: { runtime: ProjectRuntime }) {
     return <div className="rounded-xl border border-amber-200 bg-amber-50 p-5"><h2 className="font-semibold">先完成前置步骤</h2><p className="mt-2 text-sm leading-6">{state.detail}</p><Button className="mt-3" disabled={runtime.status.busy} onClick={() => runtime.setStage(next ? preferredInternalStage(runtime.project, next.id) : "target")}>返回{next?.label ?? "材料与目标"}</Button></div>;
   }
   switch (runtime.stage) {
-    case "target": return <TargetPanel runtime={runtime} />;
+    case "target": return <TargetPanel runtime={runtime} serverStartBlocked={serverStartBlocked}/>;
     case "baseline": return <BaselinePanel runtime={runtime} />;
     case "problem": return <ProblemPanel runtime={runtime} />;
     case "diagnosis": return <DiagnosisPanel runtime={runtime} />;

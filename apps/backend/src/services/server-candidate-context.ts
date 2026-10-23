@@ -1,8 +1,7 @@
 import type { Candidate, EvolveProject, SourceArtifact } from "@evolution/contracts";
-import { buildExactCandidateTextEdits } from "@evolution/core";
+import { buildExactCandidateTextEdits, isTextArtifactExtension, isZipArtifact } from "@evolution/core";
 import { retrieveTextContext, trustedServerBaselineChampion } from "@evolution/harness";
-
-export const SERVER_TEXT_FAMILY = /^(txt|md|markdown|mdx|csv|tsv|json|yaml|yml|css|js|jsx|ts|tsx|html|htm|xml|svg)$/i;
+import {serverStructuredTargetContext} from "./server-structured-target-context";
 
 export function isServerTextEditBlueprint(content: string) {
   try { return (JSON.parse(content) as { kind?: unknown })?.kind === "text-edits"; }
@@ -33,19 +32,40 @@ function compactStructured(artifact: SourceArtifact, candidate: Candidate) {
   };
 }
 
-export async function buildServerCandidateTargetContext(project: EvolveProject, candidate: Candidate, readCurrentText: (source: SourceArtifact) => Promise<string>, parentCandidate?: Candidate) {
+export async function buildServerCandidateTargetContext(
+  project:EvolveProject,candidate:Candidate,readCurrentText:(source:SourceArtifact)=>Promise<string>,
+  parentCandidate?:Candidate,
+  readVerifiedNativeParent?:(source:SourceArtifact)=>Promise<SourceArtifact>,
+){
   const champion = parentCandidate ?? trustedServerBaselineChampion(project);
   const championBySource = new Map((champion?.artifactSnapshots ?? []).map((snapshot) => [snapshot.sourceArtifactId, snapshot]));
   let remaining = 72_000;
   const result = [];
   for (const artifact of project.sourceArtifacts.filter((artifact) => artifact.role === "target")) {
     const parent = championBySource.get(artifact.id);
-    const textTarget = SERVER_TEXT_FAMILY.test(artifact.extension);
-    const source = textTarget ? await readCurrentText(artifact) : parent?.content || artifact.textContent || artifact.textExcerpt || "";
+    const descriptor=artifact.artifactDescriptor;
+    const requiresIndexedMutation=descriptor?.adapterId==="document-docx-ooxml"
+      ||descriptor?.adapterId==="presentation-pptx-ooxml"
+      ||descriptor?.family==="spreadsheet"||["docx","pptx","xlsx","xls","ods","csv","tsv"].includes(artifact.extension.toLowerCase());
+    const textTarget = isTextArtifactExtension(artifact.extension)&&!requiresIndexedMutation;
+    if(requiresIndexedMutation&&(parentCandidate||project.searchChampion)&&!parent){
+      throw new Error(`${artifact.name} 缺少 Champion 当前 Target Snapshot，禁止回退到过期 Source 索引。`);
+    }
+    // A last-round sparse edit omits earlier generations. Read the actual
+    // SHA-verified frozen parent bytes to build cumulative editable indexes.
+    const liveParent=requiresIndexedMutation&&parent&&readVerifiedNativeParent
+      ?await readVerifiedNativeParent(artifact):undefined;
+    const source = textTarget ? await readCurrentText(artifact)
+      :liveParent?.textContent??parent?.content??artifact.textContent??artifact.textExcerpt??"";
     const allowance = Math.max(0, Math.min(22_000, remaining));
     const query = [project.goal, project.evolutionCommand, candidate.title, candidate.change, candidate.hypothesis, ...(candidate.designRationale?.sourceEvidence ?? []), ...candidate.patches.filter((patch) => !patch.artifactId || patch.artifactId === artifact.id).map((patch) => `${patch.target} ${patch.rationale}`)].join(" ");
     const content = textTarget ? retrieveTextContext(source, query, { maxChars: allowance, maxChunks: 6 }) : source.slice(0, allowance);
     remaining = Math.max(0, remaining - content.length);
+    const indexedContext=serverStructuredTargetContext(liveParent??artifact,candidate,
+      liveParent?undefined:parent?.content);
+    if(requiresIndexedMutation&&!indexedContext){
+      throw new Error(`${artifact.name} 缺少可编辑的文本位置或 Sheet/Cell 结构；请重新解析原文件，不能把提取的摘要当成可修改的原文件。`);
+    }
     result.push({
       id: artifact.id,
       name: parent?.name ?? artifact.name,
@@ -60,7 +80,7 @@ export async function buildServerCandidateTargetContext(project: EvolveProject, 
       originalChars: source.length,
       truncated: content.length < source.length,
       mutationMode: textTarget && content.length < source.length ? "text-edits" : "full",
-      structuredContext: compactStructured(artifact, candidate),
+      structuredContext:indexedContext??compactStructured(artifact,candidate),
     });
   }
   return result;
@@ -86,8 +106,13 @@ export async function buildServerExactCandidateArtifacts(
   const ids = new Set(targets.map((source) => source.id));
   if (!targets.length || ids.size !== targets.length || !candidate.patches.length
     || new Set(candidate.patches.map((patch) => patch.id)).size !== candidate.patches.length
-    || targets.some((source) => !SERVER_TEXT_FAMILY.test(source.extension)
-      || source.artifactKind === "codebase" || ["codebase", "package"].includes(source.artifactDescriptor?.family ?? ""))
+    || targets.some((source) => !isTextArtifactExtension(source.extension)
+      // Delimited files still require a sheet/cell overlay on the original bytes.
+      // Never send a raw CSV/TSV string to the native spreadsheet materializer.
+      || ["csv", "tsv"].includes(source.extension.toLowerCase())
+      || source.artifactKind === "spreadsheet"
+      || source.artifactDescriptor?.family === "spreadsheet"
+      || isZipArtifact(source))
     || candidate.patches.some((patch) => patch.artifactId ? !ids.has(patch.artifactId) : targets.length !== 1)) return undefined;
   const artifacts = [];
   const champion = trustedServerBaselineChampion(project);

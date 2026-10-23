@@ -21,13 +21,41 @@ export function normalizeEvaluationScore(value: number): number {
 }
 
 /** Deterministic criteria are settled by Runtime and must not consume or invalidate Judge output. */
+function verifiedOriginalDefectRuns(
+  criterion:AcceptanceCriterion,testCases:TestCase[],runs:TargetRunResult[],
+) {
+  if(!criterion.hardGate||criterion.source!=="user-command")return [];
+  const mappedIds=new Set(testCases.filter(item=>item.criterionIds.includes(criterion.id)).map(item=>item.id));
+  const {byId,duplicateIds}=indexUniqueById(runs,run=>run.testCaseId);
+  if(!mappedIds.size||[...mappedIds].some(id=>duplicateIds.has(id)))return [];
+  return [...mappedIds].flatMap(id=>{
+    const observed=byId.get(id);
+    if(observed?.verificationStatus!=="verified"
+      ||typeof observed.output!=="string"
+      ||!observed.output.startsWith("VERIFIED DOCUMENTED BASELINE DEFECT (not product success)")
+      ||!Array.isArray(observed.trace))return [];
+    const sourceProof=observed.trace.some(step=>step.stage==="baseline-exact-source-negative-evidence"&&step.status==="pass");
+    const browserProof=!observed.error
+      &&typeof observed.artifactHash==="string"&&/^[a-f0-9]{64}$/i.test(observed.artifactHash)
+      &&observed.output.includes("Exact Original HTML SHA-256: "+observed.artifactHash)
+      &&observed.trace.some(step=>step.stage==="sandbox-artifact"&&step.status==="pass")
+      &&observed.trace.some(step=>step.stage==="browser-preview"&&step.status==="pass")
+      &&observed.trace.some(step=>step.stage==="browser-step"&&step.status==="fail")
+      &&observed.trace.some(step=>step.stage==="baseline-exact-browser-negative-evidence"&&step.status==="pass");
+    if(!sourceProof&&!browserProof)return [];
+    return [observed];
+  });
+}
+
 export function criteriaRequiringJudge(
   criteria: AcceptanceCriterion[],
   testCases: TestCase[],
   runs: TargetRunResult[],
 ) {
   const mapped = new Set(testCases.flatMap((testCase) => testCase.criterionIds));
-  return criteria.filter((criterion) => mapped.has(criterion.id) && !hasDeterministicRoundtripProof(criterion, testCases, runs));
+  return criteria.filter(criterion=>mapped.has(criterion.id)
+    &&!hasDeterministicRoundtripProof(criterion,testCases,runs)
+    &&!verifiedOriginalDefectRuns(criterion,testCases,runs).length);
 }
 
 export function deriveCriterionScores(
@@ -49,7 +77,11 @@ export function deriveCriterionScores(
     const limitedCoverage = mappedTests.some((testCase) => testCase.tags?.includes("source-grounded-html-assertions"));
     const coverageGaps = limitedCoverage ? ["自动生成的 HTML 检查仅覆盖搜索交互，尚未覆盖该保护标准的全部要求；需补齐对应的执行、视觉或人工证据"] : [];
     const mappedStatuses = mappedTests.map((testCase) => {
-      const status = runMap.get(testCase.id)?.verificationStatus ?? "unverified";
+      const observed = runMap.get(testCase.id);
+      // A claimed VERIFIED status without actual Run output/trace cannot establish evidence.
+      if (observed?.verificationStatus === "verified"
+        && (typeof observed.output !== "string" || !Array.isArray(observed.trace))) return "unverified" as const;
+      const status = observed?.verificationStatus ?? "unverified";
       return status === "verified" && testCase.tags?.includes("source-grounded-html-assertions") ? "partial" : status;
     });
     if (mappedCases.some((id) => repeatedRuns.has(id))) return {
@@ -80,6 +112,18 @@ export function deriveCriterionScores(
       gaps: ["评审对同一 Criterion 或 Test Case 返回了重复判定，不能选择其中一项作为验收结果"],
       testCaseIds: mappedCases,
     };
+    // A fully documented original defect is a VERIFIED failure, never a
+    // success even if an independent Judge later assigns it a high score.
+    // Duplicated/ambiguous runs and Judge rows have already failed closed above.
+    const sourceDefectRuns=verifiedOriginalDefectRuns(criterion,testCases,runs);
+    if(criterion.hardGate&&criterion.source==="user-command"&&sourceDefectRuns.length){
+      return {
+        criterionId:criterion.id,score:0,pass:false,verificationStatus:"verified" as const,
+        evidence:sourceDefectRuns.map(run=>run.output.slice(0,700)).slice(0,4),
+        gaps:["原版具有可核验的原文或云端 Chromium 断言缺陷证据；属于 VERIFIED FAIL，独立 Judge 不得把失败判为成功"],
+        testCaseIds:mappedCases,
+      };
+    }
     const ai = aiMap.get(criterion.id);
     const historicalCitation = [
       ...(ai?.evidence ?? []),

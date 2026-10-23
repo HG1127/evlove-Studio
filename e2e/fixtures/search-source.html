@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>研究索引 · 搜索行为审计</title>
+  <style>
+    *{box-sizing:border-box}
+    body{max-width:920px;margin:0 auto;padding:20px;font:16px/1.5 system-ui,sans-serif}
+    input{width:100%;padding:12px;border:1px solid #999;border-radius:8px}
+    main{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,250px),1fr));gap:12px;margin-top:20px}
+    article{padding:16px;border:1px solid #ddd;border-radius:8px}
+    .search-hidden{display:none}
+  </style>
+</head>
+<body>
+  <h1>研究索引</h1>
+  <label for="search">按研究主题搜索</label>
+  <input id="search" autocomplete="off" placeholder="输入主题">
+  <p role="status" id="searchCount">2 页命中</p>
+  <main>
+    <article id="slide-1" class="slide-card" data-search="alpha ai investing">Alpha · AI 投资研究</article>
+    <article id="slide-2" class="slide-card" data-search="beta clean energy">Beta · 清洁能源研究</article>
+  </main>
+  <script>
+    const search=document.querySelector("#search");
+    const cards=[...document.querySelectorAll(".slide-card")];
+    const count=document.querySelector("#searchCount");
+    function filter(){
+      const query=search.value.trim().toLowerCase();
+      for(const card of cards){
+        // Known Baseline defect: every nonempty query incorrectly hides the card.
+        const matches=query ? false : true;
+        card.classList.toggle("search-hidden",!matches);
+      }
+      count.textContent=cards.filter(card=>!card.classList.contains("search-hidden")).length+" 页命中";
+    }
+    search.addEventListener("input",filter);
+    filter();
+  </script>
+</body>
+</html>

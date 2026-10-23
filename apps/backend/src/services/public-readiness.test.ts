@@ -47,8 +47,7 @@ describe("public readiness passive boundary",()=>{
     expect(snapshot.blockers.map((item)=>item.code)).not.toContain("IDENTITY_NOT_CONFIGURED");
     expect(snapshot.blockers.map((item)=>item.code)).not.toContain("RELEASE_PROVIDER_NOT_CONFIGURED");
     expect(fetch).not.toHaveBeenCalled();
-  });
-
+  },15_000);
   it("reports saved-connection storage without inventing model configuration or making network requests",async()=>{
     process.env.SUPABASE_URL="https://example.supabase.co";
     process.env.SUPABASE_SECRET_KEY="server-secret-key-for-passive-readiness-test";

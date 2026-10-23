@@ -1,3 +1,5 @@
+import {productionRuntimeMode} from "../runtime/production-runtime";
+import {runServerAiOperation,ServerAiUnavailableError} from "../runtime/server-ai-client";
 import { serverEnv } from "../runtime/env";
 import { EvaluateAiResultSchema } from "../ai/schemas";
 import { getAiProviderStatus, runEvolveAi, type AiAttemptNotice } from "../ai/service";
@@ -101,6 +103,22 @@ function compactEvaluationContext(context: Record<string, unknown>, rubric: Acce
   };
 }
 
+// App composition: use the configured backend Judge even when the browser has no BYOK key.
+async function runJudge(payload:unknown,notice:((value:AiAttemptNotice)=>void)|undefined,options:NonNullable<Parameters<typeof runEvolveAi>[4]>){
+  const backend=productionRuntimeMode()!=="local";
+  if(backend){
+    try{
+      const result=await runServerAiOperation("evaluate",payload);
+      options.validateResult?.(result);
+      return result;
+    }catch(error){
+      if(!(error instanceof ServerAiUnavailableError))throw error;
+      notice?.({kind:"retry",model:"browser-fallback",message:"后台评审暂不可用，尝试浏览器已配置的真实模型"});
+    }
+  }
+  return runEvolveAi("evaluate",payload,undefined,notice,{...options,requireLive:backend||options.requireLive});
+}
+
 export async function evaluateRuns(args: {
   testCases: TestCase[];
   runs: TargetRunResult[];
@@ -108,9 +126,10 @@ export async function evaluateRuns(args: {
   forceRefresh?: boolean;
 }): Promise<EvaluationResult> {
   const status = getAiProviderStatus("evaluate", args.context);
-  if (args.forceRefresh && !status.live) throw new Error("补跑评审没有可用的真实模型连接，请检查当前项目评审模型配置");
+  const backend=productionRuntimeMode()!=="local";
+  if (args.forceRefresh && !backend && !status.live) throw new Error("补跑评审没有可用的真实模型连接，请检查当前项目评审模型配置");
   const evaluatorMode = serverEnv.EVOLVE_EVALUATOR || "auto";
-  const useAi = Boolean(args.forceRefresh) || evaluatorMode === "ai" || (evaluatorMode === "auto" && status.live);
+  const useAi = Boolean(args.forceRefresh) || evaluatorMode === "ai" || (evaluatorMode === "auto" && (status.live||backend));
 
   // 审计留痕：重试、演示兜底、小数换算都写进结果备注，报表里可追溯，不让降级静默发生。
   const warnings: string[] = [];
@@ -148,7 +167,7 @@ export async function evaluateRuns(args: {
       testCases: args.testCases.filter((testCase) => evaluableRunIds.has(testCase.id)).map((testCase) => ({ id: testCase.id, title: testCase.title, input: testCase.input.slice(0, 1600), expected: testCase.expected, tags: testCase.tags, criterionIds: testCase.criterionIds, executionMode: testCase.executionMode, evidenceScope: testCase.evidenceScope })),
       runs: reviewRuns,
     };
-    let ai = EvaluateAiResultSchema.parse(await runEvolveAi("evaluate", evaluationPayload, undefined, onAttemptNotice, { forceRefresh: args.forceRefresh, requireLive: args.forceRefresh }));
+    let ai = EvaluateAiResultSchema.parse(await runJudge(evaluationPayload,onAttemptNotice, { forceRefresh: args.forceRefresh, requireLive: args.forceRefresh }));
     // Settle what the first response already proves before asking for a supplement. A valid per-case
     // score can settle its mapped semantic criterion even if the model omitted the redundant criteria[]
     // row; deterministic format criteria have already been removed from evaluatorRubric altogether.
@@ -186,10 +205,18 @@ export async function evaluateRuns(args: {
             evaluatorInstruction: "RUBRIC SUPPLEMENT ONLY: return one criteria entry for EVERY supplied acceptance criterion using the EXACT criterionId. Judge only the supplied current-artifact runs; never cite diagnosis, patches or task assumptions. The cases array may be empty because this recovery call exists only to settle missing criterion rows. Missing evidence belongs in gaps rather than a fabricated failure.",
             recovery: { reason: "missing-rubric-judgements", criterionIds: [...missingIds] },
             testCases: recoveryCases,
-            runs: reviewRuns.filter((run) => recoveryCaseIds.has(run.testCaseId)),
+            // A shared first-pass budget may omit the step that closes this criterion. Recover
+            // from the complete observed output when bounded, instead of resending the same excerpts.
+            runs: reviewRuns.filter((run) => recoveryCaseIds.has(run.testCaseId)).map((run) => {
+              const observed = args.runs.find((item) => item.testCaseId === run.testCaseId)!;
+              const complete = observed.output.length <= 36_000;
+              return complete ? { ...run, outputChunks: [observed.output], outputMeta: {
+                originalLength: observed.output.length, reviewedLength: observed.output.length, truncated: false,
+              } } : run;
+            }),
           };
-          const supplement = EvaluateAiResultSchema.parse(await runEvolveAi("evaluate", supplementPayload, undefined, onAttemptNotice, {
-            forceRefresh: args.forceRefresh,
+          const supplement = EvaluateAiResultSchema.parse(await runJudge(supplementPayload,onAttemptNotice, {
+            forceRefresh: true,
             requireLive: args.forceRefresh,
             validateResult: (value) => {
               const parsed = EvaluateAiResultSchema.parse(value);

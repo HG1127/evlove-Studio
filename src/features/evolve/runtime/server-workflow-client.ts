@@ -1,3 +1,4 @@
+import {httpApiErrorDetail} from "@evolution/adapters";
 import {
   EvolutionBackendHealthSchema,
   EvolutionWorkflowCapabilitiesSchema,
@@ -7,6 +8,7 @@ import {
   PublicReadinessSnapshotSchema,
   SandboxBrowserHealthSchema,
   SandboxHealthSchema,
+  SandboxAuthorizationDiagnosticSchema,
   ServerAiRuntimeHealthSchema,
   type EvolutionBackendHealth,
   type EvolutionWorkflowCapabilities,
@@ -15,16 +17,23 @@ import {
   type PublicReadinessSnapshot,
   type SandboxBrowserHealth,
   type SandboxHealth,
+  type SandboxAuthorizationDiagnostic,
   type ServerAiRuntimeHealth,
 } from "@evolution/contracts";
-import { projectHasOnlineReleaseTarget,projectUsesConnectorRelease,projectUsesHttpRelease,projectUsesVercelRelease } from "@evolution/core";
+import { projectHasOnlineReleaseTarget,projectUsesConnectorRelease,projectUsesHttpRelease,projectUsesVercelRelease,requiresSandboxHtmlSourceExecution } from "@evolution/core";
 
 async function apiJson(url:string,init?:RequestInit){
   const response=await fetch(url,init);
   const data=await response.json().catch(()=>({}));
   if(!response.ok){
-    const detail=data as {statusMessage?:string;message?:string;error?:string};
-    throw new Error(detail.statusMessage||detail.message||detail.error||`Workflow API HTTP ${response.status}`);
+    const detail=httpApiErrorDetail(data)??`Workflow API HTTP ${response.status}`;
+    const inner=data&&typeof data==="object"&&"data" in data
+      ?(data as {data?:{code?:unknown;action?:unknown}}).data:undefined;
+    const htmlRuntimeCode=["HTML_SANDBOX_NOT_READY","HTML_BROWSER_NOT_READY","HTML_MIXED_TARGET_UNSUPPORTED"]
+      .includes(typeof inner?.code==="string"?inner.code:"");
+    const remediation=htmlRuntimeCode&&typeof inner?.action==="string"
+      ?inner.action.trim().slice(0,260):"";
+    throw new Error(remediation?`${detail}；处理方式：${remediation}`:detail);
   }
   return data;
 }
@@ -78,12 +87,22 @@ export async function getServerEvolutionWorkflowStatus(input:{runId?:string;jobI
   return status;
 }
 
+/** Passive authenticated configuration check: never spawns a metered Sandbox. */
+export async function getServerSandboxAuthorizationDiagnostic():Promise<SandboxAuthorizationDiagnostic>{
+  return SandboxAuthorizationDiagnosticSchema.parse(await apiJson("/api/evolution/sandbox-auth-status"));
+}
+
 export async function checkServerSandboxHealth():Promise<SandboxHealth>{
   return SandboxHealthSchema.parse(await apiJson("/api/evolution/sandbox-health"));
 }
 
 export async function checkServerBrowserHealth():Promise<SandboxBrowserHealth>{
   return SandboxBrowserHealthSchema.parse(await apiJson("/api/evolution/browser-health"));
+}
+
+/** HTML Target cannot be verified by local Harness or a connectivity-only Proxy. */
+export function requiresIsolatedHtmlServerExecution(project:EvolveProject){
+  return requiresSandboxHtmlSourceExecution(project);
 }
 
 export async function shouldUseServerAutoPilot(project:EvolveProject){

@@ -11,6 +11,7 @@ const migrationText=(name:string)=>fs.readFileSync(path.join(migrationsDir,name)
 const allSql=migrationFiles.map(migrationText).join("\n");
 const tailName=migrationFiles.at(-1)!;
 const tailSql=migrationText(tailName);
+const artifactTailSql=migrationText("20260924153000_artifact_blob_cleanup_security_invariants.sql");
 
 function createdPublicTables(){
   return [...allSql.matchAll(/create\s+table\s+if\s+not\s+exists\s+public\.([a-z0-9_]+)/g)]
@@ -27,6 +28,16 @@ describe("Supabase production security invariants",()=>{
     expect(tailSql).toContain("revoke execute on functions from public, anon, authenticated");
   });
 
+  it("guards HTML Campaign starts atomically with a Mission-level lock and service-only RPC",()=>{
+    expect(tailSql).toContain("create or replace function public.create_evolution_html_campaign_control(");
+    expect(tailSql).toContain("pg_advisory_xact_lock(hashtextextended('html-campaign-start:'||v_mission,0))");
+    expect(tailSql).toContain("and status in ('queued','running','waiting')");
+    expect(tailSql).toContain("v_active_count=1");
+    expect(tailSql).toContain("public.create_evolution_job_idempotent(p_job)");
+    expect(tailSql).toContain("return query select false,'mission-active',to_jsonb(v_active)");
+    expect(tailSql).toContain("revoke execute on function public.create_evolution_html_campaign_control(jsonb,boolean) from public, anon, authenticated;");
+    expect(tailSql).toContain("grant execute on function public.create_evolution_html_campaign_control(jsonb,boolean) to service_role;");
+  });
   it("re-hardens every Evolution public table created by migrations",()=>{
     const tables=createdPublicTables();
     expect(tables.length).toBeGreaterThan(0);
@@ -124,32 +135,32 @@ describe("Supabase production security invariants",()=>{
   });
 
   it("freezes Artifact identity and blocks deletion of Mission or Evidence-bound metadata",()=>{
-    expect(tailSql).toContain("create or replace function public.enforce_evolution_artifact_identity()");
-    expect(tailSql).toContain("create trigger evolution_artifact_identity_trigger");
-    expect(tailSql).toContain("before insert or update or delete on public.artifacts");
-    expect(tailSql).toContain("artifact_identity_immutable");
-    expect(tailSql).toContain("artifact_mission_bound");
-    expect(tailSql).toContain("artifact_evidence_referenced");
+    expect(artifactTailSql).toContain("create or replace function public.enforce_evolution_artifact_identity()");
+    expect(artifactTailSql).toContain("create trigger evolution_artifact_identity_trigger");
+    expect(artifactTailSql).toContain("before insert or update or delete on public.artifacts");
+    expect(artifactTailSql).toContain("artifact_identity_immutable");
+    expect(artifactTailSql).toContain("artifact_mission_bound");
+    expect(artifactTailSql).toContain("artifact_evidence_referenced");
     expect(tailSql).toContain("revoke execute on function public.enforce_evolution_artifact_identity() from public, anon, authenticated;");
   });
 
   it("serializes Artifact deletion with Evidence appends and retires deleted identities",()=>{
     expect(allSql).toContain("create table if not exists public.artifact_retention_tombstones");
-    expect(tailSql).toContain("pg_advisory_xact_lock(hashtextextended('artifact-retention:' || old.id, 0))");
+    expect(artifactTailSql).toContain("pg_advisory_xact_lock(hashtextextended('artifact-retention:' || old.id, 0))");
     expect(allSql).toContain("pg_advisory_xact_lock(hashtextextended('artifact-retention:' || v_ref, 0))");
     expect(allSql).toContain("create trigger evolution_evidence_artifact_retention_trigger");
     expect(allSql).toContain("before insert on public.evidence_ledger");
-    expect(tailSql).toContain("artifact_id_retired");
+    expect(artifactTailSql).toContain("artifact_id_retired");
     expect(allSql).toContain("evidence_artifact_retired");
     expect(tailSql).toContain("revoke execute on function public.lock_evolution_evidence_artifact_refs() from public, anon, authenticated;");
   });
 
   it("retains Artifact tombstones while allowing only service-side blob cleanup",()=>{
-    expect(tailSql).toContain("add column if not exists blob_deleted_at timestamptz");
-    expect(tailSql).toContain("artifact_retention_pending_blob_cleanup_idx");
-    expect(tailSql).toContain("'artifact-path:' || new.bucket || '/' || new.object_path");
-    expect(tailSql).toContain("'artifact-path:' || old.bucket || '/' || old.object_path");
-    expect(tailSql).toContain("artifact_path_retired");
+    expect(artifactTailSql).toContain("add column if not exists blob_deleted_at timestamptz");
+    expect(artifactTailSql).toContain("artifact_retention_pending_blob_cleanup_idx");
+    expect(artifactTailSql).toContain("'artifact-path:' || new.bucket || '/' || new.object_path");
+    expect(artifactTailSql).toContain("'artifact-path:' || old.bucket || '/' || old.object_path");
+    expect(artifactTailSql).toContain("artifact_path_retired");
     expect(tailSql).toContain("grant select, update (blob_deleted_at) on table public.artifact_retention_tombstones to service_role;");
     expect(tailSql).not.toContain("grant select, insert,update,delete on table public.artifact_retention_tombstones to service_role;");
   });

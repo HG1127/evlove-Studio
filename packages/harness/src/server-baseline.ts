@@ -30,6 +30,7 @@ import {
   unavailableBaselineRun,
 } from "./server-baseline-evidence";
 import { indexUniqueBatchResults } from "./server-batch-results";
+import {groundedOriginalCitationDefect,groundedOriginalDocumentProtection} from "./server-grounded-baseline-defect";
 import { serverExperimentRecoveryCheckpoint } from "./server-experiment-wait";
 
 export { trustedServerBaselineChampion, serverBaselineFingerprint } from "./server-baseline-evidence";
@@ -73,6 +74,28 @@ export type ServerBaselineOutcome = {
 };
 
 /**
+ * A fully read Original can lack a NEW soft quality dimension. That is not a
+ * missing Runner and must not prevent searching for a Candidate which adds it.
+ * Preserve its UNVERIFIED score: this is not a VERIFIED failure or a PASS.
+ *
+ * Only defer when the source was actually inspected by the semantic Runner;
+ * missing/duplicate/transport results carry warning traces and still block.
+ * Mixed Hard Gate cases never qualify.
+ */
+function deferrableOriginalSoftObservation(
+  project:EvolveProject,testCase:TestCase,run:TargetRunResult|undefined,
+):boolean{
+  if(!run||run.error||run.verificationStatus!=="unverified"
+    ||!/^\s*UNVERIFIED\b/i.test(run.output)
+    ||!testCase.criterionIds.length
+    ||run.trace.some(trace=>trace.status==="warning")
+    ||!run.trace.some(trace=>trace.stage==="AI 语义核查"&&trace.status==="info")
+    ||!run.trace.some(trace=>trace.status==="fail"))return false;
+  const rubric=new Map(project.acceptanceRubric.map(criterion=>[criterion.id,criterion]));
+  return testCase.criterionIds.every(id=>rubric.get(id)?.hardGate===false);
+}
+
+/**
  * Run the visible Baseline on the server without React/browser runtime dependencies.
  * Missing capabilities remain UNVERIFIED; infrastructure absence is never converted to product failure.
  */
@@ -100,7 +123,7 @@ export async function runServerBaseline(
   const targetGate = inputProject.gates.find((gate) => gate.id === "target-ready");
   if (targetGate?.status !== "approved") throw new Error("Target Ready gate is not approved");
   if (!inputProject.evalSuite.length) throw new Error("Project evalSuite is empty");
-  const rubricCheck = rubricValidation(inputProject.acceptanceRubric);
+  const rubricCheck = rubricValidation(inputProject.acceptanceRubric,inputProject.sourceArtifacts);
   if (!rubricCheck.ready) throw new Error(`Acceptance Rubric is not ready: ${rubricCheck.warnings.join("；")}`);
   const coverage = rubricSuiteCoverage(inputProject.acceptanceRubric, inputProject.evalSuite, inputProject.hiddenEvalSuite);
   if (!coverage.ready) {
@@ -175,41 +198,45 @@ export async function runServerBaseline(
   }
 
   if (semanticCases.length) {
-    const semanticStarted = Date.now();
+    const semanticStarted=Date.now();
     try {
-      const artifactContext = await currentSemanticArtifactContext(project, ports.buildCurrentArtifactContext, semanticCases);
-      const result = await ports.executeSemanticBatch({
-        project,
-        testCases: semanticCases,
-        artifactContext,
-      });
-      const { byId, duplicateIds } = indexUniqueBatchResults(result.results);
-      const latency = Math.max(1, Math.round((Date.now() - semanticStarted) / Math.max(1, semanticCases.length)));
-      for (const testCase of semanticCases) {
-        const item = byId.get(testCase.id);
-        ordered.set(testCase.id, duplicateIds.has(testCase.id)
-          ? unavailableBaselineRun(testCase, "Server AI Batch 对本题返回了重复结果，证据身份不明确。")
-          : item ? {
-          testCaseId: testCase.id,
-          output: item.output,
-          latencyMs: latency,
-          cost: 0,
-          verificationStatus: artifactContext.some((artifact) => artifact.truncated) && semanticEvidenceStatus(item.output) === "verified" ? "partial" : semanticEvidenceStatus(item.output),
-          trace: [{
-            id: `server-semantic-${testCase.id}`,
-            stage: "AI 语义核查",
-            summary: "Server AI 读取当前 Baseline 成果并按本题定位显性内容",
-            status: "info",
-            detail: "这是成果观察证据；独立 Judge 仍负责 Rubric 结算。",
-          }, ...item.trace],
-        } : unavailableBaselineRun(testCase, "Server AI Batch 未返回本题结果。"));
+      const artifactContext=await currentSemanticArtifactContext(project,ports.buildCurrentArtifactContext,semanticCases);
+      for(const testCase of semanticCases){
+        // Complete original bytes may directly prove a written defect or protected
+        // instruction. This is evidence of document text, not Agent behavior.
+        const direct=groundedOriginalCitationDefect({
+          project,testCase,output:"UNVERIFIED: pre-candidate exact source evidence",artifactContext,
+        })??groundedOriginalDocumentProtection({project,testCase,artifactContext});
+        if(direct)ordered.set(testCase.id,direct);
       }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      for (const testCase of semanticCases) ordered.set(testCase.id, unavailableBaselineRun(testCase, `Server AI Artifact Runtime 未完成：${message}`));
+      const remaining=semanticCases.filter(testCase=>!ordered.has(testCase.id));
+      if(remaining.length){
+        const result=await ports.executeSemanticBatch({project,testCases:remaining,artifactContext});
+        const {byId,duplicateIds}=indexUniqueBatchResults(result.results);
+        const latency=Math.max(1,Math.round((Date.now()-semanticStarted)/Math.max(1,remaining.length)));
+        for(const testCase of remaining){
+          const item=byId.get(testCase.id);
+          const status=item?semanticEvidenceStatus(item.output):"unverified";
+          ordered.set(testCase.id,duplicateIds.has(testCase.id)
+            ?unavailableBaselineRun(testCase,"Server AI Batch 对本题返回了重复结果，证据身份不明确。")
+            :item?{
+              testCaseId:testCase.id,output:item.output,latencyMs:latency,cost:0,
+              verificationStatus:artifactContext.some(artifact=>artifact.truncated)&&status==="verified"?"partial":status,
+              trace:[{id:"server-semantic-"+testCase.id,stage:"AI 语义核查",
+                summary:"Server AI 读取当前 Baseline 成果并按本题定位显性内容",status:"info",
+                detail:"这是成果观察证据；独立 Judge 仍负责 Rubric 结算。"},...item.trace],
+            }:unavailableBaselineRun(testCase,"Server AI Batch 未返回本题结果。"));
+        }
+      }
+    } catch(error) {
+      const message=error instanceof Error?error.message:String(error);
+      // A later provider failure must never erase already grounded source evidence.
+      for(const testCase of semanticCases){
+        if(!ordered.has(testCase.id))ordered.set(testCase.id,
+          unavailableBaselineRun(testCase,"Server AI Artifact Runtime 未完成："+message));
+      }
     }
   }
-
   const runs = project.evalSuite.map((testCase) => ordered.get(testCase.id) ?? unavailableBaselineRun(testCase, "Baseline 执行未返回结果。"));
   const evaluableRuns = runs.filter((run) => run.verificationStatus === "verified" || run.verificationStatus === "partial");
   if (!evaluableRuns.length) {
@@ -331,15 +358,22 @@ export async function runServerBaseline(
     result: evaluation,
   };
   const runById = new Map(runs.map((run) => [run.testCaseId, run]));
+  const deferrableSoft=project.evalSuite.filter(testCase=>
+    deferrableOriginalSoftObservation(project,testCase,runById.get(testCase.id)));
+  const deferredIds=new Set(deferrableSoft.map(testCase=>testCase.id));
   const requiredCapabilityGaps = project.evalSuite.filter((testCase) => {
     const comparisonOnly = testCase.criterionIds.length > 0 && testCase.criterionIds.every((id) => id === "SYS-PAIRWISE");
-    if (comparisonOnly) return false;
+    if (comparisonOnly || deferredIds.has(testCase.id)) return false;
     const status = runById.get(testCase.id)?.verificationStatus ?? "unverified";
     return status === "unverified" || status === "failed";
   });
   const criterionById = new Map((evaluation.criterionScores ?? []).map((item) => [item.criterionId, item]));
+  // SYS-PAIRWISE compares the evolved Candidate with its source, so it cannot be
+  // VERIFIED before a Candidate exists. Defer only that comparison-only hard gate
+  // until Experiment/Hidden Holdout; never waive it from final acceptance.
   const hardGateGaps = project.acceptanceRubric.filter((criterion) =>
-    criterion.hardGate && criterionById.get(criterion.id)?.verificationStatus !== "verified");
+    criterion.hardGate && criterion.id !== "SYS-PAIRWISE"
+    && criterionById.get(criterion.id)?.verificationStatus !== "verified");
   const measured: EvolveProject = {
     ...project,
     baselineRun: baseline,
@@ -404,7 +438,7 @@ export async function runServerBaseline(
     project: readyProject,
     baseline,
     ready: true,
-    reason: `Server Baseline 已完成：${readiness.verified} verified / ${readiness.partial} partial，证据覆盖 ${readiness.evidenceCoverage}%`,
+    reason: `Server Baseline 已完成：${readiness.verified} verified / ${readiness.partial} partial，证据覆盖 ${readiness.evidenceCoverage}%${deferrableSoft.length ? `；${deferrableSoft.length} 道原版非强制题仍为 UNVERIFIED，需在 Candidate/Hidden 重新验证` : ""}`,
     capabilityGaps: [],
   };
 }

@@ -117,6 +117,76 @@ describe("server targeted Artifact repair", () => {
     expect(repaired.artifactSnapshots[1]!.frozenArtifact).toEqual(inherited.frozenArtifact);
     expect(put).toHaveBeenCalledTimes(1);
   });
+  it("repairs an HTML Target while preserving a frozen CSV Target with exact bytes",async()=>{
+    const args=await fixture();
+    const tableText="code,total\n000123,5\n000124,9\n";
+    const csv=SourceArtifactSchema.parse({
+      ...args.project.sourceArtifacts[0],id:"csv",name:"protected.csv",extension:"csv",mimeType:"text/csv",
+      artifactKind:"spreadsheet",role:"target",size:Buffer.byteLength(tableText),
+      structuredContent:{kind:"spreadsheet",sheets:[{name:"Sheet1",cells:[
+        {address:"A1",value:"code"},{address:"B1",value:"total"},
+        {address:"A2",value:"000123"},{address:"B2",value:5},
+        {address:"A3",value:"000124"},{address:"B3",value:9},
+      ]}]},
+    });
+    const keep=JSON.stringify({kind:"keep-parent",sourceArtifactId:csv.id});
+    const csvSnapshot=await snapshot(csv.id,keep,new Blob([tableText],{type:csv.mimeType}),csv.name);
+    args.project.sourceArtifacts.push(csv);
+    args.candidate.artifactSnapshots.push(csvSnapshot);
+    ai.mockImplementation(async(operation:string,payload:{instruction:string,candidate:{artifacts:Array<{sourceArtifactId:string;structuredContext?:unknown}>}})=>{
+      expect(operation).toBe("repair-artifact");
+      expect(payload.instruction).toContain("keep-parent");
+      expect(payload.instruction).toContain("Sheet/A1");
+      expect(payload.candidate.artifacts.find(item=>item.sourceArtifactId===csv.id)?.structuredContext)
+        .toMatchObject({kind:"spreadsheet",sheets:[{name:"Sheet1"}]});
+      return {...output(),artifacts:[...output().artifacts,{
+        sourceArtifactId:csv.id,name:csv.name,mimeType:csv.mimeType,content:keep,notes:[],
+      }]};
+    });
+    const repaired=await repairServerArtifactCandidate(args);
+    const preserved=repaired.artifactSnapshots.find(item=>item.sourceArtifactId===csv.id)!;
+    expect(preserved.frozenArtifact?.blobId).toBe(csvSnapshot.frozenArtifact?.blobId);
+    expect(await verifyServerCandidateFrozenArtifact(preserved)).toBe(true);
+    expect(await blobs.get(preserved.frozenArtifact!.blobId)!.text()).toBe(tableText);
+    expect(put).toHaveBeenCalledTimes(1);
+  });
+
+  it("reindexes all frozen CSV revisions before a targeted repair",async()=>{
+    const args=await fixture();
+    const original={kind:"spreadsheet",sheets:[{name:"Sheet1",cells:[
+      {address:"A1",value:"code"},{address:"B1",value:"value"},
+      {address:"A2",value:"000123"},{address:"B2",value:5},
+      {address:"A3",value:"000124"},{address:"B3",value:9},
+    ]}]};
+    const csv=SourceArtifactSchema.parse({...args.project.sourceArtifacts[0],
+      id:"csv",name:"history.csv",extension:"csv",mimeType:"text/csv",
+      artifactKind:"spreadsheet",structuredContent:original,
+    });
+    const full="code,value\n000123,15\n000124,19\n";
+    const latestOnly=JSON.stringify({kind:"spreadsheet",sheets:[{name:"Sheet1",cells:[{address:"B3",value:19}]}]});
+    const inherited=await snapshot(csv.id,latestOnly,new Blob([full],{type:csv.mimeType}),csv.name);
+    args.project.sourceArtifacts.push(csv);
+    args.candidate.artifactSnapshots.push(inherited);
+    ai.mockImplementation(async(_operation:string,payload:{candidate:{artifacts:Array<{sourceArtifactId:string;structuredContext?:unknown}>}})=>{
+      const structured=payload.candidate.artifacts.find(item=>item.sourceArtifactId===csv.id)!.structuredContext as {
+        sheets:Array<{cells:Array<{address:string;value?:unknown}>}>;
+      };
+      const value=(address:string)=>structured.sheets[0]!.cells.find(cell=>cell.address===address)?.value;
+      // Raw CSV retains exact text field values including leading zeros.
+      expect(value("B2")).toBe("15");
+      expect(value("B3")).toBe("19");
+      expect(value("A2")).toBe("000123");
+      return {...output(),artifacts:[...output().artifacts,{
+        sourceArtifactId:csv.id,name:csv.name,mimeType:csv.mimeType,
+        content:JSON.stringify({kind:"keep-parent",sourceArtifactId:csv.id}),notes:[],
+      }]};
+    });
+    const result=await repairServerArtifactCandidate(args);
+    const preserved=result.artifactSnapshots.find(item=>item.sourceArtifactId===csv.id)!;
+    expect(preserved.frozenArtifact?.sha256).toBe(inherited.frozenArtifact?.sha256);
+    expect(await verifyServerCandidateFrozenArtifact(preserved)).toBe(true);
+  });
+
   it("preserves an unrelated target's exact frozen receipt during a scoped repair", async () => {
     const args = await fixture();
     const other = SourceArtifactSchema.parse({ ...args.project.sourceArtifacts[0], id: "other", name: "protected.md", extension: "md", mimeType: "text/markdown" });

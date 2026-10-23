@@ -1,5 +1,5 @@
 import { runServerAi, serverAiUnavailableMessage, serverAiUnavailableReason, type ServerAiMedia, type ServerAiOperation } from "./ai-gateway";
-import { probeServerAiRuntime } from "./server-ai-health";
+import { getPassiveServerAiHealth, probeServerAiRuntime } from "./server-ai-health";
 import {withServerAiConnection} from "./server-ai-connection";
 
 /** Only AI-origin availability failures may become a control-loop capability wait. */
@@ -11,7 +11,13 @@ export class ServerControlAiUnavailableError extends Error {
 }
 
 export async function requireServerControlAi(options: { force?: boolean } = {}): Promise<void> {
-  const health = await probeServerAiRuntime(undefined, options);
+  // A business call is already an authoritative live capability check: do not
+  // spend an unrelated structured-output model call before EVERY Workflow step.
+  // The explicit forced probe remains in recovery/readiness flows only.
+  const health = options.force
+    ? await probeServerAiRuntime(undefined, options)
+    : await getPassiveServerAiHealth();
+  if (health.configured && !options.force) return;
   if (health.ready) return;
   if (health.status === "unconfigured") throw new ServerControlAiUnavailableError("not-configured");
   if (health.status === "unavailable" && health.reasonCode) {

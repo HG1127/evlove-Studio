@@ -60,9 +60,11 @@ The current Vercel Hobby project uses **Preview Gate → Production Promote**. R
 
 选择“接口协议”和“JSON 输出方式”，点击“测试后端调用”。这会从后端执行一次无任务文件的真实结构化模型调用，不会保存草稿或启动 Mission。普通健康检查不会调用模型。服务商不支持 JSON 模式时可选择“仅提示词 JSON”；返回值仍必须通过任务的 Zod 契约，不能用无法解析的文本冒充执行结果。
 
+后端解析兼容完整的前置 `<think>…</think>` 推理段和包裹最终 JSON 的代码块，仅解析最终回复并继续通过任务的 Zod 契约。只有推理内容、未闭合推理段、输出长度截断、JSON 格式错误或任务结构不符都会明确提示失败，不会自动补全内容或宣称测试通过。
+
 测试通过后点击“保存为后端默认模型”。浏览器可添加多个连接；后台任务使用工作区中保存的一个默认连接。仅保存浏览器连接不会配置后台任务。保存成功也不等于 Mission 已验收，真实 Baseline、Candidate、实验、Hidden Validation 和 Gate F 仍需各自的执行证据。
 
-后端通过现有 `evolution_vault_secrets` 表加密保存连接，查询只返回名称、URL、模型和协议，不返回 API Key。部署前须配置独立随机的服务端 `EVOLUTION_VAULT_MASTER_KEY`（至少 32 字符），以及上文的工作区凭据。保留既有 Vault 主密钥；不要在已有加密数据时随意替换。加密密钥必须有受保护的备份，不得放入 `VITE_*` 或 Git。该功能不需要新数据库迁移。
+后端通过现有 `evolution_vault_secrets` 表加密保存连接，查询只返回名称、URL、模型和协议，不返回 API Key。部署前须配置独立随机的服务端 `EVOLUTION_VAULT_MASTER_KEY`（至少 32 字符），以及上文的工作区凭据。保留既有 Vault 主密钥；不要在已有加密数据时随意替换。加密密钥必须有受保护的备份，不得放入 `VITE_*` 或 Git。该功能不需要新数据库迁移。 如果页面提示加密保存尚未启用，补齐服务端配置并重启后，可点击“重新检查保存状态”恢复保存按钮；“测试后端调用”可在保存草稿前使用。
 
 路由优先级为：保存的后端连接 → 完整的直连环境配置 → 显式开启的历史 Gateway。若不使用 Gateway，将 `EVOLUTION_AI_GATEWAY_ENABLED=false`。直连环境配置为 `EVOLUTION_AI_API_KEY`、`EVOLUTION_AI_MODEL`、`EVOLUTION_AI_BASE_URL`，也保留已有服务商环境变量的兼容读取。模型切换会改变后续评分的路由身份；一次成对评测会固定同一配置，避免当前版本和 Candidate 使用不同模型。
 

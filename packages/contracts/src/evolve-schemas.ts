@@ -1,4 +1,5 @@
 import { z } from "zod";
+import {ProductionGoalEvidenceSchema} from "./production-goal-evidence";
 import { GitRepositoryBindingSchema, GitTargetSnapshotBindingSchema } from "./git-target-contract";
 import {ConnectorCandidateBindingSchema,ConnectorTargetBindingSchema,ConnectorTargetSnapshotBindingSchema} from "./connector-contract";
 
@@ -449,6 +450,7 @@ export const CandidateArtifactSnapshotSchema = z.object({
 export type CandidateArtifactSnapshot = z.infer<typeof CandidateArtifactSnapshotSchema>;
 
 export const CandidateSchema = z.object({
+  finalHoldoutPaperHash:z.string().optional(),
   id: z.string(),
   name: z.string(),
   title: z.string().optional(),
@@ -463,6 +465,9 @@ export const CandidateSchema = z.object({
   riskCoverage: z.number().default(0),
   costDelta: z.number().default(0),
   speedDelta: z.number().default(0),
+  /** False means the relative percentage cannot be measured (e.g. a zero baseline). */
+  costDeltaKnown: z.boolean().optional(),
+  speedDeltaKnown: z.boolean().optional(),
   safety: z.enum(["PASS", "REVIEW", "FAIL"]).default("REVIEW"),
   recommended: z.boolean().default(false),
   status: z.enum(["draft", "queued", "running", "passed", "failed", "winner"]).default("draft"),
@@ -673,7 +678,18 @@ export const EvolvedVersionSchema = z.object({
 });
 export type EvolvedVersion = z.infer<typeof EvolvedVersionSchema>;
 
+export const IndependentFinalEvidenceSchema=z.object({
+  candidateId:z.string(),inputFingerprint:z.string(),paperHash:z.string(),suite:z.array(TestCaseSchema),
+  status:z.enum(["idle","running","completed","failed"]),
+  runs:z.array(TargetRunResultSchema),baselineRuns:z.array(TargetRunResultSchema),
+  evaluation:EvaluationResultSchema.optional(),baselineEvaluation:EvaluationResultSchema.optional(),
+  baselineSuiteIds:z.array(z.string()).optional(),baselineContextFingerprint:z.string().optional(),baselineObservedAt:z.number().optional(),
+  recommendation:z.enum(["release","hold","reject"]).optional(),error:z.string().optional(),
+});
+export type IndependentFinalEvidence=z.infer<typeof IndependentFinalEvidenceSchema>;
+
 export const ValidationRunSchema = z.object({
+  independentFinal:IndependentFinalEvidenceSchema.optional(),
   evidenceFingerprint: z.string().optional(),
   id: z.string(),
   status: z.enum(["idle", "running", "completed", "failed"]),
@@ -766,6 +782,7 @@ export const ReleaseObservationSchema = z.object({
 export type ReleaseObservation = z.infer<typeof ReleaseObservationSchema>;
 
 export const ReleaseStateSchema = z.object({
+  goalEvidence:ProductionGoalEvidenceSchema.optional(),
   status: z.enum(["idle", "shadow", "canary-5", "canary-20", "canary-50", "promoted", "rolled-back"]),
   candidateId: z.string().optional(),
   trafficPercent: z.number().min(0).max(100).default(0),
@@ -1095,7 +1112,7 @@ export type ExperimentPolicy = z.infer<typeof ExperimentPolicySchema>;
 export const AttentionRequestSchema = z.object({
   id: z.string(),
   type: z.enum(["clarification", "input", "evidence", "capability", "authorization", "limit"]),
-  diagnosticCode: z.enum(["local-evidence-incomplete", "judge-recovery", "artifact-repair-recovery"]).optional(),
+  diagnosticCode: z.enum(["local-evidence-incomplete", "judge-recovery", "artifact-repair-recovery", "production-goal-evidence"]).optional(),
   status: z.enum(["pending", "resolved", "expired"]).default("pending"),
   title: z.string(),
   reason: z.string(),
@@ -1145,6 +1162,7 @@ export const EvolveProjectSchema = z.object({
   acceptanceRubricState: AcceptanceRubricStateSchema.prefault({}),
   evalSuite: z.array(TestCaseSchema).default([]),
   hiddenEvalSuite: z.array(TestCaseSchema).default([]),
+  finalHoldout:z.object({round:z.number().int().positive(),suite:z.array(TestCaseSchema),paperHash:z.string(),contractFingerprint:z.string(),createdAt:z.string()}).optional(),
   gates: z.array(GateStateSchema),
   problems: z.array(ProblemSchema),
   selectedProblemId: z.string().optional(),

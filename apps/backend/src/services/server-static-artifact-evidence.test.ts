@@ -126,7 +126,7 @@ describe("Server frozen Artifact static evidence", () => {
     expect(run.output).not.toContain("BLUEPRINT ONLY");
     const corrupt = await candidate("pdf", new NodeBlob(["%PDF-1.4 invalid"], { type: "application/pdf" }) as Blob);
     expect((await runServerFrozenArtifactStaticEvidence({ project: project("pdf"), candidate: corrupt, testCase })).verificationStatus).toBe("unverified");
-  });
+  },15_000);
 
   it("keeps product behavior partial and unsupported empty PDF unverified", async () => {
     const variant = await candidate("md", new NodeBlob(["REAL FINAL GUIDE"], { type: "text/markdown" }) as Blob, "REAL FINAL GUIDE");

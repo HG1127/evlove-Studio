@@ -1,5 +1,6 @@
 import {describe,expect,it} from "vitest";
 import type {EvolveProject} from "@evolution/contracts";
+import {withMeasuredProductionGoal} from "@evolution/testkit";
 import {completeAutonomousMission} from "./autonomous-completion";
 
 describe("autonomous mission completion",()=>{
@@ -29,7 +30,7 @@ describe("autonomous mission completion",()=>{
     expect(()=>completeAutonomousMission(project,{at,reason:"closure complete"})).toThrow(/Outcome.*稳定|连续健康|线上自主闭环/);
   });
 
-  it("completes an online mission only after two fresh healthy production observations",()=>{
+  it("requires measured goal improvement as well as fresh healthy production observations",()=>{
     const at="2026-09-20T15:00:00Z";
     const project={
       releaseTarget:{provider:"vercel",mode:"preview-promote",status:"connected",label:"Vercel"},
@@ -45,7 +46,8 @@ describe("autonomous mission completion",()=>{
       campaign:{status:"running",schedule:{enabled:false}},
       gates:[],
     } as unknown as EvolveProject;
-    const done=completeAutonomousMission(project,{at,reason:"closure complete"});
+    expect(()=>completeAutonomousMission(project,{at,reason:"closure complete"})).toThrow(/目标收益/);
+    const done=completeAutonomousMission(withMeasuredProductionGoal(project),{at,reason:"closure complete"});
     expect(done.campaign.status).toBe("completed");
   });
 });

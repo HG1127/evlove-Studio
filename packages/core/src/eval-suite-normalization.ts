@@ -175,6 +175,48 @@ export function normalizeEvalSuiteForProject(project: EvolveProject, validationC
   };
 }
 
+/**
+ * The final Holdout requires proof for every Rubric criterion, including soft
+ * items. Add missing soft tests ONLY while building the hidden paper, before
+ * any Candidate is constructed. Never introduce a test after seeing a Winner.
+ *
+ * These cases are real execution/verification requests, NOT synthetic passes.
+ */
+export function ensurePreCandidateHiddenSoftCoverage(
+  project:EvolveProject,
+  visible:TestCase[],
+  frozenCandidates:TestCase[],
+):TestCase[]{
+  const missing=project.acceptanceRubric.filter(c=>!c.hardGate
+    && !frozenCandidates.some(test=>test.criterionIds.includes(c.id)));
+  if(!missing.length)return frozenCandidates;
+  if(project.candidates.some(candidate=>candidate.artifactBuildStatus==="ready"||candidate.artifactSnapshots.length>0)
+    ||project.experimentRun.status==="completed"||project.campaign.currentRound>0){
+    throw new Error("Hidden contract cannot be expanded after Candidate construction; create a new evaluation version");
+  }
+  const used=new Set([...visible,...frozenCandidates].map(test=>test.id));
+  const extra=missing.map((criterion)=>{
+    const slug=criterion.id.toLowerCase().replace(/[^a-z0-9_-]/g,"-").slice(0,48)||"criterion";
+    let id="holdout-soft-"+slug,index=1;
+    while(used.has(id))id="holdout-soft-"+slug+"-"+(++index);
+    used.add(id);
+    const testcase:TestCase={
+      id,
+      title:"隐藏独立验收 · "+criterion.title,
+      input:"只针对当前实际冻结成果，独立核对验收标准："+criterion.requirement+
+        "。不得把 Plan、预测收益或旧诊断当作当前证据；无法核实则报告 UNVERIFIED。",
+      expected:criterion.evidenceExpected.length?criterion.evidenceExpected.slice(0,8):[criterion.requirement],
+      tags:["pre-candidate-hidden-soft-criterion","contract-derived"],
+      hidden:true,
+      criterionIds:[criterion.id],
+      executionMode:methodMode(criterion.validationMethod),
+      evidenceScope:scopeFor(criterion.validationMethod),
+    };
+    return bindExecutionEvidence(project,[criterion],testcase,executionForProject(project,[criterion],testcase));
+  });
+  return [...frozenCandidates,...extra];
+}
+
 export type CriterionEvidenceRoute = "visual" | "manual" | "runner" | "local" | "capability";
 
 /**

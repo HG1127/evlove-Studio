@@ -1,4 +1,5 @@
 import type { AcceptanceCriterion, ArtifactDescriptor, ArtifactKind, EvolveProject, SourceArtifact, Stage } from "@evolution/contracts";
+import {isTextArtifactExtension} from "./format-roundtrip-policy";
 
 export type AdaptiveStageId = "define" | "baseline" | "diagnose" | "evolve" | "verify" | "deliver";
 export type AdaptiveStageSpec = {
@@ -53,11 +54,11 @@ export function describeArtifact(input: Pick<SourceArtifact, "name" | "mimeType"
   };
   if (["ppt", "odp"].includes(extension) || kind === "presentation") return {
     family: "presentation", subtype: extension || "presentation", adapterId: "presentation-generic", confidence: 0.9,
-    preservationMode: extension === "odp" ? "same-package" : "external-required", fidelity: extension === "odp" ? "medium" : "limited", formatExtension: extension, editable: true,
-    capabilities: { parse: true, mutate: true, materialize: extension === "odp", validateStructure: true, execute: false, visual: true },
+    preservationMode: "external-required", fidelity: "limited", formatExtension: extension, editable: false,
+    capabilities: { parse: true, mutate: false, materialize: false, validateStructure: true, execute: false, visual: true },
     evolutionDimensions: ["逐页内容覆盖", "叙事结构", "表达清晰度", "格式保真"],
     requiredValidations: ["页级结构完整", "用户要求覆盖", "原格式输出能力"],
-    limitations: extension === "ppt" ? ["旧版 .ppt 为 OLE 二进制格式；没有外部 Office 渲染器 时不能保证同格式高保真重写。建议另存为 .pptx。"] : [],
+    limitations: [extension === "ppt" ? "旧版 .ppt 为 OLE 二进制格式，建议另存为 PPTX。" : "ODP 或未知演示格式暂无同格式物化引擎，建议另存为 PPTX。", "当前只能读取/分析，未接入原生 Renderer 前不得标记 Artifact Ready。"],
   };
   if (extension === "docx") return {
     family: "text", subtype: "docx", adapterId: "document-docx-ooxml", confidence: 0.99,
@@ -70,7 +71,7 @@ export function describeArtifact(input: Pick<SourceArtifact, "name" | "mimeType"
   if (extension === "pdf") return {
     family: "fixed-layout", subtype: "pdf", adapterId: "document-pdf-readonly", confidence: 0.99,
     preservationMode: "external-required", fidelity: "limited", formatExtension: "pdf", editable: false,
-    capabilities: { parse: true, mutate: true, materialize: false, validateStructure: true, execute: false, visual: true },
+    capabilities: { parse: true, mutate: false, materialize: false, validateStructure: true, execute: false, visual: true },
     evolutionDimensions: ["内容覆盖", "结构", "可读性", "视觉/版面意图"],
     requiredValidations: ["不得伪造同格式交付", "若无 PDF 渲染器 必须阻止 Artifact Ready"],
     limitations: ["PDF 是固定版式结果格式。当前内置 Runtime 可读取并评价，但没有高保真 PDF 重排引擎；需要外部 PDF 渲染器 才能同格式交付。"],
@@ -93,12 +94,15 @@ export function describeArtifact(input: Pick<SourceArtifact, "name" | "mimeType"
   };
   if (["md", "mdx", "txt", "html", "htm", "rtf", "odt", "doc"].includes(extension) || kind === "document") return {
     family: "text", subtype: extension || "document", adapterId: "document-structured-text", confidence: 0.92,
-    preservationMode: ["md", "mdx", "txt", "html", "htm"].includes(extension) ? "same-text-format" : "same-format-rebuild",
-    fidelity: ["md", "mdx", "txt", "html", "htm"].includes(extension) ? "full" : "medium", formatExtension: extension, editable: true,
-    capabilities: { parse: true, mutate: true, materialize: !["doc"].includes(extension), validateStructure: true, execute: false, visual: false },
+    preservationMode: ["md", "mdx", "txt", "html", "htm"].includes(extension) ? "same-text-format" : "external-required",
+    fidelity: ["md", "mdx", "txt", "html", "htm"].includes(extension) ? "full" : "limited", formatExtension: extension,
+    editable: ["md", "mdx", "txt", "html", "htm"].includes(extension),
+    capabilities: { parse: true, mutate: ["md", "mdx", "txt", "html", "htm"].includes(extension),
+      materialize: ["md", "mdx", "txt", "html", "htm"].includes(extension), validateStructure: true, execute: false, visual: false },
     evolutionDimensions: ["要求覆盖", "章节结构", "内容深度", "一致性", "无截断", "原格式"],
     requiredValidations: ["章节/结构完整", "要求覆盖", "无 TODO/占位", "格式可交付"],
-    limitations: extension === "doc" ? ["旧版 .doc 无内置高保真 Writer；建议转 .docx。"] : [],
+    limitations: ["doc", "odt", "rtf"].includes(extension)
+      ? ["当前可抽取文字，但同格式 Writer/Renderer 尚未实现；请转为 DOCX 或可编辑文本格式后再进化。"] : [],
   };
   if (["xlsx", "xls", "ods", "csv", "tsv"].includes(extension) || kind === "spreadsheet") return {
     family: "spreadsheet", subtype: extension || "spreadsheet", adapterId: extension === "xlsx" ? "spreadsheet-xlsx" : "spreadsheet-generic", confidence: 0.98,
@@ -131,18 +135,18 @@ export function describeArtifact(input: Pick<SourceArtifact, "name" | "mimeType"
     evolutionDimensions: ["节点完整性", "状态流转", "输入输出契约", "异常/重试/回滚", "工具绑定", "幂等性", "可观测性"],
     requiredValidations: ["无悬空节点/边", "异常路径闭环", "输入输出可衔接", "Schema 可解析", "用户目标覆盖"], limitations: [],
   };
-  if (mime.startsWith("image/") || kind === "image") return {
+  if (extension !== "svg" && (mime.startsWith("image/") || kind === "image")) return {
     family: "image", subtype: extension || "image", adapterId: "image-external", confidence: 0.99,
-    preservationMode: "external-required", fidelity: "limited", formatExtension: extension, editable: true,
-    capabilities: { parse: true, mutate: true, materialize: false, validateStructure: false, execute: false, visual: true },
+    preservationMode: "external-required", fidelity: "limited", formatExtension: extension, editable: false,
+    capabilities: { parse: true, mutate: false, materialize: false, validateStructure: false, execute: false, visual: true },
     evolutionDimensions: ["视觉目标", "文本/主体保真", "布局", "风格", "原格式"],
     requiredValidations: ["视觉结果与目标一致", "原主体/文本保护", "同格式输出"],
     limitations: ["当前 Studio Runtime 没有内置图像生成/编辑 渲染器；需要连接视觉 Artifact Plugin 才能产出真实同格式图片。"],
   };
   if (mime.startsWith("audio/") || mime.startsWith("video/") || kind === "media" || ["mp3","wav","ogg","m4a","mp4","mov","avi","webm"].includes(extension)) return {
     family: "media", subtype: extension || "media", adapterId: "media-external", confidence: 0.96,
-    preservationMode: "external-required", fidelity: "limited", formatExtension: extension, editable: true,
-    capabilities: { parse: false, mutate: true, materialize: false, validateStructure: true, execute: false, visual: mime.startsWith("video/") },
+    preservationMode: "external-required", fidelity: "limited", formatExtension: extension, editable: false,
+    capabilities: { parse: false, mutate: false, materialize: false, validateStructure: true, execute: false, visual: mime.startsWith("video/") },
     evolutionDimensions: ["内容结构", "脚本/字幕", "时长与节奏", "音画一致性", "主体/品牌保护", "原格式"],
     requiredValidations: ["用户目标逐项覆盖", "时序/字幕/结构约束", "受保护元素保持", "同格式 渲染器"],
     limitations: ["当前 Studio Runtime 能识别媒体类型并编译专属标准，但没有内置转写/剪辑/编码 渲染器；接入 Media Artifact Plugin 前会阻止假同格式交付。"],
@@ -155,13 +159,18 @@ export function describeArtifact(input: Pick<SourceArtifact, "name" | "mimeType"
     requiredValidations: ["ZIP 可打开", "原文件树不被无授权删除", "目标修改可定位"],
     limitations: ["若 ZIP 不是代码工程，系统会以 Package Adapter 处理；未知二进制子文件只能保留，不能自动语义修改。"],
   };
+  const genericText = isTextArtifactExtension(extension) || mime.startsWith("text/") || mime === "application/json" || mime.endsWith("+json")
+    || mime === "application/xml" || mime.endsWith("+xml")
+    || ["json", "jsonl", "yaml", "yml", "xml", "svg", "toml", "ini", "conf", "log", "graphql", "gql", "sh", "bash", "zsh", "env", "css", "scss", "less", "mjs", "cjs", "rb", "kts"].includes(extension);
   return {
     family: "generic", subtype: extension || "generic", adapterId: "generic-safe", confidence: 0.55,
-    preservationMode: input.artifactKind === "generic" && !extension ? "external-required" : "same-text-format", fidelity: "medium", formatExtension: extension, editable: true,
-    capabilities: { parse: true, mutate: true, materialize: Boolean(extension), validateStructure: true, execute: false, visual: false },
+    preservationMode: genericText ? "same-text-format" : "external-required", fidelity: genericText ? "full" : "limited",
+    formatExtension: extension, editable: genericText,
+    capabilities: { parse: genericText, mutate: genericText, materialize: genericText, validateStructure: genericText, execute: false, visual: false },
     evolutionDimensions: ["用户要求覆盖", "完整性", "一致性", "原格式"],
     requiredValidations: ["用户要求逐条覆盖", "成果完整", "格式可交付"],
-    limitations: ["这是通用安全适配器。系统会保留原格式/原包并仅修改可理解部分；若无法保证同格式物化，会阻止最终交付而不是伪造成功。"],
+    limitations: genericText ? ["通用纯文本模式可进行精确文本变更；领域级行为仍需独立验证。"]
+      : ["该未知二进制格式只有文件元信息可识别，缺少原生解析/编辑/渲染器；禁止用 AI 文本伪造原格式成果。"],
   };
 }
 

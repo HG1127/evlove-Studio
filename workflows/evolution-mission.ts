@@ -3,6 +3,7 @@ import { EvolutionWorkflowRunInputSchema, type EvolutionWorkflowResult } from "@
 import {
   executeServerControlStep,
   failLoopGuardStep,
+  finalizeUnexpectedWorkflowFailureStep,
   finalizeWorkflowResultStep,
   initializeWorkflowControlStep,
   planMissionStep,
@@ -15,6 +16,8 @@ const MAX_CONTROL_STEPS=32;
 export async function evolutionMissionWorkflow(rawInput:unknown):Promise<EvolutionWorkflowResult>{
   "use workflow";
   const input=EvolutionWorkflowRunInputSchema.parse(rawInput);
+  let lastIteration=0;
+  try{
   await initializeWorkflowControlStep(input);
 
   let scheduledFor=input.scheduledFor;
@@ -35,6 +38,7 @@ export async function evolutionMissionWorkflow(rawInput:unknown):Promise<Evoluti
     let rearmed=false;
     for(let localIteration=0;localIteration<MAX_CONTROL_STEPS;localIteration+=1){
       const iteration=cycle*MAX_CONTROL_STEPS+localIteration;
+      lastIteration=iteration;
       const plan=await planMissionStep(input,iteration);
       const execution=await executeServerControlStep(input,plan,iteration);
       if(execution.control==="stop"&&execution.result)return execution.result;
@@ -54,5 +58,10 @@ export async function evolutionMissionWorkflow(rawInput:unknown):Promise<Evoluti
     }
     if(rearmed)continue;
     return finalizeWorkflowResultStep(input,await failLoopGuardStep(input,(cycle+1)*MAX_CONTROL_STEPS));
+  }
+  }catch{
+    // Runtime retry budget exhausted: close this Job, preserve Mission evidence, never
+    // let one uncaught provider/schema error leave a permanently 'running' Control Job.
+    return finalizeUnexpectedWorkflowFailureStep(input,lastIteration+1);
   }
 }

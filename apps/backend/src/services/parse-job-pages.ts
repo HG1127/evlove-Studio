@@ -6,10 +6,10 @@ function filterValue(value:string){
 }
 
 function query(since:string,limit:number,sessionId?:string,cursor?:ParseJobCursor){
-  const scope=sessionId?"&metadata->>sessionId=eq."+filterValue(sessionId):"";
+  const scope=sessionId?"&metadata->>sessionId=eq."+encodeURIComponent(sessionId):"";
   const after=cursor?"&or=(created_at.lt."+filterValue(cursor.createdAt)
     +",and(created_at.eq."+filterValue(cursor.createdAt)+",id.lt."+filterValue(cursor.id)+"))":"";
-  return "jobs?select=*&type=eq.parse&updated_at=gte."+filterValue(since)
+  return "jobs?select=*&type=eq.parse&updated_at=gte."+encodeURIComponent(since)
     +scope+"&order=created_at.desc,id.desc&limit="+limit+after;
 }
 

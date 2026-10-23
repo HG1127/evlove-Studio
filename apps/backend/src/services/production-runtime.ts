@@ -308,6 +308,28 @@ export async function listServerActiveJobs(limit=100,missionId?:string){
     .slice(0,bounded);
 }
 
+/**
+ * HTML start protection needs EVERY active Campaign for this one Mission.
+ * The generic reconciliation inventory intentionally filters workflow-control
+ * receipts and mixes parse jobs; either behavior can hide a blocking Campaign.
+ * Query Campaigns separately, including historical idempotency keys.
+ */
+export async function listServerActiveMissionCampaignJobs(missionId:string,limit=100){
+  const {request}=createRestClient();
+  const bounded=Math.max(1,Math.min(limit,100));
+  const statuses=["queued","running","waiting"] as const;
+  const pages=await Promise.all(statuses.map(async status=>{
+    try{
+      return await readActiveJobRows(request,{
+        kind:"campaign",status,missionId,limit:bounded,campaignKeyScope:"all",
+      });
+    }catch(error){throw new ActiveJobQueryError("campaign",error);}
+  }));
+  return pages.flat().map(rowJob)
+    .sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)||b.id.localeCompare(a.id))
+    .slice(0,bounded);
+}
+
 export async function probeServerActiveJobPage(){
   return probeActiveJobPage(createRestClient().request);
 }
@@ -326,11 +348,22 @@ export async function listRecentServerParseJobs(args:{
   return rows.map(rowJob);
 }
 
-export async function createServerJobIdempotentReceipt(jobInput:EvolutionJob){
+export async function createServerJobIdempotentReceipt(
+  jobInput:EvolutionJob,
+  startGuard?:{kind:"html-campaign";allowSingleWaitingRetry:boolean},
+){
   const job=EvolutionJobSchema.parse(jobInput);
+  if(startGuard&&(job.type!=="campaign"||job.status!=="queued"||!job.missionId)){
+    throw new Error("HTML Campaign start guard requires a queued Mission-bound Campaign Job");
+  }
   const {request}=createRestClient();
-  const rows=await request("rpc/create_evolution_job_idempotent",{
-    method:"POST",body:JSON.stringify({p_job:job}),
+  // HTML starts must make the active-Job check and Job/Event creation atomic in
+  // Postgres. A missing migration must fail closed; NEVER fall back to the
+  // generic idempotency-key-only RPC for this path.
+  const rpc=startGuard?"rpc/create_evolution_html_campaign_control":"rpc/create_evolution_job_idempotent";
+  const payload=startGuard?{p_job:job,p_allow_single_waiting_retry:startGuard.allowSingleWaitingRetry}:{p_job:job};
+  const rows=await request(rpc,{
+    method:"POST",body:JSON.stringify(payload),
   }) as Array<{applied?:unknown;reason?:unknown;job?:unknown}>;
   const result=rows?.[0];
   const current=rpcJob(result?.job);

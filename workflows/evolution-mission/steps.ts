@@ -1,5 +1,5 @@
 import { FatalError } from "workflow";
-import { campaignScoringInputBlocker } from "@evolution/core";
+import { campaignScoringInputBlocker,selectPlanningLessons,productionGoalReadiness } from "@evolution/core";
 import {
   EvolutionJobSchema,
   PRODUCTION_SCHEMA_VERSIONS,
@@ -7,7 +7,7 @@ import {
   type EvolutionWorkflowResult,
   type EvolutionWorkflowRunInput,
 } from "@evolution/contracts";
-import { advanceCampaignScheduleAfterServerRun, applyDeterministicRoundtripEvidence, applyProductionLearningGovernance, campaignGoalSatisfied, campaignStopReason, completeAutonomousMission, integrateDistilledLesson, mapTestsToRubric, materializeAcceptedChampionPackage, mergeGovernedNextQueue, normalizeAcceptanceRubric, normalizeEvalSuiteForProject, productionOutcomeFreshness, productionOutcomeTrend, projectHasStableHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, resetDownstream, rubricSuiteCoverage, rubricValidation } from "@evolution/core";
+import { advanceCampaignScheduleAfterServerRun, applyDeterministicRoundtripEvidence, applyProductionLearningGovernance, campaignGoalSatisfied, campaignStopReason, completeAutonomousMission, integrateDistilledLesson, mapTestsToRubric, materializeAcceptedChampionPackage, mergeGovernedNextQueue, normalizeAcceptanceRubric, normalizeEvalSuiteForProject, ensurePreCandidateHiddenSoftCoverage, productionOutcomeFreshness, productionOutcomeTrend, projectHasStableHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, resetDownstream, rubricSuiteCoverage, rubricValidation } from "@evolution/core";
 import {
   advanceServerCampaignPreparation,
   compactServerSourceArtifacts,
@@ -32,7 +32,7 @@ import { restoreServerControlAiWait } from "../../apps/backend/src/services/serv
 import { runServerMissionBaseline } from "../../apps/backend/src/services/server-baseline";
 import { runServerMissionExperiment } from "../../apps/backend/src/services/server-experiment";
 import { runServerMissionHoldout } from "../../apps/backend/src/services/server-holdout";
-import { runServerMissionArtifactAcceptance } from "../../apps/backend/src/services/server-artifact-acceptance";
+import { recoverServerAcceptedOfflineChampion, runServerMissionArtifactAcceptance } from "../../apps/backend/src/services/server-artifact-acceptance";
 import { runServerMissionRelease } from "../../apps/backend/src/services/server-release-orchestration";
 import { runServerMissionReleaseReconciliation } from "../../apps/backend/src/services/server-release-reconciliation";
 import { nextProductionMonitorDelay } from "../../apps/backend/src/services/production-monitor";
@@ -600,7 +600,7 @@ async function executeServerControlAction(
       sourceContextInstruction:SERVER_SOURCE_CONTEXT_INSTRUCTION,
     });
     const criteria=normalizeAcceptanceRubric(generated.criteria,mission);
-    const validation=rubricValidation(criteria);
+    const validation=rubricValidation(criteria,mission.sourceArtifacts);
     const hasDownstream=mission.baselineRun.status!=="idle"||mission.evalSuite.length>0||mission.candidates.length>0||mission.gates.find((gate)=>gate.id==="target-ready")?.status==="approved";
     const base=hasDownstream?resetDownstream(mission,{nowMs:Date.parse(now)}):mission;
     const updated={
@@ -632,7 +632,7 @@ async function executeServerControlAction(
   }
 
   if(action==="build-eval"&&(await serverAiConfigured())){
-    const rubricCheck=rubricValidation(mission.acceptanceRubric);
+    const rubricCheck=rubricValidation(mission.acceptanceRubric,mission.sourceArtifacts);
     if(!rubricCheck.ready)throw new FatalError("Acceptance Rubric 尚未 Ready："+rubricCheck.warnings.join("；"));
     const generated=await runServerAi("eval-suite",{
       sourceContextInstruction:SERVER_SOURCE_CONTEXT_INSTRUCTION,
@@ -651,7 +651,8 @@ async function executeServerControlAction(
     });
     const mappedRaw=mapTestsToRubric(mission.acceptanceRubric,generated.validationCases,generated.hiddenCases);
     const mapped=normalizeEvalSuiteForProject(mission,mappedRaw.validationCases,mappedRaw.hiddenCases);
-    const coverage=rubricSuiteCoverage(mission.acceptanceRubric,mapped.validationCases,mapped.hiddenCases);
+    const completedHidden=ensurePreCandidateHiddenSoftCoverage(mission,mapped.validationCases,mapped.hiddenCases);
+    const coverage=rubricSuiteCoverage(mission.acceptanceRubric,mapped.validationCases,completedHidden);
     const hiddenHardGates=coverage.hiddenHardGateMissing.map((criterion)=>criterion.id);
     const warnings=[
       ...(coverage.uncovered.length?[`${coverage.uncovered.length} 条 Criterion 未映射测试题`]:[]),
@@ -669,7 +670,7 @@ async function executeServerControlAction(
       },
       artifactAcceptance:{id:`artifact-acceptance-${plan.checkpoint.id}`,status:"idle" as const,overallScore:0,coverageScore:0,integrityScore:0,pairwiseScore:0,hardGatePass:false,results:[],attempts:0,maxRepairAttempts:mission.artifactAcceptance.maxRepairAttempts||3,summary:"等待 Best-Ever / Winner Artifact 验收"},
       evalSuite:mapped.validationCases,
-      hiddenEvalSuite:mapped.hiddenCases,
+      hiddenEvalSuite:completedHidden,
       baselineRun:{...mission.baselineRun,status:"idle" as const,totalCases:mapped.validationCases.length,result:undefined,runs:[]},
       problems:[],selectedProblemId:undefined,diagnosis:undefined,candidates:[],selectedCandidateIds:[],
       experimentRun:{id:`experiment-${plan.checkpoint.id}`,status:"idle" as const,candidateResults:[]},
@@ -684,7 +685,49 @@ async function executeServerControlAction(
       id:`evt-${input.controlJobId}-action-${iteration}-complete`,
       missionId:input.missionId,jobId:input.controlJobId,checkpointId:plan.checkpoint.id,
       type:"ActionCompleted",source:"vercel-workflow-ai",
-      payload:{action,serverNative:true,visibleCases:mapped.validationCases.length,hiddenCases:mapped.hiddenCases.length,coverageReady:warnings.length===0},
+      payload:{action,serverNative:true,visibleCases:mapped.validationCases.length,hiddenCases:completedHidden.length,coverageReady:warnings.length===0},
+    }));
+    return {control:"continue"};
+  }
+
+  if(action==="run-campaign"&&mission.targetConnection.adapter==="artifact"
+    &&mission.artifactAcceptance.status==="passed"&&!mission.searchChampion
+    &&mission.campaign.currentRound>0){
+    // Never infer a Champion from scores alone. The service re-reads the exact
+    // frozen Blob and Core rechecks all Hidden, Gate F and fingerprint identities.
+    const recovered=await recoverServerAcceptedOfflineChampion(mission);
+    if(!recovered?.searchChampion?.candidate){
+      const reason="[server-campaign-accepted-champion-recovery-pending] 既有 Gate F 成功记录与冻结文件无法重新逐项核验，保持原始状态等待复查。";
+      await runtime.jobs.put(await controlJob(input,{
+        status:"waiting",startedAt:input.requestedAt,
+        progress:{percent:83,detail:reason},
+      }));
+      await runtime.events.append(createEvolutionEvent({
+        id:`evt-${input.controlJobId}-accepted-recovery-${iteration}-pending`,
+        missionId:input.missionId,jobId:input.controlJobId,checkpointId:plan.checkpoint.id,
+        type:"JobProgress",source:"vercel-workflow-control",
+        payload:{action,reason,serverNative:true},
+      }));
+      return {control:"stop",result:result(input,{
+        status:"waiting-action",iterations:iteration+1,nextAction:action,
+        checkpointId:plan.checkpoint.id,reason,
+      })};
+    }
+    await runtime.missions.save(recovered);
+    await runtime.jobs.put(await controlJob(input,{
+      status:"running",startedAt:input.requestedAt,
+      progress:{percent:87,detail:"已根据同一冻结成果与 Hidden/Gate F 证据恢复 Search Champion，继续成果打包"},
+    }));
+    await runtime.events.append(createEvolutionEvent({
+      id:`evt-${input.controlJobId}-accepted-recovery-${iteration}-complete`,
+      missionId:input.missionId,jobId:input.controlJobId,checkpointId:plan.checkpoint.id,
+      type:"ActionCompleted",source:"vercel-workflow-control",
+      payload:{
+        action,serverNative:true,
+        candidateId:recovered.searchChampion.candidate.id,
+        versionLabel:recovered.searchChampion.versionLabel,
+        frozenSha256:recovered.searchChampion.artifactAcceptance?.frozenArtifacts?.map(f=>f.sha256),
+      },
     }));
     return {control:"continue"};
   }
@@ -918,6 +961,7 @@ async function executeServerControlAction(
       return {control:"continue"};
     }
     const outcome=await advanceServerCampaignPreparation(campaignMission,{
+      reserveFinalHoldout:async payload=>(await runServerAi("eval-suite",payload)).hiddenCases.map((test,index)=>({...test,id:`FINAL-r${campaignMission.campaign.currentRound+1}-${index}-${test.id}`,hidden:true})),
       problemAnalysis:(payload)=>runServerAi("problem-analysis",payload),
       diagnose:(payload)=>runServerAi("diagnose",payload),
       plan:(payload)=>runServerAi("plan",payload),
@@ -1079,7 +1123,7 @@ async function executeServerControlAction(
     const hasLiveDecision=projectHasLiveReleaseDecision(mission);
     const releaseFreshness=productionOutcomeFreshness(mission);
     const releaseTrend=productionOutcomeTrend(mission);
-    const hasStableLiveOutcome=hasLiveDecision&&mission.release.status==="promoted"&&projectHasStableHealthyProductionOutcome(mission);
+    const hasStableLiveOutcome=hasLiveDecision&&mission.release.status==="promoted"&&projectHasStableHealthyProductionOutcome(mission)&&productionGoalReadiness(mission).improved;
     const hasOfflineAcceptance=!projectHasOnlineReleaseTarget(mission)
       &&mission.artifactAcceptance.status==="passed"
       &&mission.artifactAcceptance.candidateId===winner.id;
@@ -1128,7 +1172,7 @@ async function executeServerControlAction(
         goal:mission.goal,
         desiredOutcome:mission.desiredOutcome,
         problems:mission.problems.slice(0,12).map((item)=>({id:item.id,title:item.title,impact:item.impact,severity:item.severity,status:item.status,summary:item.summary})),
-        lessons:mission.lessons.slice(0,8),
+        lessons:selectPlanningLessons(mission.lessons,8),
         validation:{recommendation:mission.validationRun.recommendation,summary:mission.validationRun.summary,failedChecks:mission.validationRun.checks.filter((item)=>item.status==="fail").slice(0,8)},
         artifactAcceptance:{status:mission.artifactAcceptance.status,score:mission.artifactAcceptance.overallScore,summary:mission.artifactAcceptance.summary},
         release:{status:mission.release.status,evidenceMode:mission.release.evidenceMode,healthy:mission.release.healthy,kpis:mission.release.kpis.slice(0,8)},
@@ -1442,6 +1486,42 @@ export async function finalizeWorkflowResultStep(input:EvolutionWorkflowRunInput
     payload:{status:result.status,jobStatus:settlement.job?.status,iterations:result.iterations,checkpointId:result.checkpointId,reason:result.reason},
   }));
   return result;
+}
+
+/** Finalize an uncaught Step failure without leaking provider payloads or losing prior evidence. */
+export async function finalizeUnexpectedWorkflowFailureStep(
+  input:EvolutionWorkflowRunInput,iterations:number,
+):Promise<EvolutionWorkflowResult>{
+  "use step";
+  const runtime=getServerProductionRuntime();
+  const current=await runtime.jobs.get(input.controlJobId);
+  if(!current||current.missionId!==input.missionId
+    ||["completed","partial","failed","cancelled"].includes(current.status)){
+    return result(input,{status:"blocked",iterations,reason:"控制 Job 已结束或不存在；未重开历史运行。"});
+  }
+  const now=new Date().toISOString();
+  const reason="[server-workflow-step-failed] 后台执行节点失败，原有成果和检查点已保留；查看服务端运行日志后，可重新启动独立尝试。";
+  const mission=await runtime.missions.get(input.missionId);
+  if(mission&&!(["completed","stopped"] as string[]).includes(mission.campaign.status)){
+    // A temporary Mission CAS error must not strand an otherwise active Control Job.
+    try{
+      await runtime.missions.save({
+        ...mission,
+        campaign:{...mission.campaign,status:"paused",stopReason:reason,
+          schedule:{...mission.campaign.schedule,enabled:false,nextRunAt:undefined}},
+        updatedAt:now,
+      });
+    }catch(error){console.error("Workflow failure Mission pause could not be recorded",error);}
+  }
+  const failed=result(input,{status:"failed",iterations,reason});
+  const settlement=planWorkflowResultFinalization(current,failed,now);
+  if(settlement.write&&settlement.job)await runtime.jobs.put(settlement.job);
+  await runtime.events.append(createEvolutionEvent({
+    id:`evt-${input.controlJobId}-unexpected-step-failed`,missionId:input.missionId,
+    jobId:input.controlJobId,type:"JobFailed",source:"vercel-workflow-finalizer",
+    payload:{status:"failed",iterations,reason},
+  }));
+  return failed;
 }
 
 export async function failLoopGuardStep(input:EvolutionWorkflowRunInput,iterations:number):Promise<EvolutionWorkflowResult>{

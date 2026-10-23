@@ -192,20 +192,49 @@ describe("server frozen roundtrip recheck", () => {
     const candidate = frozenCandidate(project.candidates[0]!, JSON.stringify({ kind: "codebase", overlay: true, files: [{ path: "src/app.ts", content: "export const app = true" }] }));
     return { project, testCase, candidate };
   }
-  function ports(verifyFrozenArtifact?: (snapshot: Candidate["artifactSnapshots"][number]) => Promise<boolean>) {
-    return { executeSemanticBatch: async () => ({ results: [] }), verifyFrozenArtifact, judge: async () => judge(90) };
+  function ports(
+    verifyFrozenArtifact?: (snapshot: Candidate["artifactSnapshots"][number]) => Promise<boolean>,
+    verifyNativeFormat?: ()=>Promise<{passed:boolean;detail:string}>,
+  ){
+    return {executeSemanticBatch:async()=>({results:[]}),verifyFrozenArtifact,verifyNativeFormat,judge:async()=>judge(90)};
   }
 
   it("verifies binary roundtrip only after the injected store rechecks the frozen bytes", async () => {
     const { project, testCase, candidate } = scenario();
     const verify = vi.fn(async () => true);
-    const [run] = await executeServerExperimentCandidate(project, candidate, ports(verify), [testCase]);
+    const check=vi.fn(async()=>({passed:true,detail:"ZIP CRC and source path checked"}));
+    const [run] = await executeServerExperimentCandidate(project, candidate, ports(verify,check), [testCase]);
     expect(verify).toHaveBeenCalledOnce();
+    expect(check).toHaveBeenCalledOnce();
     expect(run?.verificationStatus).toBe("verified");
     expect(run?.artifactHash).toBe(candidate.artifactSnapshots[0]!.frozenArtifact!.sha256);
     expect(run?.trace.some((step) => step.id.startsWith("server-frozen-roundtrip-") && step.status === "pass")).toBe(true);
+    expect(run?.trace.some(step=>step.id.startsWith("server-frozen-native-")&&step.status==="pass")).toBe(true);
   });
 
+  it("rejects native ZIP even when its SHA matches if the independent parser is absent or fails",async()=>{
+    const {project,testCase,candidate}=scenario();
+    const missing=await executeServerExperimentCandidate(project,candidate,ports(async()=>true),[testCase]);
+    expect(missing[0]?.verificationStatus).toBe("unverified");
+    expect(missing[0]?.output).toContain("独立格式");
+    const malformed=await executeServerExperimentCandidate(project,candidate,
+      ports(async()=>true,async()=>({passed:false,detail:"ZIP CRC mismatch"})),[testCase]);
+    expect(malformed[0]?.verificationStatus).toBe("unverified");
+    expect(malformed[0]?.output).toContain("CRC mismatch");
+    const behavior=await executeServerExperimentCandidate(project,candidate,
+      ports(async()=>true,async()=>({passed:true,detail:"only format"})),
+      [{...testCase,evidenceScope:"product-behavior"}]);
+    expect(behavior[0]?.verificationStatus).toBe("unverified");
+  });
+  it("never upgrades a text byte-roundtrip into product-behavior proof",async()=>{
+    const project=fixture();
+    const testCase={...project.evalSuite[0]!,executionMode:"roundtrip" as const,evidenceScope:"product-behavior" as const};
+    const candidate=frozenCandidate(project.candidates[0]!);
+    const [run]=await executeServerExperimentCandidate(project,candidate,ports(async()=>true),[testCase]);
+    expect(run?.verificationStatus).toBe("unverified");
+    expect(run?.output).toContain("实际产品行为必须由独立 Runner");
+    expect(run?.output).not.toContain("ROUNDTRIP VERIFIED");
+  });
   it("requires the stored text file before upgrading UTF-8 Snapshot evidence", async () => {
     const project = fixture();
     project.acceptanceRubric[0]!.validationMethod = "format-roundtrip";

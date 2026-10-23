@@ -16,8 +16,8 @@ describe("Event Evidence scan pages",()=>{
     expect(page.nextCursor).toBe("evt-b");
     const query=new URL("https://example.test/rest/v1/"+paths[0]).searchParams;
     expect(query.get("order")).toBe("id.asc");
-    expect(query.get("mission_id")).toBe('eq."mission-1"');
-    expect(query.get("id")).toBe('gt."evt-a"');
+    expect(query.get("mission_id")).toBe('eq.mission-1');
+    expect(query.get("id")).toBe('gt.evt-a');
     expect(query.get("limit")).toBe("2");
   });
 
@@ -33,7 +33,7 @@ describe("Event Evidence scan pages",()=>{
     const request=vi.fn(async(path:string)=>{paths.push(path);return [];});
     await expect(probeEventEvidencePage(request)).resolves.toBe(true);
     const query=new URL("https://example.test/rest/v1/"+paths[0]).searchParams;
-    expect(query.get("mission_id")).toBe('eq."health-probe-no-such-mission"');
-    expect(query.get("id")).toBe('gt."health-probe:no-such-event"');
+    expect(query.get("mission_id")).toBe('eq.health-probe-no-such-mission');
+    expect(query.get("id")).toBe('gt.health-probe:no-such-event');
   });
 });

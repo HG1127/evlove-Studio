@@ -14,6 +14,7 @@ import {
   fastHash,
   settleAiEvaluation,
 } from "@evolution/core";
+import {requiresIndependentFormatValidation} from "@evolution/core";
 import {
   candidateArtifactContext,
   candidateLocalEvidence,
@@ -33,6 +34,7 @@ export type ServerExperimentExecutionPorts = {
     artifactContext: Array<Record<string, unknown>>;
   }): Promise<ExecuteArtifactBatchAiResult>;
   verifyFrozenArtifact?(snapshot: CandidateArtifactSnapshot): Promise<boolean>;
+  verifyNativeFormat?(args:{project:EvolveProject;candidate:Candidate;testCase:TestCase;snapshots:CandidateArtifactSnapshot[]}):Promise<{passed:boolean;detail:string}>;
   executeFrozenStatic?(args: { project: EvolveProject; candidate: Candidate; testCase: TestCase }): Promise<TargetRunResult>;
   executeExternalBatch?(args: {
     project: EvolveProject;
@@ -120,13 +122,39 @@ export async function executeServerExperimentCandidate(
             validated = false;
           }
         }
+        const hasNative=snapshots.some(snapshot=>project.sourceArtifacts.some(source=>
+          source.id===snapshot.sourceArtifactId&&requiresIndependentFormatValidation(source.extension)));
+        let native:{passed:boolean;detail:string}|undefined;
+        if(validated&&testCase.evidenceScope==="product-behavior"){
+          // A format-roundtrip Test can never establish product behavior, even
+          // for plain text/HTML whose bytes roundtrip perfectly.
+          validated=false;
+          native={passed:false,detail:"格式往返只证明字节/结构；实际产品行为必须由独立 Runner 验证。"};
+        }else if(validated&&hasNative){
+          if(ports.verifyNativeFormat){
+            try{
+              native=await ports.verifyNativeFormat({project,candidate,testCase,snapshots});
+              validated=native.passed;
+            }catch(error){
+              validated=false;
+              native={passed:false,detail:error instanceof Error?error.message:String(error)};
+            }
+          }else{
+            validated=false;
+            native={passed:false,detail:"原生文件缺少独立格式解析与 CRC 校验端口。"};
+          }
+        }
         ordered.set(testCase.id, validated ? {
           ...local,
-          output: `CANDIDATE FROZEN ARTIFACT ROUNDTRIP VERIFIED\n${local.output}\n本轮已重新读取每份实际 Blob，并核对 Snapshot 绑定、大小及 SHA-256。`,
-          verificationStatus: "verified",
-          artifactHash: snapshots.length === 1 ? snapshots[0]!.frozenArtifact!.sha256 : undefined,
-          trace: [...local.trace, { id: `server-frozen-roundtrip-${testCase.id}`, stage: "format-roundtrip", summary: "本轮已重新核对冻结文件字节", status: "pass", detail: frozenRoundtripSignature(snapshots) }],
-        } : unavailableFrozenRoundtrip(testCase, "Candidate 冻结文件未通过本轮 Blob 回读、完整 Target 覆盖或 SHA-256 校验。"));
+          output: `CANDIDATE FROZEN FORMAT ROUNDTRIP VERIFIED\n${local.output}\n${native?.detail??"本轮已回读 Blob 大小与 SHA-256。"}\n格式通过不代表代码运行、PPT/Word 视觉保真或 Excel 公式重算。`,
+          verificationStatus:"verified",
+          artifactHash:snapshots.length===1?snapshots[0]!.frozenArtifact!.sha256:undefined,
+          trace:[...local.trace,
+            {id:`server-frozen-roundtrip-${testCase.id}`,stage:"format-roundtrip",summary:"冻结 Artifact 字节绑定与 SHA-256 通过",status:"pass",detail:frozenRoundtripSignature(snapshots)},
+            ...(native?[{id:`server-frozen-native-${testCase.id}`,stage:"format-roundtrip",summary:"原生文件结构独立回读通过",status:"pass" as const,detail:native.detail}]:[]),
+          ],
+        } : unavailableFrozenRoundtrip(testCase,
+          native?.detail??"Candidate 冻结文件未通过完整 Target 覆盖、字节/哈希或原生格式校验。"));
         continue;
       }
       ordered.set(testCase.id, local);

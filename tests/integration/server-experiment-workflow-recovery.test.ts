@@ -9,14 +9,22 @@ import { deriveAttentionRequest, serverBaselineFingerprint } from "@evolution/ha
 import { experimentRecoveryAt as at, experimentRecoveryFixture } from "@evolution/testkit";
 import { runServerMissionExperiment } from "../../apps/backend/src/services/server-experiment";
 import { executeServerControlStep, planMissionStep } from "../../workflows/evolution-mission/steps";
-const m = vi.hoisted(() => ({ blobs: new Map<string, Blob>(), get: vi.fn(), put: vi.fn(), ai: vi.fn(), browser: vi.fn(), mission: vi.fn(), save: vi.fn(), job: vi.fn(), jobPut: vi.fn(), append: vi.fn(), probe: vi.fn(), start: vi.fn(), getRun: vi.fn(), create: vi.fn(), bind: vi.fn() }));
+const m = vi.hoisted(() => ({ blobs: new Map<string, Blob>(), get: vi.fn(), put: vi.fn(), ai: vi.fn(), browser: vi.fn(), mission: vi.fn(), save: vi.fn(), job: vi.fn(), jobPut: vi.fn(), append: vi.fn(), activeJobs: vi.fn(), probe: vi.fn(), start: vi.fn(), getRun: vi.fn(), create: vi.fn(), lookup: vi.fn(), bind: vi.fn() }));
 vi.mock("../../apps/backend/src/services/artifact-runtime", () => ({ getServerArtifactStore: () => ({ get: m.get, put: m.put }) }));
 vi.mock("../../apps/backend/src/services/ai-gateway", async (original) => ({ ...await original<typeof import("../../apps/backend/src/services/ai-gateway")>(), runServerAi: m.ai, serverAiScoringRouteFingerprint: () => "b".repeat(64) }));
-vi.mock("../../apps/backend/src/services/server-ai-health", () => ({ probeServerAiRuntime: m.probe }));
+vi.mock("../../apps/backend/src/services/server-ai-health", () => ({
+  probeServerAiRuntime: m.probe,
+  getPassiveServerAiHealth: async () => ({ configured: true, ready: false, status: "not-checked" }),
+}));
 vi.mock("../../apps/backend/src/services/server-html-artifact-execution", () => ({ serverHtmlArtifactTargetEnabled: () => true, runServerHtmlArtifactBatch: m.browser }));
+// This suite isolates persisted Experiment Judge retry; Browser/Sandbox authorization
+// is tested separately in html-browser-preflight-route.test.ts, never faked as production evidence.
+vi.mock("../../apps/backend/src/services/html-browser-preflight",()=>({assertServerHtmlBrowserExecutionReady:vi.fn(async()=>undefined)}));
 vi.mock("../../apps/backend/src/services/connector-target-source", () => ({ serverConnectorTargetEnabled: () => false }));
 vi.mock("../../apps/backend/src/services/server-http-target-execution", () => ({ serverHttpTargetEnabled: () => false }));
-vi.mock("../../apps/backend/src/services/production-runtime", async original => ({ ...await original<typeof import("../../apps/backend/src/services/production-runtime")>(), createServerJobIdempotentReceipt: m.create, bindServerJobWorkflowRun: m.bind, getServerProductionRuntime: () => ({ missions: { get: m.mission, save: m.save }, jobs: { get: m.job, put: m.jobPut }, events: { append: m.append } }) }));
+vi.mock("../../apps/backend/src/services/production-runtime", async original => ({ ...await original<typeof import("../../apps/backend/src/services/production-runtime")>(), createServerJobIdempotentReceipt: m.create, getServerJobByIdempotencyKey: m.lookup, bindServerJobWorkflowRun: m.bind, listServerActiveJobs: m.activeJobs,
+  listServerActiveMissionCampaignJobs: (missionId:string,limit:number)=>m.activeJobs(limit,missionId),
+  getServerProductionRuntime: () => ({ missions: { get: m.mission, save: m.save }, jobs: { get: m.job, put: m.jobPut, list: m.activeJobs }, events: { append: m.append } }) }));
 vi.mock("../../apps/backend/src/server-env", async (original) => ({ ...await original<typeof import("../../apps/backend/src/server-env")>(), serverAiConfigured: () => true }));
 vi.mock("workflow/api", () => ({ start: m.start, getRun: m.getRun }));
 vi.mock("../../workflows/evolution-mission", () => ({ evolutionMissionWorkflow: vi.fn() }));
@@ -60,6 +68,7 @@ beforeEach(() => {
   m.mission.mockImplementation(async () => structuredClone(stored));
   m.save.mockImplementation(async (p: EvolveProject) => { stored = EvolveProjectSchema.parse(JSON.parse(JSON.stringify(p))); });
   m.job.mockResolvedValue(job);
+  m.activeJobs.mockResolvedValue([]);
   m.probe.mockResolvedValue({ ready: true, status: "ready" });
   m.ai.mockRejectedValueOnce(new Error("independent model timeout")).mockImplementation(async (_role: string, payload: { mode?: string }) => {
     const score = payload.mode === "server-baseline" ? 60 : 92;
@@ -89,7 +98,10 @@ describe("explicit durable run restores the stored Experiment Judge checkpoint",
   it("dispatches a new explicit attempt after an unavailable run finishes, while lost acknowledgements reuse the first run", async () => {
     await paused(); const firstVersion = structuredClone(stored);
     const jobs = new Map<string, typeof job>();
-    m.create.mockImplementation(async (j: typeof job) => {
+    m.activeJobs.mockImplementation(async (_limit:number, missionId?:string) => [...jobs.values()].filter(j=>j.missionId===missionId&&["queued","running","waiting"].includes(j.status)));
+    m.lookup.mockImplementation(async (key:string)=>[...jobs.values()].find(x=>x.idempotencyKey===key));
+    m.create.mockImplementation(async (j: typeof job,guard?:{kind:string;allowSingleWaitingRetry:boolean}) => {
+      expect(guard).toMatchObject({kind:"html-campaign"});
       const prior = [...jobs.values()].find(x => x.idempotencyKey === j.idempotencyKey);
       if (prior) return { job: prior, reused: true };
       jobs.set(j.id, j); return { job: j, reused: false };

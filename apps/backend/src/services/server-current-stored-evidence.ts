@@ -5,6 +5,8 @@ import { serverArtifactSha256, verifyServerCandidateFrozenArtifact } from "./ser
 import { extractServerStaticArtifactText, runServerFrozenArtifactStaticEvidence, serverStaticTextExtension } from "./server-static-artifact-evidence";
 import { indexServerCodebaseZip } from "./server-codebase-zip-index";
 import { buildServerCodebaseStaticRun } from "./server-static-codebase-evidence";
+import {requiresIndependentFormatValidation} from "@evolution/core";
+import {hasServerNativeRoundtrip,inspectServerNativeFormat} from "./server-native-format-roundtrip";
 
 const MAX_FILE_BYTES = 12_000_000;
 const MAX_OUTPUT_CHARS = 28_000;
@@ -48,6 +50,24 @@ export async function runServerCurrentStoredEvidence({ project, testCase }: { pr
     const sha256 = await serverArtifactSha256(bytes);
     if (receipt && sha256 !== receipt.sha256) return unavailable(testCase, "当前 Search Champion 冻结字节 SHA-256 不一致。");
     if (testCase.executionMode === "roundtrip") {
+      if(testCase.evidenceScope==="product-behavior")return unavailable(testCase,
+        "格式往返只证明字节/结构；实际产品行为必须由独立 Runner 验证。");
+      if(requiresIndependentFormatValidation(extension)&&!hasServerNativeRoundtrip(extension)){
+        return unavailable(testCase,`${extension.toUpperCase()} 尚未接入独立语法/结构往返校验器，不能仅凭 UTF-8 字节相同标记 VERIFIED。`);
+      }
+      if(hasServerNativeRoundtrip(extension)){
+        // A proper format check must read/parse *current stored bytes*, not the
+        // Candidate's JSON delta. Formatted data never equals that JSON text.
+        const detail=await inspectServerNativeFormat({source,bytes,snapshot});
+        return {
+          testCaseId:testCase.id,
+          output:`CURRENT NATIVE FORMAT ROUNDTRIP · SHA-256 ${sha256}\n${source.name}\n${detail}\n这是原生格式结构证据，不能作为视觉、公式重算或运行行为证据。`,
+          latencyMs:0,cost:0,verificationStatus:"verified",artifactHash:sha256,
+          trace:[{id:`server-current-native-${testCase.id}`,stage:"format-roundtrip",
+            summary:"已从实际 Source/Champion 字节验证原生格式",status:"pass",
+            detail:JSON.stringify([source.id,blobId,sha256,extension])}],
+        };
+      }
       if (!serverStaticTextExtension(extension)) return unavailable(testCase, "此格式尚无 Server 当前版本解析→物化→逐字节往返验证器。");
       const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
       const encoded = new TextEncoder().encode(text);

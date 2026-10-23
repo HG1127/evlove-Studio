@@ -1,3 +1,4 @@
+import {buildCandidatePopulation} from "@evolution/harness";
 import { deliveryReadiness } from "./delivery-readiness";
 import { evidenceFingerprint } from "./evidence-binding";
 import { reusableBaselineRuns } from "./baseline-readiness";
@@ -408,7 +409,7 @@ export async function runBaseline(project: EvolveProject, onProgress?: (done: nu
   const targetGate = parsed.gates.find((gate) => gate.id === "target-ready");
   if (targetGate?.status !== "approved") throw new Error("Target Ready gate is not approved");
   if (parsed.evalSuite.length === 0) throw new Error("Project evalSuite is empty");
-  const rubricCheck = rubricValidation(parsed.acceptanceRubric);
+  const rubricCheck = rubricValidation(parsed.acceptanceRubric,parsed.sourceArtifacts);
   if (!rubricCheck.ready) throw new Error(`Acceptance Rubric is not ready: ${rubricCheck.warnings.join("；")}`);
   const coverage = rubricCoverage(parsed.acceptanceRubric, [...parsed.evalSuite, ...parsed.hiddenEvalSuite]);
   const hiddenHardGateMissing = parsed.acceptanceRubric.filter((criterion) => criterion.hardGate && !parsed.hiddenEvalSuite.some((testCase) => testCase.criterionIds.includes(criterion.id)));
@@ -753,7 +754,7 @@ export function visibleBaselineEvaluationReusable(project: EvolveProject, suite:
   });
 }
 
-export async function runExperiment(project: EvolveProject, inputCandidates: Candidate[], onProgress?: (done: number, total: number, phase?: string) => void): Promise<ExperimentRun> {
+export async function runExperiment(project: EvolveProject, inputCandidates: Candidate[], onProgress?: (done: number, total: number, phase?: string, route?: {provider?:string;model?:string}) => void, options?: {onCandidateBuilt?:(candidate:Candidate)=>void|Promise<void>}): Promise<ExperimentRun> {
   const parsed = EvolveProjectSchema.parse(project);
   const experimentGate = parsed.gates.find((gate) => gate.id === "experiment-ready");
   if (experimentGate?.status !== "approved") throw new Error("Experiment Ready gate is not approved");
@@ -804,9 +805,13 @@ export async function runExperiment(project: EvolveProject, inputCandidates: Can
   const hasLargeTextTarget = parsed.sourceArtifacts.some((artifact) => artifact.role === "target" && /^(html?|xhtml|md|markdown|txt|css|js|ts|tsx|jsx|json|yaml|yml|svg)$/i.test(artifact.extension) && (artifact.textContent?.length ?? 0) > 32000);
   // Long text/HTML builds can already occupy a provider for a full reasoning window. Avoid
   // sending two heavyweight candidate requests to the same connection at once.
-  rawCandidates=await pooled(rawCandidates,Math.min(hasLargeTextTarget ? 1 : policy.buildConcurrency,rawCandidates.length),async candidate=>{
-    try{return await buildCandidateArtifacts(parsed,candidate);}catch(error){return CandidateSchema.parse({...candidate,artifactBuildStatus:"failed",artifactBuildSummary:error instanceof Error ? error.message : String(error)});}
-  },(done,total)=>onProgress?.(done,total,"生成实际候选文件"));
+  rawCandidates=await buildCandidatePopulation(rawCandidates,{
+    concurrency:Math.min(hasLargeTextTarget?1:policy.buildConcurrency,rawCandidates.length),
+    signal:getActiveAbortSignal(),
+    build:(candidate,onProgress)=>buildCandidateArtifacts(parsed,candidate,{onProgress}),
+    checkpoint:options?.onCandidateBuilt,
+    progress:(done,total,detail,route)=>onProgress?.(done,total,`生成实际候选文件 · ${detail}`,route),
+  });
   const failedBuilds = rawCandidates.filter((candidate) => candidate.artifactBuildStatus === "failed");
   rawCandidates=rawCandidates.filter(c=>c.artifactBuildStatus==="ready" && c.artifactSnapshots.length > 0);
   if(!rawCandidates.length)throw new CandidateArtifactBuildError(failedBuilds.length ? failedBuilds : inputCandidates);
@@ -1002,7 +1007,7 @@ export async function retryFailedExperimentCases(project: EvolveProject, inputCa
 
 // ===== POST /api/v1/runner/validation =====
 
-export type ValidationOptions = { retryFailedOnly?: boolean; skipFastGate?: boolean };
+export type ValidationOptions = { retryFailedOnly?: boolean; skipFastGate?: boolean; forceJudgeRefresh?: boolean };
 
 export async function runValidation(project: EvolveProject, inputCandidate: Candidate, onProgress?: (done: number, total: number, phase?: string) => void, options?: ValidationOptions): Promise<ValidationRun> {
   // Runtime migration for persisted projects: compact duplicate/fallback rubric rows before binding
@@ -1012,7 +1017,7 @@ export async function runValidation(project: EvolveProject, inputCandidate: Cand
   // retryFailedOnly may reuse the previous answer sheet only for the exact same artifact binding.
   // skipFastGate is a control-flow hint and must survive a repaired Candidate fingerprint change.
   const effectiveOptions: ValidationOptions | undefined = options
-    ? { skipFastGate: options.skipFastGate, retryFailedOnly: normalizedProject.validationRun.evidenceFingerprint === binding ? options.retryFailedOnly : undefined }
+    ? { skipFastGate: options.skipFastGate, forceJudgeRefresh: options.forceJudgeRefresh, retryFailedOnly: normalizedProject.validationRun.evidenceFingerprint === binding ? options.retryFailedOnly : undefined }
     : undefined;
   const result = await runValidationUnbound(normalizedProject, inputCandidate, onProgress, effectiveOptions);
   return { ...result, evidenceFingerprint: binding };
@@ -1071,7 +1076,7 @@ async function runValidationUnbound(project: EvolveProject, inputCandidate: Cand
       const candidateFast = await executeValidationCases({ adapter, project: parsed, testCases: critical, variant: candidate, batchSize, concurrency: 2, onProgress: (done) => onProgress?.(done, critical.length, "Fast Gate · 候选关键标准") });
       try {
         onProgress?.(critical.length, critical.length, "Fast Gate · 候选 Hard Rubric Judge");
-        const candidateEval = applySupplementalEvidenceToEvaluation(parsed, candidate, await evaluateRuns({testCases:critical,runs:candidateFast,context:{mode:"holdout-fast",candidate,project:evaluationProjectContext(parsed)}}));
+        const candidateEval = applySupplementalEvidenceToEvaluation(parsed, candidate, await evaluateRuns({testCases:critical,runs:candidateFast,forceRefresh:options?.forceJudgeRefresh,context:{mode:"holdout-fast",candidate,project:evaluationProjectContext(parsed)}}));
         const fastHard=hardRubricFailures(parsed,candidateEval);
         const fastUnverified=unverifiedHardRubricCriteria(parsed,candidateEval);
         const externalUnverified=fastUnverified.filter((criterion)=>!criterionCanUseLocalSnapshotEvidence(parsed,criterion));
@@ -1140,7 +1145,7 @@ async function runValidationUnbound(project: EvolveProject, inputCandidate: Cand
     onProgress?.(retryTotal, retryTotal, "评审两张答卷");
     const retryBaseHoldout = await evaluateRuns({ testCases: suite, runs: baselineRuns, context: { mode: "holdout", project: evaluationProjectContext(parsed) } });
     setHoldoutBaseline(parsed.id, { fingerprint: roundFingerprint, suiteIds, runs: baselineRuns, evaluation: retryBaseHoldout });
-    const retryEval = applySupplementalEvidenceToEvaluation(parsed, candidate, await evaluateRuns({ testCases: suite, runs, context: { mode: "holdout", candidate, project: evaluationProjectContext(parsed) } }));
+    const retryEval = applySupplementalEvidenceToEvaluation(parsed, candidate, await evaluateRuns({ testCases: suite, runs, forceRefresh: options?.forceJudgeRefresh, context: { mode: "holdout", candidate, project: evaluationProjectContext(parsed) } }));
     baselineHoldout = retryBaseHoldout;
     evaluation = retryEval;
     setHoldoutBaseline(parsed.id, { fingerprint: roundFingerprint, suiteIds, runs: baselineRuns, evaluation: baselineHoldout });
@@ -1158,7 +1163,7 @@ async function runValidationUnbound(project: EvolveProject, inputCandidate: Cand
       const batchSize = policy.batchArtifactRuntime ? policy.batchSize : 1;
       runs = await executeValidationCases({ adapter, project: parsed, testCases: suite, variant: candidate, batchSize, concurrency: 3, onProgress: (done) => onProgress?.(suite.length + done, totalRuns, adapter.runBatch && batchSize > 1 ? "批量候选同卷作答" : "候选同卷作答") });
       onProgress?.(totalRuns, totalRuns, "评审候选答卷");
-      evaluation = applySupplementalEvidenceToEvaluation(parsed, candidate, await evaluateRuns({ testCases: suite, runs, context: { mode: "holdout", candidate, project: evaluationProjectContext(parsed) } }));
+      evaluation = applySupplementalEvidenceToEvaluation(parsed, candidate, await evaluateRuns({ testCases: suite, runs, forceRefresh: options?.forceJudgeRefresh, context: { mode: "holdout", candidate, project: evaluationProjectContext(parsed) } }));
       setHoldoutBaseline(parsed.id, { fingerprint: roundFingerprint, suiteIds, runs: baselineRuns, evaluation: baselineHoldout });
     } else if (cacheReusable && cachedHoldout) {
       onProgress?.(suite.length, totalRuns, "复用上一轮当前版本盲测对照");
@@ -1167,7 +1172,7 @@ async function runValidationUnbound(project: EvolveProject, inputCandidate: Cand
       const batchSize = policy.batchArtifactRuntime ? policy.batchSize : 1;
       runs = await executeValidationCases({ adapter, project: parsed, testCases: suite, variant: candidate, batchSize, concurrency: 3, onProgress: (done) => onProgress?.(suite.length + done, totalRuns, adapter.runBatch && batchSize > 1 ? "批量候选同卷作答" : "候选同卷作答") });
       onProgress?.(totalRuns, totalRuns, "评审候选答卷");
-      evaluation = applySupplementalEvidenceToEvaluation(parsed, candidate, await evaluateRuns({ testCases: suite, runs, context: { mode: "holdout", candidate, project: evaluationProjectContext(parsed) } }));
+      evaluation = applySupplementalEvidenceToEvaluation(parsed, candidate, await evaluateRuns({ testCases: suite, runs, forceRefresh: options?.forceJudgeRefresh, context: { mode: "holdout", candidate, project: evaluationProjectContext(parsed) } }));
     } else {
       // 两张考卷互不依赖；对于支持 runBatch 的 Artifact Runtime，按候选上下文分别批量执行，
       // 避免同一 Source/Candidate 被每一道题重复传输。
@@ -1181,7 +1186,7 @@ async function runValidationUnbound(project: EvolveProject, inputCandidate: Cand
       onProgress?.(totalRuns, totalRuns, "评审两张答卷");
       const holdoutBase = await evaluateRuns({ testCases: suite, runs: baselineRuns, context: { mode: "holdout", project: evaluationProjectContext(parsed) } });
       setHoldoutBaseline(parsed.id, { fingerprint: roundFingerprint, suiteIds, runs: baselineRuns, evaluation: holdoutBase });
-      const holdoutEval = applySupplementalEvidenceToEvaluation(parsed, candidate, await evaluateRuns({ testCases: suite, runs, context: { mode: "holdout", candidate, project: evaluationProjectContext(parsed) } }));
+      const holdoutEval = applySupplementalEvidenceToEvaluation(parsed, candidate, await evaluateRuns({ testCases: suite, runs, forceRefresh: options?.forceJudgeRefresh, context: { mode: "holdout", candidate, project: evaluationProjectContext(parsed) } }));
       baselineHoldout = holdoutBase;
       evaluation = holdoutEval;
       setHoldoutBaseline(parsed.id, { fingerprint: roundFingerprint, suiteIds, runs: baselineRuns, evaluation: baselineHoldout });

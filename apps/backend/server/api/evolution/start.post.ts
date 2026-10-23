@@ -12,18 +12,40 @@ import {
   bindServerJobWorkflowRun,
   createServerJobIdempotentReceipt,
   getServerProductionRuntime,
+  getServerJobByIdempotencyKey,
+  listServerActiveMissionCampaignJobs,
   isBenignJobBookkeepingConflict,
   JobStateConflictError,
   MissionRevisionConflictError,
 } from "../../../src/services/production-runtime";
 import { evolutionMissionWorkflow } from "../../../../../workflows/evolution-mission";
+import {requiresSandboxHtmlSourceExecution} from "@evolution/core";
+import {serverExperimentRecoveryWait} from "@evolution/harness";
 import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 import {cancelWorkflowRunById,workflowRunIdForJob} from "../../../src/services/workflow-run-control";
+import {assertServerHtmlBrowserExecutionReady} from "../../../src/services/html-browser-preflight";
 
 async function cleanupStartedRun(runId:string){
   try{return {ok:true as const,result:await cancelWorkflowRunById(runId)};}
   catch{return {ok:false as const,reason:"workflow-run-cancel-failed" as const};}
 }
+
+/** The identical request may retrieve its existing receipt without rerunning a metered Browser probe. */
+function reusedStartReceipt(
+  prior:ReturnType<typeof EvolutionJobSchema.parse>,
+  mission:NonNullable<Awaited<ReturnType<ReturnType<typeof getServerProductionRuntime>["missions"]["get"]>>>,
+  scheduledFor?:string,
+):EvolutionWorkflowStartResponse|{error:string;controlJobId:string}{
+  const priorRunId=workflowRunIdForJob(prior,mission);
+  if(!priorRunId||["failed","cancelled","partial"].includes(prior.status)){
+    return {error:"相同 Workflow 请求已存在但没有可复用的活动 run，请刷新状态后重试",controlJobId:prior.id};
+  }
+  return {
+    missionId:mission.id,controlJobId:prior.id,runId:priorRunId,
+    status:"queued",...(scheduledFor?{scheduledFor}:{}),reused:true,
+  };
+}
+
 
 export default defineEventHandler(async(event)=>{
   await requireGovernedEvolutionPermission(event,"mission.execute");
@@ -63,8 +85,65 @@ export default defineEventHandler(async(event)=>{
       return {error:"Durable Scheduler 正在绑定当前计划，请勿重复启动"};
     }
   }
-  const controlJobId=`workflow-control-${randomUUID()}`;
   const operationKey=parsed.data.idempotencyKey??(scheduledFor?`scheduled:${scheduledFor}`:randomUUID());
+  // Recover an already accepted same-request Workflow BEFORE a new metered
+  // Browser health probe. Receipt lookup is read-only; the SQL create RPC
+  // below remains authoritative for concurrent requests racing this lookup.
+  // Non-HTML Mission retries keep the original RPC path unchanged.
+  const executableHtmlTarget=requiresSandboxHtmlSourceExecution(mission);
+  if(executableHtmlTarget&&(parsed.data.idempotencyKey||scheduledFor)){
+    const prior=await getServerJobByIdempotencyKey(`workflow-control:${mission.id}:${operationKey}`);
+    if(prior){
+      if(prior.missionId!==mission.id||prior.type!=="campaign"){
+        setResponseStatus(event,409);
+        return {error:"Workflow 请求键绑定的 Mission 或 Job 类型不匹配"};
+      }
+      const response=reusedStartReceipt(prior,mission,scheduledFor);
+      if("error" in response)setResponseStatus(event,409);
+      return response;
+    }
+  }
+  // A fresh idempotency key is NOT permission to start a second Campaign
+  // against the same HTML Mission. Query the durable Job system of record
+  // before any metered Sandbox/AI work. Running, queued and waiting receipts
+  // all remain blocking until an authorized reconciliation determines their
+  // actual Workflow and checkpoint state. A failed read must fail closed.
+  let allowSingleWaitingRetry=false;
+  if(executableHtmlTarget){
+    const campaigns=(await listServerActiveMissionCampaignJobs(mission.id,100))
+      .filter(job=>job.type==="campaign"&&["queued","running","waiting"].includes(job.status));
+    // Only a structurally validated frozen-Experiment recovery may reopen a
+    // waiting job, and only via its explicit retry key. Generic start requests
+    // remain blocked while any Campaign is queued/running/waiting.
+    const authorizedExperimentRetry=operationKey.startsWith("experiment-judge-retry:")
+      &&Boolean(serverExperimentRecoveryWait(mission));
+    // An authorized retry may replace only one clearly identified waiting
+    // Workflow. Never exempt every waiting job when duplicates are present.
+    const singleRecoverableWait=authorizedExperimentRetry&&campaigns.length===1
+      &&campaigns[0].status==="waiting"
+      &&campaigns[0].idempotencyKey.startsWith("workflow-control:");
+    allowSingleWaitingRetry=Boolean(singleRecoverableWait);
+    const blockingCampaigns=singleRecoverableWait?[]:campaigns;
+    if(blockingCampaigns.length){
+      const latest=blockingCampaigns.at(-1)!;
+      setResponseStatus(event,409);
+      return {
+        error:blockingCampaigns.length>1
+          ?"此 Mission 存在多条尚未结算的 Durable Workflow；请先核查运行记录，禁止重复启动"
+          :"此 Mission 已有未结束或待核验的 Durable Workflow；请刷新后端状态，禁止重新启动",
+        code:"MISSION_WORKFLOW_ALREADY_ACTIVE",
+        controlJobId:latest.id,
+        ...(workflowRunIdForJob(latest,mission)?{runId:workflowRunIdForJob(latest,mission)}:{}),
+      };
+    }
+  }
+
+  // Standalone HTML Missions require actual isolated Chromium execution.
+  // Check before a new Job receipt or billable AI Workflow is created. A
+  // compiled adapter or local Chromium smoke cannot substitute this proof.
+  await assertServerHtmlBrowserExecutionReady(mission);
+
+  const controlJobId=`workflow-control-${randomUUID()}`;
   const input=EvolutionWorkflowRunInputSchema.parse({
     missionId:mission.id,
     controlJobId,
@@ -84,25 +163,29 @@ export default defineEventHandler(async(event)=>{
       generation:1,attempts:0,priority:70,
       progress:{percent:0,detail:scheduledFor?`等待 Durable Scheduler 武装至 ${scheduledFor}`:"等待 Durable Workflow 启动"},
       createdAt:requestedAt,updatedAt:requestedAt,
-    }));
+    }),executableHtmlTarget?{kind:"html-campaign",allowSingleWaitingRetry}:undefined);
   }catch(error){
     if(error instanceof JobStateConflictError){
       setResponseStatus(event,409);
-      return {error:"Workflow 启动请求与已有 Job 冲突，请使用新的请求键重试"};
+      if(error.reason==="mission-active"&&error.current?.missionId===mission.id){
+        const existing=error.current;
+        const priorRunId=workflowRunIdForJob(existing,mission);
+        return {
+          code:"MISSION_WORKFLOW_ALREADY_ACTIVE",
+          error:"并发请求已占用该 Mission 的 Campaign；请刷新后端状态，禁止重复启动",
+          controlJobId:existing.id,
+          ...(priorRunId?{runId:priorRunId}:{}),
+        };
+      }
+      return {error:error.reason==="mission-missing"
+        ?"Mission 在启动时已被移除，请刷新任务列表"
+        :"Workflow 启动请求与已有 Job 冲突；请刷新后端任务状态，不要盲目更换请求键"};
     }
     throw error;
   }
   if(created.reused){
-    const prior=created.job;
-    const priorRunId=workflowRunIdForJob(prior,mission);
-    if(!priorRunId||["failed","cancelled","partial"].includes(prior.status)){
-      setResponseStatus(event,409);
-      return {error:"相同 Workflow 请求已存在但没有可复用的活动 run，请刷新状态后重试",controlJobId:prior.id};
-    }
-    const response:EvolutionWorkflowStartResponse={
-      missionId:mission.id,controlJobId:prior.id,runId:priorRunId,
-      status:"queued",...(scheduledFor?{scheduledFor}:{}),reused:true,
-    };
+    const response=reusedStartReceipt(created.job,mission,scheduledFor);
+    if("error" in response)setResponseStatus(event,409);
     return response;
   }
 

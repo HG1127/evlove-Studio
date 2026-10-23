@@ -3,6 +3,7 @@ import type {
   EvolveProject,
   PlanAiResult,
   ProblemAnalysisAiResult,
+  TestCase,
 } from "@evolution/contracts";
 import {
   baselineReadiness,
@@ -14,11 +15,17 @@ import {
   planGroundingContext,
   prioritizeProblems,
   resolveEvidenceRefs,
+  selectPlanningLessons,
+  assertIndependentFinalPaper,
+  finalHoldoutPaperHash,
+  finalHoldoutContractFingerprint,
 } from "@evolution/core";
 
 import { retrieveTextContext } from "./context-retrieval";
+import {scopeCandidateIdsForRound} from "./candidate-round-identity";
 
 export type ServerCampaignAiPort = {
+  reserveFinalHoldout?(payload:unknown):Promise<TestCase[]>;
   problemAnalysis(payload: unknown): Promise<ProblemAnalysisAiResult>;
   diagnose(payload: unknown): Promise<DiagnosisAiResult>;
   plan(payload: unknown): Promise<PlanAiResult>;
@@ -57,17 +64,37 @@ function checkpoint(project: EvolveProject, round: number, phase: "problem" | "d
 }
 
 function compactBaseline(project: EvolveProject) {
+  // The original-side SYS-PAIRWISE is necessarily unmeasurable until a new
+  // Candidate exists. Feed AI only actionable Baseline evidence; otherwise
+  // Problem/Diagnosis agents can hallucinate a scoring-system fault from an
+  // intentional comparison-only 0 / UNVERIFIED row.
+  // Do not alter stored Baseline or the final Hidden/Pairwise safety contract.
+  const pendingPairwiseIds=new Set(project.acceptanceRubric.filter(c=>c.id==="SYS-PAIRWISE")
+    .map(c=>c.id));
+  const comparisonCaseIds=new Set(project.evalSuite.filter(test=>test.criterionIds.length>0
+    &&test.criterionIds.every(id=>pendingPairwiseIds.has(id))).map(test=>test.id));
+  const currentResult=project.baselineRun.result;
+  const result=currentResult?{
+    ...currentResult,
+    criterionScores:currentResult.criterionScores?.filter(c=>!pendingPairwiseIds.has(c.criterionId)),
+    unverifiedCriterionIds:currentResult.unverifiedCriterionIds?.filter(id=>!pendingPairwiseIds.has(id)),
+    failures:currentResult.failures.filter(line=>!/SYS-PAIRWISE/.test(line)),
+  }:undefined;
   return {
-    id: project.baselineRun.id,
-    status: project.baselineRun.status,
-    result: project.baselineRun.result,
-    runs: project.baselineRun.runs.slice(0, 16).map((run) => ({
-      testCaseId: run.testCaseId,
-      verificationStatus: run.verificationStatus,
-      error: run.error,
-      output: run.output.slice(0, 2400),
-      trace: run.trace.slice(0, 8),
-    })),
+    id:project.baselineRun.id,
+    status:project.baselineRun.status,
+    result,
+    comparisonOnlyDeferred:comparisonCaseIds.size>0
+      ?"SYS-PAIRWISE 仅在实际 Candidate 与原始侧具备同卷证据之后核验。原版 UNVERIFIED 不代表当前产品故障。"
+      :undefined,
+    runs:project.baselineRun.runs.filter(run=>!comparisonCaseIds.has(run.testCaseId))
+      .slice(0,16).map(run=>({
+        testCaseId:run.testCaseId,
+        verificationStatus:run.verificationStatus,
+        error:run.error,
+        output:run.output.slice(0,2400),
+        trace:run.trace.slice(0,8),
+      })),
   };
 }
 
@@ -80,7 +107,7 @@ function compactCampaignArtifacts(project: EvolveProject) {
     problem?.title, problem?.summary, problem?.rootCause,
     project.diagnosis?.rootCause, project.diagnosis?.summary,
     ...(project.baselineRun.result?.failures ?? []),
-    project.goal, project.evolutionCommand,
+    project.problemStatement, project.goal, project.evolutionCommand,
     ...project.acceptanceRubric.map((criterion) => criterion.requirement),
   ].filter(Boolean).join("\n");
   const championBySource = new Map((project.searchChampion?.candidate?.artifactSnapshots ?? []).map((snapshot) => [snapshot.sourceArtifactId, snapshot]));
@@ -218,6 +245,8 @@ export async function advanceServerCampaignPreparation(
       const generated = await ai.problemAnalysis({
         project: {
           goal: project.goal,
+          problemStatement: project.problemStatement,
+          desiredOutcome: project.desiredOutcome,
           evolutionCommand: project.evolutionCommand,
           metrics: project.metrics,
           protectedItems: project.protectedItems,
@@ -269,6 +298,8 @@ export async function advanceServerCampaignPreparation(
     const generated = await ai.diagnose({
       project: {
         goal: project.goal,
+        problemStatement: project.problemStatement,
+        desiredOutcome: project.desiredOutcome,
         evolutionCommand: project.evolutionCommand,
         metrics: project.metrics,
         protectedItems: project.protectedItems,
@@ -294,9 +325,26 @@ export async function advanceServerCampaignPreparation(
       const reason = "[server-campaign-diagnosis-pending] 缺少已持久化 Diagnosis。";
       return { control: "stop", phase: "diagnose", project: capabilityPause(project, reason, "diagnosis", now), reason };
     }
+    if(ai.reserveFinalHoldout&&(project.finalHoldout?.round!==round||project.finalHoldout.contractFingerprint!==finalHoldoutContractFingerprint(project))){
+      try{
+      const suite=await ai.reserveFinalHoldout({
+        project:{goal:project.goal,evolutionCommand:project.evolutionCommand,protectedItems:project.protectedItems,
+          editableItems:project.editableItems,artifacts:compactCampaignArtifacts({...project,searchChampion:undefined})},
+        acceptanceRubric:project.acceptanceRubric,
+        instruction:"Reserve independent final tests BEFORE Candidate planning. Use only Original sources and the fixed goal/rubric. Return novel discriminative scenarios, not paraphrases or clones. Candidate content, plans, diagnosis and repair feedback are intentionally absent. This paper is never sent to the mutator and its failures must not trigger targeted repair.",
+      });
+      assertIndependentFinalPaper(project,suite);
+      return {control:"continue",phase:"plan",project:{...project,finalHoldout:{round,suite,paperHash:finalHoldoutPaperHash(suite),contractFingerprint:finalHoldoutContractFingerprint(project),createdAt:now},updatedAt:now},reason:"独立终验题集已在 Candidate 规划前预留并持久化。"};
+      }catch(error){
+        const reason="[server-campaign-final-holdout-contract-pending] "+(error instanceof Error?error.message:String(error));
+        return {control:"stop",phase:"plan",project:capabilityPause(project,reason,"plan",now),reason};
+      }
+    }
     const generated = await ai.plan({
       project: {
         goal: project.goal,
+        problemStatement: project.problemStatement,
+        desiredOutcome: project.desiredOutcome,
         evolutionCommand: project.evolutionCommand,
         protectedItems: project.protectedItems,
         editableItems: project.editableItems,
@@ -333,11 +381,12 @@ export async function advanceServerCampaignPreparation(
           reason: entry.reason,
         })),
       },
-      existingLessons: project.lessons.slice(-6),
+      existingLessons: selectPlanningLessons(project.lessons),
       gapAdvice: project.validationRun.aiAdvice ?? project.experimentRun.aiAdvice ?? project.campaign.lastGapAdvice,
     });
     const grounded = flagUngroundedCandidates(generated);
-    const candidates = selectPlanCandidates(project, grounded.result);
+    const candidates = scopeCandidateIdsForRound(project,selectPlanCandidates(project, grounded.result),round)
+      .map(candidate=>({...candidate,...(project.finalHoldout?.round===round?{finalHoldoutPaperHash:project.finalHoldout.paperHash}:{})}));
     if (!candidates.length || !candidates.some(groundedCandidate)) {
       const reason = "[server-campaign-plan-grounding-pending] Candidate 方案缺少源成果证据或因果机制，禁止进入实验。";
       return {

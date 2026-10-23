@@ -14,7 +14,7 @@ function project(){
   } as unknown as Candidate;
   const acceptance={
     id:"acceptance",status:"passed" as const,candidateId:"C1",overallScore:100,coverageScore:100,integrityScore:100,pairwiseScore:100,
-    hardGatePass:true,results:[],attempts:1,maxRepairAttempts:3,summary:"passed",acceptedAt:"2026-09-21T03:00:00Z",
+    hardGatePass:true,results:[],attempts:0,maxRepairAttempts:3,summary:"passed",acceptedAt:"2026-09-21T03:00:00Z",
     frozenArtifacts:[
       {sourceArtifactId:"source-a",snapshotHash:"hash-a",blobId:"blob-a",name:"src/a.ts",mimeType:"text/plain",sha256:"sha-a",size:16,verifiedAt:"now",checks:[],limitations:[]},
       {sourceArtifactId:"source-b",snapshotHash:"hash-b",blobId:"blob-b",name:"README.md",mimeType:"text/markdown",sha256:"sha-b",size:9,verifiedAt:"now",checks:[],limitations:[]},
@@ -53,6 +53,10 @@ function refreshBinding(mission:EvolveProject){
 const repository={provider:"github" as const,owner:"acme",repo:"app",baseBranch:"main"};
 
 describe("accepted Git publisher",()=>{
+  it("refuses a repaired legacy Champion without independent final evidence",()=>{
+    const mission=project();mission.artifactAcceptance.attempts=1;
+    expect(()=>acceptedChampionGitChanges(mission,true)).toThrow(/验证绑定不完整|终验|冻结证据/);
+  });
   it("derives writeback only from Gate F frozen Champion artifacts",()=>{
     const prepared=acceptedChampionGitChanges(project(),true);
     expect(prepared.primaryCount).toBe(2);

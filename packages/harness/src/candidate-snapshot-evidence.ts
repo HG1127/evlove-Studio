@@ -1,9 +1,10 @@
 import type { Candidate, EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
 import { criterionCanUseLocalSnapshotEvidence, fastHash } from "@evolution/core";
+import {isTextArtifactExtension,requiresIndependentFormatValidation} from "@evolution/core";
 import { retrieveTextContext } from "./context-retrieval";
 import { htmlSnapshotReview } from "./html-snapshot-review";
 
-const LOCALLY_ROUNDTRIPPABLE_TEXT = /^(txt|md|markdown|csv|json|yaml|yml|css|js|jsx|ts|tsx)$/i;
+// CSV is a native Sheet/A1 overlay; JSON modification instructions are not CSV bytes.
 
 function staticSnapshotText(content: string) {
   try {
@@ -97,6 +98,10 @@ export function normalizeLocallyVerifiableCandidateRuns(
     if (run.error) return run;
     const testCase = tests.get(run.testCaseId);
     if (!testCase) return run;
+    if(testCase.executionMode==="roundtrip"&&testCase.evidenceScope==="product-behavior")return{
+      ...run,verificationStatus:"unverified",
+      output:"UNVERIFIED：格式往返只证明字节/结构；实际产品行为必须由独立 Runner 验证。",
+    };
     const mapped = testCase.criterionIds.flatMap((id) => {
       const criterion = criteria.get(id);
       return criterion ? [criterion] : [];
@@ -123,7 +128,11 @@ export function normalizeLocallyVerifiableCandidateRuns(
         && new Set(snapshots.map((snapshot) => snapshot.sourceArtifactId)).size === snapshots.length
         && snapshots.every((snapshot) => snapshot.frozenArtifact?.sourceArtifactId === snapshot.sourceArtifactId);
       const signature = JSON.stringify(snapshots.map((snapshot) => [snapshot.sourceArtifactId, snapshot.frozenArtifact?.sha256, fastHash(snapshot.content)]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))));
-      const bound = exactCoverage && run.verificationStatus === "verified"
+      const requiresNative=snapshots.some(snapshot=>sources.has(snapshot.sourceArtifactId)
+        &&requiresIndependentFormatValidation(sources.get(snapshot.sourceArtifactId)!.extension));
+      const nativeProof=!requiresNative||run.trace.some(step=>
+        step.id===`server-frozen-native-${testCase.id}`&&step.status==="pass"&&Boolean(step.detail));
+      const bound = exactCoverage && nativeProof && run.verificationStatus === "verified"
         && (snapshots.length !== 1 || run.artifactHash === snapshots[0]!.frozenArtifact?.sha256)
         && run.trace.some((step) => step.id === `server-frozen-roundtrip-${testCase.id}` && step.status === "pass" && step.detail === signature);
       return bound ? run : {
@@ -257,7 +266,7 @@ export function normalizeLocallyVerifiableCandidateRuns(
       const verified = snapshots.length > 0 && snapshots.every((snapshot) => {
         const source = sources.get(snapshot.sourceArtifactId);
         const extension = (source?.extension || snapshot.name.split(".").pop() || "").toLowerCase();
-        if (!LOCALLY_ROUNDTRIPPABLE_TEXT.test(extension)) return false;
+        if (!isTextArtifactExtension(extension)||requiresIndependentFormatValidation(extension)) return false;
         try {
           const bytes = new TextEncoder().encode(snapshot.content);
           const restored = new TextDecoder("utf-8", { fatal: true }).decode(bytes);

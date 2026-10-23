@@ -57,6 +57,23 @@ describe("custom model for backend tasks",()=>{
     expect(host.textContent).toContain("后端真实模型调用通过");
     expect(client.save).not.toHaveBeenCalled();
   });
+  it("restores saving after the backend encryption configuration becomes available",async()=>{
+    client.read.mockResolvedValueOnce({configured:false,storageConfigured:false,message:"加密保存尚未启用"});
+    await render();
+    expect(button("保存为后端默认模型").disabled).toBe(true);
+    expect(button("测试后端调用").disabled).toBe(false);
+    client.read.mockResolvedValueOnce({configured:false,storageConfigured:true,message:"ready"});
+    await act(async()=>button("重新检查保存状态").click());
+    expect(button("保存为后端默认模型").disabled).toBe(false);
+    expect(host.textContent).toContain("保存服务已就绪");
+  });
+  it("does not imply saving is available after a successful probe when storage is unconfigured",async()=>{
+    client.read.mockResolvedValueOnce({configured:false,storageConfigured:false,message:"加密保存尚未启用"});
+    await render();
+    await act(async()=>button("测试后端调用").click());
+    expect(host.textContent).toContain("加密保存服务启用后");
+    expect(button("保存为后端默认模型").disabled).toBe(true);
+  });
   it("does not save an incomplete custom connection",async()=>{
     await render({...selected,apiKey:""});
     expect(button("保存为后端默认模型").disabled).toBe(true);

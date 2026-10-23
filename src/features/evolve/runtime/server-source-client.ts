@@ -1,3 +1,4 @@
+import {httpApiErrorDetail} from "@evolution/adapters";
 import {
   SourceParseCapabilitiesSchema,
   SourceParseCancelResponseSchema,
@@ -10,6 +11,7 @@ import {
   type EvolutionJob,
   type ArtifactRole,
   type SourceArtifact,
+  type SourceParseStatusResponse,
 } from "@evolution/contracts";
 
 export class ServerParseUnavailableError extends Error{
@@ -21,13 +23,26 @@ class ServerParseResultPendingError extends Error{
   constructor(message:string,jobId:string){super(message);this.jobId=jobId;}
 }
 
-async function json(path:string,init?:RequestInit){
-  const response=await fetch(path,init);
-  const body=await response.json().catch(()=>({}));
+async function json(path:string,init?:RequestInit,timeoutMs=15_000){
+  const deadline=AbortSignal.timeout(timeoutMs);
+  const signal=init?.signal?AbortSignal.any([init.signal,deadline]):deadline;
+  let response:Response;
+  try{response=await fetch(path,{...init,signal});}
+  catch(error){
+    if(init?.signal?.aborted)throw init.signal.reason??error;
+    if(deadline.aborted)throw new Error("解析服务响应超时，请重试；已保存的原文件和解析任务会保留。",{cause:error});
+    throw error;
+  }
+  let body:unknown;
+  try{body=await response.json();}
+  catch(error){
+    if(init?.signal?.aborted)throw init.signal.reason??error;
+    if(deadline.aborted)throw new Error("解析服务响应超时，请重试；已保存的原文件和解析任务会保留。",{cause:error});
+    if(response.ok)throw new Error("解析服务返回了无法读取的结果，请重试查看任务状态。",{cause:error});
+    body={};
+  }
   if(!response.ok){
-    const message=String((body as {statusMessage?:string;message?:string}).statusMessage
-      ??(body as {message?:string}).message
-      ??`Parse API HTTP ${response.status}`);
+    const message=httpApiErrorDetail(body)??`Parse API HTTP ${response.status}`;
     if(response.status===503){
       const pending=SourceParseResultPendingErrorDataSchema.safeParse((body as {data?:unknown}).data);
       if(pending.success)throw new ServerParseResultPendingError(message,pending.data.jobId);
@@ -40,11 +55,22 @@ async function json(path:string,init?:RequestInit){
   return body;
 }
 
+export function canFallbackToLocalParse(error:unknown,serverJobId?:string):error is ServerParseUnavailableError{
+  // Never substitute browser-local bytes once a durable Job ID has been acknowledged.
+  return error instanceof ServerParseUnavailableError&&!serverJobId;
+}
+
+/** A completed but permanently unreadable result may be safely retried as a new generation. */
+export function parseNeedsNewGeneration(status:SourceParseStatusResponse){
+  return status.job.status==="failed"||status.job.status==="cancelled"
+    ||(status.job.status==="completed"&&!status.artifact&&status.resultIssueCode!=="temporary-storage-unavailable");
+}
+
 export async function getServerParseCapabilities(){
   return SourceParseCapabilitiesSchema.parse(await json("/api/evolution/parse-capabilities"));
 }
 
-export async function startServerParseFile(file:File,role:ArtifactRole,artifactId:string,sessionId?:string){
+export async function startServerParseFile(file:File,role:ArtifactRole,artifactId:string,sessionId?:string,signal?:AbortSignal){
   const form=new FormData();
   form.append("file",file);
   form.append("role",role);
@@ -52,7 +78,7 @@ export async function startServerParseFile(file:File,role:ArtifactRole,artifactI
   form.append("lastModified",String(file.lastModified));
   if(sessionId)form.append("sessionId",sessionId);
   try{
-    const receipt=SourceParseStartResponseSchema.parse(await json("/api/evolution/parse-start",{method:"POST",body:form}));
+    const receipt=SourceParseStartResponseSchema.parse(await json("/api/evolution/parse-start",{method:"POST",body:form,signal},90_000));
     if(receipt.artifactId!==artifactId)throw new Error("Parse start Artifact identity mismatch");
     return receipt;
   }catch(error){
@@ -63,32 +89,41 @@ export async function startServerParseFile(file:File,role:ArtifactRole,artifactI
   }
 }
 
-export async function getServerParseStatus(jobId:string){
-  const status=SourceParseStatusResponseSchema.parse(await json("/api/evolution/parse-status?id="+encodeURIComponent(jobId)));
+export async function getServerParseStatus(jobId:string,signal?:AbortSignal){
+  const status=SourceParseStatusResponseSchema.parse(await json("/api/evolution/parse-status?id="+encodeURIComponent(jobId),{signal}));
   if(status.job.id!==jobId||status.job.type!=="parse")throw new Error("Parse status Job identity mismatch");
   if(status.artifact&&typeof status.job.metadata?.artifactId==="string"
     &&status.artifact.id!==status.job.metadata.artifactId)throw new Error("Parse status Artifact identity mismatch");
   return status;
 }
 
-export async function waitForServerParseJob(jobId:string,signal?:AbortSignal,expectedArtifactId?:string){
-  const started=Date.now();
-  while(Date.now()-started<5*60_000){
-    if(signal?.aborted)throw signal.reason??new DOMException("Aborted","AbortError");
-    const status=await getServerParseStatus(jobId);
-    if(status.job.status==="completed"&&status.artifact){
-      if(expectedArtifactId&&status.artifact.id!==expectedArtifactId)throw new Error("Parse result Artifact identity mismatch");
-      return status.artifact;
+export async function waitForServerParseJob(jobId:string,signal?:AbortSignal,expectedArtifactId?:string,onStatus?:(status:SourceParseStatusResponse)=>void){
+  const deadline=AbortSignal.timeout(5*60_000);
+  const combined=signal?AbortSignal.any([signal,deadline]):deadline;
+  try{
+    for(;;){
+      combined.throwIfAborted();
+      const status=await getServerParseStatus(jobId,combined);
+      onStatus?.(status);
+      if(status.job.status==="completed"&&status.artifact){
+        if(expectedArtifactId&&status.artifact.id!==expectedArtifactId)throw new Error("Parse result Artifact identity mismatch");
+        return status.artifact;
+      }
+      if(status.job.status==="completed"&&status.resultIssueCode!=="temporary-storage-unavailable")throw new Error(status.resultIssue??"Parse 结果 Artifact 缺失");
+      if(status.job.status==="failed"||status.job.status==="cancelled")throw new Error(status.job.error??"Server Parse 失败");
+      await new Promise<void>((resolve,reject)=>{
+        const finish=()=>{combined.removeEventListener("abort",abort);resolve();};
+        const abort=()=>{clearTimeout(timer);combined.removeEventListener("abort",abort);reject(combined.reason);};
+        const timer=setTimeout(finish,350);
+        combined.addEventListener("abort",abort,{once:true});
+        if(combined.aborted)abort();
+      });
     }
-    if(status.job.status==="completed"&&status.resultIssueCode!=="temporary-storage-unavailable"){
-      throw new Error(status.resultIssue??"Parse 结果 Artifact 缺失");
-    }
-    if(status.job.status==="failed"||status.job.status==="cancelled"){
-      throw new Error(status.job.error??"Server Parse 失败");
-    }
-    await new Promise((resolve)=>setTimeout(resolve,350));
+  }catch(error){
+    if(signal?.aborted)throw signal.reason??error;
+    if(deadline.aborted)throw new Error("解析任务等待超过 5 分钟；原文件和任务已保留，可重试查看状态。",{cause:error});
+    throw error;
   }
-  throw new Error("Server Parse 超时：5 分钟内未完成");
 }
 
 export async function listServerParseJobs(sessionId?:string){
@@ -128,7 +163,7 @@ export async function parseServerFile(args:{
   signal?:AbortSignal;
 }):Promise<SourceArtifact>{
   const artifactId=args.artifactId??`artifact-${crypto.randomUUID()}`;
-  const start=await startServerParseFile(args.file,args.role,artifactId,args.sessionId);
+  const start=await startServerParseFile(args.file,args.role,artifactId,args.sessionId,args.signal);
   return waitForServerParseJob(start.jobId,args.signal,artifactId);
 }
 

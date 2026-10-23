@@ -2,6 +2,8 @@ import {afterEach,describe,expect,it,vi} from "vitest";
 import {EvolutionJobSchema} from "@evolution/contracts";
 import {
   ServerParseUnavailableError,
+  canFallbackToLocalParse,
+  parseNeedsNewGeneration,
   cancelServerParseJob,
   getServerParseStatus,
   listServerParseJobs,
@@ -11,7 +13,25 @@ import {
 } from "./server-source-client";
 
 describe("server source client degraded fallback classification",()=>{
-  afterEach(()=>vi.unstubAllGlobals());
+  it("never falls back to local ingestion after receiving a durable Parse Job ID",()=>{
+    const unavailable=new ServerParseUnavailableError("backend temporarily unavailable");
+    expect(canFallbackToLocalParse(unavailable)).toBe(true);
+    expect(canFallbackToLocalParse(unavailable,"parse-accepted")).toBe(false);
+    expect(canFallbackToLocalParse(new Error("corrupt"),undefined)).toBe(false);
+  });
+  it("retries an existing active Parse instead of launching a conflicting generation",()=>{
+    const at="2026-10-20T03:00:00.000Z";
+    const base=EvolutionJobSchema.parse({schemaVersion:"job-v1",id:"parse-a",type:"parse",status:"queued",label:"P",idempotencyKey:"k",createdAt:at,updatedAt:at});
+    for(const status of ["queued","running","waiting"] as const){
+      expect(parseNeedsNewGeneration({job:{...base,status}})).toBe(false);
+    }
+    expect(parseNeedsNewGeneration({job:{...base,status:"completed"},resultIssue:"temporary",resultIssueCode:"temporary-storage-unavailable"})).toBe(false);
+    for(const status of ["failed","cancelled"] as const){
+      expect(parseNeedsNewGeneration({job:{...base,status}})).toBe(true);
+    }
+    expect(parseNeedsNewGeneration({job:{...base,status:"completed"},resultIssue:"invalid result"})).toBe(true);
+  });
+  afterEach(()=>{vi.unstubAllGlobals();vi.restoreAllMocks();vi.useRealTimers();});
 
   it("validates persisted Parse metadata before restoring source identity",()=>{
     const at="2026-09-24T00:00:00.000Z";
@@ -173,4 +193,42 @@ describe("server source client degraded fallback classification",()=>{
     }),{status:200})));
     await expect(cancelServerParseJob("parse-expected")).rejects.toThrow("Parse cancel Job identity mismatch");
   });
+  it("aborts an in-flight status request when the user removes an attachment",async()=>{
+    const controller=new AbortController();
+    vi.stubGlobal("fetch",vi.fn(async(_url:string,init?:RequestInit)=>new Promise<Response>((_resolve,reject)=>{
+      init?.signal?.addEventListener("abort",()=>reject(init.signal?.reason),{once:true});
+    })));
+    const request=waitForServerParseJob("parse-1",controller.signal);
+    const check=expect(request).rejects.toThrow("Removed");
+    controller.abort(new Error("Removed"));await check;
+  });
+  it("ends the whole wait budget even when a status request has not returned",async()=>{
+    const controller=new AbortController();
+    const timeout=vi.spyOn(AbortSignal,"timeout").mockReturnValueOnce(controller.signal);
+    vi.stubGlobal("fetch",vi.fn(async(_url:string,init?:RequestInit)=>new Promise<Response>((_resolve,reject)=>{
+      init?.signal?.addEventListener("abort",()=>reject(init.signal?.reason),{once:true});
+    })));
+    const request=waitForServerParseJob("parse-1");const check=expect(request).rejects.toThrow("超过 5 分钟");
+    controller.abort(new DOMException("timeout","TimeoutError"));await check;
+    expect(timeout).toHaveBeenCalledWith(300000);
+  });
+  it("reports queue and running transitions before the same Artifact completes",async()=>{
+    vi.useFakeTimers();
+    const at="2026-10-13T08:00:00.000Z";
+    const job=EvolutionJobSchema.parse({schemaVersion:"job-v1",id:"parse-1",type:"parse",status:"queued",label:"Parse",idempotencyKey:"key",createdAt:at,updatedAt:at});
+    const artifact={id:"artifact-1",name:"input.html",role:"target",mimeType:"text/html",size:10,inputMode:"upload",createdAt:at};
+    vi.stubGlobal("fetch",vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({job})))
+      .mockResolvedValueOnce(new Response(JSON.stringify({job:{...job,status:"running"}})))
+      .mockResolvedValueOnce(new Response(JSON.stringify({job:{...job,status:"completed"},artifact}))));
+    const observe=vi.fn();const request=waitForServerParseJob(job.id,undefined,artifact.id,observe);
+    await vi.advanceTimersByTimeAsync(750);
+    expect(await request).toMatchObject(artifact);
+    expect(observe.mock.calls.map(call=>call[0].job.status)).toEqual(["queued","running","completed"]);
+  });
+  it("exposes a safe public Parse error reason instead of the generic HTTP wrapper",async()=>{
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({message:"HTTPError",data:{message:"解析步骤加载失败，请重试。"}}),{status:500})));
+    await expect(getServerParseStatus("parse-1")).rejects.toThrow("解析步骤加载失败，请重试。");
+  });
+
 });

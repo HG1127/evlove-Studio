@@ -3,7 +3,7 @@ import { goalReadiness } from "../runtime/goal-readiness";
 import { retrieveTextContext } from "../runtime/context-retrieval";
 import type { ProjectRuntime } from "../runtime/use-project-runtime";
 
-export function GoalConfirmationCard({ runtime }: { runtime: ProjectRuntime }) {
+export function GoalConfirmationCard({ runtime,serverStartBlocked=false }: { runtime: ProjectRuntime;serverStartBlocked?:boolean }) {
   const p = runtime.project;
   const readiness = goalReadiness(p);
   const approved = runtime.gate("target-ready")?.status === "approved";
@@ -12,7 +12,7 @@ export function GoalConfirmationCard({ runtime }: { runtime: ProjectRuntime }) {
   if (approved) return <section aria-label="已确认目标" className="rounded-2xl border border-emerald-200 bg-emerald-50/50 p-4">
     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <div className="min-w-0"><div className="flex items-center gap-2"><h3 className="text-sm font-bold text-slate-900">系统已建立目标与验收标准</h3><span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-emerald-700">自主执行</span></div><p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-600">{p.inputUnderstanding?.intentRestatement || originalRequest}</p></div>
-      <Button className="shrink-0" disabled={runtime.status.busy} onClick={() => void runtime.runAutoPilot()}>继续自动进化</Button>
+      <Button className="shrink-0" disabled={runtime.status.busy||serverStartBlocked} onClick={() => void runtime.runAutoPilot()}>继续自动进化</Button>
     </div>
     <details className="mt-3 border-t border-emerald-100 pt-2"><summary className="cursor-pointer text-xs font-semibold text-slate-600">查看已确认的要求与边界</summary><dl className="mt-3 grid gap-3 md:grid-cols-3"><div><dt className="text-[10px] font-semibold text-slate-400">原始要求</dt><dd className="mt-1 whitespace-pre-wrap text-xs leading-5">{originalRequest}</dd></div><div><dt className="text-[10px] font-semibold text-slate-400">必须保留</dt><dd className="mt-1 text-xs leading-5">{p.protectedItems.join("；") || "无"}</dd></div><div><dt className="text-[10px] font-semibold text-slate-400">验收标准</dt><dd className="mt-1 text-xs leading-5">{p.acceptanceRubric.map((criterion) => criterion.title).join("；")}</dd></div></dl></details>
   </section>;
@@ -30,7 +30,7 @@ export function GoalConfirmationCard({ runtime }: { runtime: ProjectRuntime }) {
     </details>
     {readiness.blockers.length > 0 && <ul className="mt-4 space-y-1 rounded-xl bg-amber-50 p-3 text-sm leading-6 text-amber-900">{readiness.blockers.map((text) => <li key={text}>{text}</li>)}</ul>}
     <div className="mt-4 flex flex-wrap gap-2">
-      <Button disabled={runtime.status.busy} onClick={() => void runtime.runAutoPilot()}>{readiness.ready ? "继续自主进化" : readiness.questions.length ? "处理问题后继续" : "让系统自动处理并继续"}</Button>
+      <Button disabled={runtime.status.busy||serverStartBlocked} onClick={() => void runtime.runAutoPilot()}>{readiness.ready ? "继续自主进化" : readiness.questions.length ? "处理问题后继续" : "让系统自动处理并继续"}</Button>
     </div>
   </section>;
 }

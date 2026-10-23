@@ -3,6 +3,7 @@ import type {
   Candidate,
   EvolveProject,
   FrozenArtifact,
+  IndependentFinalEvidence,
 } from "@evolution/contracts";
 import {
   campaignObservesLiveTarget,
@@ -11,6 +12,8 @@ import {
   settleArtifactAcceptanceFromValidation,
   updateSearchChampion,
   verifiedValidationFailures,
+  independentFinalReadiness,
+  hasAuthoritativeHiddenRelease,
 } from "@evolution/core";
 
 export type ServerArtifactVerification={
@@ -20,6 +23,7 @@ export type ServerArtifactVerification={
 };
 
 export type ServerArtifactAcceptancePorts={
+  verifyIndependentFinal?(args:{project:EvolveProject;candidate:Candidate}):Promise<IndependentFinalEvidence>;
   verifyFrozenArtifacts(args:{project:EvolveProject;candidate:Candidate}):Promise<ServerArtifactVerification>;
   repairCandidate(args:{
     project:EvolveProject;
@@ -178,6 +182,23 @@ export async function runServerArtifactAcceptance(
     };
     const project={...inputProject,artifactAcceptance:acceptance,updatedAt:now};
     return pause(project,"[server-campaign-artifact-acceptance-integrity-failed] frozen Artifact bytes/hash 与凭证不一致，禁止交付。",now);
+  }
+  if(hasAuthoritativeHiddenRelease(inputProject.validationRun,candidate.id,inputProject.hiddenEvalSuite,inputProject.acceptanceRubric)){
+    let final=independentFinalReadiness(inputProject,candidate);
+    if(!final.ready&&!final.failed&&candidate.finalHoldoutPaperHash&&ports.verifyIndependentFinal){
+      try{
+        const proof=await ports.verifyIndependentFinal({project:inputProject,candidate});
+        inputProject={...inputProject,validationRun:{...inputProject.validationRun,independentFinal:proof}};
+        final=independentFinalReadiness(inputProject,candidate);
+      }catch(error){
+        return pause(inputProject,`[server-campaign-final-holdout-pending] 独立终验未完成：${error instanceof Error?error.message:String(error)}`,now);
+      }
+    }
+    if(final.failed){
+      const failedProject={...inputProject,artifactAcceptance:{...inputProject.artifactAcceptance,status:"failed" as const,candidateId:candidate.id,hardGatePass:false,summary:final.reason}};
+      return {control:"continue",project:settleRound(failedProject,candidate,false,now),reason:final.reason,accepted:false,repaired:false};
+    }
+    if(!final.ready)return pause(inputProject,"[server-campaign-final-holdout-pending] "+final.reason,now);
   }
   const acceptance=settleArtifactAcceptanceFromValidation({
     project:inputProject,

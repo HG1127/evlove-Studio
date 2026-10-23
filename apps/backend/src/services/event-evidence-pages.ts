@@ -2,7 +2,7 @@ import {type EvolutionEvent} from "@evolution/contracts";
 import {rowEvent} from "./event-persistence";
 
 function filterValue(value:string){
-  return "%22"+encodeURIComponent(value.replace(/\\/g,"\\\\").replace(/"/g,'\\"'))+"%22";
+  return encodeURIComponent(value);
 }
 
 export async function readEventEvidencePage(

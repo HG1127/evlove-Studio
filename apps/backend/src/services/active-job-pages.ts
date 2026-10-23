@@ -7,10 +7,11 @@ function filterValue(value:string){
   return "%22"+encodeURIComponent(value.replace(/\\/g,"\\\\").replace(/"/g,'\\"'))+"%22";
 }
 
-function query(status:JobStatus,kind:JobKind,limit:number,missionId?:string,cursor?:JobCursor){
-  const scope=missionId?"&mission_id=eq."+filterValue(missionId):"";
+function query(status:JobStatus,kind:JobKind,limit:number,missionId?:string,cursor?:JobCursor,
+  campaignKeyScope:"workflow-control"|"all"="workflow-control"){
+  const scope=missionId?"&mission_id=eq."+encodeURIComponent(missionId):"";
   const kindFilter=kind==="parse"?"&type=eq.parse"
-    :"&type=eq.campaign&idempotency_key=like.workflow-control*";
+    :"&type=eq.campaign"+(campaignKeyScope==="all"?"":"&idempotency_key=like.workflow-control*");
   const after=cursor?"&or=(updated_at.gt."+filterValue(cursor.updatedAt)
     +",and(updated_at.eq."+filterValue(cursor.updatedAt)+",id.gt."+filterValue(cursor.id)+"))":"";
   return "jobs?select=*&order=updated_at.asc,id.asc&limit="+limit
@@ -19,14 +20,15 @@ function query(status:JobStatus,kind:JobKind,limit:number,missionId?:string,curs
 
 export async function readActiveJobRows(
   request:(path:string)=>Promise<unknown>,
-  args:{status:JobStatus;kind:JobKind;limit:number;missionId?:string;initialCursor?:JobCursor},
+  args:{status:JobStatus;kind:JobKind;limit:number;missionId?:string;initialCursor?:JobCursor;
+    campaignKeyScope?:"workflow-control"|"all"},
 ){
   const limit=Math.max(1,Math.min(args.limit,100));
   const rows:JobRow[]=[];
   let cursor=args.initialCursor;
   while(rows.length<limit){
     const pageLimit=limit-rows.length;
-    const page=await request(query(args.status,args.kind,pageLimit,args.missionId,cursor));
+    const page=await request(query(args.status,args.kind,pageLimit,args.missionId,cursor,args.campaignKeyScope));
     if(!Array.isArray(page))throw new Error("Active Job page is not an array");
     if(page.length===0)break;
     if(page.length>pageLimit)throw new Error("Active Job page exceeds the requested limit");
@@ -42,7 +44,7 @@ export async function readActiveJobRows(
       }
       if(row.status!==args.status||row.type!==args.kind
         ||(args.missionId&&row.mission_id!==args.missionId)
-        ||(args.kind==="campaign"&&(
+        ||(args.kind==="campaign"&&args.campaignKeyScope!=="all"&&(
           typeof row.idempotency_key!=="string"
           ||!row.idempotency_key.startsWith("workflow-control:"
           )))){

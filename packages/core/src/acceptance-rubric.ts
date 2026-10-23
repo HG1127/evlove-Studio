@@ -1,5 +1,6 @@
 import type { AcceptanceCriterion, EvolveProject, TestCase } from "@evolution/contracts";
 import { artifactStrategyCriteria, resolveProjectArtifactStrategy } from "./artifact-strategy";
+import { projectSupportsLocalDocumentSnapshot } from "./criterion-evidence";
 export { rubricCoverage, rubricSuiteCoverage, rubricValidation, rubricWeightTotal } from "./rubric-readiness";
 
 const SYSTEM_CRITERIA: AcceptanceCriterion[] = [
@@ -70,7 +71,7 @@ function implementationCoupled(item: AcceptanceCriterion, command: string) {
 function dedupeCriteria(items: AcceptanceCriterion[]) {
   const kept: AcceptanceCriterion[] = [];
   for (const item of items) {
-    const duplicateIndex = kept.findIndex((existing) => similarity(criterionText(existing), criterionText(item)) >= 0.62);
+    const duplicateIndex = kept.findIndex((existing) => existing.id === item.id || similarity(criterionText(existing), criterionText(item)) >= 0.62);
     if (duplicateIndex < 0) {
       kept.push(item);
       continue;
@@ -92,7 +93,7 @@ function chooseUserCriteria(items: AcceptanceCriterion[], max = 4) {
 }
 
 
-function commandDerivedCriteria(command: string): AcceptanceCriterion[] {
+function commandDerivedCriteria(command: string, project?: RubricProjectInput): AcceptanceCriterion[] {
   const value = command.trim();
   if (!value) return [];
   const criteria: AcceptanceCriterion[] = [];
@@ -107,7 +108,16 @@ function commandDerivedCriteria(command: string): AcceptanceCriterion[] {
     push("USER-INPUT-COMPAT", "成果物输入兼容", "系统应能让真实用户导入不同类型/结构的成果物，正确完成解析、类型/业务对象理解和后续路由；解析器能力缺失不得被伪装成成果本身失败。", "user-scenario", ["代表性成果物可成功导入", "解析结果与实际结构一致", "不同成果进入正确自适应流程", "不支持能力明确标记为未验证/需插件"], 92);
   }
   if (/(流程|工作流).{0,10}(完整|闭环|清晰|顺畅)|完整.{0,6}(流程|闭环)|闭环/i.test(value)) {
-    push("USER-WORKFLOW-CLOSURE", "流程完整闭环", "用户从输入、理解、诊断、进化、验证到交付应形成可理解、可继续、可回退的闭环；问题、原因、动作、结果和下一步必须分明。", "user-scenario", ["关键阶段均有明确输入/动作/输出/完成条件", "失败/未验证/通过三种状态可区分", "前一阶段产出成为后一阶段输入", "存在可恢复/重试/回退路径"], 92);
+    // A written SOP describes a workflow; it does not run Evolution OS or deploy its examples.
+    // Keep the stable criterion ID, but bind the corrected contract to a new evidence fingerprint.
+    const documentWorkflow = project && projectSupportsLocalDocumentSnapshot(project)
+      && project.semanticEvolution?.semanticObject.typeId !== "software-system";
+    push("USER-WORKFLOW-CLOSURE", "流程完整闭环", documentWorkflow
+      ? "文档中描述的业务或操作流程应完整、可理解、可复现：各步骤的前置条件、输入、操作、输出与完成检查明确，前一步结果衔接后一步，并说明常见异常、重试或回退路径。只检查当前文档实际写明的内容；真实系统运行、部署或真人实操需另设对应验收项。"
+      : "用户从输入、理解、诊断、进化、验证到交付应形成可理解、可继续、可回退的闭环；问题、原因、动作、结果和下一步必须分明。",
+      documentWorkflow ? "semantic-judge" : "user-scenario", documentWorkflow
+        ? ["关键步骤写明前置条件、输入、操作、输出与完成检查", "前后步骤与配置结果能衔接，无遗漏或自相矛盾", "常见异常有具体处理、重试或回退说明", "证据引用当前文档中的实际步骤与检查清单"]
+        : ["关键阶段均有明确输入/动作/输出/完成条件", "失败/未验证/通过三种状态可区分", "前一阶段产出成为后一阶段输入", "存在可恢复/重试/回退路径"], 92);
   }
   if (/(ui\s*\/?\s*ux|uiux|界面|产品审美|操作习惯|易用|易上手|交互)/i.test(value)) {
     push("USER-UIUX", "UI/UX 与操作习惯", "界面应符合主流产品的信息层级与操作习惯，用户无需理解底层 AI 工程术语也能知道当前状态、主要动作、失败原因和下一步。", "visual-review", ["关键页面视觉层级清晰", "主操作突出且无重复/冲突入口", "状态/等待/失败/未验证有明确反馈", "核心流程普通业务用户可理解"], 88);
@@ -120,6 +130,23 @@ function commandDerivedCriteria(command: string): AcceptanceCriterion[] {
     push("USER-PRIMARY-INTENT", "用户原始进化要求", value.slice(0, 1200), "semantic-judge", ["最终成果逐项回应原始用户要求", "未满足项必须显式列出而非默认为通过"], 90);
   }
   return criteria.slice(0, 4);
+}
+
+/** Canonicalize a provisional AI ID only when a sole Target makes its meaning unique. */
+function bindUniqueDraftTarget(
+  criterion:AcceptanceCriterion,
+  project?:RubricProjectInput,
+):AcceptanceCriterion{
+  const ids=criterion.artifactIds??[];
+  if(!project||ids.length!==1)return criterion;
+  // Once any attempt/evidence has been recorded, a scope correction changes the
+  // acceptance fingerprint and must be an explicit new contract version.
+  if(project.candidates?.length || (project.baselineRun && project.baselineRun.status!=="idle")
+    || (project.campaign && project.campaign.currentRound>0))return criterion;
+  const targets=project.sourceArtifacts.filter(source=>source.role==="target");
+  // A valid reference ID is intentionally not reinterpreted as a Target.
+  if(targets.length!==1||project.sourceArtifacts.some(source=>source.id===ids[0]))return criterion;
+  return {...criterion,artifactIds:[targets[0]!.id]};
 }
 
 function chooseArtifactCriteria(items: AcceptanceCriterion[], max = 3) {
@@ -135,7 +162,7 @@ function chooseArtifactCriteria(items: AcceptanceCriterion[], max = 3) {
   return chosen;
 }
 
-export type RubricProjectInput = Pick<EvolveProject, "protectedItems" | "sourceArtifacts"> & Partial<Pick<EvolveProject, "semanticEvolution" | "evolutionCommand">>;
+export type RubricProjectInput = Pick<EvolveProject, "protectedItems" | "sourceArtifacts"> & Partial<Pick<EvolveProject, "semanticEvolution" | "evolutionCommand" | "candidates" | "baselineRun" | "campaign">>;
 
 export function normalizeAcceptanceRubric(input: AcceptanceCriterion[], project?: RubricProjectInput) {
   const command = project?.evolutionCommand ?? "";
@@ -158,7 +185,7 @@ export function normalizeAcceptanceRubric(input: AcceptanceCriterion[], project?
     if (!normalized.requirement || ids.has(id)) continue;
     if ((normalized.source === "user-command" || normalized.source === "source-understanding") && implementationCoupled(normalized, command)) continue;
     ids.add(id);
-    base.push(normalized);
+    base.push(bindUniqueDraftTarget(normalized,project));
   }
 
   const semantic = project?.semanticEvolution?.acceptanceRubric ?? [];
@@ -174,15 +201,29 @@ export function normalizeAcceptanceRubric(input: AcceptanceCriterion[], project?
     if (item.id === "SEM-INTEGRITY") return false; // SYS-INTEGRITY already owns this responsibility.
     if (item.id === "SEM-CROSS-CONSISTENCY" && targets.length <= 1 && !item.requirement.trim()) return false;
     return true;
-  }).map((item) => ({ ...item, validationMethod: validationMethodFor(item) }));
+  }).map((item) => bindUniqueDraftTarget({ ...item, validationMethod: validationMethodFor(item) },project));
 
   // If the project already has an explicit user/source-understanding outcome criterion, do not add
   // USER-PRIMARY-INTENT merely as a second wording of the same goal. This migration also repairs
   // persisted projects where an AI criterion such as R-USER-REFINE and the fallback anchor co-exist.
   const explicitUserOutcome = base.some((item) => (item.source === "user-command" || item.source === "source-understanding")
     && item.category === "outcome" && item.validationMethod === "semantic-judge" && item.id !== "USER-PRIMARY-INTENT");
-  const commandCriteria = commandDerivedCriteria(command).filter((item) => !(explicitUserOutcome && item.id === "USER-PRIMARY-INTENT"));
-  const baseUserCriteria = base.filter((item) => !item.id.startsWith("SEM-") && item.category !== "artifact-specific"
+  const commandCriteria = commandDerivedCriteria(command, project).filter((item) => !(explicitUserOutcome && item.id === "USER-PRIMARY-INTENT")).map((item) => {
+    const previous = base.find((prior) => prior.id === item.id && criterionText(prior) === criterionText(item)
+      && prior.validationMethod === item.validationMethod && prior.minScore === item.minScore
+      && prior.hardGate === item.hardGate && prior.source === item.source && prior.category === item.category
+      && prior.protectedConstraint === item.protectedConstraint && JSON.stringify(prior.artifactIds) === JSON.stringify(item.artifactIds));
+    // Preserve the relative user-goal weights after normalization. Resetting only generated goals
+    // to 25 on each pass changes the contract fingerprint every time alongside custom criteria.
+    return previous ? { ...item, weight: previous.weight } : item;
+  });
+  // Generated IDs have one owner. Repeated normalization must not append a stale definition or
+  // let previously normalized default system weights compete for user-goal slots.
+  const commandCriterionIds = new Set(commandCriteria.map((item) => item.id));
+  const systemCriterionIds = new Set(SYSTEM_CRITERIA.map((item) => item.id));
+  const artifactCriterionIds = new Set(artifact.map((item) => item.id));
+  const baseUserCriteria = base.filter((item) => !commandCriterionIds.has(item.id) && !systemCriterionIds.has(item.id) && !artifactCriterionIds.has(item.id)
+    && !item.id.startsWith("SEM-") && item.category !== "artifact-specific"
     && !(explicitUserOutcome && item.id === "USER-PRIMARY-INTENT"));
   const userCandidates = dedupeCriteria([...commandCriteria, ...baseUserCriteria, ...semanticFiltered.filter((item) => item.id === "SEM-USER-GOAL" || item.id === "SEM-BUSINESS-OUTCOME")]);
   const semanticCross = dedupeCriteria(semanticFiltered.filter((item) => item.id === "SEM-CROSS-CONSISTENCY"));
@@ -285,8 +326,20 @@ function dedicatedCase(criterion: AcceptanceCriterion, hidden: boolean, index: n
  */
 export function mapTestsToRubric(criteria: AcceptanceCriterion[], validationCases: TestCase[], hiddenCases: TestCase[]) {
   const known = new Set(criteria.map((criterion) => criterion.id));
-  const visible = validationCases.map((item) => ({ ...item, hidden: false, criterionIds: item.criterionIds.filter((id) => known.has(id)) }));
-  const hidden = hiddenCases.map((item) => ({ ...item, hidden: true, criterionIds: item.criterionIds.filter((id) => known.has(id)) }));
+  const refreshStoredCase = (item: TestCase, hidden: boolean): TestCase => {
+    const criterionIds = item.criterionIds.filter((id) => known.has(id));
+    const criterion = criterionIds.length === 1 ? criteria.find((entry) => entry.id === criterionIds[0]) : undefined;
+    const generatedPrefix = criterion && `${hidden ? "holdout" : "validation"}-criterion-${criterion.id.toLowerCase().replace(/[^a-z0-9-]+/g, "-")}-`;
+    if (criterion && generatedPrefix && item.id.startsWith(generatedPrefix) && /^\d+$/.test(item.id.slice(generatedPrefix.length))) {
+      // Auto-created coverage cases follow the current contract; explicit authored scenarios retain
+      // their independent expectations. Preserve the test ID so observations remain attributable.
+      const refreshed = dedicatedCase(criterion, hidden, 0);
+      return { ...item, ...refreshed, id: item.id, tags: [...new Set([...item.tags, ...refreshed.tags])] };
+    }
+    return { ...item, hidden, criterionIds };
+  };
+  const visible = validationCases.map((item) => refreshStoredCase(item, false));
+  const hidden = hiddenCases.map((item) => refreshStoredCase(item, true));
 
 
   const attachIfRelevant = (criterion: AcceptanceCriterion, pool: TestCase[]) => {

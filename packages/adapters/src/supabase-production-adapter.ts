@@ -340,7 +340,7 @@ export function createSupabaseProductionPorts(
         if (metadata) {
           if(metadata.mission_id)throw new Error(`Artifact ${id} is Mission-bound and cannot be deleted`);
           const {data:references,error:referenceError}=await client.from("evidence_ledger")
-            .select("id").contains("artifact_refs",[id]).limit(1);
+            .select("id").filter("artifact_refs","cs",JSON.stringify([id])).limit(1);
           throwIfError(referenceError,"Supabase artifact evidence reference check");
           if(references?.length)throw new Error(`Artifact ${id} is referenced by immutable Evidence and cannot be deleted`);
           // Delete metadata first so the database retention trigger can veto removal

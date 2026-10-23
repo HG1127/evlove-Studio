@@ -1,6 +1,9 @@
 import type { AttentionRequest, EvolveProject, Stage } from "@evolution/contracts";
 import {
   campaignGoalSatisfied,
+  campaignPreflightStopReason,
+  assertDeliverablePackageIdentity,
+  reconcileAcceptedOfflineChampion,
   deliveryReadiness,
   evidenceRouteForCriterion,
   experimentNeedsEvidenceRepair,
@@ -9,6 +12,7 @@ import {
   nextDurableReleaseAction,
   productionOutcomeFreshness,
   productionOutcomeTrend,
+  productionGoalReadiness,
   projectNeedsProductionLearningRedistill,
   projectHasLiveReleaseDecision,
   projectHasOnlineReleaseTarget,
@@ -18,6 +22,7 @@ import {
   rubricValidation,
 } from "@evolution/core";
 import { autonomousClarificationPlan } from "./autonomy-policy";
+import {serverExperimentRecoveryWait} from "./server-experiment-wait";
 
 export type AutonomousAction =
   | "understand"
@@ -36,7 +41,7 @@ export type AutonomousAction =
   | "wait-human";
 
 /** Bump when local Judge settlement semantics change; stale persisted fuse states get one fresh retry. */
-export const LOCAL_REVIEW_CONTRACT_VERSION = "judge-contract-v3";
+export const LOCAL_REVIEW_CONTRACT_VERSION = "judge-contract-v4";
 
 export type AutonomousDecision = {
   action: AutonomousAction;
@@ -125,6 +130,10 @@ export function artifactRepairNeedsRecovery(project: EvolveProject): boolean {
 }
 
 export function deriveAttentionRequest(project: EvolveProject): AttentionRequest | undefined {
+  if(project.campaign.status==="paused"&&(project.campaign.stopReason??"").startsWith("[server-campaign-final-holdout-")){
+    return attention({type:"evidence",title:"独立终验尚未完成",reason:project.campaign.stopReason!,stage:"validation",riskLevel:"medium",blocking:true,questions:[],criterionIds:[],
+      suggestedAction:"已有预留题集时恢复验证能力并复验同一冻结候选；历史修复候选未预留题集时需启动新的受控轮次，不能事后补造盲测通过证据。"});
+  }
   const clarificationPlan = autonomousClarificationPlan(project);
   if (clarificationPlan.human.length) {
     return attention({
@@ -247,6 +256,18 @@ export function deriveAttentionRequest(project: EvolveProject): AttentionRequest
     && (project.campaign.stopReason ?? "").includes("[server-campaign-artifact-acceptance-pending]");
   if (staleServerArtifactAcceptancePause) return undefined;
 
+  const frozenExperimentJudgeWait=serverExperimentRecoveryWait(project);
+  if(frozenExperimentJudgeWait?.startsWith("[server-campaign-experiment-judge-pending]")){
+    return attention({
+      type:"capability",diagnosticCode:"judge-recovery",
+      title:"候选文件已冻结，等待独立 AI 评审",
+      reason:frozenExperimentJudgeWait,
+      stage:"experiment",riskLevel:"medium",blocking:true,questions:[],
+      suggestedAction:"实际 Candidate 文件和已记录的实验观察均已保留。请检查或切换支持完整 JSON 结构化输出的评审模型，然后从当前 Experiment 断点重试；系统会先核验冻结文件字节与测试指纹，不应重新生成候选文件。",
+      criterionIds:[],
+    });
+  }
+
   const serverCampaignCapabilityPending = project.campaign.status === "paused"
     && /\[server-campaign-(?:ai-pending|baseline-evidence-pending|baseline-judge-pending|contract-pending|diagnosis-pending|plan-grounding-pending|experiment-build-pending|experiment-judge-pending|holdout-contract-pending|holdout-artifact-pending|holdout-judge-pending|holdout-review-pending|holdout-evidence-pending|artifact-acceptance-candidate-pending|artifact-acceptance-evidence-pending|artifact-acceptance-integrity-failed|artifact-repair-pending)\]/.test(project.campaign.stopReason ?? "");
   if (serverCampaignCapabilityPending) {
@@ -365,7 +386,22 @@ export function deriveAutonomousDecision(project: EvolveProject): AutonomousDeci
   }
 
   const acceptedOutput = project.outputArtifacts.some((artifact) => artifact.accepted && artifact.kind === "primary");
-  if (deliveryReadiness(project).ready && acceptedOutput) {
+  // A later unsuccessful search round must not erase a prior, fully accepted
+  // Search Champion. Delivery remains bound to the champion's own immutable
+  // Hidden/Gate F receipts rather than the losing last attempt's idle validation.
+  // This only applies to offline Artifact Target packages; no online release
+  // authorization or production evidence is inferred from a historical version.
+  let exactPriorChampionPackage=false;
+  if(acceptedOutput&&project.targetConnection.adapter==="artifact"
+    &&project.release.status==="idle"&&project.searchChampion?.candidate){
+    try{
+      exactPriorChampionPackage=assertDeliverablePackageIdentity(project)===project.searchChampion.candidate.id;
+    }catch{
+      // Missing/tampered metadata or frozen bytes stay blocked, never repaired
+      // by treating a stale artifact's accepted flag as authoritative.
+    }
+  }
+  if(acceptedOutput&&(deliveryReadiness(project).ready||exactPriorChampionPackage)) {
     const onlineRelease = projectHasOnlineReleaseTarget(project);
     const liveReleaseDecision=projectHasLiveReleaseDecision(project);
     if(onlineRelease&&liveReleaseDecision){
@@ -405,6 +441,16 @@ export function deriveAutonomousDecision(project: EvolveProject): AutonomousDeci
           suggestedAction:"先核对最新 Production Outcome 与最近 Observation Timeline；连续异常或健康/异常反复不会被当作稳定线上证据。",
         });
         return {action:"wait-human",reason:request.reason,stage:request.stage,attention:request};
+      }
+      const goal=productionGoalReadiness(project);
+      if(!goal.ready){
+        if(!project.release.goalEvidence&&project.release.deploymentId&&project.release.stableDeploymentId&&(projectUsesVercelRelease(project)||projectUsesHttpRelease(project))){
+          return {action:"reconcile-release",stage:"release",reason:"发布健康已观测；只读获取与本次发布绑定的目标收益统计。"};
+        }
+        const request=attention({type:"evidence",diagnosticCode:"production-goal-evidence",title:"需要验证真实目标收益",reason:goal.reason,
+          stage:"release",riskLevel:"medium",blocking:true,questions:[],criterionIds:[],
+          suggestedAction:"配置目标指标的真实 Telemetry，补齐 Stable / Candidate 对照样本后刷新线上观测；健康检查不会代替业务改进证据。"});
+        return {action:"wait-human",reason:request.reason,stage:"release",attention:request};
       }
     }
     if (onlineRelease && !liveReleaseDecision) {
@@ -504,7 +550,49 @@ export function deriveAutonomousDecision(project: EvolveProject): AutonomousDeci
     if (project.nextQueue.length === 0) return { action: "next-queue", reason: "Lesson 已形成，自动生成下一轮 Evolve Queue", stage: "learning" };
     return { action: "complete", reason: onlineRelease ? "线上 Release 决策、经验与下一轮建议均已完成" : "离线成果、经验与下一轮建议均已准备完成", stage: "learning" };
   }
-  if (campaignGoalSatisfied(project)) return { action: "package", reason: "完整验收已通过，冻结并打包最终成果", stage: "release" };
+  if(acceptedOutput&&project.targetConnection.adapter==="artifact"
+    &&project.searchChampion?.candidate&&!exactPriorChampionPackage
+    &&!deliveryReadiness(project).ready){
+    const request=attention({
+      type:"capability",title:"已交付文件需要重新核对",
+      reason:"已持久化的离线成果与当前通过验收的 Search Champion、冻结文件或验收指纹不一致；禁止重复打包覆盖历史结果。",
+      stage:"release",riskLevel:"high",blocking:true,questions:[],criterionIds:[],
+      suggestedAction:"核对 exact Champion 文件哈希、冻结 Blob 和验收版本，再恢复离线交付。",
+    });
+    return {action:"wait-human",reason:request.reason,stage:request.stage,attention:request};
+  }
+
+  // Prior Gate F versions may have persisted a passed, fully measured offline
+  // round while omitting the Champion projection. Restore only that exact
+  // evidence-bound state; never launch another search or bypass a safety pause.
+  if (reconcileAcceptedOfflineChampion(project, project.artifactAcceptance.acceptedAt)) {
+    return {
+      action:"run-campaign",
+      reason:"已有完整 Hidden Holdout、Gate F 与冻结成果，恢复遗漏的 Search Champion；禁止重新生成或发布",
+      stage:"validation",
+    };
+  }
+  // A verified Champion is a reusable intermediate search state, NOT itself a
+  // stop signal. In multi-round mode (stopWhenAcceptanceMet=false), continue
+  // measuring the next round against that Champion until the configured budget,
+  // patience, safety or score policy actually terminates exploration.
+  // Do not package an older Champion while a round checkpoint is still active
+  // or a safety/evidence stop requires manual intervention.
+  const acceptedStopReason=campaignPreflightStopReason(project);
+  const safeToPackage=campaignGoalSatisfied(project)
+    && !project.campaign.checkpoint
+    && project.campaign.status!=="paused"
+    && (project.campaign.status==="completed" || Boolean(acceptedStopReason))
+    && project.artifactAcceptance.status==="passed"
+    && project.validationRun.evaluation?.safety!=="FAIL"
+    && !(project.validationRun.evaluation?.unverifiedCriterionIds?.length);
+  if (safeToPackage) return {
+    action:"package",
+    reason:acceptedStopReason
+      ? "已达到配置的进化停止条件（"+acceptedStopReason+"），打包已验收 Search Champion"
+      : "已完成搜索，冻结并打包已验收 Search Champion",
+    stage:"release",
+  };
   if (project.inputUnderstanding?.status !== "ready") return { action: "understand", reason: "先完整理解输入与隐含约束", stage: "target" };
 
   const clarifications = autonomousClarificationPlan(project);
@@ -515,6 +603,27 @@ export function deriveAutonomousDecision(project: EvolveProject): AutonomousDeci
 
   const currentCandidateId = project.experimentRun.winnerId ?? project.experimentRun.pendingEvidenceCandidateId;
   const hasCurrentCandidate = Boolean(currentCandidateId && project.candidates.some((candidate) => candidate.id === currentCandidateId));
+  // A durable Campaign with an exact completed Hidden paper must resume the
+  // frozen Gate F checkpoint before generic local revalidation. Gate F itself
+  // re-reads every frozen Blob and re-checks the original evidence fingerprint;
+  // routing to "revalidate" here strands a verified Candidate in a capability wait.
+  // A paused Campaign still goes through the Attention gate above, and may only
+  // reach this branch after an explicit, governed resume.
+  if (project.stage === "validation"
+    && project.campaign.status !== "paused"
+    && project.campaign.checkpoint?.round === project.campaign.currentRound + 1
+    && project.campaign.checkpoint.completedPhase === "validation"
+    && hasCurrentCandidate
+    && project.validationRun.status === "completed"
+    && project.validationRun.candidateId === currentCandidateId
+    && Boolean(project.validationRun.evaluation)
+    && project.artifactAcceptance.status === "unverified") {
+    return {
+      action: "run-campaign",
+      reason: "恢复已有 Hidden Validation 的 Artifact Acceptance 断点；直接复核冻结文件与原始证据，不生成新 Candidate、不重写评分",
+      stage: "validation",
+    };
+  }
   const hasVerifiedValidationFailure = project.validationRun.checks.some((item) => item.status === "fail")
     || Boolean(project.validationRun.evaluation?.criterionScores?.some((item) => item.verificationStatus === "verified" && !item.pass));
   const pendingIdsForDecision = pendingEvidenceCriterionIds(project);
@@ -527,7 +636,7 @@ export function deriveAutonomousDecision(project: EvolveProject): AutonomousDeci
     return { action: "revalidate", reason: "当前候选没有已证实失败，只需用现有成果自动补齐本地验证", stage: "validation" };
   }
 
-  const rubricCheck = rubricValidation(project.acceptanceRubric);
+  const rubricCheck = rubricValidation(project.acceptanceRubric,project.sourceArtifacts);
   if (!rubricCheck.ready) return { action: "compile-contract", reason: "编译项目专属验收标准", stage: "target" };
   const suiteCoverage = rubricSuiteCoverage(project.acceptanceRubric, project.evalSuite, project.hiddenEvalSuite);
   if (!suiteCoverage.ready) {

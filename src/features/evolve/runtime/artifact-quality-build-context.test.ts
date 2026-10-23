@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { demoProject } from "../data/mock-project";
 import { CandidateSchema, type EvolveProject } from "../schemas";
 import { runEvolveAi } from "../ai/service";
@@ -27,6 +27,7 @@ const candidate = CandidateSchema.parse({
 });
 
 describe("candidate builder context budget", () => {
+  afterEach(()=>vi.restoreAllMocks());
   beforeEach(() => { rejected.mockReset().mockRejectedValue(new Error("stop before materialization")); });
 
   it("sends one bounded source excerpt for a large HTML target", async () => {
@@ -43,4 +44,16 @@ describe("candidate builder context budget", () => {
     expect(payload.targetArtifacts[0]?.context).toBeTruthy();
     expect(payload.project.artifactGraph).toBeDefined();
   });
+  it("uses one Candidate deadline across model attempts and returns a readable timeout",async()=>{
+    const controller=new AbortController();
+    const timeout=vi.spyOn(AbortSignal,"timeout").mockReturnValueOnce(controller.signal);
+    rejected.mockImplementation(async(_operation,_payload,_media,_notice,options)=>{
+      expect(options?.signal).toBe(controller.signal);
+      controller.abort(new DOMException("timed out","TimeoutError"));
+      throw controller.signal.reason;
+    });
+    await expect(buildCandidateArtifacts(projectWithHtml(40000),candidate)).rejects.toThrow("超过 180 秒等待预算");
+    expect(timeout).toHaveBeenCalledWith(180000);
+  });
+
 });
