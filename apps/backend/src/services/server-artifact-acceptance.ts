@@ -1,12 +1,13 @@
 import type {AcceptanceCriterion,Candidate,EvolveProject,FrozenArtifact} from "@evolution/contracts";
-import {indexUniqueById,reconcileAcceptedOfflineChampion} from "@evolution/core";
-import {runServerArtifactAcceptance,type ServerArtifactVerification} from "@evolution/harness";
+import {evidenceFingerprint,htmlRepairBodyContext,indexUniqueById,reconcileAcceptedOfflineChampion} from "@evolution/core";
+import {measuredDocumentObservations,runServerArtifactAcceptance,type ServerArtifactVerification} from "@evolution/harness";
 import {runServerAi} from "./ai-gateway";
 import {getServerArtifactStore} from "./artifact-runtime";
 import {materializeServerCandidateArtifacts,readServerCandidateParentText,readServerCandidateParentNativeStructure,verifyServerCandidateFrozenArtifact} from "./server-experiment-artifacts";
 
 import {buildServerCandidateTargetContext,requireServerCandidateOutputModes} from "./server-candidate-context";
 import {verifyServerIndependentFinalHoldout} from "./server-independent-final-holdout";
+import {serverRepairMeasuredTextAuthorized} from "./server-ai-repair-consent";
 
 export async function verifyServerFrozenCandidateArtifacts({project,candidate}:{project:EvolveProject;candidate:Candidate}):Promise<ServerArtifactVerification>{
   const targetIds=project.sourceArtifacts.filter((artifact)=>artifact.role==="target").map((artifact)=>artifact.id);
@@ -46,10 +47,22 @@ export async function repairServerArtifactCandidate(args:{
   attempt:number;
 }){
   const failedIds=new Set(args.failedCriteria.map((criterion)=>criterion.id));
+  const authorizedBody=serverRepairMeasuredTextAuthorized(args.project.id);
   const focused = {...args.candidate, change: args.failedCriteria.map((criterion) => `${criterion.title}: ${criterion.requirement}`).join("\n")};
-  const contexts = await buildServerCandidateTargetContext(args.project,focused,
-    (source)=>readServerCandidateParentText(args.project,source,args.candidate),args.candidate,
+  const rawContexts = await buildServerCandidateTargetContext(args.project,focused,
+    async(source)=>{
+      const actual=await readServerCandidateParentText(args.project,source,args.candidate);
+      if(!authorizedBody||!/^html?$/i.test(source.extension))return actual;
+      const safe=htmlRepairBodyContext(actual);
+      if(safe===undefined)throw new Error("HTML repair requires complete physical body boundaries before sharing mutation context");
+      return safe;
+    },args.candidate,
     (source)=>readServerCandidateParentNativeStructure(args.project,source,args.candidate));
+  const contexts=rawContexts.map(context=>authorizedBody&&/^html?$/i.test(context.extension)
+    ?{...context,mutationMode:"text-edits",truncated:true,contextProjection:"exact body slices; scripts, styles and executable/style-bearing opening tags omitted"}:context);
+  const boundObservation=authorizedBody
+    &&args.project.validationRun.candidateId===args.candidate.id
+    &&args.project.validationRun.evidenceFingerprint===evidenceFingerprint(args.project,args.candidate);
   const response=await runServerAi("repair-artifact",{
     project:{
       name:args.project.name,
@@ -76,8 +89,11 @@ export async function repairServerArtifactCandidate(args:{
         originalChars:context.originalChars,
         truncated:context.truncated,
         mutationMode:context.mutationMode,
+        contextProjection:"contextProjection" in context?context.contextProjection:undefined,
       })),
     },
+    measuredCandidateDocuments:measuredDocumentObservations(boundObservation?args.project.validationRun.runs:[]),
+    scopeInstruction:"Satisfy the entire supplied failed requirement in the actual document. Use existing measuredCandidateDocuments to understand its full chapter/configuration scope; do not replace a request for concrete configuration detail with generic instructions telling the reader to add details. These are existing measured text observations, not quality verdicts or script/style/runtime proof. They are not raw HTML edit anchors: edits must still match the supplied current Candidate chunks verbatim. All original goals, protected items and acceptance thresholds remain binding. A new Candidate must pass the complete Visible suite, ordinary Hidden and the unchanged independent final paper before acceptance.",
     failedCriteria:args.failedCriteria.map((criterion)=>{
       const score=args.project.validationRun.evaluation?.criterionScores?.find((item)=>item.criterionId===criterion.id);
       return {

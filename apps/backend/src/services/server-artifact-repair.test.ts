@@ -1,9 +1,11 @@
 // @vitest-environment node
 import JSZip from "jszip";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AcceptanceCriterionSchema, CandidateSchema, SourceArtifactSchema, type CandidateArtifactSnapshot, type EvolveProject } from "@evolution/contracts";
 import { repairServerArtifactCandidate } from "./server-artifact-acceptance";
 import { serverArtifactSha256, verifyServerCandidateFrozenArtifact } from "./server-experiment-artifacts";
+import {evidenceFingerprint} from "@evolution/core";
+import {acceptedPackageFixture} from "@evolution/testkit";
 
 const { blobs, ai, put } = vi.hoisted(() => ({ blobs: new Map<string, Blob>(), ai: vi.fn(), put: vi.fn() }));
 vi.mock("./artifact-runtime", () => ({ getServerArtifactStore: () => ({ get: async (id: string) => blobs.get(id), put }) }));
@@ -29,9 +31,37 @@ async function fixture() {
   blobs.set(source.id, new Blob(['<html><body>OLD SOURCE</body></html>'], { type: "text/html" }));
   return { project, candidate: tested, failedCriteria: [failed], attempt: 1 };
 }
-beforeEach(() => { blobs.clear(); ai.mockReset(); put.mockReset(); put.mockImplementation(async (id: string, blob: Blob) => { blobs.set(id, blob); }); });
+beforeEach(() => { vi.stubEnv("EVOLUTION_AI_FULL_REPAIR_TEXT_MISSIONS","");blobs.clear(); ai.mockReset(); put.mockReset(); put.mockImplementation(async (id: string, blob: Blob) => { blobs.set(id, blob); }); });
+afterEach(()=>vi.unstubAllEnvs());
 
 describe("server targeted Artifact repair", () => {
+  it.each(["bound","changed-contract","different-candidate","not-authorized","other-mission","invalid-allowlist"] as const)("uses only already measured document observations with a %s repair binding",async kind=>{
+    const args=await fixture(),base=acceptedPackageFixture(false).project;
+    if(kind==="bound")args.candidate.artifactSnapshots=[await snapshot("source",current.replace('</body>','<script>PRIVATE_RUNTIME_CODE</script><style>PRIVATE_STYLE_CODE</style></body>'))];
+    args.project={...base,...args.project,candidates:[args.candidate],acceptanceRubric:[failed]};
+    const outputText="CURRENT CANDIDATE SNAPSHOT EVIDENCE\ncomplete text projection\n\nEXISTING FULL DOCUMENT CONFIGURATION TAIL";
+    args.project.validationRun={...base.validationRun,...args.project.validationRun,candidateId:args.candidate.id,
+      runs:[{testCaseId:"H1",output:outputText,artifactHash:args.candidate.artifactSnapshots[0]!.frozenArtifact!.sha256,
+        verificationStatus:"verified",latencyMs:1,cost:0,trace:[{id:"candidate-semantic-snapshot-H1",stage:"candidate-document-text",status:"pass",summary:"existing measured text"}]}]};
+    args.project.validationRun.evidenceFingerprint=evidenceFingerprint(args.project,args.candidate);
+    vi.stubEnv("EVOLUTION_AI_FULL_REPAIR_TEXT_MISSIONS",kind==="not-authorized"?"":kind==="other-mission"?"another-mission":kind==="invalid-allowlist"?args.project.id+",*":args.project.id);
+    if(kind==="changed-contract")args.project.goal+=" changed";
+    if(kind==="different-candidate")args.project.validationRun.candidateId="different";
+    ai.mockImplementation(async(_operation:string,payload:{candidate:{artifacts:Array<{content:string;mutationMode:string}>};measuredCandidateDocuments:{observations:Array<{output:string}>}})=>{
+      expect(payload.measuredCandidateDocuments.observations).toHaveLength(kind==="bound"?1:0);
+      if(kind==="bound")expect(payload.measuredCandidateDocuments.observations[0]!.output).toBe(outputText);
+      if(kind==="bound"){
+        expect(payload.candidate.artifacts[0]!.content).not.toMatch(/PRIVATE_RUNTIME_CODE|PRIVATE_STYLE_CODE/);
+        expect(payload.candidate.artifacts[0]!.mutationMode).toBe("text-edits");
+      }
+      return output();
+    });
+    const repaired=await repairServerArtifactCandidate(args);
+    if(kind==="bound"){
+      expect(repaired.artifactSnapshots[0]!.content).toContain('PRIVATE_RUNTIME_CODE');
+      expect(repaired.artifactSnapshots[0]!.content).toContain('PRIVATE_STYLE_CODE');
+    }
+  });
   it("uses bounded failed-Candidate context and preserves its existing improvements in exact frozen bytes", async () => {
     const args = await fixture();
     ai.mockImplementation(async (operation: string, payload: { candidate: { id: string; artifacts: Array<{ content: string; currentVersion: string; originalChars: number; truncated: boolean; mutationMode: string }> } }) => {
