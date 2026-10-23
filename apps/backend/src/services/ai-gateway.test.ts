@@ -300,6 +300,23 @@ describe("custom provider protocols and JSON output",()=>{
       .rejects.toMatchObject({code:"AI_OUTPUT_SCHEMA_MISMATCH"});
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+  it("sends browser assertions in the final-paper schema and preserves the returned executable steps",async()=>{
+    const test=(id:string,hidden:boolean)=>({id,title:id,input:"independent DOM scenario "+id,expected:["111 cards"],tags:[],hidden,
+      criterionIds:["PROTECT"],executionMode:"external-runner",evidenceScope:"product-behavior",
+      browserSteps:[{action:"count",selector:"article.slide-card",count:111,value:""}]});
+    const result={validationCases:Array.from({length:3},(_,i)=>test("V"+i,false)),hiddenCases:[test("F1",true),test("F2",true)],summary:"actual DOM assertions"};
+    const fetchMock=vi.fn(async(_url:unknown,init?:RequestInit)=>{
+      const request=JSON.parse(String(init?.body));
+      const schema=request.response_format.json_schema.schema.properties.hiddenCases.items;
+      expect(schema.required).toContain("browserSteps");
+      expect(schema.properties.browserSteps).toMatchObject({type:"array",maxItems:24,items:{properties:{action:{enum:["click","fill","visible","text","count"]}}}});
+      return new Response(JSON.stringify({choices:[{message:{content:JSON.stringify(result)}}]}),{status:200});
+    });
+    vi.stubGlobal("fetch",fetchMock);
+    const response=await withExplicitServerAiConnection({...input,responseFormat:"json-schema"},()=>runServerAi("eval-suite",{}));
+    expect(response.hiddenCases[0]?.browserSteps).toEqual(result.hiddenCases[0]!.browserSteps);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
   it("preserves network classification without exposing native causes or credentials",async()=>{
     const fetchMock=vi.fn().mockRejectedValue(new TypeError("fetch failed "+input.apiKey,{cause:{code:"ECONNRESET"}}));
     vi.stubGlobal("fetch",fetchMock);

@@ -500,6 +500,19 @@ export const TestCaseSchema = z.object({
 });
 export type TestCase = z.infer<typeof TestCaseSchema>;
 
+export const IndependentFinalExecutionContractSchema=z.object({
+  schemaVersion:z.literal("independent-final-execution-v1"),
+  supportedModes:z.array(z.enum(["artifact-runtime","static-evidence","external-runner","roundtrip","visual-review","manual"])).min(1),
+  requireBrowserStepsForExternal:z.boolean(),
+  limitations:z.array(z.string()),
+});
+export type IndependentFinalExecutionContract=z.infer<typeof IndependentFinalExecutionContractSchema>;
+export const FinalHoldoutReservationSchema=z.object({
+  round:z.number().int().positive(),suite:z.array(TestCaseSchema),paperHash:z.string(),contractFingerprint:z.string(),createdAt:z.string(),
+  executionContractFingerprint:z.string().optional(),
+});
+export const SupersededFinalHoldoutSchema=FinalHoldoutReservationSchema.extend({supersededAt:z.string(),reason:z.string()});
+
 export const TargetRunResultSchema = z.object({
   artifactHash:z.string().optional(),
   screenshots:z.array(z.object({name:z.string(),width:z.number(),height:z.number(),dataUrl:z.string(),artifactHash:z.string()})).optional(),
@@ -1165,7 +1178,8 @@ export const EvolveProjectSchema = z.object({
   acceptanceRubricState: AcceptanceRubricStateSchema.prefault({}),
   evalSuite: z.array(TestCaseSchema).default([]),
   hiddenEvalSuite: z.array(TestCaseSchema).default([]),
-  finalHoldout:z.object({round:z.number().int().positive(),suite:z.array(TestCaseSchema),paperHash:z.string(),contractFingerprint:z.string(),createdAt:z.string()}).optional(),
+  finalHoldout:FinalHoldoutReservationSchema.optional(),
+  supersededFinalHoldouts:z.array(SupersededFinalHoldoutSchema).optional(),
   gates: z.array(GateStateSchema),
   problems: z.array(ProblemSchema),
   selectedProblemId: z.string().optional(),

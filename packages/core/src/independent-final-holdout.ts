@@ -1,4 +1,4 @@
-import {IndependentFinalEvidenceSchema,type Candidate,type EvolveProject,type TestCase,type ValidationRun} from "@evolution/contracts";
+import {IndependentFinalEvidenceSchema,IndependentFinalExecutionContractSchema,type IndependentFinalExecutionContract,type Candidate,type EvolveProject,type TestCase,type ValidationRun} from "@evolution/contracts";
 import {fastHash} from "./stable-hash";
 import {evidenceFingerprint} from "./evidence-binding";
 import {hasAuthoritativeHiddenRelease} from "./hidden-validation-evidence";
@@ -6,26 +6,58 @@ import {validationDecision} from "./validation-decision";
 import {rubricSuiteCoverage} from "./rubric-readiness";
 
 export const finalHoldoutPaperHash=(suite:readonly TestCase[])=>fastHash(JSON.stringify(suite));
+export const finalHoldoutExecutionFingerprint=(contract:IndependentFinalExecutionContract)=>fastHash(JSON.stringify(IndependentFinalExecutionContractSchema.parse(contract)));
+export function assertIndependentFinalExecution(suite:TestCase[],contract:IndependentFinalExecutionContract){
+  const checked=IndependentFinalExecutionContractSchema.parse(contract);
+  const unavailable=suite.filter(test=>!checked.supportedModes.includes(test.executionMode)
+    ||(checked.requireBrowserStepsForExternal&&["external-runner","visual-review"].includes(test.executionMode)
+      &&(!test.browserSteps?.some(step=>["visible","text","count"].includes(step.action))
+        ||test.browserSteps.some(step=>step.action==="text"&&!step.value?.trim())
+        ||test.browserSteps.some(step=>step.action==="count"&&step.count===undefined))));
+  if(unavailable.length)throw Object.assign(Error("独立终验缺少已绑定执行能力或浏览器断言："+unavailable.map(t=>`${t.id.slice(0,120)} (${t.executionMode})`).join("、")),{code:"INDEPENDENT_FINAL_EXECUTION_UNAVAILABLE"});
+}
+export function independentFinalReplacementBlocker(project:EvolveProject,round:number){
+  if(project.finalHoldout?.round!==round)return undefined;
+  if(project.candidates.length||project.experimentRun.candidateResults.length||project.validationRun.candidateId
+    ||project.validationRun.independentFinal||project.artifactAcceptance.candidateId||project.artifactAcceptance.attempts>0
+    ||project.roundHistory.some(item=>item.round===round&&item.candidateCount>0)){
+    return "本轮已存在候选或候选反馈，不能替换独立终验题集。";
+  }
+  return undefined;
+}
 export const finalHoldoutContractFingerprint=(project:EvolveProject)=>fastHash(JSON.stringify([
   project.goal,project.evolutionCommand,project.metrics,project.protectedItems,project.editableItems,project.acceptanceRubric,
   project.sourceArtifacts.map(source=>[source.id,source.role,source.textContent,source.structuredContent]),
 ]));
 function caseKey(test:TestCase){
   const text=(value:string)=>value.trim().replace(/\s+/g," ").toLowerCase();
-  return JSON.stringify([text(test.input),test.expected.map(text).sort(),test.criterionIds.slice().sort(),test.executionMode,test.evidenceScope,test.browserSteps]);
+  const steps=test.browserSteps?.map(step=>({action:step.action,selector:step.selector.trim(),
+    ...(["fill","text"].includes(step.action)?{value:step.value??""}:{}),...(step.action==="count"?{count:step.count}:{}),
+  }));
+  // Relabeling an execution mode/scope or filling unused browser operands does
+  // not create a new independent scenario.
+  return JSON.stringify([text(test.input),test.expected.map(text).sort(),test.criterionIds.slice().sort(),steps?.length?steps:undefined]);
 }
 export function assertIndependentFinalPaper(project:EvolveProject,suite:TestCase[]){
-  const exposed=new Set([...project.evalSuite,...project.hiddenEvalSuite].map(caseKey));
+  const exposed=new Set([...project.evalSuite,...project.hiddenEvalSuite,...(project.supersededFinalHoldouts??[]).flatMap(paper=>paper.suite)].map(caseKey));
   const ids=new Set<string>(),keys=new Set<string>();
   const known=new Set(project.acceptanceRubric.map(criterion=>criterion.id));
-  if(!suite.length||suite.some(test=>{
+  const reasons:string[]=[];
+  if(!suite.length)reasons.push("题集为空");
+  for(const test of suite){
     const key=caseKey(test);
-    if(!test.hidden||ids.has(test.id)||keys.has(key)||exposed.has(key)
-      ||[...project.evalSuite,...project.hiddenEvalSuite].some(old=>old.id===test.id)
-      ||!test.criterionIds.length||test.criterionIds.some(id=>!known.has(id)))return true;
-    ids.add(test.id);keys.add(key);return false;
-  })||!rubricSuiteCoverage(project.acceptanceRubric,project.evalSuite,suite).ready){
-    throw Error("独立终验题集必须覆盖当前契约，且不能复制已公开或已用于修复的题目。");
+    const id=test.id.slice(0,120);
+    if(!test.hidden)reasons.push(`${id}: 必须标记为隐藏题`);
+    if(ids.has(test.id)||[...project.evalSuite,...project.hiddenEvalSuite].some(old=>old.id===test.id))reasons.push(`${id}: 题目 ID 重复`);
+    if(keys.has(key)||exposed.has(key))reasons.push(`${id}: 复制了已有场景；改名、改模式或无关浏览器参数不构成独立题目`);
+    if(!test.criterionIds.length||test.criterionIds.some(id=>!known.has(id)))reasons.push(`${id}: 未准确绑定当前 Rubric Criterion ID`);
+    ids.add(test.id);keys.add(key);
+  }
+  const coverage=rubricSuiteCoverage(project.acceptanceRubric,[],suite);
+  if(coverage.uncovered.length)reasons.push("缺少标准覆盖："+coverage.uncovered.join("、"));
+  if(coverage.hiddenHardGateMissing.length)reasons.push("缺少隐藏题 Hard Gate 覆盖："+coverage.hiddenHardGateMissing.map(c=>c.id).join("、"));
+  if(reasons.length){
+    throw Object.assign(Error("独立终验题集不符合固定契约："+reasons.slice(0,16).join("；")),{code:"INDEPENDENT_FINAL_PAPER_INVALID"});
   }
 }
 export function independentFinalReadiness(project:EvolveProject,candidate:Candidate,validation=project.validationRun){

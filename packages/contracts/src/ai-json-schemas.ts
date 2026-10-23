@@ -15,10 +15,13 @@ const testCase = {
   type: "object",
   additionalProperties: false,
   properties: {
+    browserSteps:{type:"array",maxItems:24,items:{type:"object",additionalProperties:false,
+      properties:{action:{type:"string",enum:["click","fill","visible","text","count"]},selector:{type:"string",minLength:1},value:{type:"string"},count:{type:"integer",minimum:0}},
+      required:["action","selector","value","count"]},description:"Use [] for non-browser cases. Browser cases require actual selectors and at least one visible/text/count assertion."},
     id: { type: "string" }, title: { type: "string" }, input: { type: "string" }, expected: stringArray, tags: stringArray, hidden: { type: "boolean" }, criterionIds: stringArray,
     executionMode: { type: "string", enum: ["artifact-runtime", "static-evidence", "external-runner", "roundtrip", "visual-review", "manual"] },
     evidenceScope: { type: "string", enum: ["product-behavior", "implementation", "format", "parser", "cross-artifact"] },
-  }, required: ["id", "title", "input", "expected", "tags", "hidden", "criterionIds", "executionMode", "evidenceScope"],
+  }, required: ["id", "title", "input", "expected", "tags", "hidden", "criterionIds", "executionMode", "evidenceScope", "browserSteps"],
 } as const;
 const problem = {
   type: "object", additionalProperties: false,

@@ -29,6 +29,7 @@ import { getServerProductionRuntime } from "../../apps/backend/src/services/prod
 import { serverAiScoringRouteFingerprint } from "../../apps/backend/src/services/ai-gateway";
 import { runServerControlAi as runServerAi, ServerControlAiUnavailableError } from "../../apps/backend/src/services/server-control-ai";
 import { restoreServerControlAiWait } from "../../apps/backend/src/services/server-control-ai-recovery";
+import {reserveServerMissionFinalPaper,serverFinalPaperExecutionContract} from "../../apps/backend/src/services/server-final-paper";
 import { runServerMissionBaseline } from "../../apps/backend/src/services/server-baseline";
 import { runServerMissionExperiment } from "../../apps/backend/src/services/server-experiment";
 import { runServerMissionHoldout } from "../../apps/backend/src/services/server-holdout";
@@ -961,7 +962,8 @@ async function executeServerControlAction(
       return {control:"continue"};
     }
     const outcome=await advanceServerCampaignPreparation(campaignMission,{
-      reserveFinalHoldout:async payload=>(await runServerAi("eval-suite",payload)).hiddenCases.map((test,index)=>({...test,id:`FINAL-r${campaignMission.campaign.currentRound+1}-${index}-${test.id}`,hidden:true})),
+      finalHoldoutExecution:serverFinalPaperExecutionContract(campaignMission),
+      reserveFinalHoldout:payload=>reserveServerMissionFinalPaper(campaignMission,payload,value=>runServerAi("eval-suite",value)),
       problemAnalysis:(payload)=>runServerAi("problem-analysis",payload),
       diagnose:(payload)=>runServerAi("diagnose",payload),
       plan:(payload)=>runServerAi("plan",payload),

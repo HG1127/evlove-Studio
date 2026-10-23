@@ -4,6 +4,7 @@ import type {
   PlanAiResult,
   ProblemAnalysisAiResult,
   TestCase,
+  IndependentFinalExecutionContract,
 } from "@evolution/contracts";
 import {
   baselineReadiness,
@@ -16,15 +17,14 @@ import {
   prioritizeProblems,
   resolveEvidenceRefs,
   selectPlanningLessons,
-  assertIndependentFinalPaper,
-  finalHoldoutPaperHash,
-  finalHoldoutContractFingerprint,
 } from "@evolution/core";
 
 import { retrieveTextContext } from "./context-retrieval";
 import {scopeCandidateIdsForRound} from "./candidate-round-identity";
+import {prepareServerIndependentFinalPaper} from "./server-final-paper";
 
 export type ServerCampaignAiPort = {
+  finalHoldoutExecution?:IndependentFinalExecutionContract;
   reserveFinalHoldout?(payload:unknown):Promise<TestCase[]>;
   problemAnalysis(payload: unknown): Promise<ProblemAnalysisAiResult>;
   diagnose(payload: unknown): Promise<DiagnosisAiResult>;
@@ -324,16 +324,14 @@ export async function advanceServerCampaignPreparation(
       const reason = "[server-campaign-diagnosis-pending] 缺少已持久化 Diagnosis。";
       return { control: "stop", phase: "diagnose", project: capabilityPause(project, reason, "diagnosis", now), reason };
     }
-    if(ai.reserveFinalHoldout&&(project.finalHoldout?.round!==round||project.finalHoldout.contractFingerprint!==finalHoldoutContractFingerprint(project))){
+    if(ai.reserveFinalHoldout){
       try{
-      const suite=await ai.reserveFinalHoldout({
-        project:{goal:project.goal,evolutionCommand:project.evolutionCommand,protectedItems:project.protectedItems,
-          editableItems:project.editableItems,artifacts:compactCampaignArtifacts({...project,searchChampion:undefined})},
-        acceptanceRubric:project.acceptanceRubric,
-        instruction:"Reserve independent final tests BEFORE Candidate planning. Use only Original sources and the fixed goal/rubric. Return novel discriminative scenarios, not paraphrases or clones. Candidate content, plans, diagnosis and repair feedback are intentionally absent. This paper is never sent to the mutator and its failures must not trigger targeted repair.",
+      const prepared=await prepareServerIndependentFinalPaper(project,{round,at:now,reserve:ai.reserveFinalHoldout,
+        executionContract:ai.finalHoldoutExecution,
+        artifacts:compactCampaignArtifacts({...project,searchChampion:undefined,problems:[],diagnosis:undefined,selectedProblemId:undefined,
+          problemStatement:"",baselineRun:{...project.baselineRun,result:undefined}}),
       });
-      assertIndependentFinalPaper(project,suite);
-      return {control:"continue",phase:"plan",project:{...project,finalHoldout:{round,suite,paperHash:finalHoldoutPaperHash(suite),contractFingerprint:finalHoldoutContractFingerprint(project),createdAt:now},updatedAt:now},reason:"独立终验题集已在 Candidate 规划前预留并持久化。"};
+      if(prepared.reserved)return {control:"continue",phase:"plan",project:prepared.project,reason:"独立终验题集已在 Candidate 规划前预留并持久化。"};
       }catch(error){
         const reason="[server-campaign-final-holdout-contract-pending] "+(error instanceof Error?error.message:String(error));
         return {control:"stop",phase:"plan",project:capabilityPause(project,reason,"plan",now),reason};

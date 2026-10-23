@@ -3,7 +3,7 @@ import {
   ServerAiConnectionPutSchema,ServerAiConnectionSettingsSchema,ServerAiConnectionStatusSchema,
   ServerAiStoredConnectionSchema,type EvolutionActor,type ServerAiConnectionPut,
 } from "@evolution/contracts";
-import {getServerAiConfig,serverAiConfigured,vaultEncryptionConfigured,type ServerAiConfig} from "../server-env";
+import {getServerAiConfig,serverAiConfigured,serverAiTimeoutMs,vaultEncryptionConfigured,type ServerAiConfig} from "../server-env";
 import {getVaultSecretMetadata,putVaultSecret,resolveVaultSecret} from "./server-vault";
 
 const VAULT_ID="server-ai-default-connection-v1";
@@ -32,7 +32,7 @@ function directConfig(input:ServerAiConnectionPut):ServerAiConfig{
   assertServerAiEndpoint(input.baseUrl);
   return {
     mode:"openai-compatible",apiKey:input.apiKey,baseUrl:normalizeBaseUrl(input.baseUrl),
-    model:input.model,timeoutMs:getServerAiConfig()?.timeoutMs??90_000,protocol:input.protocol,responseFormat:input.responseFormat,
+    model:input.model,timeoutMs:serverAiTimeoutMs(),protocol:input.protocol,responseFormat:input.responseFormat,
   };
 }
 

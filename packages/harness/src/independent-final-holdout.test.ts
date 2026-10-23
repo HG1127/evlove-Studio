@@ -54,6 +54,12 @@ it.each(["bytes","paper","partial"])("rejects changed %s evidence",scenario=>{
 it("rejects a cloned visible/regression case even if its ID was renamed",()=>{
   const {p}=fixture();expect(()=>assertIndependentFinalPaper(p,[{...p.hiddenEvalSuite[0]!,id:"FAKE-FINAL"}])).toThrow(/复制/);
 });
+it("rejects a copied paper relabeled as another mode or padded with unused browser operands",()=>{
+  const {p}=fixture();
+  expect(()=>assertIndependentFinalPaper(p,[{...p.hiddenEvalSuite[0]!,id:"RENAMED",executionMode:"static-evidence",evidenceScope:"implementation"}])).toThrow(/复制/);
+  p.hiddenEvalSuite[0]!.browserSteps=[{action:"count",selector:"article",count:111}];
+  expect(()=>assertIndependentFinalPaper(p,[{...p.hiddenEvalSuite[0]!,id:"RENAMED",browserSteps:[{action:"count",selector:"article",count:111,value:"unused"}]}])).toThrow(/复制/);
+});
 it("enforces hard minima even if a Judge supplies a contradictory pass flag",()=>{
   const {p,c,proof}=fixture();p.validationRun.independentFinal=proof;
   proof.evaluation!.criterionScores![0]!.score=20;

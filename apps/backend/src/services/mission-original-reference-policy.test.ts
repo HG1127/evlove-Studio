@@ -13,6 +13,11 @@ describe("server-owned Original reference facts",()=>{
   const current=project(),next=structuredClone(current);next.name="resumed";
   expect(()=>assertClientMissionMutationSafe(current,next)).not.toThrow();
  });
+ it("refuses minting or removing superseded final papers through generic Mission PUT",()=>{
+  const current=project(),next=structuredClone(current);next.supersededFinalHoldouts=[];
+  expect(()=>assertClientMissionMutationSafe(current,next)).toThrow("历史独立终验");
+  expect(()=>assertClientMissionMutationSafe(next,current)).toThrow("历史独立终验");
+ });
  it("allows a fresh empty Baseline reset without carrying or issuing reference facts",()=>{
   const current=project(),next=structuredClone(current);
   current.baselineRun.id="measured";

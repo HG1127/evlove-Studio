@@ -18,6 +18,7 @@ export function assertClientMissionMutationSafe(current:EvolveProject,next:Evolv
     if(!emptyBaselineReset)throw new Error("原版字节参照及初次 Baseline 对照标记是 server-owned，只能随全新空白 Baseline 一并清除，不能通过通用 Mission PUT 签发或改写");
   }
   if(json(current.finalHoldout)!==json(next.finalHoldout))throw new Error("独立终验预留题集是 server-owned，不能通过通用 Mission PUT 改写");
+  if(json(current.supersededFinalHoldouts)!==json(next.supersededFinalHoldouts))throw new Error("历史独立终验题集是 server-owned，不能通过通用 Mission PUT 改写");
   if(next.validationRun.independentFinal&&json(current.validationRun.independentFinal)!==json(next.validationRun.independentFinal))throw new Error("独立终验凭证是 server-owned，不能通过通用 Mission PUT 签发");
   for(const candidate of current.candidates){
     const updated=next.candidates.find(item=>item.id===candidate.id);
