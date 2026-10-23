@@ -268,10 +268,13 @@ describe("server Hidden assessment recovery",()=>{
     try{
       const project=fixture(),first=semanticPorts(82,50);
       addLimitedProtection(project,first.ports);
+      const executeCurrent=first.ports.current.executeSemanticBatch!;
+      first.ports.current.executeSemanticBatch=async args=>{
+        const response=await executeCurrent(args);
+        return {...response,results:response.results.map(row=>row.testCaseId==="H2"?{...row,output:"UNVERIFIED: same-paper baseline comparison unavailable"}:row)};
+      };
       const measured=await runServerHoldout(project,{...first.ports,readArtifactFingerprint:async()=>artifactBinding});
-      // Incomplete comparison evidence is retained as unknown, not rerolled or upgraded.
-      measured.validation.baselineEvaluation!.criterionScores![0]!.verificationStatus="unverified";
-      measured.validation.baselineEvaluation!.unverifiedCriterionIds=["CONTENT"];
+      expect(measured.validation.baselineRuns.find(row=>row.testCaseId==="H2")?.verificationStatus).toBe("unverified");
       // Simulate the old controller's completed-but-paused Experiment checkpoint.
       const prior={...measured.project,campaign:{...measured.project.campaign,checkpoint:project.campaign.checkpoint}};
       vi.setSystemTime(observed+60*60_000);
@@ -284,6 +287,12 @@ describe("server Hidden assessment recovery",()=>{
       expect(outcome.validation.baselineObservedAt).toBe(observed);
       expect(setup.currentCases).toEqual([]);expect(setup.candidateCases).toEqual([]);
       expect(currentJudge).not.toHaveBeenCalled();expect(candidateJudge).not.toHaveBeenCalled();expect(review).not.toHaveBeenCalled();
+      const damaged=structuredClone(prior);damaged.validationRun.runs[0]!.output+=" changed";
+      const guarded=semanticPorts();
+      const stopped=await runServerHoldout(damaged,{...guarded.ports,readArtifactFingerprint:async()=>artifactBinding});
+      expect(stopped.control).toBe("stop");expect(stopped.reason).toContain("evidence-identity-pending");
+      expect(guarded.currentCases).toEqual([]);expect(guarded.candidateCases).toEqual([]);
+      expect(stopped.validation.evaluation).toEqual(measured.validation.evaluation);
       const changed=semanticPorts();
       await runServerHoldout(prior,{...changed.ports,readArtifactFingerprint:async()=>"b".repeat(64)});
       expect(changed.currentCases).toEqual(["H1","H2"]);expect(changed.candidateCases).toEqual(["H1","H2"]);

@@ -197,6 +197,15 @@ export async function runServerHoldout(
 
   const beforeArtifactFingerprint = await readServerHoldoutArtifactFingerprint(inputProject, candidate, ports.readArtifactFingerprint);
   const prior = recoverableServerHoldout(inputProject, candidate, suite, round, baseFingerprint, beforeArtifactFingerprint, Date.now());
+  const recorded=inputProject.validationRun;
+  if(!prior&&beforeArtifactFingerprint&&recorded.executionArtifactFingerprint===beforeArtifactFingerprint
+    &&recorded.baselineContextFingerprint===baseFingerprint&&recorded.evidenceFingerprint===evidenceFingerprint(inputProject,candidate)
+    &&recorded.candidateId===candidate.id&&knownServerHoldoutRejection(inputProject,suite,recorded)){
+    const reason="[server-campaign-holdout-evidence-identity-pending] 同一冻结文件已有明确失败，但持久化执行记录未通过恢复校验；保留原拒绝，禁止通过重新评分替代修复。";
+    const project:EvolveProject={...inputProject,stage:"validation",campaign:{...inputProject.campaign,status:"paused",stopReason:reason,
+      schedule:{...inputProject.campaign.schedule,enabled:false,nextRunAt:undefined}},updatedAt:now()};
+    return {control:"stop",project,validation:recorded,reason,readyForArtifactAcceptance:false,evidenceIncomplete:true};
+  }
   const retainedRejection=prior&&knownServerHoldoutRejection(inputProject,suite,prior);
   let executionArtifactFingerprint: string | undefined;
   let baselineRuns:TargetRunResult[]=[];

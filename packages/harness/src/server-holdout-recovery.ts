@@ -58,7 +58,10 @@ export function recoverableServerHoldout(
     && !run.error && Boolean(run.output.trim())
     && (run.verificationStatus === "verified" || run.verificationStatus === "partial");
   return suite.every((testCase, index) => prior.baselineSuiteIds?.[index] === testCase.id
-    && observable(prior.runs[index], testCase.id) && observable(prior.baselineRuns[index], testCase.id)) ? prior : undefined;
+    && (knownFailure
+      ? prior.runs[index]?.testCaseId===testCase.id&&prior.baselineRuns[index]?.testCaseId===testCase.id
+        &&Boolean(prior.runs[index]?.output.trim())&&Boolean(prior.baselineRuns[index]?.output.trim())
+      : observable(prior.runs[index], testCase.id) && observable(prior.baselineRuns[index], testCase.id))) ? prior : undefined;
 }
 
 /** Retain a complete independent assessment only on the already checked execution binding. */
