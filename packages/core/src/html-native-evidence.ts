@@ -26,6 +26,10 @@ export function inspectHtmlNativeEvidence(run:TargetRunResult,testCaseId:string,
   const parsed=HtmlNativeRunProofSchema.safeParse(run.nativeHtmlProof),document=HtmlRenderedDocumentEvidenceSchema.safeParse(run.renderedDocumentEvidence);
   if(!parsed.success||!document.success||run.error)return undefined;
   const proof=parsed.data,observation=proof.observation,body=document.data;
+  const retention=observation.codeBlockRetention;
+  if(retention&&(retention.retainedCount!==retention.exactCount+retention.extendedInstructionCount
+    ||retention.retainedCount>retention.originalCount||retention.retained!==(retention.retainedCount===retention.originalCount)
+    ||retention.retained!==observation.originalCodeBlocksRetained))return undefined;
   if(proof.testCaseId!==testCaseId||run.testCaseId!==testCaseId||proof.subjectSha256!==run.artifactHash||observation.subject.sha256!==proof.subjectSha256
     ||sourceArtifactId!==undefined&&proof.sourceArtifactId!==sourceArtifactId||subjectSha256!==undefined&&proof.subjectSha256!==subjectSha256
     ||body.sourceArtifactId!==proof.sourceArtifactId||body.artifactSha256!==proof.subjectSha256

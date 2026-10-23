@@ -28,4 +28,11 @@ describe("pure native renderer profile identification",()=>{
     if(kind==="frame")changed=changed.replace('</body>','<iframe></iframe></body>');
     expect(identifyHtmlNativeSubjects(original,changed,profiles)).toBeUndefined();
   });
+  it("retains appended numbered prose without claiming its original full digest is unchanged",()=>{
+    const source=original.replace("  exact code","9. 保存结果。\n10. 检查失败原因。");
+    const next=source.replace("10. 检查失败原因。","10. 检查失败原因。\n补充说明：失败时保留现场。");
+    const result=identifyHtmlNativeSubjects(source,next,profiles)!;
+    expect(result.original.codeBlockDigests).not.toEqual(result.subject.codeBlockDigests);
+    expect(result).toMatchObject({originalCodeBlocksRetained:true,codeBlockRetention:{exactCount:0,extendedInstructionCount:1}});
+  });
 });

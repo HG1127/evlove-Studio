@@ -9,6 +9,13 @@ const test=TestCaseSchema.parse({id:"native-case",title:"保护测试",input:"�
 const judge=[{criterionId:criterion.id,score:99,pass:true,evidence:["Independent semantic review"],gaps:[],testCaseIds:[test.id]}];
 
 describe("bound native HTML evidence",()=>{
+  it("does not accept contradictory code retention counts",()=>{
+    const run=htmlNativeEvidenceFixture();
+    run.nativeHtmlProof!.observation.codeBlockRetention={policy:"original-text-with-numbered-instruction-append-v1",originalCount:2,retainedCount:2,exactCount:1,extendedInstructionCount:1,retained:true};
+    expect(inspectHtmlNativeEvidence(run,test.id,"source-html","a".repeat(64))).toMatchObject({complete:true,pass:true});
+    run.nativeHtmlProof!.observation.codeBlockRetention.exactCount=2;
+    expect(inspectHtmlNativeEvidence(run,test.id,"source-html","a".repeat(64))).toBeUndefined();
+  });
   it("recognizes complete observations without generating a semantic verdict",()=>{
     const run=htmlNativeEvidenceFixture();
     expect(inspectHtmlNativeEvidence(run,test.id,"source-html","a".repeat(64))).toMatchObject({complete:true,pass:true});

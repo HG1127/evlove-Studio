@@ -22,6 +22,16 @@ One real, diagnostic-only request to the current `MiniMax-M2.7-highspeed` servic
 
 A fresh authoritative Mission read after the diagnostic still selects frozen `0de13e…`, with campaign paused at validation, Artifact Acceptance `repairing`, attempts **2 of a configured maximum 2**, and release `idle`. The diagnostic does not reset that budget or certify the ranked `winner` as accepted. Further evolution must respect the actual current budget and preserve the failed/partial history.
 
+## Local verification of the search repair
+
+Actual offline isolated-browser execution on the same physical Original and frozen `0de13e…` completed 41 assertions per subject. The Original passed; the frozen Candidate failed all nine new-content search assertions. The canonical index preview `b304afdddb19fa84e6ee272c5bee039fad27601047941869138a3cb8ac68c301` passed all 41 assertions, including those nine searches, and both viewport style comparisons. All original preformatted text remains retained; a numbered workflow example appends prose while preserving its exact original prefix. The [retention decision and execution limits](architecture/2026-10-24-html-instruction-retention-and-local-observation.md) explain why this differs from exact full-block digest equality.
+
+The local execution manifests have SHA-256 `ff5457eefd46a6c89a9d0c91ce9a4fc7f4a8dfb0268ed120db3c614bc192ea27` for the frozen file and `7c822a04d02011d136b5b63a2337d0e017f728799b1c04f41c28f9f5e2d563f4` for the preview. The body-bearing observations have SHA-256 `778bc11c1f63584cc7e7fcc61f50717d1305108c48610e14c24b5881366ce080` and `214a62ca440bccf5350427574ffe88babd604000ba601236aece36297c16bf3c`, respectively. The first memory-interrupted attempt remains preserved and is not counted as complete evidence. No full HTML was uploaded to an external sandbox. These reports remain local: automatic approval rejected uploading the rendered body evidence to Supabase, and additional user consent is pending.
+
+A subsequent authoritative read still has four verified passing criteria (workflow closure 98, understandability 96, detail 93 and pairwise improvement 94), four partial criteria, campaign paused at validation and repair attempts 2/2. No new AI repair, independent final acceptance, Gate F pass or delivery is claimed. The passing preview is not a replacement for the frozen Candidate.
+
+A read-only call to the configured provider's documented subscription quota endpoint succeeded. It supplies quota windows/counters rather than an attributable monetary bill; the counters do not establish zero usage or zero cost. Actual monetary evidence, accepted pilot deliveries and controlled lesson transfer remain unproved. The billing UI is still awaiting user dismissal of a blocking browser extension panel.
+
 ## Failures found by the real pilot
 
 - A Mission-bound upload stored bytes before discovering an unavailable evidence signer. Registration and reconciliation now check actual evidence-ledger readiness first. Existing partial registrations must reconcile the original Artifact ID and exact stored bytes.

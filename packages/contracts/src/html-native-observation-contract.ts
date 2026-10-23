@@ -45,6 +45,8 @@ export const HtmlNativeObservationSchema=z.object({
   isolation:z.literal("network-denied-ephemeral"),
   observedAt:z.iso.datetime(),kernelSha256:sha,programSignature:sha,styleSignature:sha,
   originalCodeBlocksRetained:z.boolean(),originalNamedElementsRetained:z.boolean(),originalInteractiveSequenceRetained:z.boolean(),
+  codeBlockRetention:z.object({policy:z.literal("original-text-with-numbered-instruction-append-v1"),
+    originalCount:count,retainedCount:count,exactCount:count,extendedInstructionCount:count,retained:z.boolean()}).strict().optional(),
   originalNamedElementCount:count,
   rawNamedAttributesRetained:z.boolean(),derivedSearchMetadataUpdates:count,
   originalSlideCardOrderRetained:z.boolean(),original:HtmlNativeSubjectSchema,subject:HtmlNativeSubjectSchema,

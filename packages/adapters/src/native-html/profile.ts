@@ -1,6 +1,6 @@
 import {createHash} from "node:crypto";
 import {HTML_NATIVE_PROFILE_ID} from "@evolution/contracts";
-import {htmlCandidateProtection,htmlNativeProgramIdentity,synchronizeHtmlCardSearchIndex} from "@evolution/core";
+import {htmlCandidateProtection,htmlNativeCodeRetention,htmlNativeProgramIdentity,synchronizeHtmlCardSearchIndex} from "@evolution/core";
 
 export const nativeHtmlSha256=(bytes:Uint8Array|string)=>createHash("sha256").update(bytes).digest("hex");
 export const KNOWN_HTML_NATIVE_PROFILES=[{
@@ -24,10 +24,9 @@ export function identifyHtmlNativeSubjects(originalHtml:string,subjectHtml:strin
     ||original.externalScriptCount||subject.externalScriptCount||original.mediaCount||subject.mediaCount
     ||JSON.stringify(original.visualBlockDigests)!==JSON.stringify(subject.visualBlockDigests)
     ||subject.signature!==original.signature||subject.styleSignature!==original.styleSignature)return undefined;
-  let index=0;
-  for(const digest of subject.codeBlockDigests)if(digest===original.codeBlockDigests[index])index++;
+  const codeBlockRetention=htmlNativeCodeRetention(originalHtml,subjectHtml);
   const protection=htmlCandidateProtection({sourceArtifactId:"native-subject",originalHtml,candidateHtml:subjectHtml,protectedItems:[],allowCanonicalDerivedSearchIndex:true});
-  return {profile,original,subject,originalCodeBlocksRetained:index===original.codeBlockDigests.length,protection:protection.nativeObservation};
+  return {profile,original,subject,originalCodeBlocksRetained:codeBlockRetention.retained,codeBlockRetention,protection:protection.nativeObservation};
 }
 
 /** Preserve model-authored prose and compile only the known renderer's derived index. */
