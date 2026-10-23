@@ -25,6 +25,7 @@ import {
   serverExperimentRecoveryWait,
   serverMainFlowRecoveryWait,
   serverMainFlowRecoveryActive,
+  serverRecoveringControlRetrySource,
   serverMainFlowRecoveryReadiness,
   serverBaselineFingerprint,
   normalizeLocallyVerifiableCandidateRuns,
@@ -758,8 +759,9 @@ async function executeServerControlAction(
       if(!currentJob || currentJob.missionId!==input.missionId || currentJob.generation!==1
         || !["queued","running","waiting"].includes(currentJob.status))throw new FatalError("控制 Job 不再活动；未执行恢复断点。");
       if(mission.campaign.serverRecoveryWait?.status==="recovering"
-        && (mission.campaign.serverRecoveryWait.resumedByControlJobId!==input.controlJobId
-          || !serverMainFlowRecoveryActive(mission) || !hasServerMainFlowRecoveryBinding(mission)))
+        // A retried Step may read the running transition persisted by its own earlier attempt.
+        // Preserve exact owner/readiness/context checks and independently verify the full SHA.
+        && (!serverRecoveringControlRetrySource(mission,input.controlJobId) || !hasServerMainFlowRecoveryBinding(mission)))
         throw new FatalError("恢复断点的输入、父代或运行条件已变化；禁止复用旧 Candidate / 验收。");
       if(input.freshBaseline && campaignPreflightStopReason(mission))throw new FatalError("重新测量的预算或停止条件已达到；未继续执行。");
     }
