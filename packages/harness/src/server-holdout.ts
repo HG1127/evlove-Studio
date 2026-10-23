@@ -225,7 +225,7 @@ export async function runServerHoldout(
         : judgeServerCurrentArtifactSuite(inputProject, suite, baselineRuns, ports.current),
       prior && reusableServerHoldoutAssessment(inputProject, suite, runs, prior.evaluation)
         ? Promise.resolve(prior.evaluation!)
-        : judgeServerExperimentCandidate(inputProject, candidate, runs, ports.candidate, suite, "server-hidden-holdout-candidate"),
+        : judgeServerExperimentCandidate(inputProject, candidate, runs, ports.candidate, suite, "server-hidden-holdout-candidate", baselineRuns),
     ]);
     // Keep the fulfilled arm before propagating the other arm's failure.
     if(currentJudge.status==="fulfilled")baselineEvaluation=currentJudge.value;

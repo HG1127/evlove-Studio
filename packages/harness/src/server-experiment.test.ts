@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Candidate, EvaluateAiResult, EvolveProject, TargetRunResult } from "@evolution/contracts";
 import { fastHash } from "@evolution/core";
 import { runServerExperiment } from "./server-experiment";
-import { executeServerExperimentCandidate } from "./server-experiment-runner";
+import { executeServerExperimentCandidate, judgeServerExperimentCandidate } from "./server-experiment-runner";
 import { normalizeLocallyVerifiableCandidateRuns } from "./candidate-snapshot-evidence";
 import { candidateLocalEvidence } from "./server-experiment-evidence";
 
@@ -60,6 +60,30 @@ function judge(score:number):EvaluateAiResult{
 }
 
 describe("server experiment",()=>{
+  it("gives the independent Judge the already measured Candidate and current Baseline bodies without reading raw snapshots",async()=>{
+    const p=fixture();
+    const baseline:TargetRunResult={testCaseId:"V1",output:"COMPLETE CURRENT DOCUMENT TEXT OBSERVATION\n"+"original text ".repeat(1000)+"ORIGINAL-END",
+      cost:0,latencyMs:0,verificationStatus:"verified",artifactHash:"a".repeat(64),
+      trace:[{id:"current-document-text-V1",stage:"current-document-text-evidence",status:"pass",summary:"document read"}]};
+    p.baselineRun.runs=[baseline];
+    const run:TargetRunResult={...baseline,artifactHash:undefined,
+      output:"CURRENT CANDIDATE SNAPSHOT EVIDENCE\n\ncomplete text projection: "+"evolved text ".repeat(1000)+"EVOLVED-END",
+      trace:[{id:"candidate-semantic-snapshot-V1",stage:"semantic-evidence",status:"pass",summary:"document read"}]};
+    const independentJudge=vi.fn(async()=>judge(90));
+    const result=await judgeServerExperimentCandidate(p,frozenCandidate(p.candidates[0]!,"RAW-SOURCE-MUST-NOT-BE-ADDED"),[run],{
+      executeSemanticBatch:async()=>({results:[]}),judge:independentJudge,
+    });
+    const wire=JSON.stringify(independentJudge.mock.calls);
+    expect(wire).toContain("ORIGINAL-END");expect(wire).toContain("EVOLVED-END");
+    expect(wire).not.toContain("RAW-SOURCE-MUST-NOT-BE-ADDED");
+    expect(result.measuredReviewVersion).toBe("server-measured-document-review-v1");
+    independentJudge.mockClear();
+    await judgeServerExperimentCandidate(p,frozenCandidate(p.candidates[0]!),[run],{
+      executeSemanticBatch:async()=>({results:[]}),judge:independentJudge,
+    },p.evalSuite,"server-hidden-holdout-candidate",[{...baseline,output:baseline.output.replace("ORIGINAL-END","HIDDEN-CONTROL-END")}]);
+    expect(JSON.stringify(independentJudge.mock.calls)).toContain("HIDDEN-CONTROL-END");
+    expect(JSON.stringify(independentJudge.mock.calls)).not.toContain("ORIGINAL-END");
+  });
   it("discards repeated semantic Candidate results and uses only the exact local snapshot",async()=>{
     const project=fixture();
     const runs=await executeServerExperimentCandidate(project,frozenCandidate(project.candidates[0]!),{

@@ -567,6 +567,8 @@ export const EvaluationResultSchema = z.object({
   caseScores: z.array(CaseScoreSchema).optional(),
   /** 评审由演示启发式兜底（真实 Judge 连接全失败）：分数只作参考，禁止据此夺冠。 */
   demoJudged: z.boolean().optional(),
+  /** Runtime-owned assessment payload policy; older assessments cannot satisfy new review reuse. */
+  measuredReviewVersion: z.string().min(1).optional(),
 });
 export type EvaluationResult = z.infer<typeof EvaluationResultSchema>;
 

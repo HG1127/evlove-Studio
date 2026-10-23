@@ -1,5 +1,6 @@
 import type { Candidate, EvaluationResult, EvolveProject, TargetRunResult, TestCase, ValidationRun } from "@evolution/contracts";
 import { criteriaRequiringJudge, evidenceFingerprint, fastHash, LIVE_TARGET_OBSERVATION_MAX_AGE_MS } from "@evolution/core";
+import { SERVER_MEASURED_REVIEW_VERSION } from "./server-measured-review-evidence";
 
 export type ServerHoldoutArtifactReader = (args: { project: EvolveProject; candidate: Candidate }) => Promise<string | undefined>;
 
@@ -48,9 +49,11 @@ export function recoverableServerHoldout(
 /** Retain a complete independent assessment only on the already checked execution binding. */
 export function reusableServerHoldoutAssessment(project: EvolveProject, suite: TestCase[], runs: TargetRunResult[], evaluation?: EvaluationResult) {
   if (!evaluation || evaluation.demoJudged) return false;
+  const judgeCriteria = criteriaRequiringJudge(project.acceptanceRubric, suite, runs);
+  if (judgeCriteria.length && evaluation.measuredReviewVersion !== SERVER_MEASURED_REVIEW_VERSION) return false;
   const scores = evaluation.criterionScores ?? [];
   if (new Set(scores.map(item => item.criterionId)).size !== scores.length) return false;
-  return criteriaRequiringJudge(project.acceptanceRubric, suite, runs).every(criterion => {
+  return judgeCriteria.every(criterion => {
     const score = scores.find(item => item.criterionId === criterion.id);
     const ids = new Set(suite.filter(item => item.criterionIds.includes(criterion.id)).map(item => item.id));
     return score && (score.verificationStatus === "verified" || score.verificationStatus === "partial")

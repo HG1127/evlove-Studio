@@ -1,9 +1,8 @@
 import {OriginalArtifactReferenceProofSchema,type EvolveProject} from "@evolution/contracts";
 
-/** Initial Baseline locks the comparison reference; preservation acceptance belongs to the later Candidate. */
+/** A Baseline of the unchanged Original locks the reference; Candidate acceptance remains separate. */
 export function originalBaselineReferenceCriteria(project:EvolveProject,raw:unknown[]):string[]{
-  if(project.stage!=="baseline"||project.searchChampion||project.campaign.currentRound!==0
-    ||project.candidates.length)return [];
+  if(project.stage!=="baseline"||project.searchChampion)return [];
   const parsed=raw.map(value=>OriginalArtifactReferenceProofSchema.safeParse(value));
   if(parsed.some(p=>!p.success))return [];
   const proofs=parsed.map(p=>p.data!);

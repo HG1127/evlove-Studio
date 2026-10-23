@@ -17,6 +17,8 @@ import {
 } from "./server-baseline-evidence";
 import { indexUniqueBatchResults } from "./server-batch-results";
 import { groundedOriginalCitationDefect, groundedOriginalDocumentProtection } from "./server-grounded-baseline-defect";
+import { currentHtmlDocumentTextObservation } from "./server-current-document-evidence";
+import { measuredDocumentObservations, SERVER_MEASURED_REVIEW_VERSION } from "./server-measured-review-evidence";
 
 export type ServerCurrentArtifactPorts = {
   executeSemanticBatch(args: {
@@ -89,7 +91,8 @@ export async function executeServerCurrentArtifactSuite(
         ordered.set(testCase.id,duplicateIds.has(testCase.id)
           ?unavailableBaselineRun(testCase,"Server AI Batch 对本题返回了重复结果，证据身份不明确。")
           :item ? groundedOriginalCitationDefect({project,testCase,output:item.output,artifactContext})
-            ?? groundedOriginalDocumentProtection({project,testCase,artifactContext}) ?? {
+            ?? groundedOriginalDocumentProtection({project,testCase,artifactContext})
+            ?? currentHtmlDocumentTextObservation(project,testCase,artifactContext) ?? {
           testCaseId:testCase.id,output:item.output,latencyMs:latency,cost:0,
           verificationStatus:artifactContext.some((artifact)=>artifact.truncated)&&semanticEvidenceStatus(item.output)==="verified"?"partial":semanticEvidenceStatus(item.output),
           trace:[{id:`server-current-semantic-${testCase.id}`,stage:"AI 语义核查",summary:"Server AI 读取当前版本并定位同卷证据",status:"info",detail:"仅提供当前成果观察；独立 Judge 负责 Rubric 结算。"},...item.trace],
@@ -104,6 +107,7 @@ export async function executeServerCurrentArtifactSuite(
         const grounded=artifactContext && (
           groundedOriginalCitationDefect({project,testCase,output:"UNVERIFIED: batch provider failed",artifactContext})
           ?? groundedOriginalDocumentProtection({project,testCase,artifactContext})
+          ?? currentHtmlDocumentTextObservation(project,testCase,artifactContext)
         );
         ordered.set(testCase.id,grounded??unavailableBaselineRun(testCase,`Server AI Artifact Runtime 未完成：${message}`));
       }
@@ -127,9 +131,11 @@ export async function judgeServerCurrentArtifactSuite(
   if(!judgeCases.length||!effectiveCriteria.length)return deterministicOnly(project,testCases,runs);
   const ai=await ports.judge({
     mode:"server-holdout-baseline",
+    measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION,
+    measuredCurrentDocuments:measuredDocumentObservations(runs.filter(run=>judgeCaseIds.has(run.testCaseId))),
     project:{goal:project.goal,metrics:project.metrics,acceptanceRubric:effectiveCriteria},
     acceptanceRubric:effectiveCriteria,
-    evaluatorInstruction:"Judge only supplied CURRENT VERSION evidence from the hidden same-paper baseline. UNVERIFIED tests are omitted and must not be invented as failures. Never cite diagnosis, plan or Candidate claims.",
+    evaluatorInstruction:"Judge only supplied CURRENT VERSION evidence from the hidden same-paper baseline. Read existing measuredCurrentDocuments before treating compact excerpts as missing document content. Respect their omissions: document text cannot establish scripts, styles, visual or runtime behavior. UNVERIFIED tests are omitted and must not be invented as failures. Never cite diagnosis, plan or Candidate claims.",
     testCases:judgeCases.map((testCase)=>({id:testCase.id,title:testCase.title,input:testCase.input.slice(0,1600),expected:testCase.expected,tags:testCase.tags,criterionIds:testCase.criterionIds,executionMode:testCase.executionMode,evidenceScope:testCase.evidenceScope})),
     runs:runs.filter((run)=>judgeCaseIds.has(run.testCaseId)).map((run)=>{
       const testCase=testCases.find((item)=>item.id===run.testCaseId);
@@ -137,8 +143,8 @@ export async function judgeServerCurrentArtifactSuite(
       return {testCaseId:run.testCaseId,verificationStatus:run.verificationStatus,outputChunks:[compactBaselineRunOutput(run.output,query)],trace:run.trace.slice(0,12).map((step)=>({stage:step.stage,status:step.status,summary:step.summary}))};
     }),
   });
-  return settleAiEvaluation({
+  return {...settleAiEvaluation({
     criteria:project.acceptanceRubric,testCases,runs,ai,
     notes:["Server Hidden Holdout：当前版本已在隐藏同卷执行并独立 Judge。",...(runs.some((run)=>run.verificationStatus==="unverified")?["部分隐藏题缺真实执行能力；对应 Criterion 保持 UNVERIFIED。"]:[])],
-  });
+  }),measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION};
 }

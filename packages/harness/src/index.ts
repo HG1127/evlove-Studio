@@ -23,5 +23,6 @@ export * from "./server-source-context";
 export {htmlSnapshotReview} from "./html-snapshot-review";
 
 export * from "./server-experiment-wait";
+export * from "./server-measured-review-evidence";
 
 export * from "./build-candidates";

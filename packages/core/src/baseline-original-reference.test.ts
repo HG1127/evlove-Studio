@@ -27,11 +27,15 @@ describe("initial Original reference eligibility",()=>{
   p.sourceArtifacts.push({...p.sourceArtifacts[0]!,id:"reference",role:"reference"} as EvolveProject["sourceArtifacts"][number]);
   expect(originalBaselineReferenceCriteria(p,[proof])).toEqual(["PROTECT"]);
  });
- it("does not apply after a Candidate exists, to a later round, or to an accepted Champion",()=>{
+ it("retains the same physical Original reference after an unaccepted Candidate or failed round",()=>{
   const p=project();p.candidates=[{id:"C1"}] as EvolveProject["candidates"];
+  expect(originalBaselineReferenceCriteria(p,[proof])).toEqual(["PROTECT"]);
+  p.campaign.currentRound=1;expect(originalBaselineReferenceCriteria(p,[proof])).toEqual(["PROTECT"]);
+  expect(originalBaselineReferenceCriteria(p,[{...proof,blobId:"candidate-file"}])).toEqual([]);
+ });
+ it("never treats an accepted Champion or another phase as the Original",()=>{
+  const p=project();p.searchChampion={id:"S1"} as EvolveProject["searchChampion"];
   expect(originalBaselineReferenceCriteria(p,[proof])).toEqual([]);
-  p.candidates=[];p.campaign.currentRound=1;expect(originalBaselineReferenceCriteria(p,[proof])).toEqual([]);
-  p.campaign.currentRound=0;p.searchChampion={id:"S1"} as EvolveProject["searchChampion"];
-  expect(originalBaselineReferenceCriteria(p,[proof])).toEqual([]);
+  p.searchChampion=undefined;p.stage="validation";expect(originalBaselineReferenceCriteria(p,[proof])).toEqual([]);
  });
 });

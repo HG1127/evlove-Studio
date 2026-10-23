@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {ValidationRunSchema,type EvaluateAiResult,type EvolveProject,type TargetRunResult} from "@evolution/contracts";
 import { runServerHoldout, type ServerHoldoutPorts } from "./server-holdout";
-import { executeServerCurrentArtifactSuite } from "./server-current-artifact-runner";
+import { executeServerCurrentArtifactSuite, judgeServerCurrentArtifactSuite } from "./server-current-artifact-runner";
 
 function judged(score:number,testCaseId="H1"):EvaluateAiResult{
   return {
@@ -62,6 +62,18 @@ function semanticPorts(baselineScore=82,candidateScore=92){
 }
 
 describe("server hidden holdout",()=>{
+  it("supplies the Hidden current Judge with its complete existing measured observation",async()=>{
+    const p=fixture();
+    const run:TargetRunResult={testCaseId:"H1",output:"COMPLETE CURRENT DOCUMENT TEXT OBSERVATION\n"+"measured text ".repeat(1000)+"HIDDEN-TAIL",
+      cost:0,latencyMs:0,verificationStatus:"verified",artifactHash:"a".repeat(64),
+      trace:[{id:"current-document-text-H1",stage:"current-document-text-evidence",status:"pass",summary:"document read"}]};
+    const judge=vi.fn(async()=>judged(82));
+    const result=await judgeServerCurrentArtifactSuite(p,p.hiddenEvalSuite,[run],{
+      executeSemanticBatch:async()=>({results:[]}),judge,
+    });
+    expect(JSON.stringify(judge.mock.calls)).toContain("HIDDEN-TAIL");
+    expect(result.measuredReviewVersion).toBe("server-measured-document-review-v1");
+  });
   it("keeps repeated current-version semantic evidence unverified",async()=>{
     const project=fixture();
     const runs=await executeServerCurrentArtifactSuite(project,project.hiddenEvalSuite,{
@@ -296,6 +308,13 @@ describe("server Hidden assessment recovery",()=>{
   });
   it("rejudges an incomplete or demo assessment without rerunning valid execution",async()=>{
     const p=await paused();p.validationRun.evaluation={...p.validationRun.evaluation!,demoJudged:true};
+    const setup=semanticPorts();const candidateJudge=vi.fn(setup.ports.candidate.judge);setup.ports.candidate.judge=candidateJudge;
+    const result=await runServerHoldout(p,{...setup.ports,readArtifactFingerprint:async()=>artifactBinding});
+    expect(result.readyForArtifactAcceptance).toBe(true);expect(candidateJudge).toHaveBeenCalledOnce();
+    expect(setup.currentCases).toEqual([]);expect(setup.candidateCases).toEqual([]);
+  });
+  it("rejudges a legacy truncated-context assessment without rebuilding or rerunning valid observations",async()=>{
+    const p=await paused();delete p.validationRun.evaluation!.measuredReviewVersion;
     const setup=semanticPorts();const candidateJudge=vi.fn(setup.ports.candidate.judge);setup.ports.candidate.judge=candidateJudge;
     const result=await runServerHoldout(p,{...setup.ports,readArtifactFingerprint:async()=>artifactBinding});
     expect(result.readyForArtifactAcceptance).toBe(true);expect(candidateJudge).toHaveBeenCalledOnce();

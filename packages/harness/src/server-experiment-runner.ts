@@ -25,6 +25,7 @@ import {
 } from "./server-experiment-evidence";
 import { normalizeLocallyVerifiableCandidateRuns } from "./candidate-snapshot-evidence";
 import { indexUniqueBatchResults } from "./server-batch-results";
+import { measuredDocumentObservations, SERVER_MEASURED_REVIEW_VERSION } from "./server-measured-review-evidence";
 
 export type ServerExperimentExecutionPorts = {
   executeSemanticBatch(args: {
@@ -237,6 +238,7 @@ export async function judgeServerExperimentCandidate(
   ports: ServerExperimentExecutionPorts,
   testCases: TestCase[] = project.evalSuite,
   mode = "server-candidate",
+  comparisonRuns: TargetRunResult[] = project.baselineRun.runs,
 ) {
   const judgeCriteria = criteriaRequiringJudge(project.acceptanceRubric, testCases, runs);
   const judgeIds = new Set(judgeCriteria.map((criterion) => criterion.id));
@@ -252,6 +254,9 @@ export async function judgeServerExperimentCandidate(
   if (!judgeCases.length || !effectiveCriteria.length) return deterministicOnlyEvaluation(project, testCases, runs);
   const payload = {
     mode,
+    measuredReviewVersion: SERVER_MEASURED_REVIEW_VERSION,
+    measuredCandidateDocuments: measuredDocumentObservations(runs.filter(run => judgeCaseIds.has(run.testCaseId))),
+    measuredComparisonDocuments: measuredDocumentObservations(comparisonRuns),
     candidate: { id: candidate.id },
     project: {
       goal: project.goal,
@@ -259,7 +264,7 @@ export async function judgeServerExperimentCandidate(
       acceptanceRubric: effectiveCriteria,
     },
     acceptanceRubric: effectiveCriteria,
-    evaluatorInstruction: "Judge only the supplied exact Candidate evidence. Never cite diagnosis, plan, patches or expected impact as observed proof. UNVERIFIED tests are omitted and must not be invented as failures. PARTIAL evidence cannot fully satisfy a hard gate.",
+    evaluatorInstruction: "Judge only the supplied exact Candidate evidence. Read the existing measuredCandidateDocuments and measuredComparisonDocuments before treating compact output excerpts as missing document content. Comparison observations are the measured current Baseline, not Candidate claims. Respect their scope and omissions; missing comparison, script/style, visual or runtime proof stays unknown. Never cite diagnosis, plan, patches or expected impact as observed proof. UNVERIFIED tests are omitted and must not be invented as failures. PARTIAL evidence cannot fully satisfy a hard gate.",
     testCases: judgeCases.map((testCase) => ({
       id: testCase.id,
       title: testCase.title,
@@ -282,7 +287,7 @@ export async function judgeServerExperimentCandidate(
     }),
   };
   const ai = await ports.judge(payload);
-  return settleAiEvaluation({
+  return { ...settleAiEvaluation({
     criteria: project.acceptanceRubric,
     testCases,
     runs,
@@ -293,5 +298,5 @@ export async function judgeServerExperimentCandidate(
         ? ["部分测试仍缺真实运行能力；对应 Criterion 保持 UNVERIFIED，不作为产品失败。"]
         : []),
     ],
-  });
+  }), measuredReviewVersion: SERVER_MEASURED_REVIEW_VERSION };
 }
