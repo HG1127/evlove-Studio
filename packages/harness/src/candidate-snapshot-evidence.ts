@@ -1,5 +1,5 @@
 import {DOCUMENT_TEXT_REVIEW_MAX_CHARS,type Candidate,type EvolveProject,type TargetRunResult,type TestCase} from "@evolution/contracts";
-import { criterionCanUseLocalSnapshotEvidence, fastHash } from "@evolution/core";
+import { criterionCanUseLocalSnapshotEvidence, fastHash,htmlNativeCaseSource,inspectHtmlNativeEvidence } from "@evolution/core";
 import {isTextArtifactExtension,requiresIndependentFormatValidation} from "@evolution/core";
 import { retrieveTextContext } from "./context-retrieval";
 import { htmlSnapshotReview } from "./html-snapshot-review";
@@ -98,6 +98,14 @@ export function normalizeLocallyVerifiableCandidateRuns(
     if (run.error) return run;
     const testCase = tests.get(run.testCaseId);
     if (!testCase) return run;
+    if(run.nativeHtmlProof){
+      const source=htmlNativeCaseSource(project,testCase);
+      const snapshots=candidate.artifactSnapshots.filter(snapshot=>snapshot.sourceArtifactId===source?.id);
+      const sha=snapshots.length===1?snapshots[0]?.frozenArtifact?.sha256:undefined;
+      const proof=source&&sha?inspectHtmlNativeEvidence(run,testCase.id,source.id,sha):undefined;
+      return proof?.complete?run:{...run,verificationStatus:"unverified",nativeHtmlProof:undefined,renderedDocumentEvidence:undefined,
+        output:"UNVERIFIED: 原生 HTML 观察未绑定本题当前唯一冻结文件，或执行覆盖不完整。"};
+    }
     if(testCase.executionMode==="roundtrip"&&testCase.evidenceScope==="product-behavior")return{
       ...run,verificationStatus:"unverified",
       output:"UNVERIFIED：格式往返只证明字节/结构；实际产品行为必须由独立 Runner 验证。",

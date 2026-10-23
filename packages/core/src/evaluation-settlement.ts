@@ -9,6 +9,7 @@ import type {
 } from "@evolution/contracts";
 import { hasDeterministicRoundtripProof } from "./deterministic-criterion-evidence";
 import { indexUniqueById } from "./identity-index";
+import {inspectHtmlNativeEvidence} from "./html-native-evidence";
 
 export function citesHistoricalEvidence(text: string) {
   return /\b(?:diagnosis|sourceUnderstanding|designRationale|appliedPatches|searchAppliedPatches)\s*[.[]/i.test(text);
@@ -74,7 +75,11 @@ export function deriveCriterionScores(
     const mappedCases = mappedTests.map((testCase) => testCase.id);
     // Generated search smoke covers one interaction, not the complete protection contract.
     // Preserve the Runner's truthful assertion result while limiting criterion-level claims.
-    const limitedCoverage = mappedTests.some((testCase) => testCase.tags?.includes("source-grounded-html-assertions"));
+    const nativeFor=(testCase:TestCase)=>{
+      const run=runMap.get(testCase.id);
+      return run&&inspectHtmlNativeEvidence(run,testCase.id,criterion.artifactIds.length===1?criterion.artifactIds[0]:undefined);
+    };
+    const limitedCoverage = mappedTests.some((testCase) => testCase.tags?.includes("source-grounded-html-assertions")&&!nativeFor(testCase)?.complete);
     const coverageGaps = limitedCoverage ? ["自动生成的 HTML 检查仅覆盖搜索交互，尚未覆盖该保护标准的全部要求；需补齐对应的执行、视觉或人工证据"] : [];
     const mappedStatuses = mappedTests.map((testCase) => {
       const observed = runMap.get(testCase.id);
@@ -82,7 +87,7 @@ export function deriveCriterionScores(
       if (observed?.verificationStatus === "verified"
         && (typeof observed.output !== "string" || !Array.isArray(observed.trace))) return "unverified" as const;
       const status = observed?.verificationStatus ?? "unverified";
-      return status === "verified" && testCase.tags?.includes("source-grounded-html-assertions") ? "partial" : status;
+      return status === "verified" && testCase.tags?.includes("source-grounded-html-assertions")&&!nativeFor(testCase)?.complete ? "partial" : status;
     });
     if (mappedCases.some((id) => repeatedRuns.has(id))) return {
       criterionId: criterion.id,
@@ -116,6 +121,15 @@ export function deriveCriterionScores(
     // success even if an independent Judge later assigns it a high score.
     // Duplicated/ambiguous runs and Judge rows have already failed closed above.
     const sourceDefectRuns=verifiedOriginalDefectRuns(criterion,testCases,runs);
+    const nativeDefects=criterion.id==="PROTECT-ALL"?mappedTests.flatMap(test=>{
+      const proof=nativeFor(test);
+      return proof?.complete&&!proof.pass?[{id:test.id,failures:proof.failures}]:[];
+    }):[];
+    if(nativeDefects.length)return{
+      criterionId:criterion.id,score:0,pass:false,verificationStatus:"verified" as const,
+      evidence:nativeDefects.map(item=>`${item.id}: ${item.failures.join(", ")}`),
+      gaps:["同一冻结 HTML 在原版健康的隔离浏览器中出现可复现保护断言失败；独立 Judge 不得覆盖实际失败。"],testCaseIds:mappedCases,
+    };
     if(criterion.hardGate&&criterion.source==="user-command"&&sourceDefectRuns.length){
       return {
         criterionId:criterion.id,score:0,pass:false,verificationStatus:"verified" as const,

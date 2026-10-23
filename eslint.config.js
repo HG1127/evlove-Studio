@@ -24,7 +24,7 @@ export default defineConfig([
     rules: {
       'no-restricted-imports': ['error', {
         patterns: [{
-          group: ['@evolution/core', '@evolution/harness', '@evolution/adapters', '@/*', 'react', 'react-dom', '@supabase/*', '@vercel/*'],
+          group: ['@evolution/core', '@evolution/harness', '@evolution/adapters', '@evolution/adapters/*', '@/*', 'react', 'react-dom', '@supabase/*', '@vercel/*'],
           message: 'contracts is the innermost shared language and cannot depend on UI, domain, harness or infrastructure.',
         }],
       }],
@@ -36,7 +36,7 @@ export default defineConfig([
     rules: {
       'no-restricted-imports': ['error', {
         patterns: [{
-          group: ['@evolution/harness', '@evolution/adapters', '@/*', 'react', 'react-dom', '@supabase/*', '@vercel/*'],
+          group: ['@evolution/harness', '@evolution/adapters', '@evolution/adapters/*', '@/*', 'react', 'react-dom', '@supabase/*', '@vercel/*'],
           message: 'core is pure Evolution Domain logic and cannot depend on execution hosts or infrastructure.',
         }],
       }],
@@ -48,7 +48,7 @@ export default defineConfig([
     rules: {
       'no-restricted-imports': ['error', {
         patterns: [{
-          group: ['@evolution/adapters', '@/*', 'react', 'react-dom', '@supabase/*', '@vercel/*'],
+          group: ['@evolution/adapters', '@evolution/adapters/*', '@/*', 'react', 'react-dom', '@supabase/*', '@vercel/*'],
           message: 'harness may depend on contracts/core only; infrastructure must be injected through ports/tools.',
         }],
       }],

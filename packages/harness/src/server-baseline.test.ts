@@ -3,6 +3,7 @@ import type { EvaluateAiResult, EvolveProject, TargetRunResult } from "@evolutio
 import { campaignScoringInputFingerprint, fastHash } from "@evolution/core";
 import { canReuseServerBaseline, runServerBaseline } from "./server-baseline";
 import { serverBaselineFingerprint } from "./server-baseline-evidence";
+import {htmlNativeEvidenceFixture} from "@evolution/testkit";
 
 function fixture(): EvolveProject {
   const now="2026-09-20T13:00:00.000Z";
@@ -55,6 +56,25 @@ function judge(): EvaluateAiResult {
 }
 
 describe("server baseline",()=>{
+  it.each(["native-only","later-provider-failure"])("locks the physical Original and preserves native evidence under %s",async mode=>{
+    const p=fixture(),run=htmlNativeEvidenceFixture();
+    p.evalSuite=[p.evalSuite[0]!];p.hiddenEvalSuite=[p.hiddenEvalSuite[0]!];
+    p.evalSuite[0]!.criterionIds=p.acceptanceRubric.map(item=>item.id);
+    p.hiddenEvalSuite[0]!.criterionIds=p.acceptanceRubric.map(item=>item.id);
+    if(mode==="later-provider-failure")p.evalSuite.push({...p.evalSuite[0]!,id:"EXTRA",criterionIds:["CONTENT"]});
+    p.sourceArtifacts[0]={...p.sourceArtifacts[0]!,extension:"html",mimeType:"text/html",inputMode:"upload",storageRef:"original",size:1000};
+    run.testCaseId=p.evalSuite[0]!.id;run.nativeHtmlProof!.testCaseId=run.testCaseId;
+    run.nativeHtmlProof!.sourceArtifactId="source";run.renderedDocumentEvidence!.sourceArtifactId="source";
+    run.nativeHtmlProof!.observation.original.sha256=run.artifactHash!;
+    const reference={schemaVersion:"original-artifact-reference-v1" as const,missionId:p.id,sourceArtifactId:"source",blobId:"original",sha256:run.artifactHash!,sizeBytes:1000};
+    const readOriginal=vi.fn(async()=>[{id:"source",artifactSha256:reference.sha256,originalReference:reference}]);
+    const semantic=vi.fn(async()=>{throw Error("Later semantic provider failed");});
+    const outcome=await runServerBaseline(p,{executeNativeHtmlBatch:async()=>[run],buildCurrentArtifactContext:readOriginal,executeSemanticBatch:semantic,judge:async()=>judge()});
+    expect(readOriginal).toHaveBeenCalledTimes(1);
+    expect(semantic).toHaveBeenCalledTimes(mode==="native-only"?0:1);
+    expect(outcome.baseline.runs[0]?.nativeHtmlProof).toEqual(run.nativeHtmlProof);
+    expect(outcome.baseline.originalReferences).toEqual([reference]);
+  });
   it("diagnoses a measured document deficiency after locking Original bytes without accepting the future Candidate",async()=>{
     const p=fixture();
     p.sourceArtifacts[0]={...p.sourceArtifacts[0]!,extension:"html",mimeType:"text/html",inputMode:"upload",storageRef:"original",size:1000};

@@ -2,6 +2,7 @@ import {describe,expect,it} from "vitest";
 import type {TargetRunResult} from "@evolution/contracts";
 import {EvaluationResultSchema} from "@evolution/contracts";
 import {measuredDocumentObservations,SERVER_MEASURED_REVIEW_VERSION} from "./server-measured-review-evidence";
+import {htmlNativeEvidenceFixture} from "@evolution/testkit";
 
 function observed(id:string,body:string):TargetRunResult {
   return {testCaseId:id,output:`CURRENT CANDIDATE SNAPSHOT EVIDENCE\n\nCase ${id}\n\ncomplete text projection: ${body}`,
@@ -9,6 +10,20 @@ function observed(id:string,body:string):TargetRunResult {
     trace:[{id:`candidate-semantic-snapshot-${id}`,stage:"semantic-evidence",status:"pass",summary:"measured document"}]};
 }
 describe("existing measured document review",()=>{
+  it("includes bound rendered paragraph facts once without converting observations to a quality pass",()=>{
+    const run=htmlNativeEvidenceFixture();
+    const result=measuredDocumentObservations([run,structuredClone(run)]);
+    expect(result.observations).toHaveLength(1);
+    expect(result.observations[0]!.output).toContain(run.renderedDocumentEvidence!.text);
+    expect(result.observations[0]!.output).toContain('"cardDetailChars":3');
+    expect(result.observations[0]!.output).toContain("no automatic quality verdict");
+  });
+  it("omits forged or budget-exceeding native document claims without silently truncating them",()=>{
+    const run=htmlNativeEvidenceFixture();
+    expect(measuredDocumentObservations([run],1)).toMatchObject({observations:[],omittedTestCaseIds:[run.testCaseId]});
+    run.renderedDocumentEvidence!.text+=" unobserved";
+    expect(measuredDocumentObservations([run]).observations).toEqual([]);
+  });
   it("retains a complete expanded observation beyond the old excerpt budget",()=>{
     const run=observed("LARGE","配置说明".repeat(11000)+"TAIL_EXPANDED_CONFIGURATION");
     const result=measuredDocumentObservations([run]);

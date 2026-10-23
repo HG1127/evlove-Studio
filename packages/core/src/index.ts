@@ -61,3 +61,7 @@ export * from "./candidate-metric-deltas";
 export * from "./baseline-original-reference";
 export * from "./html-repair-context";
 export * from "./html-text-node-edits";
+export * from "./html-readable-body";
+export * from "./html-native-program-identity";
+export * from "./html-derived-search-index";
+export * from "./html-native-evidence";

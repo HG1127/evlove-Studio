@@ -26,8 +26,9 @@ import {
 import { normalizeLocallyVerifiableCandidateRuns } from "./candidate-snapshot-evidence";
 import { indexUniqueBatchResults } from "./server-batch-results";
 import { measuredDocumentObservations, SERVER_MEASURED_REVIEW_VERSION } from "./server-measured-review-evidence";
+import {collectServerHtmlNativeRuns,type ServerHtmlNativePort} from "./server-html-native-runs";
 
-export type ServerExperimentExecutionPorts = {
+export type ServerExperimentExecutionPorts = ServerHtmlNativePort & {
   executeSemanticBatch(args: {
     project: EvolveProject;
     candidate: Candidate;
@@ -78,10 +79,11 @@ export async function executeServerExperimentCandidate(
   ports: ServerExperimentExecutionPorts,
   testCases: TestCase[] = project.evalSuite,
 ): Promise<TargetRunResult[]> {
-  const ordered = new Map<string, TargetRunResult>();
+  const ordered = await collectServerHtmlNativeRuns(project,testCases,ports,candidate);
   const semanticCases: TestCase[] = [];
   const externalCases: TestCase[] = [];
   for (const testCase of testCases) {
+    if(ordered.has(testCase.id))continue;
     const criterionIds = new Set(testCase.criterionIds);
     const staticScope = new Set(project.acceptanceRubric.filter((criterion) => criterionIds.has(criterion.id)).flatMap((criterion) => criterion.artifactIds));
     const codebaseStaticCase = testCase.executionMode === "static-evidence"

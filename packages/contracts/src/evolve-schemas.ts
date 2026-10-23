@@ -2,6 +2,7 @@ import { z } from "zod";
 import {ProductionGoalEvidenceSchema} from "./production-goal-evidence";
 import {OriginalArtifactReferenceProofSchema} from "./original-reference-contract";
 import { GitRepositoryBindingSchema, GitTargetSnapshotBindingSchema } from "./git-target-contract";
+import {HtmlNativeRunProofSchema,HtmlRenderedDocumentEvidenceSchema} from "./html-native-observation-contract";
 import {ConnectorCandidateBindingSchema,ConnectorTargetBindingSchema,ConnectorTargetSnapshotBindingSchema} from "./connector-contract";
 
 export const StageSchema = z.enum([
@@ -515,6 +516,8 @@ export const SupersededFinalHoldoutSchema=FinalHoldoutReservationSchema.extend({
 
 export const TargetRunResultSchema = z.object({
   artifactHash:z.string().optional(),
+  nativeHtmlProof:HtmlNativeRunProofSchema.optional(),
+  renderedDocumentEvidence:HtmlRenderedDocumentEvidenceSchema.optional(),
   screenshots:z.array(z.object({name:z.string(),width:z.number(),height:z.number(),dataUrl:z.string(),artifactHash:z.string()})).optional(),
   visualEvidenceRefs:z.array(z.object({name:z.string(),width:z.number(),height:z.number(),artifactHash:z.string(),blobId:z.string()})).optional(),
   testCaseId: z.string(),

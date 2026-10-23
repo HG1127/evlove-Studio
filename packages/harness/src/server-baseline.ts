@@ -34,6 +34,7 @@ import {
 } from "./server-baseline-evidence";
 import { indexUniqueBatchResults } from "./server-batch-results";
 import {groundedOriginalCitationDefect,groundedOriginalDocumentProtection} from "./server-grounded-baseline-defect";
+import {collectServerHtmlNativeRuns,bindServerHtmlNativeOriginalReferences,type ServerHtmlNativePort} from "./server-html-native-runs";
 import { serverExperimentRecoveryCheckpoint } from "./server-experiment-wait";
 import {currentHtmlDocumentTextObservation} from "./server-current-document-evidence";
 
@@ -53,7 +54,7 @@ export function canReuseServerBaseline(project: EvolveProject, routeFingerprint?
   return baselineReadiness(project).ready
     && project.baselineRun.measurementFingerprint === serverBaselineFingerprint(project, routeFingerprint);
 }
-export type ServerBaselinePorts = {
+export type ServerBaselinePorts = ServerHtmlNativePort & {
   scoringRouteFingerprint?: string;
   executeSemanticBatch(args: {
     project: EvolveProject;
@@ -155,13 +156,16 @@ export async function runServerBaseline(
     updatedAt: startedAt,
   };
 
-  const ordered = new Map<string, TargetRunResult>();
+  const ordered = await collectServerHtmlNativeRuns(project,project.evalSuite,ports);
   let currentArtifactContext:Array<Record<string,unknown>>=[];
   let referenceOnlyCriterionIds=new Set<string>();
   let originalReferences:OriginalArtifactReferenceProof[]=[];
   const semanticCases: TestCase[] = [];
   const externalCases: TestCase[] = [];
   for (const testCase of project.evalSuite) {
+    // Native observations still need the complete physical Original references
+    // gathered below before a baseline may be locked.
+    if(ordered.has(testCase.id)){semanticCases.push(testCase);continue;}
     const stored = await storedBaselineEvidence(project, testCase, ports.executeStoredEvidence);
     if (stored) { ordered.set(testCase.id, stored); continue; }
     const currentViewGap = testCase.executionMode === "artifact-runtime" && ports.buildCurrentArtifactContext
@@ -214,9 +218,11 @@ export async function runServerBaseline(
         const proof=OriginalArtifactReferenceProofSchema.safeParse(entry.originalReference);
         return proof.success&&proof.data.sourceArtifactId===entry.id&&proof.data.sha256===entry.artifactSha256?[proof.data]:[];
       });
+      bindServerHtmlNativeOriginalReferences(ordered,references,project.id);
       referenceOnlyCriterionIds=new Set(originalBaselineReferenceCriteria(project,references));
       originalReferences=references;
       for(const testCase of semanticCases){
+        if(ordered.has(testCase.id))continue;
         // Complete original bytes may directly prove a written defect or protected
         // instruction. This is evidence of document text, not Agent behavior.
         const direct=groundedOriginalCitationDefect({
@@ -245,6 +251,7 @@ export async function runServerBaseline(
         }
       }
     } catch(error) {
+      bindServerHtmlNativeOriginalReferences(ordered,originalReferences,project.id);
       const message=error instanceof Error?error.message:String(error);
       // A later provider failure must never erase already grounded source evidence.
       for(const testCase of semanticCases){

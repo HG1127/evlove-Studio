@@ -1,4 +1,4 @@
-import { fastHash } from "@evolution/core";
+import { fastHash,htmlReadableBody } from "@evolution/core";
 
 const EMBEDDED_BLOCK = /<(script|style|template|svg)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
 const ENTITY = /&(#(?:x[\da-f]+|\d+)|amp|lt|gt|quot|apos|nbsp);/gi;
@@ -24,7 +24,9 @@ export function htmlSnapshotReview(content: string) {
   const scripts = embedded.filter((match) => match[1]?.toLowerCase() === "script").map((match) => match[0]);
   const styles = embedded.filter((match) => match[1]?.toLowerCase() === "style").map((match) => match[0]);
   const bodyWithoutEmbedded = body.replace(EMBEDDED_BLOCK, " ").replace(/<!--[\s\S]*?-->/g, " ");
-  const text = decodeEntity(bodyWithoutEmbedded.replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ").trim();
+  const readable=htmlReadableBody(content);
+  if(!readable)return undefined;
+  const text=readable.text;
   const openingTags = [...bodyWithoutEmbedded.matchAll(/<([a-z][\w:-]*)\b([^>]*)>/gi)];
   const tags = openingTags.map((match) => match[1]!.toLowerCase());
   const counts = new Map<string, number>();
@@ -45,9 +47,11 @@ export function htmlSnapshotReview(content: string) {
     rawLength: content.length,
     rawHash: fastHash(content),
     text,
+    readableBodyVersion:readable.version,
+    paragraphFacts:readable.facts,
     scripts,
     styles,
-    summary: `完整 HTML 源码 ${content.length} 字符 / hash ${fastHash(content)}；正文投影 ${text.length} 字符；标签 ${tags.length} 个（${[...counts].sort(([a], [b]) => a.localeCompare(b)).map(([tag, count]) => `${tag}:${count}`).join("、")}）；标题 ${headings.length} 个；重复 ID ${duplicateIds.length} 个；失效页内锚点 ${brokenAnchors.length} 个；内嵌 script ${scripts.length} 段、style ${styles.length} 段。`,
+    summary: `完整 HTML 源码 ${content.length} 字符 / hash ${fastHash(content)}；正文投影 ${text.length} 字符；标签 ${tags.length} 个（${[...counts].sort(([a], [b]) => a.localeCompare(b)).map(([tag, count]) => `${tag}:${count}`).join("、")}）；标题 ${headings.length} 个；重复 ID ${duplicateIds.length} 个；失效页内锚点 ${brokenAnchors.length} 个；内嵌 script ${scripts.length} 段、style ${styles.length} 段。\n${readable.version} 保留标题、段落、卡片及代码空白；下列分配数据仅为观察，不自动决定质量分数或证明真实理解：${JSON.stringify(readable.facts)}`,
     structuralIssues: [...duplicateIds.map((id) => `重复 ID: ${id}`), ...brokenAnchors.map((id) => `失效页内锚点: #${id}`)],
     headings,
   };

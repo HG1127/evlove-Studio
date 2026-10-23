@@ -243,6 +243,9 @@ importers:
       '@evolution/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@evolution/core':
+        specifier: workspace:*
+        version: link:../core
       '@supabase/supabase-js':
         specifier: ^2.116.0
         version: 2.116.0

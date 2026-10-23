@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 import { htmlCandidateProtection, requiresHtmlProtectionBaseline } from "./html-candidate-protection";
+import {synchronizeHtmlCardSearchIndex} from "./html-derived-search-index";
 
 const html = (body: string) => "<html><body>" + body + "</body></html>";
 const section = '<article id="slide-51"><h2>Git &amp; 命令</h2><p>原有步骤</p></article>';
@@ -8,6 +9,14 @@ const report = (originalHtml: string, candidateHtml: string, protectedItems = ["
   htmlCandidateProtection({ sourceArtifactId: "source", originalHtml, candidateHtml, protectedItems });
 
 describe("pure complete HTML Candidate protection", () => {
+  it("keeps raw attribute changes visible and accepts only canonical derived-search changes in the optional identity observation",()=>{
+    const original='<html><body><article class="slide-card" id="slide-64" data-search="old keyword"><div class="slide-body"><p>old content</p></div></article></body></html>';
+    const subject=synchronizeHtmlCardSearchIndex(original,original.replace('old content','new configuration')).html;
+    const input={sourceArtifactId:"s",originalHtml:original,candidateHtml:subject,protectedItems:[],allowCanonicalDerivedSearchIndex:true};
+    expect(htmlCandidateProtection(input).nativeObservation).toMatchObject({originalNamedElementsRetained:false,originalNamedIdentitiesWithCanonicalSearchRetained:true,canonicalSearchIndexChangedIds:["slide-64"],invalidSearchIndexChangedIds:[]});
+    expect(htmlCandidateProtection({...input,candidateHtml:subject.replace('data-search="old keyword new configuration"','data-search="invented"')}).nativeObservation).toMatchObject({originalNamedIdentitiesWithCanonicalSearchRetained:false,invalidSearchIndexChangedIds:["slide-64"]});
+    expect(htmlCandidateProtection({...input,candidateHtml:subject.replace('class="slide-card"','class="broken"')}).nativeObservation.originalNamedIdentitiesWithCanonicalSearchRetained).toBe(false);
+  });
   it("observes static preservation when only document wording changes, without making a runtime verdict",()=>{
     const original='<html><head><style>p{color:red}</style><script>const label="same";</script></head><body><article class="slide-card" id="slide-1"><p>old wording</p></article></body></html>';
     const result=report(original,original.replace("old wording","clearer configuration instructions"),["保留 slide 章节结构"]);

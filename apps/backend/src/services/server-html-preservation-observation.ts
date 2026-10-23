@@ -2,7 +2,7 @@ import type { EvolveProject, SourceArtifact } from "@evolution/contracts";
 import { htmlCandidateProtection } from "@evolution/core";
 import { getServerArtifactStore } from "./artifact-runtime";
 import { serverArtifactSha256 } from "./server-experiment-artifacts";
-export const HTML_PRESERVATION_EXECUTION_VERSION="html-preservation-execution-v1";
+export const HTML_PRESERVATION_EXECUTION_VERSION="html-preservation-execution-v2";
 
 /** Physical comparison returns hashes/counts/booleans only, never HTML or extracted source fragments. */
 export async function serverHtmlPreservationObservation(args:{project:EvolveProject;source:SourceArtifact;candidateBytes:Uint8Array;candidateSha256:string}){
@@ -24,10 +24,11 @@ export async function serverHtmlPreservationObservation(args:{project:EvolveProj
       ||references[0]!.sha256!==originalSha256||references[0]!.sizeBytes!==bytes.byteLength))return unavailable("Original bytes differ from the locked Baseline reference.");
     const originalHtml=new TextDecoder("utf-8",{fatal:true}).decode(bytes);
     const candidateHtml=new TextDecoder("utf-8",{fatal:true}).decode(args.candidateBytes);
-    const report=htmlCandidateProtection({sourceArtifactId:args.source.id,originalHtml,candidateHtml,protectedItems:args.project.protectedItems??[]});
+    const report=htmlCandidateProtection({sourceArtifactId:args.source.id,originalHtml,candidateHtml,protectedItems:args.project.protectedItems??[],allowCanonicalDerivedSearchIndex:true});
     return {schemaVersion:"html-preservation-observation-v1",available:true,sourceArtifactId:args.source.id,originalSha256,candidateSha256:args.candidateSha256,
       observation:report.nativeObservation,limitations:["Static comparison only; independent document quality and actual browser evidence remain required.",
         "HTML5 parsing normalizes source syntax; element/text/attribute equality is not Original byte identity.",
-        "External resource bytes are not compared. Template descendants are outside these parsed-tree observations when templateCount is nonzero."]};
+        "External resource bytes are not compared. Template descendants are outside these parsed-tree observations when templateCount is nonzero.",
+        "Raw named-attribute equality remains separate from exact canonical data-search updates; canonical contents alone do not prove renderer search behavior."]};
   }catch{return unavailable("Physical Original comparison could not be completed; it is not a product failure or a preservation pass.");}
 }

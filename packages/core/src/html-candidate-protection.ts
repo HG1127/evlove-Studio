@@ -1,4 +1,5 @@
 import { parse, type DefaultTreeAdapterTypes } from "parse5";
+import {canonicalHtmlSearchIndexChanges} from "./html-derived-search-index";
 
 type Node = DefaultTreeAdapterTypes.Node;
 type Element = DefaultTreeAdapterTypes.Element;
@@ -54,13 +55,14 @@ function skeleton(nodes:Element[]){
   const positions=new Map(nodes.map((node,index)=>[node,index]));
   return nodes.map(node=>[node.tagName,attributes(node),positions.get(node.parentNode as Element)??-1]);
 }
-function elementRecords(nodes:Element[],include:(node:Element)=>boolean){
+function elementRecords(nodes:Element[],include:(node:Element)=>boolean,canonicalSearchIds:ReadonlySet<string>=new Set()){
   const ancestors=new Map<Element,string>();
   return nodes.flatMap(node=>{
     const parent=node.parentNode;
     const ancestor=parent&&"tagName" in parent?(attribute(parent,"id")||ancestors.get(parent)||""):"";
     ancestors.set(node,ancestor);
-    return include(node)?[JSON.stringify([node.tagName,attributes(node),ancestor])]:[];
+    const attrs=attributes(node).filter(attr=>!(attr[2]==="data-search"&&canonicalSearchIds.has(attribute(node,"id")??"")));
+    return include(node)?[JSON.stringify([node.tagName,attrs,ancestor])]:[];
   });
 }
 const interactive=(node:Element)=>["button","input","select","textarea","form","summary","details","label"].includes(node.tagName)
@@ -81,6 +83,7 @@ function ids(nodes: Element[]) {
 /** Both inputs must be complete files. Never use a parsed excerpt as protection evidence. */
 export function htmlCandidateProtection(input: {
   sourceArtifactId: string; originalHtml: string; candidateHtml: string; protectedItems: string[];
+  allowCanonicalDerivedSearchIndex?:boolean;
 }) {
   const original = elements(descendants(parse(input.originalHtml, { scriptingEnabled: false })));
   const candidate = elements(descendants(parse(input.candidateHtml, { scriptingEnabled: false })));
@@ -123,6 +126,8 @@ export function htmlCandidateProtection(input: {
   const stylesheets=(nodes:Element[])=>nodes.filter(node=>node.tagName==="link"&&attribute(node,"rel")?.split(/\s+/).includes("stylesheet")).map(attributes);
   const originalNamed=elementRecords(original,node=>Boolean(attribute(node,"id"))),candidateNamed=elementRecords(candidate,node=>Boolean(attribute(node,"id")));
   const originalInteractive=elementRecords(original,interactive),candidateInteractive=elementRecords(candidate,interactive);
+  const derived=input.allowCanonicalDerivedSearchIndex?canonicalHtmlSearchIndexChanges(input.originalHtml,input.candidateHtml):undefined;
+  const canonicalSearchIds=new Set(derived?.changedIds.filter(id=>!derived.invalidIds.includes(id))??[]);
   const nativeObservation={
     originalScriptCount:originalScripts.length,candidateScriptCount:candidateScripts.length,
     scriptBlocksUnchanged:equal(originalScripts,candidateScripts),
@@ -131,6 +136,8 @@ export function htmlCandidateProtection(input: {
     elementTreeAndAttributesUnchanged:equal(skeleton(original),skeleton(candidate)),
     originalNamedElementCount:originalNamed.length,candidateNamedElementCount:candidateNamed.length,
     originalNamedElementsRetained:preservesSequence(originalNamed,candidateNamed),
+    ...(derived?{canonicalSearchIndexChangedIds:derived.changedIds,invalidSearchIndexChangedIds:derived.invalidIds,
+      originalNamedIdentitiesWithCanonicalSearchRetained:preservesSequence(elementRecords(original,node=>Boolean(attribute(node,"id")),canonicalSearchIds),elementRecords(candidate,node=>Boolean(attribute(node,"id")),canonicalSearchIds))}:{}),
     originalInteractiveElementCount:originalInteractive.length,candidateInteractiveElementCount:candidateInteractive.length,
     originalInteractiveElementSequenceRetained:preservesSequence(originalInteractive,candidateInteractive),
     originalSlideCardCount:slideCardIds(original).length,candidateSlideCardCount:slideCardIds(candidate).length,

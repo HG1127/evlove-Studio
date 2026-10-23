@@ -19,8 +19,9 @@ import { indexUniqueBatchResults } from "./server-batch-results";
 import { groundedOriginalCitationDefect, groundedOriginalDocumentProtection } from "./server-grounded-baseline-defect";
 import { currentHtmlDocumentTextObservation } from "./server-current-document-evidence";
 import { measuredDocumentObservations, SERVER_MEASURED_REVIEW_VERSION } from "./server-measured-review-evidence";
+import {collectServerHtmlNativeRuns,type ServerHtmlNativePort} from "./server-html-native-runs";
 
-export type ServerCurrentArtifactPorts = {
+export type ServerCurrentArtifactPorts = ServerHtmlNativePort & {
   executeSemanticBatch(args: {
     project: EvolveProject;
     testCases: TestCase[];
@@ -47,10 +48,11 @@ export async function executeServerCurrentArtifactSuite(
   testCases:TestCase[],
   ports:ServerCurrentArtifactPorts,
 ){
-  const ordered=new Map<string,TargetRunResult>();
+  const ordered=await collectServerHtmlNativeRuns(project,testCases,ports);
   const semanticCases:TestCase[]=[];
   const externalCases:TestCase[]=[];
   for(const testCase of testCases){
+    if(ordered.has(testCase.id))continue;
     const stored=await storedBaselineEvidence(project,testCase,ports.executeStoredEvidence);
     if(stored){ordered.set(testCase.id,stored);continue;}
     const gap=testCase.executionMode==="artifact-runtime"&&ports.buildCurrentArtifactContext

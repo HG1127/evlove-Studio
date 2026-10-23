@@ -29,6 +29,7 @@ export * from "./read-query-contract";
 export * from "./text-edit-contract";
 export * from "./document-review-limits";
 export * from "./html-execution-contract";
+export * from "./html-native-observation-contract";
 
 export * from "./artifact-package-contract";
 export * from "./server-ai-connection-contract";

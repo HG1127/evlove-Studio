@@ -1,0 +1,83 @@
+import {z} from "zod";
+
+const sha=z.string().regex(/^[a-f0-9]{64}$/);
+const count=z.number().int().nonnegative();
+export const HTML_NATIVE_PROFILE_ID="vibe-sop-browser-v1";
+export const HTML_NATIVE_OBSERVATION_VERSION="html-native-observation-v1";
+
+export const HtmlNativeInventorySchema=z.object({
+  cards:count,menu:count,top:count,progress:count,pageCopy:count,promptCopy:count,editablePrompts:count,
+  checkItems:count,checkPanels:count,details:count,
+  internalLinks:z.array(z.string().regex(/^#[\w:-]+$/)).max(500),
+  unknownControls:z.array(z.object({tag:z.string(),type:z.string().nullable(),id:z.string()})).max(1000),
+}).strict();
+
+export const HtmlNativeCheckSchema=z.object({
+  id:z.string().min(1).max(160),pass:z.boolean(),
+  tested:count.optional(),failed:count.optional(),count:count.optional(),visible:count.optional(),expected:count.optional(),
+  query:z.string().max(80).optional(),targetCardId:z.string().regex(/^slide-\d+$/).optional(),
+  expectedMatched:z.boolean().optional(),matched:z.boolean().optional(),
+}).strip();
+
+export const HtmlRenderedParagraphFactsSchema=z.object({
+  viewport:z.number().int().positive(),
+  paragraphs:z.array(z.object({
+    section:z.string().max(120),role:z.enum(["introductory","card-detail","paragraph"]),chars:count,
+    lineCount:count,height:z.number().finite().nonnegative(),cardCount:count,cardDetailChars:count,
+  }).strict()).max(12),
+}).strict();
+
+export const HtmlNativeSubjectSchema=z.object({
+  sha256:sha,bodyTextFingerprint:z.string().min(1).max(100),inventory:HtmlNativeInventorySchema,checks:z.array(HtmlNativeCheckSchema).min(1).max(1000),
+  failures:z.array(z.string().max(160)).max(1000),elapsedMs:z.number().finite().nonnegative(),
+  renderedParagraphs:z.array(HtmlRenderedParagraphFactsSchema).length(2),
+}).strict();
+
+export const HtmlNativeStyleComparisonSchema=z.object({
+  width:z.union([z.literal(1440),z.literal(390)]),propertyCount:z.literal(50),
+  namedElementsCompared:count,styleGroupsCompared:count,changedNamed:z.array(z.string().max(160)).max(5000),
+  missingGroups:z.array(z.string().max(500)).max(5000),infiniteAnimations:count,pass:z.boolean(),
+}).strict();
+
+/** Observation of one known renderer profile; it never declares a semantic quality/acceptance pass. */
+export const HtmlNativeObservationSchema=z.object({
+  schemaVersion:z.literal(HTML_NATIVE_OBSERVATION_VERSION),profileId:z.literal(HTML_NATIVE_PROFILE_ID),
+  isolation:z.literal("network-denied-ephemeral"),
+  observedAt:z.iso.datetime(),kernelSha256:sha,programSignature:sha,styleSignature:sha,
+  originalCodeBlocksRetained:z.boolean(),originalNamedElementsRetained:z.boolean(),originalInteractiveSequenceRetained:z.boolean(),
+  originalNamedElementCount:count,
+  rawNamedAttributesRetained:z.boolean(),derivedSearchMetadataUpdates:count,
+  originalSlideCardOrderRetained:z.boolean(),original:HtmlNativeSubjectSchema,subject:HtmlNativeSubjectSchema,
+  contentSearchQueries:z.array(z.object({cardId:z.string().regex(/^slide-\d+$/),query:z.string().min(1).max(80)}).strict()).max(12),
+  styleComparison:z.array(HtmlNativeStyleComparisonSchema).length(2),
+  billingStatus:z.literal("unavailable"),limitations:z.array(z.string().max(500)).max(12),
+}).strict();
+export type HtmlNativeObservation=z.infer<typeof HtmlNativeObservationSchema>;
+
+/** Server-only execution provenance; AI execute-result schemas intentionally do not accept this field. */
+export const HtmlNativeRunProofSchema=z.object({
+  sourceArtifactId:z.string().min(1),testCaseId:z.string().min(1),subjectSha256:sha,
+  producer:z.literal("native-html-observer-v1"),observation:HtmlNativeObservationSchema,
+}).strict();
+export type HtmlNativeRunProof=z.infer<typeof HtmlNativeRunProofSchema>;
+
+export const HtmlRenderedDocumentEvidenceSchema=z.object({
+  schemaVersion:z.literal("rendered-html-document-v1"),sourceArtifactId:z.string().min(1),artifactSha256:sha,
+  textFingerprint:z.string().min(1).max(100),
+  text:z.string().min(1).max(64_000),paragraphs:z.array(HtmlRenderedParagraphFactsSchema).length(2),
+  complete:z.literal(true),excludes:z.tuple([z.literal("scripts"),z.literal("styles"),z.literal("raw-attributes")]),
+}).strict();
+
+export const SandboxHtmlNativeRequestSchema=z.object({
+  original:z.instanceof(Uint8Array).refine(bytes=>bytes.byteLength>0&&bytes.byteLength<=12_000_000),
+  subject:z.instanceof(Uint8Array).refine(bytes=>bytes.byteLength>0&&bytes.byteLength<=12_000_000),
+  expectedOriginalSha256:sha,expectedSubjectSha256:sha,
+}).strict();
+export type SandboxHtmlNativeRequest=z.infer<typeof SandboxHtmlNativeRequestSchema>;
+
+export const SandboxHtmlNativeResponseSchema=z.discriminatedUnion("status",[
+  z.object({status:z.literal("unavailable"),reason:z.string().min(1).max(500)}).strict(),
+  z.object({status:z.literal("observed"),observation:HtmlNativeObservationSchema,
+    subjectText:z.string().min(1).max(64_000)}).strict(),
+]);
+export type SandboxHtmlNativeResponse=z.infer<typeof SandboxHtmlNativeResponseSchema>;

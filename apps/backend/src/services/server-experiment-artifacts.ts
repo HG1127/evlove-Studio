@@ -13,6 +13,7 @@ import { applyExactEdits, ExactEditAnchorError, isTextArtifactExtension, isZipAr
 import { buildServerCandidateTargetContext, buildServerExactCandidateArtifacts, isServerTextEditBlueprint, requireServerCandidateOutputModes } from "./server-candidate-context";
 import { runServerAi } from "./ai-gateway";
 import { checkServerHtmlCandidateProtection } from "./server-html-candidate-protection";
+import {compileServerHtmlDerivedMetadata} from "./server-html-derived-metadata";
 import { getServerArtifactStore } from "./artifact-runtime";
 import { renderSnapshot, verifyRendered } from "./server-artifact-renderer";
 import {parseServerSource} from "./server-source-parser";
@@ -383,6 +384,9 @@ export async function materializeServerCandidateArtifacts(
     if (text && isServerTextEditBlueprint(artifact.content)) {
       snapshotContent=applyExactEdits(parentText,artifact.content,{strict:true});
     }
+    const derived=text?await compileServerHtmlDerivedMetadata({extension:source.extension,content:snapshotContent,parentText,
+      readOriginal:()=>readServerCandidateParentText({...project,searchChampion:undefined},source)}):{content:snapshotContent,checks:[]};
+    snapshotContent=derived.content;
     const unchanged=snapshotContent.trim()===parentText.trim();
     if(unchanged&&!parent&&!text){
       throw new Error(`${source.name} Candidate 与当前父代完全相同，没有产生可验证变异。`);
@@ -410,6 +414,7 @@ export async function materializeServerCandidateArtifacts(
     }
     const built=await buildSnapshotFile(project,source,snapshot,artifact.content,parentCandidate);
     built.checks.push(...protection.checks);
+    built.checks.push(...derived.checks);
     built.limitations.push(...protection.limitations);
     prepared.push({source,snapshot,built,unchanged});
   }
