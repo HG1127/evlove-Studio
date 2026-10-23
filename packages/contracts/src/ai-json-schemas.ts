@@ -20,7 +20,8 @@ const testCase = {
       required:["action","selector","value","count"]},description:"Use [] for non-browser cases. Browser cases require actual selectors and at least one visible/text/count assertion."},
     id: { type: "string" }, title: { type: "string" }, input: { type: "string" }, expected: stringArray, tags: stringArray, hidden: { type: "boolean" }, criterionIds: stringArray,
     executionMode: { type: "string", enum: ["artifact-runtime", "static-evidence", "external-runner", "roundtrip", "visual-review", "manual"] },
-    evidenceScope: { type: "string", enum: ["product-behavior", "implementation", "format", "parser", "cross-artifact"] },
+    evidenceScope: { type: "string", enum: ["product-behavior", "implementation", "format", "parser", "cross-artifact"],
+      description: "Use one exact enum literal. product-behavior includes semantic/user-scenario review of what a document actually states; implementation is static implementation evidence; format is file/roundtrip structure; parser is parsing behavior; cross-artifact compares artifacts. Do not invent document/content/semantic scope aliases. executionMode chooses the executor independently; document review does not establish real external operation." },
   }, required: ["id", "title", "input", "expected", "tags", "hidden", "criterionIds", "executionMode", "evidenceScope", "browserSteps"],
 } as const;
 const problem = {

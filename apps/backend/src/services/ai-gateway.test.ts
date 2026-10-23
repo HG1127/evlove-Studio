@@ -292,6 +292,24 @@ describe("custom provider protocols and JSON output",()=>{
     await expect(withExplicitServerAiConnection(input,()=>runServerAi("eval-suite",payload)))
       .rejects.toMatchObject({code:"AI_OUTPUT_SCHEMA_MISMATCH"});
   });
+  it("rejects an invented seventh-case document scope and retries with the exact unchanged enum",async()=>{
+    const test=(id:string,hidden:boolean)=>({id,title:id,input:"inspect document",expected:["written steps"],tags:[],hidden,
+      criterionIds:["CONTENT"],executionMode:"artifact-runtime",evidenceScope:"product-behavior",browserSteps:[]});
+    const valid={validationCases:Array.from({length:3},(_,i)=>test("V"+i,false)),hiddenCases:Array.from({length:8},(_,i)=>test("H"+i,true)),summary:"paper"};
+    const invalid=structuredClone(valid);invalid.hiddenCases[6]!.evidenceScope="document-content";
+    const fetchMock=vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({choices:[{message:{content:JSON.stringify(invalid)}}]}),{status:200}))
+      .mockResolvedValueOnce(new Response(JSON.stringify({choices:[{message:{content:JSON.stringify(valid)}}]}),{status:200}));
+    vi.stubGlobal("fetch",fetchMock);
+    const payload={original:"same source",instruction:"reserve before planning"};
+    const result=await withExplicitServerAiConnection(input,()=>runServerAi("eval-suite",payload));
+    expect(result.hiddenCases[6]!.evidenceScope).toBe("product-behavior");expect(fetchMock).toHaveBeenCalledTimes(2);
+    const first=JSON.parse(String(fetchMock.mock.calls[0]![1]?.body));
+    const retry=JSON.parse(String(fetchMock.mock.calls[1]![1]?.body));
+    expect(retry.messages[0].content).toContain("hiddenCases.6.evidenceScope");
+    for(const scope of ["product-behavior","implementation","format","parser","cross-artifact"])expect(retry.messages[0].content).toContain(scope);
+    expect(first.messages[0].content).toContain("Do not invent document/content/semantic scope aliases");
+    expect(retry.messages[1].content).toBe(first.messages[1].content);
+  });
   it("stops after one retry when schema remains invalid instead of inventing a success",async()=>{
     const invalid={choices:[{message:{content:JSON.stringify({summary:"no evidence"})}}]};
     const fetchMock=vi.fn(async()=>new Response(JSON.stringify(invalid),{status:200}));

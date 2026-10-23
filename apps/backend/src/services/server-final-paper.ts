@@ -9,7 +9,8 @@ export function serverFinalPaperExecutionContract(project:EvolveProject){
     supportedModes:["artifact-runtime","static-evidence","roundtrip","external-runner"],requireBrowserStepsForExternal:true,
     limitations:["Document text, native byte/structure checks and actual Sandbox DOM assertions are bound.",
       "No human trial or fully verified visual-review port is bound. Do not invent real external configuration, deployment or fault injection for a written-document criterion.",
-      "Browser cases need selectors grounded in the supplied source and visible/text/count assertions in browserSteps. All original criteria and thresholds remain required."]});
+      "Browser cases need selectors grounded in the supplied source and visible/text/count assertions in browserSteps. All original criteria and thresholds remain required.",
+      "evidenceScope must be exactly product-behavior, implementation, format, parser or cross-artifact. Document semantic/user-scenario review uses product-behavior; it is not a new document/content/semantic scope and does not imply real external operation."]});
 }
 
 /** Reuses the existing source payload and configured provider; adds no artifact reads or source enrichment. */
