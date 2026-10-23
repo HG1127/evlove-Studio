@@ -41,7 +41,7 @@ describe("server targeted Artifact repair", () => {
     vi.stubEnv("EVOLUTION_AI_FULL_REPAIR_TEXT_MISSIONS",args.project.id);
     ai.mockImplementation(async(_operation:string,payload:{candidate:{artifacts:Array<{parentSha256:string;htmlTextNodes:Array<{anchorId:string;text:string}>}>}})=>{
       const target=payload.candidate.artifacts[0]!;
-      return output(JSON.stringify({kind:"html-text-node-edits",parentSha256:target.parentSha256,
+      return output(JSON.stringify({kind:"html-body-node-edits-v1",
         edits:[...target.htmlTextNodes.map(node=>({anchorId:node.anchorId,text:node.text+"：填写项目名并保存回读。"})),{anchorId:"invented-third-anchor",text:"无法定位"}]}));
     });
     await expect(repairServerArtifactCandidate(args)).rejects.toThrow(/unknown/);
@@ -49,6 +49,7 @@ describe("server targeted Artifact repair", () => {
   });
   it.each(["bound","changed-contract","different-candidate","not-authorized","other-mission","invalid-allowlist"] as const)("uses only already measured document observations with a %s repair binding",async kind=>{
     const args=await fixture(),base=acceptedPackageFixture(false).project;
+    args.project.sourceArtifacts[0]!.structuredContent={entries:[{path:"legacy-raw.html",content:"<script>PRIVATE_LEGACY_STRUCTURE</script>"}]};
     const complete=current.replace('<p>保留每个章节和原有说明。</p>'.repeat(10000),'<p>保留每个章节和原有说明。</p>');
     args.candidate.artifactSnapshots=[await snapshot("source",kind==="bound"?complete.replace('</body>','<script>PRIVATE_RUNTIME_CODE</script><style>PRIVATE_STYLE_CODE</style></body>'):complete)];
     args.project={...base,...args.project,candidates:[args.candidate],acceptanceRubric:[failed]};
@@ -64,14 +65,15 @@ describe("server targeted Artifact repair", () => {
       expect(payload.measuredCandidateDocuments.observations).toHaveLength(kind==="bound"?1:0);
       if(kind==="bound")expect(payload.measuredCandidateDocuments.observations[0]!.output).toBe(outputText);
       if(kind==="bound"){
+        expect(JSON.stringify(payload)).not.toContain("PRIVATE_LEGACY_STRUCTURE");
         expect(payload.candidate.artifacts[0]!.content).not.toMatch(/PRIVATE_RUNTIME_CODE|PRIVATE_STYLE_CODE/);
-        expect(payload.candidate.artifacts[0]!.mutationMode).toBe("html-text-node-edits");
+        expect(payload.candidate.artifacts[0]!.mutationMode).toBe("html-body-node-edits-v1");
         expect(JSON.stringify(payload.candidate.artifacts[0]!.htmlTextNodes)).not.toMatch(/PRIVATE_RUNTIME_CODE|PRIVATE_STYLE_CODE/);
       }
       const target=payload.candidate.artifacts[0]!;
-      if(target.mutationMode==="html-text-node-edits"){
+      if(target.mutationMode==="html-body-node-edits-v1"){
         const anchor=target.htmlTextNodes!.find(node=>node.text==='主管确认退款后才进入执行。')!;
-        return output(JSON.stringify({kind:"html-text-node-edits",parentSha256:target.parentSha256,edits:[{anchorId:anchor.anchorId,text:"主管确认退款后才进入执行，并记录审批编号。"}]}));
+        return output(JSON.stringify({kind:"html-body-node-edits-v1",edits:[{anchorId:anchor.anchorId,text:"主管确认退款后才进入执行，并记录审批编号。"}]}));
       }
       return output();
     });

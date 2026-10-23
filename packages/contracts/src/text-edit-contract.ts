@@ -20,3 +20,9 @@ export const HtmlTextNodeEditsSchema = z.object({
   parentSha256: z.string().regex(/^[a-f0-9]{64}$/),
   edits: z.array(z.object({anchorId:z.string().min(1),text:z.string()}).strict()).min(1).max(256),
 }).strict();
+
+/** Parent selection is server-owned; these IDs are issued for one SHA-verified request only. */
+export const HtmlBodyNodeEditsSchema = z.object({
+  kind:z.literal("html-body-node-edits-v1"),
+  edits:z.array(z.object({anchorId:z.string().min(1),text:z.string()}).strict()).min(1).max(256),
+}).strict();

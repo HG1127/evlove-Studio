@@ -1,5 +1,5 @@
 import {parse,type DefaultTreeAdapterTypes} from "parse5";
-import {HtmlTextNodeEditsSchema} from "@evolution/contracts";
+import {HtmlBodyNodeEditsSchema,HtmlTextNodeEditsSchema} from "@evolution/contracts";
 import {applyExactEdits} from "./exact-edits";
 
 interface BodyTextNode {
@@ -11,7 +11,8 @@ interface BodyTextNode {
   end:number;
 }
 
-function bodyTextNodes(html:string):BodyTextNode[]{
+function bodyTextNodes(html:string,parentSha256?:string):BodyTextNode[]{
+  if(parentSha256!==undefined&&!/^[a-f0-9]{64}$/.test(parentSha256))throw new Error("Invalid frozen parent SHA-256");
   const root=parse(html,{sourceCodeLocationInfo:true});
   const nodes:BodyTextNode[]=[];
   let physicalBody=false;
@@ -30,7 +31,7 @@ function bodyTextNodes(html:string):BodyTextNode[]{
       const location=node.sourceCodeLocation;
       if(!location)throw new Error("HTML body text has no physical source location");
       const start=location.startOffset,end=location.endOffset;
-      nodes.push({anchorId:`t${start.toString(36)}_${end.toString(36)}`,element,section,text:node.value,start,end});
+      nodes.push({anchorId:`t${start.toString(36)}_${end.toString(36)}${parentSha256?"-"+parentSha256.slice(0,16):""}`,element,section,text:node.value,start,end});
     }
     if("childNodes" in node)for(const child of node.childNodes)visit(child,inBody,element,section);
   };
@@ -40,8 +41,8 @@ function bodyTextNodes(html:string):BodyTextNode[]{
 }
 
 /** Complete body text only; no raw tags, attributes, scripts, styles or template code. */
-export function htmlRepairTextNodeContext(html:string){
-  const nodes=bodyTextNodes(html).map(({anchorId,element,section,text})=>({anchorId,element,section,text}));
+export function htmlRepairTextNodeContext(html:string,parentSha256?:string){
+  const nodes=bodyTextNodes(html,parentSha256).map(({anchorId,element,section,text})=>({anchorId,element,section,text}));
   // Fail closed instead of silently dropping chapters or giving an incomplete edit index.
   if(nodes.length>4096||JSON.stringify(nodes).length>240_000)throw new Error("HTML complete body text edit index exceeds the repair context capacity");
   return nodes;
@@ -51,9 +52,19 @@ export function htmlRepairTextNodeContext(html:string){
 export function resolveHtmlTextNodeEdits(html:string,payload:string,parentSha256:string){
   const data=HtmlTextNodeEditsSchema.parse(JSON.parse(payload));
   if(data.parentSha256!==parentSha256)throw new Error("HTML text edits do not match the frozen parent SHA-256");
-  const anchors=new Map(bodyTextNodes(html).map(node=>[node.anchorId,node]));
+  return exactBodyNodeEdits(html,data.edits,bodyTextNodes(html));
+}
+
+/** The caller owns the verified full SHA and immutable parent; the model cannot select another parent. */
+export function resolveBoundHtmlBodyNodeEdits(html:string,payload:string,parentSha256:string){
+  const data=HtmlBodyNodeEditsSchema.parse(JSON.parse(payload));
+  return exactBodyNodeEdits(html,data.edits,bodyTextNodes(html,parentSha256));
+}
+
+function exactBodyNodeEdits(html:string,requested:Array<{anchorId:string;text:string}>,nodes:BodyTextNode[]){
+  const anchors=new Map(nodes.map(node=>[node.anchorId,node]));
   const seen=new Set<string>();
-  const edits=data.edits.flatMap(edit=>{
+  const edits=requested.flatMap(edit=>{
     const anchor=anchors.get(edit.anchorId);
     if(!anchor||seen.has(edit.anchorId))throw new Error("HTML text edit anchor is unknown or duplicated: "+edit.anchorId);
     seen.add(edit.anchorId);

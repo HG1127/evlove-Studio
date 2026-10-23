@@ -1,5 +1,5 @@
 import type {AcceptanceCriterion,Candidate,EvolveProject,FrozenArtifact} from "@evolution/contracts";
-import {evidenceFingerprint,htmlRepairBodyContext,htmlRepairTextNodeContext,resolveHtmlTextNodeEdits,indexUniqueById,reconcileAcceptedOfflineChampion} from "@evolution/core";
+import {evidenceFingerprint,htmlRepairBodyContext,htmlRepairTextNodeContext,resolveBoundHtmlBodyNodeEdits,indexUniqueById,reconcileAcceptedOfflineChampion} from "@evolution/core";
 import {measuredDocumentObservations,runServerArtifactAcceptance,type ServerArtifactVerification} from "@evolution/harness";
 import {runServerAi} from "./ai-gateway";
 import {getServerArtifactStore} from "./artifact-runtime";
@@ -58,13 +58,13 @@ export async function repairServerArtifactCandidate(args:{
       if(safe===undefined)throw new Error("HTML repair requires complete physical body boundaries before sharing mutation context");
       const sha256=args.candidate.artifactSnapshots.find(snapshot=>snapshot.sourceArtifactId===source.id)?.frozenArtifact?.sha256;
       if(!sha256)throw new Error("HTML body repair requires the verified frozen parent SHA-256");
-      htmlParents.set(source.id,{html:actual,sha256,nodes:htmlRepairTextNodeContext(actual)});
+      htmlParents.set(source.id,{html:actual,sha256,nodes:htmlRepairTextNodeContext(actual,sha256)});
       return safe;
     },args.candidate,
     (source)=>readServerCandidateParentNativeStructure(args.project,source,args.candidate));
   const contexts=rawContexts.map(context=>{
     const parent=htmlParents.get(context.id);
-    return parent?{...context,content:"",mutationMode:"html-text-node-edits",truncated:false,
+    return parent?{...context,content:"",structuredContext:undefined,mutationMode:"html-body-node-edits-v1",truncated:false,
       originalChars:parent.html.length,parentSha256:parent.sha256,htmlTextNodes:parent.nodes,
       contextProjection:"complete body text nodes with physical edit IDs; no raw tags, attributes, scripts, styles or template code"}:context;
   });
@@ -83,7 +83,7 @@ export async function repairServerArtifactCandidate(args:{
     candidate:{
       id:args.candidate.id,
       title:args.candidate.title??args.candidate.name,
-      patches:args.candidate.patches,
+      patches:authorizedBody?[]:args.candidate.patches,
       artifacts:contexts.map((context)=>({
         sourceArtifactId:context.id,
         name:context.name,
@@ -103,7 +103,7 @@ export async function repairServerArtifactCandidate(args:{
       })),
     },
     measuredCandidateDocuments:measuredDocumentObservations(boundObservation?args.project.validationRun.runs:[]),
-    scopeInstruction:"Satisfy the entire supplied failed requirement in the actual document. Use complete htmlTextNodes and existing measuredCandidateDocuments to understand its full chapter/configuration scope; do not replace a request for concrete configuration detail with generic instructions telling the reader to add details. These are existing measured text observations, not quality verdicts or script/style/runtime proof. For html-text-node-edits use only the exact supplied anchorId and parentSha256, with the complete replacement plain text for that node. Never concatenate rendered paragraphs into a raw HTML anchor. Spread concrete, accurate configuration explanations across the chapters that need them, preserving all existing facts and protected interactions. All original goals, protected items and acceptance thresholds remain binding. A new Candidate must pass the complete Visible suite, ordinary Hidden and the unchanged independent final paper before acceptance.",
+    scopeInstruction:"Satisfy the entire supplied failed requirement in the actual document. Use complete htmlTextNodes and existing measuredCandidateDocuments to understand its full chapter/configuration scope; do not replace a request for concrete configuration detail with generic instructions telling the reader to add details. These are existing measured text observations, not quality verdicts or script/style/runtime proof. For html-body-node-edits-v1 use only exact supplied anchorIds and complete replacement plain text. The server binds the current frozen parent; do not select a parent or return a hash. Never concatenate rendered paragraphs into a raw HTML anchor. Spread concrete, accurate configuration explanations across the chapters that need them, preserving all existing facts and protected interactions. All original goals, protected items and acceptance thresholds remain binding. A new Candidate must pass the complete Visible suite, ordinary Hidden and the unchanged independent final paper before acceptance.",
     failedCriteria:args.failedCriteria.map((criterion)=>{
       const score=args.project.validationRun.evaluation?.criterionScores?.find((item)=>item.criterionId===criterion.id);
       return {
@@ -117,11 +117,11 @@ export async function repairServerArtifactCandidate(args:{
       };
     }),
     instruction:"Change only the VERIFIED failed criteria above. Preserve every other artifact behavior and protected item. Return exactly one artifact for every supplied target. For an unchanged DOCX/PPTX/XLSX/XLS/ODS/CSV/TSV/ZIP target return JSON {kind:'keep-parent',sourceArtifactId:'EXACT target id'} so the server reuses the verified frozen bytes; never reconstruct native file bytes from an excerpt. For other unchanged targets return their current content; for unchanged excerpted text targets return one exact text-edit with identical before/after. For changed DOCX targets return {kind:'document',parts:[{path:'word/document.xml',textRuns:[{index:0,text:'new text'}]}]}; for PPTX return {kind:'presentation',slides:[{number:1,textRuns:[{index:0,text:'new text'}]}]}, using only real indexed paths/slides from structuredContext. For changed spreadsheets return {kind:'spreadsheet',sheets:[{name:'Existing Sheet',cells:[{address:'A1',value:'new value'}]}]} using only real Sheet/A1 locations and preserving formulas; do not fabricate calculated formula caches. Every changed native target must have actual differences. For codebase/package targets return a JSON overlay {kind:'codebase',overlay:true,files:[{path,content}],deletions:[path]} containing only actual changes/deletions. For text artifacts with mutationMode text-edits, return content JSON {kind:'text-edits',edits:[{before,after,start?,end?}]}, anchored verbatim to current Candidate chunks without chunk markers or ellipses. The server applies edits to the complete tested Candidate, preserving untouched bytes. Do not rewrite a whole artifact from excerpts. The output becomes a NEW Candidate and must be re-tested on the full Hidden Holdout.",
-    htmlBodyInstruction:"For mutationMode html-text-node-edits, artifact.content MUST be JSON {kind:'html-text-node-edits',parentSha256:'EXACT supplied hash',edits:[{anchorId:'EXACT supplied ID',text:'complete replacement plain text'}]}. Return only changed nodes. Text is plain prose, never HTML markup; the server escapes it and preserves all surrounding markup/code/styles. Do not use text-edits or rendered text as a raw HTML anchor for these targets.",
+    htmlBodyInstruction:"For mutationMode html-body-node-edits-v1, artifact.content MUST be JSON {kind:'html-body-node-edits-v1',edits:[{anchorId:'EXACT supplied ID',text:'complete replacement plain text'}]}. Return only changed nodes. DO NOT include parentSha256 or any parent/hash field: the server owns that binding. Text is plain prose, never HTML markup; the server escapes it and preserves all surrounding markup/code/styles. Do not use text-edits or rendered text as a raw HTML anchor for these targets.",
   });
   const artifacts=response.artifacts.map(artifact=>{
     const parent=htmlParents.get(artifact.sourceArtifactId);
-    return parent?{...artifact,content:resolveHtmlTextNodeEdits(parent.html,artifact.content,parent.sha256)}:artifact;
+    return parent?{...artifact,content:resolveBoundHtmlBodyNodeEdits(parent.html,artifact.content,parent.sha256)}:artifact;
   });
   requireServerCandidateOutputModes(contexts,artifacts);
   if(response.repairedCriteria.some((id)=>!failedIds.has(id))){

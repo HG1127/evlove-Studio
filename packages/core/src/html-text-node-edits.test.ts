@@ -1,6 +1,6 @@
 import {describe,expect,it} from "vitest";
 import {applyExactEdits} from "./exact-edits";
-import {htmlRepairTextNodeContext,resolveHtmlTextNodeEdits} from "./html-text-node-edits";
+import {htmlRepairTextNodeContext,resolveBoundHtmlBodyNodeEdits,resolveHtmlTextNodeEdits} from "./html-text-node-edits";
 
 const sha="a".repeat(64);
 const html='<html><head><script>HEAD_PRIVATE</script></head><body><article id="c01" style="STYLE_PRIVATE" onclick="EVENT_PRIVATE">'
@@ -10,6 +10,16 @@ const html='<html><head><script>HEAD_PRIVATE</script></head><body><article id="c
 const payload=(edits:Array<{anchorId:string;text:string}>,parentSha256=sha)=>JSON.stringify({kind:"html-text-node-edits",parentSha256,edits});
 
 describe("frozen HTML body text edit anchors",()=>{
+  it("binds parent selection on the server and refuses stale IDs or model-supplied parent fields",()=>{
+    const node=htmlRepairTextNodeContext(html,sha)[0]!;
+    const edits=[{anchorId:node.anchorId,text:"先填写配置项，再保存并检查。"}];
+    const bound=JSON.stringify({kind:"html-body-node-edits-v1",edits});
+    expect(applyExactEdits(html,resolveBoundHtmlBodyNodeEdits(html,bound,sha),{strict:true})).toContain("先填写配置项，再保存并检查。");
+    expect(()=>resolveBoundHtmlBodyNodeEdits(html,bound,"b".repeat(64))).toThrow(/unknown/);
+    expect(()=>resolveBoundHtmlBodyNodeEdits(html,JSON.stringify({kind:"html-body-node-edits-v1",parentSha256:sha,edits}),sha)).toThrow();
+    const legacyNode=htmlRepairTextNodeContext(html)[0]!;
+    expect(()=>resolveBoundHtmlBodyNodeEdits(html,JSON.stringify({kind:"html-body-node-edits-v1",edits:[{...edits[0]!,anchorId:legacyNode.anchorId}]}),sha)).toThrow(/unknown/);
+  });
   it("provides the full body including the final chapter without raw protected bytes",()=>{
     const nodes=htmlRepairTextNodeContext(html);
     expect(nodes.at(-1)).toMatchObject({section:"c11",element:"p",text:"完整配置收尾"});
