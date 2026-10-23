@@ -1,6 +1,7 @@
 import type { ZodType } from "zod";
 import { aiProviderTransportFailure,fetchAiProvider,parseStructuredAiOutput } from "@evolution/adapters";
 import { createHash } from "node:crypto";
+import {serverAiRepairContract} from "./server-ai-repair-contract";
 import {
   AiOperationSchema,
   ArtifactAcceptanceAiResultSchema,
@@ -21,7 +22,6 @@ import {
   PlanAiResultSchema,
   PopulationEvaluationAiResultSchema,
   ProblemAnalysisAiResultSchema,
-  RepairArtifactAiResultSchema,
   ReleaseReviewAiResultSchema,
   RubricAiResultSchema,
   TargetAiResultSchema,
@@ -101,7 +101,7 @@ const SYSTEM=[
   "Return only JSON matching the requested schema. Use concise business-readable Chinese.",
 ].join("\n");
 
-function contract(operation:ServerAiOperation):Contract<unknown>{
+function contract(operation:ServerAiOperation,payload:unknown):Contract<unknown>{
   if(operation==="intake")return{schema:jsonSchemas.intake,parser:IntakeAiResultSchema,instruction:"Understand the user command and parsed artifact evidence. Infer the semantic business object, exactly six workflow stages, a compact acceptance rubric, goals, metrics, protected/editable scope, risks and artifact summaries. Parsing/runtime limitations are not product defects; never claim unseen evidence."};
   if(operation==="understand")return{schema:jsonSchemas.understand,parser:UnderstandAiResultSchema,instruction:"Deeply understand supplied command and artifact evidence. Restate intent, implicit requirements, assumptions, material clarifications, acceptance focus and confidence. Do not ask about parser/runtime capability."};
   if(operation==="command")return{schema:jsonSchemas.command,parser:CommandAiResultSchema,instruction:"Interpret the new command against current mission and artifact evidence. Preserve prior intent unless explicitly changed and return the consolidated command, scope additions and safe next action."};
@@ -110,7 +110,7 @@ function contract(operation:ServerAiOperation):Contract<unknown>{
   if(operation==="eval-suite")return{schema:jsonSchemas.evalSuite,parser:EvalSuiteAiResultSchema,instruction:"Create a compact discriminative Eval Suite mapped to the Acceptance Rubric: validationCases must contain 3-12 cases; hiddenCases must contain 2-8 cases. One case may cover multiple related criteria. Cover every criterion and hard gate with truthful execution modes."};
   if(operation==="build-candidate")return{schema:jsonSchemas.buildCandidate,parser:BuildCandidateAiResultSchema,instruction:"Construct exact Candidate artifacts from the CURRENT target version and Candidate plan. Preserve protected/untouched scope; never claim tests passed."};
   if(operation==="execute-artifact")return{schema:jsonSchemas.executeArtifact,parser:ExecuteArtifactAiResultSchema,instruction:"Inspect or execute one supplied current artifact against the test intent. Return concrete output/trace from supplied evidence; say UNVERIFIED when behavior cannot be established."};
-  if(operation==="repair-artifact")return{schema:jsonSchemas.repairArtifact,parser:RepairArtifactAiResultSchema,instruction:"Repair only explicitly supplied VERIFIED failed criteria on exact current Candidate artifacts. Preserve unrelated/protected behavior; never claim validation passed."};
+  if(operation==="repair-artifact")return serverAiRepairContract(payload);
   if(operation==="execute-artifact-batch")return{schema:jsonSchemas.executeArtifactBatch,parser:ExecuteArtifactBatchAiResultSchema,instruction:"Inspect CURRENT artifact evidence against each supplied test. Return concrete observations only; missing evidence is UNVERIFIED, not invented failure."};
   if(operation==="evaluate-population")return{schema:jsonSchemas.evaluatePopulation,parser:PopulationEvaluationAiResultSchema,instruction:"Compare the candidate population only from measured evidence. Score every candidate and enforce hard gates/safety without treating missing evidence as product failure."};
   if(operation==="artifact-acceptance")return{schema:jsonSchemas.artifactAcceptance,parser:ArtifactAcceptanceAiResultSchema,instruction:"Perform Gate F acceptance on exact supplied Candidate artifacts. Return every supplied criterion result and truthful coverage/integrity/pairwise/hard-gate conclusions."};
@@ -354,7 +354,7 @@ export function runServerAi(operation:"visual-judge",payload:unknown,media?:Serv
 export function runServerAi(operation:AiOperation,payload:unknown,media?:ServerAiMedia):Promise<unknown>;
 export function runServerAi(operation:ServerAiOperation,payload:unknown,media?:ServerAiMedia){
   AiOperationSchema.parse(operation);
-  return structured(payload,contract(operation),media);
+  return structured(payload,contract(operation,payload),media);
 }
 
 function serverAiErrorChain(error:unknown){

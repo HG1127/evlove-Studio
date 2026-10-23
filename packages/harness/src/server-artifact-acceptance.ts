@@ -252,6 +252,8 @@ export async function runServerArtifactAcceptance(
   const attempt=(inputProject.artifactAcceptance.attempts??0)+1;
   const max=inputProject.artifactAcceptance.maxRepairAttempts??3;
   if(failedCriteria.length&&attempt<=max){
+    // A completed failed provider/build attempt consumes the same repair budget as a successful one.
+    project={...project,artifactAcceptance:{...acceptance,attempts:attempt}};
     try{
       const repaired=await ports.repairCandidate({project:inputProject,candidate,failedCriteria,attempt});
       if(repaired.id===candidate.id)throw new Error("Repair Candidate 必须使用新的 Candidate identity");

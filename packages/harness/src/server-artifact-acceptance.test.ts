@@ -31,6 +31,20 @@ function fixture(pass=true){
 }
 
 describe("server artifact acceptance",()=>{
+  it("retains failed construction attempts so retries cannot bypass the repair limit",async()=>{
+    const x=fixture(false);
+    const repair=vi.fn().mockRejectedValue(new Error("third anchor is absent"));
+    const ports={verifyFrozenArtifacts:async()=>({verified:[x.frozen],unavailable:[],failed:[]}),repairCandidate:repair};
+    const first=await runServerArtifactAcceptance(x.project,ports);
+    expect(first.project.artifactAcceptance.attempts).toBe(1);
+    expect(first.project.candidates).toEqual(x.project.candidates);
+    expect(first.project.validationRun).toEqual(x.project.validationRun);
+    const second=await runServerArtifactAcceptance(first.project,ports);
+    expect(second.project.artifactAcceptance.attempts).toBe(2);
+    const exhausted=await runServerArtifactAcceptance(second.project,ports);
+    expect(exhausted.accepted).toBe(false);expect(exhausted.repaired).toBe(false);
+    expect(repair).toHaveBeenCalledTimes(2);
+  });
   it.each(["experiment","validation"] as const)("plans bound content repair from %s while retaining the pending protection request",phase=>{
     const x=fixture(false),p=x.project;
     p.inputUnderstanding=InputUnderstandingSchema.parse({status:"ready",confidence:0.95});
