@@ -1,9 +1,9 @@
-import type { TargetRunResult } from "@evolution/contracts";
+import {DOCUMENT_TEXT_OBSERVATION_MAX_CHARS,type TargetRunResult} from "@evolution/contracts";
 
 export const SERVER_MEASURED_REVIEW_VERSION = "server-measured-document-review-v1";
 
 /** Reuse only existing document observations. No Artifact/Source reads or raw HTML reconstruction. */
-export function measuredDocumentObservations(runs: TargetRunResult[], budget = 32_000) {
+export function measuredDocumentObservations(runs: TargetRunResult[], budget = DOCUMENT_TEXT_OBSERVATION_MAX_CHARS) {
   const observations: Array<{testCaseId:string;artifactHash?:string;output:string}> = [];
   const omittedTestCaseIds: string[] = [];
   const seen = new Set<string>();

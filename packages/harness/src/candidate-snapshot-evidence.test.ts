@@ -126,7 +126,9 @@ describe("candidate snapshot evidence",()=>{
     expect(run?.output).toContain("HTML 证据边界");
     expect(run?.output).not.toContain("旧版教程");
     const hugeVisible={artifactSnapshots:[{...candidate.artifactSnapshots[0]!,content:`<html><body>${"<p>完整可读内容</p>".repeat(6000)}</body></html>`}]} as Candidate;
-    expect(normalizeLocallyVerifiableCandidateRuns(project,hugeVisible,[testCase],[seed])[0]?.verificationStatus).toBe("partial");
+    expect(normalizeLocallyVerifiableCandidateRuns(project,hugeVisible,[testCase],[seed])[0]?.verificationStatus).toBe("verified");
+    const beyondCapacity={artifactSnapshots:[{...candidate.artifactSnapshots[0]!,content:`<html><body>${"<p>完整可读内容</p>".repeat(12000)}</body></html>`}]} as Candidate;
+    expect(normalizeLocallyVerifiableCandidateRuns(project,beyondCapacity,[testCase],[seed])[0]?.verificationStatus).toBe("partial");
     const shortCandidate={artifactSnapshots:[{...candidate.artifactSnapshots[0]!,content:"<html><body><h2>概念解释</h2><p>具体示例</p></body></html>"}]} as Candidate;
     expect(normalizeLocallyVerifiableCandidateRuns(project,shortCandidate,[testCase],[seed])[0]?.verificationStatus).toBe("verified");
     const malformed={artifactSnapshots:[{...candidate.artifactSnapshots[0]!,content:"<main>只有片段</main>"}]} as Candidate;
@@ -136,8 +138,8 @@ describe("candidate snapshot evidence",()=>{
   it("reviews a long HTML file's complete text projection without mistaking CSS and scripts for prose",()=>{
     const style=`<style>${".card{padding:12px;color:#123456;}".repeat(2500)}</style>`;
     const script=`<script>${"function noop(){return true;}".repeat(1000)}</script>`;
-    const original=`<html><head>${style}</head><body><h1>旧版说明</h1>${"<p>背景资料</p>".repeat(2000)}${script}</body></html>`;
-    const changed=`<html><head>${style}</head><body><h1>新版说明</h1>${"<p>背景资料</p>".repeat(2000)}<p>清晰的操作步骤和示例</p>${script}</body></html>`;
+    const original=`<html><head>${style}</head><body><h1>旧版说明</h1>${"<p>背景资料</p>".repeat(7000)}${script}</body></html>`;
+    const changed=`<html><head>${style}</head><body><h1>新版说明</h1>${"<p>背景资料</p>".repeat(7000)}<p>清晰的操作步骤和示例</p>${script}</body></html>`;
     const project={evolutionCommand:"优化说明",acceptanceRubric:[
       {id:"READ",artifactIds:["html"],validationMethod:"semantic-judge"},
       {id:"SYS-PAIRWISE",artifactIds:["html"],validationMethod:"semantic-judge"},

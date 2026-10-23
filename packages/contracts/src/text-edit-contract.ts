@@ -13,3 +13,10 @@ export const TextArtifactEditsSchema = z.object({
   edits: z.array(TextArtifactEditSchema).min(1).max(256),
 }).strict();
 export type TextArtifactEdit = z.infer<typeof TextArtifactEditSchema>;
+
+/** Plain body-text replacements bound to one frozen HTML parent, never executable markup. */
+export const HtmlTextNodeEditsSchema = z.object({
+  kind: z.literal("html-text-node-edits"),
+  parentSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  edits: z.array(z.object({anchorId:z.string().min(1),text:z.string()}).strict()).min(1).max(256),
+}).strict();

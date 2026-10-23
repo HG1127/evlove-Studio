@@ -1,10 +1,10 @@
 import {z} from "zod";
-import type {EvolveProject,TargetRunResult,TestCase} from "@evolution/contracts";
+import {DOCUMENT_TEXT_REVIEW_MAX_CHARS,DOCUMENT_TEXT_REVIEW_TOTAL_CHARS,type EvolveProject,type TargetRunResult,type TestCase} from "@evolution/contracts";
 import {criterionCanUseLocalSnapshotEvidence} from "@evolution/core";
 
 const CompleteHtmlText=z.object({
   id:z.string().min(1),artifactSha256:z.string().regex(/^[a-f0-9]{64}$/),
-  content:z.string().min(1).max(28_000),truncated:z.literal(false),
+  content:z.string().min(1).max(DOCUMENT_TEXT_REVIEW_MAX_CHARS),truncated:z.literal(false),
   contextRepresentation:z.literal("complete-html-static-text-projection"),
   originalChars:z.number().int().positive(),projectionChars:z.number().int().positive(),excludes:z.array(z.string()),
 }).passthrough().refine(row=>row.projectionChars<=row.originalChars&&row.projectionChars<=row.content.length);
@@ -24,7 +24,7 @@ export function currentHtmlDocumentTextObservation(project:EvolveProject,test:Te
   });
   if(observations.some(p=>!p?.success))return undefined;
   const files=observations.map(p=>p!.data!);
-  if(files.reduce((sum,file)=>sum+file.content.length,0)>56_000)return undefined;
+  if(files.reduce((sum,file)=>sum+file.content.length,0)>DOCUMENT_TEXT_REVIEW_TOTAL_CHARS)return undefined;
   if(files.some(file=>!["scripts","styles","visual-fidelity","runtime-behavior"].every(scope=>file.excludes.includes(scope))))return undefined;
   return {testCaseId:test.id,verificationStatus:"verified",latencyMs:0,cost:0,
     ...(files.length===1?{artifactHash:files[0]!.artifactSha256}:{}),

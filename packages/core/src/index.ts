@@ -60,3 +60,4 @@ export * from "./candidate-build-checkpoint";
 export * from "./candidate-metric-deltas";
 export * from "./baseline-original-reference";
 export * from "./html-repair-context";
+export * from "./html-text-node-edits";

@@ -6,12 +6,21 @@ import {buildServerCurrentSemanticArtifactContext} from "./server-current-semant
 const {blobs,metadata}=vi.hoisted(()=>({blobs:new Map<string,Blob>(),metadata:vi.fn()}));
 vi.mock("./artifact-runtime",()=>({getServerArtifactStore:()=>({get:async(id:string)=>blobs.get(id),getMetadata:metadata})}));
 const quote="REFUND_APPROVAL_CASE 必须由主管批准并记录退款编号。";
-const html="<html><head><style>"+".presentation-style{color:red}\n".repeat(2500)+"</style></head><body>"+"<p>其他章节</p>".repeat(6000)+"<article>"+quote+"</article>"+"<p>后续附件</p>".repeat(6000)+"</body></html>";
+const html="<html><head><style>"+".presentation-style{color:red}\n".repeat(2500)+"</style></head><body>"+"<p>其他章节</p>".repeat(12000)+"<article>"+quote+"</article>"+"<p>后续附件</p>".repeat(12000)+"</body></html>";
 const testCase=TestCaseSchema.parse({id:"H1",title:"退款审批",input:quote,expected:[quote],criterionIds:["CONTENT"],executionMode:"artifact-runtime",hidden:true});
 const source=SourceArtifactSchema.parse({id:"source",name:"sop.html",extension:"html",mimeType:"text/html",role:"target",artifactKind:"document",inputMode:"upload",parseStatus:"ready",textContent:"STALE PARSED INDEX",storageRef:"original",size:Buffer.byteLength(html),createdAt:"2026-10-08T00:00:00.000Z"});
 const project={id:"mission",version:"V1",goal:"细化流程",evolutionCommand:"细化流程",sourceArtifacts:[source],acceptanceRubric:[],evalSuite:[testCase]} as unknown as EvolveProject;
 beforeEach(()=>{blobs.clear();blobs.set("original",new Blob([html],{type:"text/html"}));metadata.mockReset();metadata.mockResolvedValue(undefined);});
 describe("actual-file semantic body context",()=>{
+  it("supplies a complete expanded body above the previous capacity without dropping its tail",async()=>{
+    const body="配置项含义、填写方法、保存与检查。".repeat(2200)+"TAIL_EXPANDED_CONFIGURATION";
+    const actual='<html><head><style>PRIVATE_STYLE</style></head><body><p>'+body+'</p><script>PRIVATE_SCRIPT</script></body></html>';
+    blobs.set("original",new Blob([actual],{type:"text/html"}));
+    const [item]=await buildServerCurrentSemanticArtifactContext({project:{...project,sourceArtifacts:[{...source,size:Buffer.byteLength(actual)}]}});
+    expect(item).toMatchObject({truncated:false,contextRepresentation:"complete-html-static-text-projection"});
+    expect(item!.content).toContain("TAIL_EXPANDED_CONFIGURATION");
+    expect(item!.content).not.toMatch(/PRIVATE_STYLE|PRIVATE_SCRIPT/);
+  });
   it("supplies every chapter when large HTML has a complete body within the existing review budget",async()=>{
     const chapters=Array.from({length:111},(_,index)=>`<article id="chapter-${index}"><h3>第${index+1}章</h3><p>${"具体配置的用途、默认值和操作步骤。".repeat(11)} 结束标记-${index}</p></article>`).join("");
     const actual=`<html><head><style>${".layout{color:red}".repeat(3000)}</style></head><body>${chapters}<script>SECRET_SCRIPT_CONTENT</script></body></html>`;

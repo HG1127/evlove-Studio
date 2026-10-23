@@ -1,4 +1,4 @@
-import {OriginalArtifactReferenceProofSchema,type OriginalArtifactReferenceProof,type EvolveProject,type TestCase} from "@evolution/contracts";
+import {DOCUMENT_TEXT_REVIEW_MAX_CHARS,DOCUMENT_TEXT_REVIEW_TOTAL_CHARS,OriginalArtifactReferenceProofSchema,type OriginalArtifactReferenceProof,type EvolveProject,type TestCase} from "@evolution/contracts";
 import { compactServerSourceText, htmlSnapshotReview, serverSemanticContextQuery, trustedServerBaselineChampion } from "@evolution/harness";
 import { getServerArtifactStore } from "./artifact-runtime";
 import { serverArtifactSha256, verifyServerCandidateFrozenArtifact } from "./server-experiment-artifacts";
@@ -6,9 +6,9 @@ import { extractServerStaticArtifactText } from "./server-static-artifact-eviden
 import { indexServerCodebaseZip, rankServerCodebaseFiles } from "./server-codebase-zip-index";
 
 const MAX_FILE_BYTES = 12_000_000;
-const MAX_TOTAL_CHARS = 56_000;
+const MAX_TOTAL_CHARS = DOCUMENT_TEXT_REVIEW_TOTAL_CHARS;
 const MAX_ARTIFACT_CHARS = 18_000;
-const MAX_HTML_TEXT_CHARS = 28_000;
+const MAX_HTML_TEXT_CHARS = DOCUMENT_TEXT_REVIEW_MAX_CHARS;
 async function codebaseSemanticText(bytes: Uint8Array, project: EvolveProject) {
   const index = await indexServerCodebaseZip(bytes);
   const query = [project.goal, project.evolutionCommand, ...project.acceptanceRubric.map((criterion) => criterion.requirement)].join(" ");

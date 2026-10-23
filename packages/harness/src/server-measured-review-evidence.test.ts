@@ -9,6 +9,12 @@ function observed(id:string,body:string):TargetRunResult {
     trace:[{id:`candidate-semantic-snapshot-${id}`,stage:"semantic-evidence",status:"pass",summary:"measured document"}]};
 }
 describe("existing measured document review",()=>{
+  it("retains a complete expanded observation beyond the old excerpt budget",()=>{
+    const run=observed("LARGE","配置说明".repeat(11000)+"TAIL_EXPANDED_CONFIGURATION");
+    const result=measuredDocumentObservations([run]);
+    expect(result.observations[0]?.output).toBe(run.output);
+    expect(result.omittedTestCaseIds).toEqual([]);
+  });
   it("retains the complete measured body beyond the compact excerpt and deduplicates case wrappers",()=>{
     const body="document content ".repeat(1000)+"TAIL-ONLY-REQUIREMENT";
     const result=measuredDocumentObservations([observed("A",body),observed("B",body)]);

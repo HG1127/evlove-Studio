@@ -1,4 +1,4 @@
-import type { Candidate, EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
+import {DOCUMENT_TEXT_REVIEW_MAX_CHARS,type Candidate,type EvolveProject,type TargetRunResult,type TestCase} from "@evolution/contracts";
 import { criterionCanUseLocalSnapshotEvidence, fastHash } from "@evolution/core";
 import {isTextArtifactExtension,requiresIndependentFormatValidation} from "@evolution/core";
 import { retrieveTextContext } from "./context-retrieval";
@@ -188,7 +188,8 @@ export function normalizeLocallyVerifiableCandidateRuns(
       const scopedIds = new Set(mapped.flatMap((criterion) => criterion.artifactIds));
       const snapshots = candidate.artifactSnapshots.filter((snapshot) => !scopedIds.size || scopedIds.has(snapshot.sourceArtifactId));
       const query = `${project.evolutionCommand}\n${testCase.title}\n${testCase.input}\n${testCase.expected.join(" ")}`;
-      const maxSideChars = 28_000;
+      const maxSideChars = snapshots.length&&snapshots.every(snapshot=>/^(html|htm)$/i.test(sources.get(snapshot.sourceArtifactId)?.extension??""))
+        ?DOCUMENT_TEXT_REVIEW_MAX_CHARS:28_000;
       const pairs = snapshots.flatMap((snapshot) => {
         const source = sources.get(snapshot.sourceArtifactId);
         if (!source || !snapshot.content) return [];
@@ -299,7 +300,8 @@ export function normalizeLocallyVerifiableCandidateRuns(
       const scopedIds = new Set(mapped.flatMap((criterion) => criterion.artifactIds));
       const snapshots = candidate.artifactSnapshots.filter((snapshot) => !scopedIds.size || scopedIds.has(snapshot.sourceArtifactId));
       const query = `${project.evolutionCommand}\n${testCase.title}\n${testCase.input}\n${testCase.expected.join(" ")}`;
-      const maxSideChars = 28_000;
+      const maxSideChars = snapshots.length&&snapshots.every(snapshot=>/^(html|htm)$/i.test(sources.get(snapshot.sourceArtifactId)?.extension??""))
+        ?DOCUMENT_TEXT_REVIEW_MAX_CHARS:28_000;
       const evidence = snapshots.filter((snapshot) => snapshot.content.length > 0).flatMap((snapshot) => {
         const source = sources.get(snapshot.sourceArtifactId);
         const docx = source?.extension.toLowerCase() === "docx"

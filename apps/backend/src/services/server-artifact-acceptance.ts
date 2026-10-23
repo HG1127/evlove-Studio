@@ -1,5 +1,5 @@
 import type {AcceptanceCriterion,Candidate,EvolveProject,FrozenArtifact} from "@evolution/contracts";
-import {evidenceFingerprint,htmlRepairBodyContext,indexUniqueById,reconcileAcceptedOfflineChampion} from "@evolution/core";
+import {evidenceFingerprint,htmlRepairBodyContext,htmlRepairTextNodeContext,resolveHtmlTextNodeEdits,indexUniqueById,reconcileAcceptedOfflineChampion} from "@evolution/core";
 import {measuredDocumentObservations,runServerArtifactAcceptance,type ServerArtifactVerification} from "@evolution/harness";
 import {runServerAi} from "./ai-gateway";
 import {getServerArtifactStore} from "./artifact-runtime";
@@ -48,6 +48,7 @@ export async function repairServerArtifactCandidate(args:{
 }){
   const failedIds=new Set(args.failedCriteria.map((criterion)=>criterion.id));
   const authorizedBody=serverRepairMeasuredTextAuthorized(args.project.id);
+  const htmlParents=new Map<string,{html:string;sha256:string;nodes:ReturnType<typeof htmlRepairTextNodeContext>}>();
   const focused = {...args.candidate, change: args.failedCriteria.map((criterion) => `${criterion.title}: ${criterion.requirement}`).join("\n")};
   const rawContexts = await buildServerCandidateTargetContext(args.project,focused,
     async(source)=>{
@@ -55,11 +56,18 @@ export async function repairServerArtifactCandidate(args:{
       if(!authorizedBody||!/^html?$/i.test(source.extension))return actual;
       const safe=htmlRepairBodyContext(actual);
       if(safe===undefined)throw new Error("HTML repair requires complete physical body boundaries before sharing mutation context");
+      const sha256=args.candidate.artifactSnapshots.find(snapshot=>snapshot.sourceArtifactId===source.id)?.frozenArtifact?.sha256;
+      if(!sha256)throw new Error("HTML body repair requires the verified frozen parent SHA-256");
+      htmlParents.set(source.id,{html:actual,sha256,nodes:htmlRepairTextNodeContext(actual)});
       return safe;
     },args.candidate,
     (source)=>readServerCandidateParentNativeStructure(args.project,source,args.candidate));
-  const contexts=rawContexts.map(context=>authorizedBody&&/^html?$/i.test(context.extension)
-    ?{...context,mutationMode:"text-edits",truncated:true,contextProjection:"exact body slices; scripts, styles and executable/style-bearing opening tags omitted"}:context);
+  const contexts=rawContexts.map(context=>{
+    const parent=htmlParents.get(context.id);
+    return parent?{...context,content:"",mutationMode:"html-text-node-edits",truncated:false,
+      originalChars:parent.html.length,parentSha256:parent.sha256,htmlTextNodes:parent.nodes,
+      contextProjection:"complete body text nodes with physical edit IDs; no raw tags, attributes, scripts, styles or template code"}:context;
+  });
   const boundObservation=authorizedBody
     &&args.project.validationRun.candidateId===args.candidate.id
     &&args.project.validationRun.evidenceFingerprint===evidenceFingerprint(args.project,args.candidate);
@@ -90,10 +98,12 @@ export async function repairServerArtifactCandidate(args:{
         truncated:context.truncated,
         mutationMode:context.mutationMode,
         contextProjection:"contextProjection" in context?context.contextProjection:undefined,
+        parentSha256:"parentSha256" in context?context.parentSha256:undefined,
+        htmlTextNodes:"htmlTextNodes" in context?context.htmlTextNodes:undefined,
       })),
     },
     measuredCandidateDocuments:measuredDocumentObservations(boundObservation?args.project.validationRun.runs:[]),
-    scopeInstruction:"Satisfy the entire supplied failed requirement in the actual document. Use existing measuredCandidateDocuments to understand its full chapter/configuration scope; do not replace a request for concrete configuration detail with generic instructions telling the reader to add details. These are existing measured text observations, not quality verdicts or script/style/runtime proof. They are not raw HTML edit anchors: edits must still match the supplied current Candidate chunks verbatim. All original goals, protected items and acceptance thresholds remain binding. A new Candidate must pass the complete Visible suite, ordinary Hidden and the unchanged independent final paper before acceptance.",
+    scopeInstruction:"Satisfy the entire supplied failed requirement in the actual document. Use complete htmlTextNodes and existing measuredCandidateDocuments to understand its full chapter/configuration scope; do not replace a request for concrete configuration detail with generic instructions telling the reader to add details. These are existing measured text observations, not quality verdicts or script/style/runtime proof. For html-text-node-edits use only the exact supplied anchorId and parentSha256, with the complete replacement plain text for that node. Never concatenate rendered paragraphs into a raw HTML anchor. Spread concrete, accurate configuration explanations across the chapters that need them, preserving all existing facts and protected interactions. All original goals, protected items and acceptance thresholds remain binding. A new Candidate must pass the complete Visible suite, ordinary Hidden and the unchanged independent final paper before acceptance.",
     failedCriteria:args.failedCriteria.map((criterion)=>{
       const score=args.project.validationRun.evaluation?.criterionScores?.find((item)=>item.criterionId===criterion.id);
       return {
@@ -107,8 +117,13 @@ export async function repairServerArtifactCandidate(args:{
       };
     }),
     instruction:"Change only the VERIFIED failed criteria above. Preserve every other artifact behavior and protected item. Return exactly one artifact for every supplied target. For an unchanged DOCX/PPTX/XLSX/XLS/ODS/CSV/TSV/ZIP target return JSON {kind:'keep-parent',sourceArtifactId:'EXACT target id'} so the server reuses the verified frozen bytes; never reconstruct native file bytes from an excerpt. For other unchanged targets return their current content; for unchanged excerpted text targets return one exact text-edit with identical before/after. For changed DOCX targets return {kind:'document',parts:[{path:'word/document.xml',textRuns:[{index:0,text:'new text'}]}]}; for PPTX return {kind:'presentation',slides:[{number:1,textRuns:[{index:0,text:'new text'}]}]}, using only real indexed paths/slides from structuredContext. For changed spreadsheets return {kind:'spreadsheet',sheets:[{name:'Existing Sheet',cells:[{address:'A1',value:'new value'}]}]} using only real Sheet/A1 locations and preserving formulas; do not fabricate calculated formula caches. Every changed native target must have actual differences. For codebase/package targets return a JSON overlay {kind:'codebase',overlay:true,files:[{path,content}],deletions:[path]} containing only actual changes/deletions. For text artifacts with mutationMode text-edits, return content JSON {kind:'text-edits',edits:[{before,after,start?,end?}]}, anchored verbatim to current Candidate chunks without chunk markers or ellipses. The server applies edits to the complete tested Candidate, preserving untouched bytes. Do not rewrite a whole artifact from excerpts. The output becomes a NEW Candidate and must be re-tested on the full Hidden Holdout.",
+    htmlBodyInstruction:"For mutationMode html-text-node-edits, artifact.content MUST be JSON {kind:'html-text-node-edits',parentSha256:'EXACT supplied hash',edits:[{anchorId:'EXACT supplied ID',text:'complete replacement plain text'}]}. Return only changed nodes. Text is plain prose, never HTML markup; the server escapes it and preserves all surrounding markup/code/styles. Do not use text-edits or rendered text as a raw HTML anchor for these targets.",
   });
-  requireServerCandidateOutputModes(contexts, response.artifacts);
+  const artifacts=response.artifacts.map(artifact=>{
+    const parent=htmlParents.get(artifact.sourceArtifactId);
+    return parent?{...artifact,content:resolveHtmlTextNodeEdits(parent.html,artifact.content,parent.sha256)}:artifact;
+  });
+  requireServerCandidateOutputModes(contexts,artifacts);
   if(response.repairedCriteria.some((id)=>!failedIds.has(id))){
     throw new Error(`Repair AI attempted out-of-scope criteria: ${response.repairedCriteria.filter((id)=>!failedIds.has(id)).join("、")}`);
   }
@@ -132,7 +147,7 @@ export async function repairServerArtifactCandidate(args:{
   return materializeServerCandidateArtifacts(
     args.project,
     next,
-    response.artifacts.map((artifact)=>({...artifact,buildMode:"ai-full" as const})),
+    artifacts.map((artifact)=>({...artifact,buildMode:"ai-full" as const})),
     `Targeted Repair ${args.attempt}: ${response.summary}`,
     args.candidate,
   );

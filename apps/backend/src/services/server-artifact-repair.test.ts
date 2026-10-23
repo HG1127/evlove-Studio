@@ -35,9 +35,22 @@ beforeEach(() => { vi.stubEnv("EVOLUTION_AI_FULL_REPAIR_TEXT_MISSIONS","");blobs
 afterEach(()=>vi.unstubAllEnvs());
 
 describe("server targeted Artifact repair", () => {
+  it("rejects an invented later body-text anchor before freezing any earlier valid edit",async()=>{
+    const args=await fixture();
+    args.candidate.artifactSnapshots=[await snapshot("source",'<html><body><p>第一段配置</p><p>第二段配置</p><script>保留原脚本</script></body></html>')];
+    vi.stubEnv("EVOLUTION_AI_FULL_REPAIR_TEXT_MISSIONS",args.project.id);
+    ai.mockImplementation(async(_operation:string,payload:{candidate:{artifacts:Array<{parentSha256:string;htmlTextNodes:Array<{anchorId:string;text:string}>}>}})=>{
+      const target=payload.candidate.artifacts[0]!;
+      return output(JSON.stringify({kind:"html-text-node-edits",parentSha256:target.parentSha256,
+        edits:[...target.htmlTextNodes.map(node=>({anchorId:node.anchorId,text:node.text+"：填写项目名并保存回读。"})),{anchorId:"invented-third-anchor",text:"无法定位"}]}));
+    });
+    await expect(repairServerArtifactCandidate(args)).rejects.toThrow(/unknown/);
+    expect(ai).toHaveBeenCalledTimes(1);expect(put).not.toHaveBeenCalled();
+  });
   it.each(["bound","changed-contract","different-candidate","not-authorized","other-mission","invalid-allowlist"] as const)("uses only already measured document observations with a %s repair binding",async kind=>{
     const args=await fixture(),base=acceptedPackageFixture(false).project;
-    if(kind==="bound")args.candidate.artifactSnapshots=[await snapshot("source",current.replace('</body>','<script>PRIVATE_RUNTIME_CODE</script><style>PRIVATE_STYLE_CODE</style></body>'))];
+    const complete=current.replace('<p>保留每个章节和原有说明。</p>'.repeat(10000),'<p>保留每个章节和原有说明。</p>');
+    args.candidate.artifactSnapshots=[await snapshot("source",kind==="bound"?complete.replace('</body>','<script>PRIVATE_RUNTIME_CODE</script><style>PRIVATE_STYLE_CODE</style></body>'):complete)];
     args.project={...base,...args.project,candidates:[args.candidate],acceptanceRubric:[failed]};
     const outputText="CURRENT CANDIDATE SNAPSHOT EVIDENCE\ncomplete text projection\n\nEXISTING FULL DOCUMENT CONFIGURATION TAIL";
     args.project.validationRun={...base.validationRun,...args.project.validationRun,candidateId:args.candidate.id,
@@ -47,12 +60,18 @@ describe("server targeted Artifact repair", () => {
     vi.stubEnv("EVOLUTION_AI_FULL_REPAIR_TEXT_MISSIONS",kind==="not-authorized"?"":kind==="other-mission"?"another-mission":kind==="invalid-allowlist"?args.project.id+",*":args.project.id);
     if(kind==="changed-contract")args.project.goal+=" changed";
     if(kind==="different-candidate")args.project.validationRun.candidateId="different";
-    ai.mockImplementation(async(_operation:string,payload:{candidate:{artifacts:Array<{content:string;mutationMode:string}>};measuredCandidateDocuments:{observations:Array<{output:string}>}})=>{
+    ai.mockImplementation(async(_operation:string,payload:{candidate:{artifacts:Array<{content:string;mutationMode:string;parentSha256?:string;htmlTextNodes?:Array<{anchorId:string;text:string}>}>};measuredCandidateDocuments:{observations:Array<{output:string}>}})=>{
       expect(payload.measuredCandidateDocuments.observations).toHaveLength(kind==="bound"?1:0);
       if(kind==="bound")expect(payload.measuredCandidateDocuments.observations[0]!.output).toBe(outputText);
       if(kind==="bound"){
         expect(payload.candidate.artifacts[0]!.content).not.toMatch(/PRIVATE_RUNTIME_CODE|PRIVATE_STYLE_CODE/);
-        expect(payload.candidate.artifacts[0]!.mutationMode).toBe("text-edits");
+        expect(payload.candidate.artifacts[0]!.mutationMode).toBe("html-text-node-edits");
+        expect(JSON.stringify(payload.candidate.artifacts[0]!.htmlTextNodes)).not.toMatch(/PRIVATE_RUNTIME_CODE|PRIVATE_STYLE_CODE/);
+      }
+      const target=payload.candidate.artifacts[0]!;
+      if(target.mutationMode==="html-text-node-edits"){
+        const anchor=target.htmlTextNodes!.find(node=>node.text==='主管确认退款后才进入执行。')!;
+        return output(JSON.stringify({kind:"html-text-node-edits",parentSha256:target.parentSha256,edits:[{anchorId:anchor.anchorId,text:"主管确认退款后才进入执行，并记录审批编号。"}]}));
       }
       return output();
     });
