@@ -44,6 +44,27 @@ describe("bound native HTML evidence",()=>{
     expect(inspectHtmlNativeEvidence(run,test.id)).toMatchObject({complete:true,pass:false,failures:[check.id]});
     expect(deriveCriterionScores([criterion],[test],[],[run],judge).criterionScores[0]).toMatchObject({score:0,pass:false,verificationStatus:"verified"});
   });
+  it("retains a measured loss of original code blocks as a complete negative observation",()=>{
+    const run=htmlNativeEvidenceFixture(),observation=run.nativeHtmlProof!.observation;
+    observation.originalCodeBlocksRetained=false;
+    observation.codeBlockRetention={policy:"original-text-with-numbered-instruction-append-v1",originalCount:57,retainedCount:55,
+      exactCount:55,extendedInstructionCount:0,retained:false};
+    expect(inspectHtmlNativeEvidence(run,test.id)).toMatchObject({complete:true,pass:false,failures:["original-code-block-loss"]});
+    expect(deriveCriterionScores([criterion],[test],[],[run],judge).criterionScores[0]).toMatchObject({score:0,pass:false,verificationStatus:"verified"});
+    // Positive tool checks still cannot substitute for an independent semantic verdict.
+    expect(deriveCriterionScores([criterion],[test],[],[run]).criterionScores[0]).toMatchObject({score:0,pass:false,verificationStatus:"verified"});
+  });
+  it("does not turn code-loss counts into coverage for unknown controls or an unhealthy Original",()=>{
+    const run=htmlNativeEvidenceFixture(),observation=run.nativeHtmlProof!.observation;
+    observation.originalCodeBlocksRetained=false;
+    observation.codeBlockRetention={policy:"original-text-with-numbered-instruction-append-v1",originalCount:57,retainedCount:55,
+      exactCount:55,extendedInstructionCount:0,retained:false};
+    observation.subject.inventory.unknownControls=[{tag:"BUTTON",type:"submit",id:"unknown"}];
+    expect(inspectHtmlNativeEvidence(run,test.id)?.complete).toBe(false);
+    observation.subject.inventory.unknownControls=[];
+    observation.original.checks[0]!.pass=false;observation.original.failures=[observation.original.checks[0]!.id];
+    expect(inspectHtmlNativeEvidence(run,test.id)?.complete).toBe(false);
+  });
   it.each(["unhealthy-original","unknown-control","changed-code"])("keeps %s incomplete rather than inventing success or failure",kind=>{
     const run=htmlNativeEvidenceFixture(),observation=run.nativeHtmlProof!.observation;
     if(kind==="unhealthy-original"){observation.original.checks[0]!.pass=false;observation.original.failures=[observation.original.checks[0]!.id];}

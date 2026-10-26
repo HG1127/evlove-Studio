@@ -8,6 +8,7 @@ import {runServerEvidenceJudge} from "./server-evidence-judge";
 import {HTML_PRESERVATION_EXECUTION_VERSION} from "./server-html-preservation-observation";
 import {executeServerHtmlNativeBatch} from "./server-html-native-execution";
 import {HTML_NATIVE_KERNEL_SHA256} from "@evolution/adapters/sandbox";
+import {HTML_NATIVE_EVIDENCE_POLICY_VERSION} from "@evolution/core";
 
 import { runServerFrozenArtifactStaticEvidence } from "./server-static-artifact-evidence";
 import {verifyServerCandidateNativeFormats} from "./server-candidate-native-roundtrip";
@@ -36,7 +37,7 @@ export async function runServerMissionHoldout(project:EvolveProject){
   return withServerAiConnection(async()=>{
   return runServerHoldout(project,{
     scoringRouteFingerprint:await serverAiScoringRouteFingerprint(),
-    executionRuntimeFingerprint:JSON.stringify([HTML_PRESERVATION_EXECUTION_VERSION,HTML_NATIVE_KERNEL_SHA256]),
+    executionRuntimeFingerprint:JSON.stringify([HTML_PRESERVATION_EXECUTION_VERSION,HTML_NATIVE_KERNEL_SHA256,HTML_NATIVE_EVIDENCE_POLICY_VERSION]),
     readArtifactFingerprint:readServerHoldoutArtifactFingerprint,
     current:{
       executeNativeHtmlBatch:executeServerHtmlNativeBatch,

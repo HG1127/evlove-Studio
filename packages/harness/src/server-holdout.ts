@@ -99,8 +99,10 @@ function holdoutChecks(
     },
     {
       label: "关键能力回归",
-      status: decision.regression ? "fail" as const : decision.comparisonEvidenceGaps.length ? "warning" as const : "pass" as const,
-      detail: `同一套隐藏卷：Candidate 准确 ${candidateEvaluation.accuracy}% / 完成 ${candidateEvaluation.completeness}% vs 当前版本 ${baselineEvaluation.accuracy}% / ${baselineEvaluation.completeness}%${gapHeadline(gap) ? `；主因：${gapHeadline(gap)}` : ""}`,
+      status: decision.regression ? "fail" as const : decision.evidenceIncomplete ? "warning" as const : "pass" as const,
+      detail: decision.evidenceIncomplete&&!decision.regression
+        ? "同一套隐藏卷的真实对照证据尚未完成；不能认定无回归。"
+        : `同一套隐藏卷：Candidate 准确 ${candidateEvaluation.accuracy}% / 完成 ${candidateEvaluation.completeness}% vs 当前版本 ${baselineEvaluation.accuracy}% / ${baselineEvaluation.completeness}%${gapHeadline(gap) ? `；主因：${gapHeadline(gap)}` : ""}`,
     },
   ];
   const failedRuns = [...runs, ...baselineRuns].filter((run) => run.error || run.verificationStatus === "failed").length;

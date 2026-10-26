@@ -2,6 +2,8 @@ import {HtmlNativeRunProofSchema,HtmlRenderedDocumentEvidenceSchema,type EvolveP
 import {fastHash} from "./stable-hash";
 import {criterionCanUseLocalSnapshotEvidence} from "./criterion-evidence";
 
+export const HTML_NATIVE_EVIDENCE_POLICY_VERSION="html-native-evidence-v2-measured-retention-loss";
+
 const protectedIds=new Set(["PROTECT-ALL","SYS-INTEGRITY","ART-1-STRUCTURE","SEM-CROSS-CONSISTENCY"]);
 const fixedChecks=["initial-card-inventory","search-positive","search-negative","search-reset","mobile-menu-opens","mobile-menu-closes-on-navigation",
   "all-copy-controls-write-real-clipboard","copied-content-matches-current-dom-order","prompt-copy-preserves-internal-whitespace",
@@ -64,10 +66,12 @@ export function inspectHtmlNativeEvidence(run:TargetRunResult,testCaseId:string,
       ||row.pass!==(row.changedNamed.length===0&&row.missingGroups.length===0&&row.infiniteAnimations===0)))return undefined;
   const originalHealthy=observation.original.checks.every(check=>check.pass)&&observation.original.inventory.unknownControls.length===0;
   const failures=[...observation.subject.failures,...styles.filter(row=>!row.pass).map(row=>"rendered-style-"+row.width),
+    ...(!observation.originalCodeBlocksRetained?["original-code-block-loss"]:[]),
     ...(!observation.originalNamedElementsRetained?["original-named-identity-loss"]:[]),
     ...(!observation.originalInteractiveSequenceRetained?["original-interactive-sequence-loss"]:[]),
     ...(!observation.originalSlideCardOrderRetained?["original-slide-order-loss"]:[])];
   return {proof,document:body,originalHealthy,failures,
-    complete:originalHealthy&&observation.subject.inventory.unknownControls.length===0&&observation.originalCodeBlocksRetained,
+    // Valid counts can prove loss. Missing retention detail remains partial; a measured defect is not a missing capability.
+    complete:originalHealthy&&observation.subject.inventory.unknownControls.length===0&&(observation.originalCodeBlocksRetained||retention!==undefined),
     pass:originalHealthy&&failures.length===0&&observation.originalCodeBlocksRetained};
 }

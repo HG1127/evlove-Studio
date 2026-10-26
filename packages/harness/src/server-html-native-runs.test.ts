@@ -68,6 +68,14 @@ describe("injected native HTML execution",()=>{
     expect((await collectServerHtmlNativeRuns(project,[test],{executeNativeHtmlBatch:async()=>[run]},candidate)).get(test.id))
       .toMatchObject({verificationStatus:"unverified",error:"NATIVE_HTML_ORIGINAL_REFERENCE_MISMATCH"});
   });
+  it("preserves complete measured code-loss evidence instead of replacing it with an unavailable capability",async()=>{
+    const {project,candidate,run,test}=fixture(),observation=run.nativeHtmlProof!.observation;
+    observation.originalCodeBlocksRetained=false;
+    observation.codeBlockRetention={policy:"original-text-with-numbered-instruction-append-v1",originalCount:57,retainedCount:55,
+      exactCount:55,extendedInstructionCount:0,retained:false};
+    expect((await collectServerHtmlNativeRuns(project,[test],{executeNativeHtmlBatch:async()=>[run]},candidate)).get(test.id)).toEqual(run);
+    expect(serverHtmlNativeRunsMatchOriginal(project,[run],candidate)).toBe(true);
+  });
   it("does not reuse a physically bound, correctly digested Experiment checkpoint containing the wrong Original",async()=>{
     const {project,candidate,run}=fixture(),at=Date.parse("2026-10-26T01:00:00.000Z");
     candidate.artifactBuildStatus="ready";

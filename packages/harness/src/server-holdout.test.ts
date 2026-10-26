@@ -124,6 +124,7 @@ describe("server hidden holdout",()=>{
     expect(setup.candidateCases).toEqual(["H1"]);
     expect(outcome.validation.validationMode).toBe("full");
     expect(outcome.validation.recommendation).toBe("release");
+    expect(outcome.validation.checks.find(check=>check.label==="关键能力回归")?.status).toBe("pass");
     expect(outcome.validation.evidenceFingerprint).toBeTruthy();
     expect(outcome.project.campaign.checkpoint).toMatchObject({round:1,completedPhase:"validation"});
     expect(outcome.validation.versionSnapshot?.artifacts[0]?.frozenArtifact?.blobId).toBe("blob-new");
@@ -157,6 +158,9 @@ describe("server hidden holdout",()=>{
     expect(outcome.control).toBe("stop");
     expect(outcome.reason).toContain("holdout-evidence-pending");
     expect(outcome.validation.recommendation).toBe("hold");
+    expect(outcome.validation.checks.find(check=>check.label==="关键能力回归")).toMatchObject({
+      status:"warning",detail:expect.stringContaining("不能认定无回归"),
+    });
     expect(releaseReview).not.toHaveBeenCalled();
     expect(outcome.project.candidates[0]?.artifactSnapshots[0]?.id).toBe("snap-C1");
     expect(outcome.project.campaign.checkpoint).toMatchObject({round:1,completedPhase:"experiment"});
