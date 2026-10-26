@@ -6,6 +6,8 @@ import { runServerHoldout } from "@evolution/harness";
 import { runServerAi, serverAiScoringRouteFingerprint } from "./ai-gateway";
 import {runServerEvidenceJudge} from "./server-evidence-judge";
 import {HTML_PRESERVATION_EXECUTION_VERSION} from "./server-html-preservation-observation";
+import {executeServerHtmlNativeBatch} from "./server-html-native-execution";
+import {HTML_NATIVE_KERNEL_SHA256} from "@evolution/adapters/sandbox";
 
 import { runServerFrozenArtifactStaticEvidence } from "./server-static-artifact-evidence";
 import {verifyServerCandidateNativeFormats} from "./server-candidate-native-roundtrip";
@@ -34,9 +36,10 @@ export async function runServerMissionHoldout(project:EvolveProject){
   return withServerAiConnection(async()=>{
   return runServerHoldout(project,{
     scoringRouteFingerprint:await serverAiScoringRouteFingerprint(),
-    executionRuntimeFingerprint:HTML_PRESERVATION_EXECUTION_VERSION,
+    executionRuntimeFingerprint:JSON.stringify([HTML_PRESERVATION_EXECUTION_VERSION,HTML_NATIVE_KERNEL_SHA256]),
     readArtifactFingerprint:readServerHoldoutArtifactFingerprint,
     current:{
+      executeNativeHtmlBatch:executeServerHtmlNativeBatch,
       executeSemanticBatch:({project:current,testCases,artifactContext})=>runServerAi("execute-artifact-batch",{
         project:{name:current.name,objectType:current.objectType,goal:current.goal,evolutionCommand:current.evolutionCommand,protectedItems:current.protectedItems,editableItems:current.editableItems,sourceArtifacts:artifactContext},
         testCases:testCases.map((testCase)=>({id:testCase.id,title:testCase.title,input:testCase.input,expected:testCase.expected,criterionIds:testCase.criterionIds,evidenceScope:testCase.evidenceScope})),
@@ -49,6 +52,7 @@ export async function runServerMissionHoldout(project:EvolveProject){
       judge:(payload)=>runServerEvidenceJudge(payload),
     },
     candidate:{
+      executeNativeHtmlBatch:executeServerHtmlNativeBatch,
       executeSemanticBatch:({project:current,candidate,testCases,artifactContext})=>runServerAi("execute-artifact-batch",{
         project:{name:current.name,objectType:current.objectType,goal:current.goal,evolutionCommand:current.evolutionCommand,protectedItems:current.protectedItems,editableItems:current.editableItems,sourceArtifacts:artifactContext},
         testCases:testCases.map((testCase)=>({id:testCase.id,title:testCase.title,input:testCase.input,expected:testCase.expected,criterionIds:testCase.criterionIds,evidenceScope:testCase.evidenceScope})),

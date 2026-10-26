@@ -128,4 +128,17 @@ describe("injected native HTML execution",()=>{
     expect((await collectServerHtmlNativeRuns(project,[test],{executeNativeHtmlBatch:execute},fixture().candidate)).size).toBe(0);
     expect(execute).not.toHaveBeenCalled();
   });
+  it("retains explicit browser steps on their ordinary execution route instead of treating fixed native checks as those steps",async()=>{
+    const {project,candidate,test}=fixture(),execute=vi.fn();
+    test.browserSteps=[{action:"text",selector:"#custom-user-control",value:"required custom state"}];
+    expect((await collectServerHtmlNativeRuns(project,[test],{executeNativeHtmlBatch:execute},candidate)).size).toBe(0);
+    expect(execute).not.toHaveBeenCalled();
+  });
+  it("uses complete native observations for protected structural cases while keeping unrelated static cases separate",async()=>{
+    const {project,candidate,test,run}=fixture(),execute=vi.fn(async()=>[run]);
+    test.executionMode="static-evidence";test.criterionIds=["ART-1-STRUCTURE"];project.acceptanceRubric[0]!.id="ART-1-STRUCTURE";
+    expect((await collectServerHtmlNativeRuns(project,[test],{executeNativeHtmlBatch:execute},candidate)).get(test.id)).toEqual(run);
+    test.criterionIds=["OTHER-STATIC"];project.acceptanceRubric[0]!.id="OTHER-STATIC";
+    expect((await collectServerHtmlNativeRuns(project,[test],{executeNativeHtmlBatch:execute},candidate)).size).toBe(0);
+  });
 });

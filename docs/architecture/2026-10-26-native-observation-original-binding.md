@@ -18,6 +18,8 @@ Baseline reuse, Experiment recovery and Hidden recovery recheck native receipt c
 
 ## Verification and limits
 
+Later on the same date, separate explicit human authorization allowed the [native production composition](2026-10-26-native-html-production-execution.md) and its actual cloud verification. References below to an unwired entry describe the earlier binding audit; no old pilot verdict or exhausted budget was changed.
+
 The 201 tests across eight affected test files cover missing, duplicate, cross-Mission, cross-source, malformed and stale Original references; contradictory frozen source IDs; valid changed Candidates; and digest-consistent but incorrectly bound Baseline/Experiment/Hidden caches. All 11 Runner tests, architecture checks, changed-file lint and the production TypeScript/Vite build pass.
 
 A read-only diagnostic at `2026-10-26T02:07:58.853Z` downloaded the approved supplemental Artifact `local-native-proof-7abc609c2c604b4c5a317b8e`, verified its registered hash and bindings, and checked the actual selected Candidate against the actual locked Original. The frozen `0de13e…` observation is complete but retains nine failures. The unregistered `b304af…` preview is rejected for that Candidate. A deliberately altered Original hash is rejected as a synthetic counterexample. No new browser execution, AI request, body upload, remote write or formal verdict was created; the supplemental report's authority remains unchanged.

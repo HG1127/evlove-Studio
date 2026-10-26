@@ -11,10 +11,12 @@ const fixedChecks=["initial-card-inventory","search-positive","search-negative",
 
 export function htmlNativeCaseSource(project:EvolveProject,test:TestCase){
   if(project.targetConnection?.adapter!=="artifact"||!test.criterionIds.length
-    ||!["artifact-runtime","external-runner","visual-review"].includes(test.executionMode))return undefined;
+    ||test.browserSteps?.length
+    ||!["artifact-runtime","external-runner","visual-review","static-evidence"].includes(test.executionMode))return undefined;
   const criteria=project.acceptanceRubric.filter(c=>test.criterionIds.includes(c.id));
   if(criteria.length!==new Set(test.criterionIds).size||criteria.some(c=>c.validationMethod==="manual-review"
-    ||!protectedIds.has(c.id)&&!criterionCanUseLocalSnapshotEvidence(project,c)))return undefined;
+    ||!protectedIds.has(c.id)&&!criterionCanUseLocalSnapshotEvidence(project,c)
+    ||test.executionMode==="static-evidence"&&!protectedIds.has(c.id)))return undefined;
   const ids=new Set(criteria.flatMap(c=>c.artifactIds));
   const targets=project.sourceArtifacts.filter(source=>source.role==="target"&&(!ids.size||ids.has(source.id)));
   if(targets.length!==1||ids.size>1||!/^html?$/i.test(targets[0]!.extension)||!["document","knowledge","generic"].includes(targets[0]!.artifactKind))return undefined;

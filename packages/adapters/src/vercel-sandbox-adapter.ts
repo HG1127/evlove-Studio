@@ -258,7 +258,7 @@ function isUnavailableError(error:unknown){
   return /OIDC|credentials|VERCEL_OIDC_TOKEN|vercel link|sandbox.*not available|unauthori[sz]ed|forbidden/i.test(message);
 }
 
-async function ensureBrowserRuntimeSnapshot(){
+export async function ensureBrowserRuntimeSnapshot(){
   if(browserSnapshotPromise)return browserSnapshotPromise;
   browserSnapshotPromise=(async()=>{
     const runtimeOptions={

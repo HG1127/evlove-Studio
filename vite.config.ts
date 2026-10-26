@@ -2,6 +2,7 @@ import path from 'node:path'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { nitro } from 'nitro/vite'
+import type {} from 'workflow/nitro'
 import { builtinRunnerPlugin } from './runner-gateway/vite-plugin'
 import {workflowStepRuntimePlugin} from './apps/backend/build/workflow-step-runtime'
 
@@ -11,6 +12,9 @@ export default defineConfig({
     preset: process.env.VERCEL ? 'vercel' : 'node-server',
     serverDir: './apps/backend/server',
     modules: ['workflow/nitro'],
+    // Discover production directives only; ignored diagnostic bundles can contain
+    // copied SDK directives and must never become deployed Workflow entrypoints.
+    workflow: { dirs: ['workflows'] },
   },
   build: {
     // 首屏与页面代码已经按路由拆分；保留更高的报告阈值给完全按需加载的 Office

@@ -20,6 +20,8 @@ Contracts also define optional native observation receipts. Core validates physi
 
 ## Rollout and limits
 
+Update, 2026-10-26: after separate explicit human approval, the [Mission-authorized production execution composition](2026-10-26-native-html-production-execution.md) was implemented and verified with real cloud observations. The initially rejected/pending rollout below records the earlier state; it does not revoke that later approval. The failed pilot remains unaccepted, and the passing preview has not been promoted.
+
 The local index compiler, structured review and receipt validation are covered by local tests. The new full-file cloud execution entry is **not wired or published**: its proposed verification and backend entry were rejected by automatic approval because the current explicit user consent covers body text sent to the existing AI service, while separate consent for complete HTML sent to Vercel Sandbox is pending. The executable drafts are retained only in the ignored local validation directory. No new Sandbox upload was attempted after that rejection.
 
 Validation: 304 related regression tests, seven additional pure-profile boundary tests, an additional later-provider-failure regression and all 11 Runner regression tests passed. Bound Original observations survive an unrelated later provider failure; a failed Original read still invalidates them. Local physical-file verification also confirmed the production signature guard recognizes both inputs and that the production compiler produces exactly the same canonical preview as Core. This remains parse-only evidence, not a browser search pass.

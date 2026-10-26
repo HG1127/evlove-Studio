@@ -6,6 +6,8 @@ import { runServerExperiment, SERVER_SEMANTIC_CONTEXT_VERSION, SERVER_MEASURED_R
 import { runServerAi, serverAiScoringRouteFingerprint } from "./ai-gateway";
 import {runServerEvidenceJudge} from "./server-evidence-judge";
 import {HTML_PRESERVATION_EXECUTION_VERSION} from "./server-html-preservation-observation";
+import {executeServerHtmlNativeBatch} from "./server-html-native-execution";
+import {HTML_NATIVE_KERNEL_SHA256} from "@evolution/adapters/sandbox";
 import { readServerHoldoutArtifactFingerprint as readExecutionArtifactFingerprint } from "./server-holdout-artifact-binding";
 
 import { runServerFrozenArtifactStaticEvidence } from "./server-static-artifact-evidence";
@@ -36,10 +38,11 @@ async function executeServerCandidateExternal(project:EvolveProject,candidate:Ca
 export async function runServerMissionExperiment(project: EvolveProject) {
   return withServerAiConnection(async()=>{
   return runServerExperiment(project, {
+    executeNativeHtmlBatch:executeServerHtmlNativeBatch,
     fingerprint: (wire) => serverArtifactSha256(new TextEncoder().encode(wire)),
     readExecutionArtifactFingerprint,
     scoringRouteFingerprint: await serverAiScoringRouteFingerprint(),
-    executionRuntimeFingerprint: JSON.stringify([process.env.VERCEL_GIT_COMMIT_SHA ?? "local", SERVER_SEMANTIC_CONTEXT_VERSION, SERVER_MEASURED_REVIEW_VERSION, HTML_PRESERVATION_EXECUTION_VERSION]),
+    executionRuntimeFingerprint: JSON.stringify([process.env.VERCEL_GIT_COMMIT_SHA ?? "local", SERVER_SEMANTIC_CONTEXT_VERSION, SERVER_MEASURED_REVIEW_VERSION, HTML_PRESERVATION_EXECUTION_VERSION,HTML_NATIVE_KERNEL_SHA256]),
     buildCandidate: async({ project: current, candidate }) => {
       const built=await buildServerExperimentCandidate(current,candidate);
       return serverConnectorTargetEnabled(current)

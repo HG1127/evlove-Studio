@@ -14,6 +14,7 @@ import { buildServerCurrentSemanticArtifactContext } from "./server-current-sema
 import { runServerHttpTargetBatch, serverHttpTargetEnabled } from "./server-http-target-execution";
 import {runServerConnectorTargetBatch} from "./server-connector-target-execution";
 import {serverConnectorTargetEnabled} from "./connector-target-source";
+import {executeServerHtmlNativeBatch} from "./server-html-native-execution";
 
 export function resolveServerBaselineCodebaseBinding(project:EvolveProject){
   const sources=project.sourceArtifacts.filter(source=>source.role==="target"&&isZipArtifact(source));
@@ -31,6 +32,7 @@ export async function executeServerBaselineExternal(current:EvolveProject,testCa
 export async function runServerMissionBaseline(project: EvolveProject) {
   return withServerAiConnection(async()=>{
   return runServerBaseline(project, {
+    executeNativeHtmlBatch:executeServerHtmlNativeBatch,
     scoringRouteFingerprint: await serverAiScoringRouteFingerprint(),
     executeSemanticBatch: async ({ project: current, testCases, artifactContext }) => runServerAi("execute-artifact-batch", {
       project: {
