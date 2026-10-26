@@ -1,5 +1,5 @@
-import {createHash} from "node:crypto";
 import {z} from "zod";
+import {buildTelemetryRecordSamples,deduplicateTelemetrySamples} from "@evolution/adapters";
 import {
   OutcomeMetricDirectionSchema,
   OutcomeMetricKindSchema,
@@ -34,6 +34,11 @@ const SourceSchema=z.object({
   timeoutMs:z.number().int().min(500).max(60_000).default(10_000),
   arms:z.array(z.enum(["stable","candidate"])).min(1).max(2).default(["stable","candidate"]),
   auth:AuthSchema.optional(),
+  sampling:z.discriminatedUnion("kind",[
+    z.object({kind:z.literal("aggregate-snapshot")}).strict(),
+    z.object({kind:z.literal("independent-task"),recordsPath:z.string().min(1).max(300),
+      taskIdPath:z.string().min(1).max(300),observedAtPath:z.string().min(1).max(300),deploymentIdPath:z.string().min(1).max(300)}).strict(),
+  ]).default({kind:"aggregate-snapshot"}),
   metrics:z.array(MetricSchema).min(1).max(50),
 });
 const SourcesSchema=z.array(SourceSchema).min(1).max(20);
@@ -127,34 +132,6 @@ export function getOutcomeTelemetryCapabilities(){
     metricCount:state.sources.reduce((sum,source)=>sum+source.metrics.length,0),
     errors:state.errors,
   };
-}
-
-function pathValue(input:unknown,path:string):unknown{
-  let current:unknown=input;
-  for(const part of path.split(".")){
-    if(!part)return undefined;
-    if(Array.isArray(current)&&/^\d+$/.test(part)){
-      current=current[Number(part)];
-      continue;
-    }
-    if(!current||typeof current!=="object")return undefined;
-    current=(current as Record<string,unknown>)[part];
-  }
-  return current;
-}
-
-function numericValue(value:unknown){
-  if(typeof value==="number")return Number.isFinite(value)?value:undefined;
-  if(typeof value==="boolean")return value?1:0;
-  if(typeof value==="string"&&value.trim()){
-    const parsed=Number(value);
-    return Number.isFinite(parsed)?parsed:undefined;
-  }
-  return undefined;
-}
-
-function telemetryId(parts:string[]){
-  return "outcome-telemetry-"+createHash("sha256").update(parts.join("|")).digest("hex").slice(0,32);
 }
 
 type Target={
@@ -275,41 +252,7 @@ async function pullSourceTarget(args:{
         requested:true,
       };
     }
-    const samples:OutcomeMetricSampleInput[]=[];
-    for(const metric of source.metrics){
-      const raw=pathValue(body,metric.path);
-      const value=numericValue(raw);
-      if(value===undefined){
-        warnings.push("source "+source.id+"/"+target.arm+": metric "+metric.metricKey+"/"+metric.segment+" missing or non-numeric at "+metric.path);
-        continue;
-      }
-      samples.push({
-        id:telemetryId([
-          project.id,observation.observedAt,source.id,target.arm,target.deploymentId,metric.metricKey,metric.segment,
-        ]),
-        candidateId:project.release.candidateId,
-        deploymentId:target.deploymentId,
-        arm:target.arm,
-        metricKey:metric.metricKey,
-        metricKind:metric.metricKind,
-        direction:metric.direction,
-        value:value*metric.scale,
-        unit:metric.unit,
-        segment:metric.segment,
-        source:"outcome-telemetry:"+source.id,
-        observedAt:observation.observedAt,
-        metadata:{
-          telemetrySourceId:source.id,
-          releaseStatus:project.release.status,
-          trafficPercent:observation.trafficPercent??project.release.trafficPercent,
-          rollingReleaseActive:observation.rollingReleaseActive??false,
-          rollingStageIndex:observation.rollingStageIndex,
-          deploymentId:target.deploymentId,
-          arm:target.arm,
-        },
-      });
-    }
-    return {samples,warnings,requested:true};
+    return {...buildTelemetryRecordSamples({body,source,target,project,observation}),requested:true};
   }catch(error){
     return {
       samples:[] as OutcomeMetricSampleInput[],
@@ -343,7 +286,10 @@ export async function collectConfiguredOutcomeTelemetry(
     targets.map((target)=>pullSourceTarget({project,observation,source,target})),
   );
   const results=await Promise.all(tasks);
-  const samples=[...new Map(results.flatMap((item)=>item.samples).map((sample)=>[sample.id!,sample])).values()];
+  let samples:OutcomeMetricSampleInput[];
+  try{samples=deduplicateTelemetrySamples(results.flatMap(item=>item.samples));}
+  catch(error){return {configured:true,ready:false,sourceCount:state.sources.length,metricCount,requestCount:results.filter(item=>item.requested).length,
+    samples:[],warnings:[...results.flatMap(item=>item.warnings),error instanceof Error?error.message:String(error)]};}
   return {
     configured:true,
     ready:true,

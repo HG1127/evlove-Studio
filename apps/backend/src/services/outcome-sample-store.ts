@@ -1,9 +1,11 @@
 import {createHash} from "node:crypto";
 import {isDeepStrictEqual} from "node:util";
+import {z} from "zod";
 import {
   OutcomeMetricBatchRequestSchema,
   OutcomeMetricBatchResponseSchema,
   OutcomeMetricSampleSchema,
+  OUTCOME_OBSERVATION_METADATA_KEY,
   type OutcomeMetricBatchRequest,
   type OutcomeMetricSample,
 } from "@evolution/contracts";
@@ -39,6 +41,7 @@ function db(){
 }
 
 function fromRow(row:JsonRecord):OutcomeMetricSample{
+  const {__evolutionOutcomeObservation:observation,...metadata}=z.record(z.string(),z.unknown()).parse(row.metadata??{});
   const value=typeof row.value==="string"&&row.value.trim()
     ?Number(row.value)
     :row.value;
@@ -47,7 +50,7 @@ function fromRow(row:JsonRecord):OutcomeMetricSample{
     candidateId:row.candidate_id??undefined,deploymentId:row.deployment_id??undefined,
     arm:row.arm,metricKey:row.metric_key,metricKind:row.metric_kind,direction:row.direction,
     value,unit:row.unit??undefined,segment:row.segment??"all",
-    source:row.source,observedAt:row.observed_at,metadata:row.metadata??{},
+    source:row.source,observedAt:row.observed_at,metadata,observation,
   });
 }
 
@@ -78,9 +81,14 @@ function generatedOutcomeSampleId(args:{workspaceId:string;missionId:string;cand
   const identity=[
     args.workspaceId,args.missionId,args.sample.candidateId??args.candidateId??null,
     args.sample.deploymentId??null,args.sample.arm,args.sample.metricKey,
-    args.sample.segment,args.sample.source.trim(),new Date(observedMs).toISOString(),
+    args.sample.segment,args.sample.source.trim(),args.sample.observation?.kind==="independent-task"
+      ?["independent-task",args.sample.observation.taskId]:new Date(observedMs).toISOString(),
   ];
   return "outcome-"+createHash("sha256").update(JSON.stringify(identity)).digest("hex");
+}
+function observationMetadata(sample:OutcomeMetricBatchRequest["samples"][number]){
+  if(Object.hasOwn(sample.metadata,OUTCOME_OBSERVATION_METADATA_KEY))throw new Error("Outcome observation metadata is reserved; use the versioned observation field");
+  return {...sample.metadata,...(sample.observation?{[OUTCOME_OBSERVATION_METADATA_KEY]:sample.observation}:{})};
 }
 export async function insertOutcomeSamples(raw:OutcomeMetricBatchRequest){
   const input=OutcomeMetricBatchRequestSchema.parse(raw);
@@ -91,7 +99,7 @@ export async function insertOutcomeSamples(raw:OutcomeMetricBatchRequest){
     candidate_id:sample.candidateId??input.candidateId??null,deployment_id:sample.deploymentId??null,
     arm:sample.arm,metric_key:sample.metricKey,metric_kind:sample.metricKind,direction:sample.direction,
     value:sample.value,unit:sample.unit??null,segment:sample.segment,source:sample.source,
-    observed_at:sample.observedAt,metadata:sample.metadata,
+    observed_at:sample.observedAt,metadata:observationMetadata(sample),
   }));
   const expectedById=new Map<string,JsonRecord>();
   for(const row of rows){

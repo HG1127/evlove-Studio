@@ -1,6 +1,6 @@
 # Real evolution acceptance
 
-Status: in progress, 2026-10-24. Green engineering checks do not establish measured evolution.
+Status: in progress, 2026-10-26. Green engineering checks do not establish measured evolution.
 
 ## Workload and identity
 
@@ -24,6 +24,8 @@ A fresh authoritative Mission read after the diagnostic still selects frozen `0d
 
 ## Local verification of the search repair
 
+The 2026-10-26 read-only audit still finds four verified passing criteria and four partial criteria, repair attempts 2/2, campaign paused at validation and the original control Job terminal `failed`. The terminal Job is not a live wait and has not been restarted. No additional AI repair or acceptance is inferred from these status reads.
+
 Actual offline isolated-browser execution on the same physical Original and frozen `0de13e…` completed 41 assertions per subject. The Original passed; the frozen Candidate failed all nine new-content search assertions. The canonical index preview `b304afdddb19fa84e6ee272c5bee039fad27601047941869138a3cb8ac68c301` passed all 41 assertions, including those nine searches, and both viewport style comparisons. All original preformatted text remains retained; a numbered workflow example appends prose while preserving its exact original prefix. The [retention decision and execution limits](architecture/2026-10-24-html-instruction-retention-and-local-observation.md) explain why this differs from exact full-block digest equality.
 
 The local execution manifests have SHA-256 `ff5457eefd46a6c89a9d0c91ce9a4fc7f4a8dfb0268ed120db3c614bc192ea27` for the frozen file and `7c822a04d02011d136b5b63a2337d0e017f728799b1c04f41c28f9f5e2d563f4` for the preview. The body-bearing observations have SHA-256 `778bc11c1f63584cc7e7fcc61f50717d1305108c48610e14c24b5881366ce080` and `214a62ca440bccf5350427574ffe88babd604000ba601236aece36297c16bf3c`, respectively. The first memory-interrupted attempt remains preserved and is not counted as complete evidence. No full HTML was uploaded to an external sandbox. These reports remain local: automatic approval rejected uploading the rendered body evidence to Supabase, and additional user consent is pending.
@@ -31,6 +33,12 @@ The local execution manifests have SHA-256 `ff5457eefd46a6c89a9d0c91ce9a4fc7f4a8
 A subsequent authoritative read still has four verified passing criteria (workflow closure 98, understandability 96, detail 93 and pairwise improvement 94), four partial criteria, campaign paused at validation and repair attempts 2/2. No new AI repair, independent final acceptance, Gate F pass or delivery is claimed. The passing preview is not a replacement for the frozen Candidate.
 
 A read-only call to the configured provider's documented subscription quota endpoint succeeded. It supplies quota windows/counters rather than an attributable monetary bill; the counters do not establish zero usage or zero cost. Actual monetary evidence, accepted pilot deliveries and controlled lesson transfer remain unproved. The billing UI is still awaiting user dismissal of a blocking browser extension panel.
+
+## Independent business observations
+
+The actual old statistics function could report significant improvement from 30 repeated aggregate polls per arm. This defect is now reproduced and repaired: versioned source task identity, exact replay deduplication, conflict exclusion, configured-source validation and a stronger production-goal fingerprint prevent these polls from authorizing improvement or Skill promotion. Existing scalar and unclassified records remain stored but do not become independent task samples. See [the observation decision and limits](architecture/2026-10-26-independent-outcome-observations.md).
+
+The final read-only audit at `2026-10-26T00:56:07.388Z` found **zero configured business sources, zero outcome records and zero independent task observations** for the real pilot. The existing minimum is 30 per arm. These are missing data, not zero monetary cost or a successful business outcome. The audit made no AI requests, body uploads or remote writes. The new 169 passing regression tests and the synthetic before/after counterexample do not satisfy any of the real-user benefit, actual billing or unseen-task learning-effect requirements.
 
 ## Failures found by the real pilot
 
@@ -106,6 +114,6 @@ Actual desktop/mobile screenshots exposed a separate usability concern: the new 
 
 The previous 32 passing browser assertions did not cover newly introduced words. A subsequent paired browser observation on the unchanged physical `0de13e…` Candidate found that `service_role`, `next_public_supabase_url` and `created_at` were present in slide 64's body but absent from its old search index; searching each term hid the target card. The Original had neither those terms nor matching results. The complete local observation JSON is 1,580 bytes with SHA-256 `d5afdb0218dc8499785b5138cf53f984ede429e086031b3ada818af028ddae50`; it has not yet been registered as a signed server Artifact. This is a real regression and limits the earlier functional-pass claim.
 
-The local compiler now refreshes derived indexes before freezing future proposals, while the textual review preserves paragraph/card boundaries and code whitespace. On the exact frozen inputs, parse-only verification updated 111 indexes and produced local preview SHA-256 `b304afdddb19fa84e6ee272c5bee039fad27601047941869138a3cb8ac68c301`. Visible body text, scripts, styles and code examples were unchanged, canonical metadata was validated and a second compilation was identical. This is **not a new registered Candidate, browser search pass, acceptance or delivery**; the official `0de13e…` frozen file remains unchanged.
+The local compiler now refreshes derived indexes before freezing future proposals, while the textual review preserves paragraph/card boundaries and code whitespace. On the exact frozen inputs, the initial parse-only verification updated 111 indexes and produced local preview SHA-256 `b304afdddb19fa84e6ee272c5bee039fad27601047941869138a3cb8ac68c301`. Visible body text, scripts, styles and code examples were unchanged, canonical metadata was validated and a second compilation was identical. Subsequent local browser verification, recorded above, passed the preview's 41 assertions. This is **not a new registered Candidate, formal acceptance or delivery**; the official `0de13e…` frozen file remains unchanged.
 
 Native evidence contracts and injected Harness ports are locally tested, including rejection of stale/cross-project/duplicate evidence and preventing Judge from overriding a bound actual protection failure. The new cloud entry is not connected or published. Automatic approval rejected both its proposed full-file verification and backend entry because separate consent to send the complete HTML, including CSS/JS, to the temporary Vercel Sandbox is still pending. Local tests do not substitute for that real execution. No final paper was consumed, no threshold was reduced, and there is still no accepted/delivered pilot, business improvement or causal lesson-transfer result. See [the architecture decision](architecture/2026-10-23-html-derived-search-and-readable-evidence.md).

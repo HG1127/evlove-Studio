@@ -208,7 +208,7 @@ async function persistOutcomeSamples(args:{
       missionId:args.project.id,
       candidateId:args.project.release.candidateId,
       samples:samples.slice(offset,offset+1000),
-    });
+    },{origin:"server-telemetry"});
     const result=await insertOutcomeSamples(batch);
     inserted+=result.inserted;
     messages.push(result.message);

@@ -2,6 +2,7 @@
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
 import type {Candidate,EvolveProject,VercelReleaseObservation} from "@evolution/contracts";
 import {collectConfiguredOutcomeTelemetry,getOutcomeTelemetryConfigState} from "./outcome-telemetry-source";
+import {analyzeOutcomeSamples} from "@evolution/core";
 
 const originalTelemetry=process.env.EVOLUTION_OUTCOME_TELEMETRY_JSON;
 const originalToken=process.env.PRODUCT_METRICS_TOKEN;
@@ -51,6 +52,36 @@ afterEach(()=>{
 });
 
 describe("outcome telemetry source",()=>{
+  const configureTasks=()=>{process.env.EVOLUTION_OUTCOME_TELEMETRY_JSON=JSON.stringify([{
+    id:"tasks",urlTemplate:"https://metrics.example.com/{deploymentId}",
+    sampling:{kind:"independent-task",recordsPath:"tasks",taskIdPath:"id",observedAtPath:"completedAt",deploymentIdPath:"deployment"},
+    metrics:[{metricKey:"acceptance_rate",metricKind:"business",direction:"higher",path:"accepted",unit:"ratio"}],
+  }]);};
+  it("keeps task identities stable across polls and release traffic changes",async()=>{
+    configureTasks();
+    vi.stubGlobal("fetch",vi.fn(async(input:string|URL|Request)=>{
+      const deployment=decodeURIComponent(new URL(String(input)).pathname.slice(1)),stable=deployment==="dpl-stable";
+      return new Response(JSON.stringify({tasks:Array.from({length:30},(_,i)=>({id:deployment+"-task-"+i,completedAt:"2026-09-21T00:00:00Z",deployment,accepted:stable?i<15:i<27}))}));
+    }));
+    const project=fixture(),first=await collectConfiguredOutcomeTelemetry(project,observation());
+    project.release.trafficPercent=50;project.release.status="canary-50";
+    const second=await collectConfiguredOutcomeTelemetry(project,{...observation(),checkedAt:"2026-09-21T04:00:00Z"});
+    expect(first.samples).toHaveLength(60);expect(second.samples).toEqual(first.samples);
+    const result=analyzeOutcomeSamples({missionId:project.id,candidateId:"C1",minimumSamplesPerArm:30,
+      samples:[...first.samples,...second.samples].map(sample=>({...sample,id:sample.id!,missionId:project.id,workspaceId:"workspace"}))});
+    expect(result).toMatchObject({verdict:"healthy",independentSampleCount:60,excludedSampleCount:60});
+    expect(result.metrics[0]).toMatchObject({stable:{count:30},candidate:{count:30}});
+  });
+  it.each(["missing-id","invalid-time","wrong-deployment","conflicting-record"])("does not invent task identity for %s",async(kind)=>{
+    configureTasks();
+    vi.stubGlobal("fetch",vi.fn(async(input:string|URL|Request)=>{
+      const deployment=decodeURIComponent(new URL(String(input)).pathname.slice(1));
+      const row={id:kind==="missing-id"?undefined:deployment+"-task",completedAt:kind==="invalid-time"?"not-a-time":"2026-09-21T00:00:00Z",deployment:kind==="wrong-deployment"?"other":deployment,accepted:true};
+      return new Response(JSON.stringify({tasks:kind==="conflicting-record"?[row,{...row,accepted:false}]:[row]}));
+    }));
+    const result=await collectConfiguredOutcomeTelemetry(fixture(),observation());
+    expect(result.samples).toEqual([]);expect(result.warnings.length).toBeGreaterThan(0);
+  });
   it("does not treat an explicitly empty source list as ready telemetry",()=>{
     process.env.EVOLUTION_OUTCOME_TELEMETRY_JSON="[]";
     const state=getOutcomeTelemetryConfigState();

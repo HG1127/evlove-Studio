@@ -13,8 +13,8 @@ function samples(input:{
   const segment=input.segment??"all";
   const base={workspaceId:"w1",missionId:"m1",candidateId:"c1",metricKey:input.metricKey,metricKind:input.kind,direction:input.direction,segment,source:"test",metadata:{}};
   return [
-    ...input.stable.map((value,index)=>({...base,id:`s-${input.metricKey}-${index}`,arm:"stable" as const,deploymentId:"stable-deployment",value,observedAt:`2026-09-21T00:${String(index).padStart(2,"0")}:00.000Z`})),
-    ...input.candidate.map((value,index)=>({...base,id:`c-${input.metricKey}-${index}`,arm:"candidate" as const,deploymentId:"candidate-deployment",value,observedAt:`2026-09-21T01:${String(index).padStart(2,"0")}:00.000Z`})),
+    ...input.stable.map((value,index)=>({...base,id:`s-${input.metricKey}-${index}`,arm:"stable" as const,deploymentId:"stable-deployment",value,observedAt:`2026-09-21T00:${String(index).padStart(2,"0")}:00.000Z`,observation:{schemaVersion:"outcome-observation-v1" as const,kind:"independent-task" as const,taskId:`stable-${index}`}})),
+    ...input.candidate.map((value,index)=>({...base,id:`c-${input.metricKey}-${index}`,arm:"candidate" as const,deploymentId:"candidate-deployment",value,observedAt:`2026-09-21T01:${String(index).padStart(2,"0")}:00.000Z`,observation:{schemaVersion:"outcome-observation-v1" as const,kind:"independent-task" as const,taskId:`candidate-${index}`}})),
   ];
 }
 

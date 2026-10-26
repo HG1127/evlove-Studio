@@ -19,8 +19,8 @@ function measuredRows():OutcomeMetricSample[]{
     metricKey:"conversion",metricKind:"business" as const,direction:"higher" as const,
     segment:"all",source:"product",metadata:{},observedAt:"2026-09-21T00:00:00.000Z"};
   return [
-    ...Array.from({length:5},(_,i)=>({...base,id:`stable-${i}`,arm:"stable" as const,deploymentId:"deployment-stable",value:0.5})),
-    ...Array.from({length:5},(_,i)=>({...base,id:`candidate-${i}`,arm:"candidate" as const,deploymentId:"deployment-candidate",value:0.6})),
+    ...Array.from({length:5},(_,i)=>({...base,id:`stable-${i}`,arm:"stable" as const,deploymentId:"deployment-stable",value:0.5,observation:{schemaVersion:"outcome-observation-v1" as const,kind:"independent-task" as const,taskId:`stable-${i}`}})),
+    ...Array.from({length:5},(_,i)=>({...base,id:`candidate-${i}`,arm:"candidate" as const,deploymentId:"deployment-candidate",value:0.6,observation:{schemaVersion:"outcome-observation-v1" as const,kind:"independent-task" as const,taskId:`candidate-${i}`}})),
   ];
 }
 
@@ -48,6 +48,13 @@ describe("Outcome Analytics sample threshold configuration",()=>{
 });
 
 describe("Outcome Analytics configured evidence",()=>{
+  it("does not accept a source name as proof when no telemetry source is configured",async()=>{
+    delete process.env.EVOLUTION_OUTCOME_TELEMETRY_JSON;
+    readSamples.mockResolvedValue(measuredRows().map(row=>({...row,source:"outcome-telemetry:claimed"})));
+    const result=await analyzeMissionOutcome({missionId:"m1",candidateId:"c1",telemetryOnly:true});
+    expect(result).toMatchObject({verdict:"insufficient",independentSampleCount:0});
+    expect(result.message).toContain("尚未配置");
+  });
   it("reports a configured metric that produced no samples instead of healthy",async()=>{
     process.env.EVOLUTION_OUTCOME_TELEMETRY_JSON=JSON.stringify([{
       id:"product",urlTemplate:"https://metrics.example.com/{deploymentId}",

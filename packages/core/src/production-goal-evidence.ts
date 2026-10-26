@@ -1,10 +1,10 @@
-import {ProductionGoalEvidenceSchema,type EvolveProject} from "@evolution/contracts";
+import {OUTCOME_MEASUREMENT_POLICY,ProductionGoalEvidenceSchema,type EvolveProject} from "@evolution/contracts";
 import {fastHash} from "./stable-hash";
 import {projectHasOnlineReleaseTarget} from "./release-target";
 import {PRODUCTION_OUTCOME_FRESHNESS_MS,PRODUCTION_OUTCOME_MAX_FUTURE_SKEW_MS} from "./release-outcome";
 
 export function productionGoalFingerprint(project:EvolveProject){
-  return fastHash(JSON.stringify(["production-goal-v1",project.id,project.goal,project.evolutionCommand,
+  return fastHash(JSON.stringify(["production-goal-v2",OUTCOME_MEASUREMENT_POLICY,project.id,project.goal,project.evolutionCommand,
     project.metrics?.map(({key,target,direction,unit})=>({key,target,direction,unit})),project.acceptanceRubric,
     project.release.candidateId,project.release.deploymentId,project.release.stableDeploymentId,project.release.artifactHashes]));
 }
@@ -33,6 +33,10 @@ export function productionGoalReadiness(project:EvolveProject,now=Date.now()){
     return pending("目标收益分析身份或时间绑定不一致。");
   }
   if(analysis.verdict!=="healthy"||analysis.regressions.length)return pending("目标收益样本不足、发生回归或存在漂移，不能宣告进化成功。");
+  if(analysis.measurementPolicy!==OUTCOME_MEASUREMENT_POLICY||analysis.observationConflictCount!==0
+    ||!Number.isInteger(analysis.independentSampleCount)||analysis.independentSampleCount!<Math.max(5,analysis.minimumSamplesPerArm)*2){
+    return pending("目标收益缺少足量、无冲突的独立任务观测，汇总轮询不能升级为真实进化或 Verified Skill。");
+  }
   const goals=project.metrics?.filter(metric=>metric.target!==undefined&&Number.isFinite(metric.target))??[];
   if(!goals.length||new Set(goals.map(goal=>goal.key)).size!==goals.length)return pending("需要唯一、可观测且有目标值的业务指标契约。");
   let improved=false;

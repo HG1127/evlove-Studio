@@ -27,6 +27,11 @@ function batch():OutcomeMetricBatchRequest{
 }
 
 describe("Outcome ingestion Mission binding",()=>{
+  it("does not allow a caller to impersonate configured telemetry",()=>{
+    const input=batch();for(const sample of input.samples)sample.source="outcome-telemetry:configured";
+    expect(()=>bindOutcomeMetricBatchToMission(mission(),input,{now})).toThrow("cannot be claimed");
+    expect(()=>bindOutcomeMetricBatchToMission(mission(),input,{now,origin:"server-telemetry"})).not.toThrow();
+  });
   it("normalizes missing sample candidate identity only after exact Release deployment binding",()=>{
     const bound=bindOutcomeMetricBatchToMission(mission(),batch(),{now});
     expect(bound.candidateId).toBe("C1");

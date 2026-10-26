@@ -1,11 +1,13 @@
 import {
   OutcomeAnalyticsResponseSchema,
+  OUTCOME_MEASUREMENT_POLICY,
   type OutcomeAnalyticsResponse,
   type OutcomeMetricAnalysis,
   type OutcomeMetricSample,
   type OutcomeSummary,
 } from "@evolution/contracts";
 import {PRODUCTION_OUTCOME_MAX_FUTURE_SKEW_MS} from "./release-outcome";
+import {qualifyOutcomeObservations} from "./outcome-observation-identity";
 
 function mean(values:number[]){
   return values.length?values.reduce((sum,value)=>sum+value,0)/values.length:undefined;
@@ -157,22 +159,26 @@ export function analyzeOutcomeSamples(input:{
     throw new Error("Outcome analysis candidateId is required when multiple Candidates are present");
   }
   const candidateId=input.candidateId??candidateIds[0];
-  const samples=input.samples.filter((sample)=>{
+  const scoped=input.samples.filter((sample)=>{
+    if(sample.missionId!==input.missionId)return false;
     if(candidateId&&sample.candidateId!==candidateId)return false;
     const observedAt=Date.parse(sample.observedAt);
     return Number.isFinite(observedAt)&&observedAt<=checkedAtMs+PRODUCTION_OUTCOME_MAX_FUTURE_SKEW_MS;
   });
-  const dropped=input.samples.length-samples.length;
-  const scopeIssue=deploymentScopeIssue(samples);
+  const qualified=qualifyOutcomeObservations(scoped),samples=qualified.samples;
+  const dropped=input.samples.length-scoped.length;
+  const measurement={measurementPolicy:OUTCOME_MEASUREMENT_POLICY,independentSampleCount:samples.length,
+    excludedSampleCount:qualified.excludedCount,droppedSampleCount:dropped,observationConflictCount:qualified.conflictCount};
+  const scopeIssue=new Set(scoped.map(sample=>sample.workspaceId)).size>1?"Outcome 样本混合了多个 Workspace。":deploymentScopeIssue(scoped);
   if(scopeIssue){
     return OutcomeAnalyticsResponseSchema.parse({
-      missionId:input.missionId,candidateId,checkedAt,sampleCount:samples.length,
+      missionId:input.missionId,candidateId,checkedAt,sampleCount:scoped.length,...measurement,
       minimumSamplesPerArm:input.minimumSamplesPerArm,
       metrics:[],drift:[],regressions:[],verdict:"insufficient",
       message:scopeIssue+" 请按单一 Release 部署周期补齐可比样本。",
     });
   }
-  assertComparableMetricContracts(samples);
+  assertComparableMetricContracts(scoped);
   const grouped=groups(samples);
   const metrics=grouped.map((group)=>analyzeGroup(group.rows,group.segment,input.minimumSamplesPerArm));
   const driftRows=grouped.map((group)=>drift(group.rows,group.segment,input.minimumSamplesPerArm));
@@ -199,21 +205,22 @@ export function analyzeOutcomeSamples(input:{
       .map((metric)=>`${metric.metricKey}/${metric.segment}: Stable ${metric.stable.count}, Candidate ${metric.candidate.count}`),
     ...missingConfigured,
   ];
-  const insufficient=metrics.length===0||incompleteScopes.length>0||Boolean(input.telemetryConfigurationError);
+  const insufficient=metrics.length===0||incompleteScopes.length>0||Boolean(input.telemetryConfigurationError)||qualified.conflictCount>0;
   const drifting=driftRows.some((item)=>item.status==="drifting");
   const verdict=regressions.length?"regression":insufficient?"insufficient":drifting?"watch":"healthy";
   return OutcomeAnalyticsResponseSchema.parse({
     missionId:input.missionId,
     candidateId,
     checkedAt,
-    sampleCount:samples.length,
+    sampleCount:scoped.length,
+    ...measurement,
     minimumSamplesPerArm:input.minimumSamplesPerArm,
     metrics,
     drift:driftRows,
     regressions,
     verdict,
     message:(verdict==="insufficient"
-      ?`每个 Stable/Candidate arm 至少需要 ${input.minimumSamplesPerArm} 个样本。`
+      ?`每个 Stable/Candidate arm 至少需要 ${input.minimumSamplesPerArm} 个独立任务样本。`
       :verdict==="regression"
         ?`检测到 ${regressions.length} 个统计回归。`
         :verdict==="watch"
@@ -221,6 +228,8 @@ export function analyzeOutcomeSamples(input:{
           :"当前样本未检测到显著回归。")
       +(incompleteScopes.length?` 证据不足：${incompleteScopes.slice(0,5).join("；")}${incompleteScopes.length>5?"；等更多分段":""}。`:"")
       +(input.telemetryConfigurationError?` Telemetry 配置不可用：${input.telemetryConfigurationError}。`:"")
+      +(qualified.excludedCount?` 已排除 ${qualified.excludedCount} 个缺少任务身份、汇总轮询、重复或冲突记录。`:"")
+      +(qualified.conflictCount?` ${qualified.conflictCount} 个任务身份存在内容或部署冲突，不能证明改善。`:"")
       +(dropped?` 已忽略 ${dropped} 个跨 Candidate、无效时间或超前时间样本。`:""),
   });
 }

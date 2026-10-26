@@ -59,16 +59,18 @@ export async function getOutcomeAnalyticsHealth(){
 
 export async function analyzeMissionOutcome(input:{missionId:string;candidateId:string;deploymentId?:string;stableDeploymentId?:string;telemetryOnly?:boolean}){
   const stored=await readOutcomeSamples({missionId:input.missionId,candidateId:input.candidateId,limit:20_000,requireComplete:true});
+  const telemetry=getOutcomeTelemetryConfigState();
+  const sources=new Set(telemetry.sources.map(source=>"outcome-telemetry:"+source.id));
   const samples=stored.filter(sample=>
-    (!input.telemetryOnly||sample.source.startsWith("outcome-telemetry:"))
+    (!input.telemetryOnly||sources.has(sample.source))
     &&(!input.deploymentId||sample.arm!=="candidate"||sample.deploymentId===input.deploymentId)
     &&(!input.stableDeploymentId||sample.arm!=="stable"||sample.deploymentId===input.stableDeploymentId));
-  const telemetry=getOutcomeTelemetryConfigState();
   return analyzeOutcomeSamples({
     ...input,
     samples,
     minimumSamplesPerArm:outcomeMinimumSamplesPerArm(),
     requiredMetricScopes:telemetry.sources.flatMap((source)=>source.metrics.map((metric)=>({metricKey:metric.metricKey,segment:metric.segment,source:"outcome-telemetry:"+source.id}))),
-    telemetryConfigurationError:telemetry.configured&&!telemetry.ready?telemetry.errors.slice(0,3).join("; "):undefined,
+    telemetryConfigurationError:input.telemetryOnly&&!telemetry.configured?"真实业务指标来源尚未配置"
+      :telemetry.configured&&!telemetry.ready?telemetry.errors.slice(0,3).join("; "):undefined,
   });
 }

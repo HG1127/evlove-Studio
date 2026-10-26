@@ -10,3 +10,4 @@ export * from "./stored-project-metrics";
 export * from "./spreadsheet-overlay";
 export * from "./structured-text-validation";
 export * from "./ai-provider-usage";
+export * from "./outcome-telemetry-records";

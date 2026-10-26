@@ -43,7 +43,7 @@ describe("Outcome sample store",()=>{
     }]};
   }
 
-  it("uses a stable generated ID for an omitted-ID replay and detects changed content",async()=>{
+  it.each(["legacy","independent-task"])("uses a stable generated ID for an omitted-ID %s replay and detects changed content",async(kind)=>{
     const stored=new Map<string,ReturnType<typeof row>>();
     const fetchMock=vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
       if(init?.method==="POST"){
@@ -59,13 +59,32 @@ describe("Outcome sample store",()=>{
     });
     vi.stubGlobal("fetch",fetchMock);
     const batch=sampleBatch();
+    if(kind==="independent-task")batch.samples[0]!.observation={schemaVersion:"outcome-observation-v1",kind:"independent-task",taskId:"actual-task-id"};
     delete batch.samples[0]!.id;
     expect((await insertOutcomeSamples(batch)).inserted).toBe(1);
     batch.samples[0]!.observedAt="2026-09-24T00:00:00.000+00:00";
     expect((await insertOutcomeSamples(batch)).inserted).toBe(0);
     expect(stored.size).toBe(1);
+    if(kind==="independent-task"){
+      expect([...stored.values()][0]!.metadata).toHaveProperty("__evolutionOutcomeObservation",batch.samples[0]!.observation);
+      batch.samples[0]!.observedAt="2026-09-24T01:00:00Z";
+      await expect(insertOutcomeSamples(batch)).rejects.toBeInstanceOf(OutcomeSampleIdConflictError);
+      expect(stored.size).toBe(1);
+    }
     batch.samples[0]!.value=2;
     await expect(insertOutcomeSamples(batch)).rejects.toBeInstanceOf(OutcomeSampleIdConflictError);
+  });
+  it("round-trips the versioned task identity through existing JSON metadata",async()=>{
+    const stored={...row("task-row"),metadata:{note:"synthetic",__evolutionOutcomeObservation:{schemaVersion:"outcome-observation-v1",kind:"independent-task",taskId:"task-1"}}};
+    let page=0;vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(page++===0?[stored]:[]))));
+    const result=await readOutcomeSamples({missionId:"mission/test",candidateId:"candidate/a",limit:10,requireComplete:true});
+    expect(result).toHaveLength(1);expect(result[0]).toMatchObject({observation:stored.metadata.__evolutionOutcomeObservation,metadata:{note:"synthetic"}});
+    expect(result[0]!.metadata).not.toHaveProperty("__evolutionOutcomeObservation");
+  });
+  it("does not reinterpret arbitrary caller metadata as a task identity",async()=>{
+    const batch=sampleBatch();batch.samples[0]!.metadata.__evolutionOutcomeObservation={schemaVersion:"outcome-observation-v1",kind:"independent-task",taskId:"claimed-task"};
+    const fetchMock=vi.fn();vi.stubGlobal("fetch",fetchMock);
+    await expect(insertOutcomeSamples(batch)).rejects.toThrow("reserved");expect(fetchMock).not.toHaveBeenCalled();
   });
   it("rejects two omitted-ID samples with the same observation identity before writing",async()=>{
     const fetchMock=vi.fn();

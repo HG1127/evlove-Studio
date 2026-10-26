@@ -7,6 +7,14 @@ export type OutcomeMetricDirection=z.infer<typeof OutcomeMetricDirectionSchema>;
 export const OutcomeArmSchema=z.enum(["stable","candidate"]);
 export type OutcomeArm=z.infer<typeof OutcomeArmSchema>;
 
+export const OUTCOME_OBSERVATION_METADATA_KEY="__evolutionOutcomeObservation";
+export const OUTCOME_MEASUREMENT_POLICY="independent-task-observations-v1";
+export const OutcomeObservationIdentitySchema=z.discriminatedUnion("kind",[
+  z.object({schemaVersion:z.literal("outcome-observation-v1"),kind:z.literal("independent-task"),taskId:z.string().trim().min(1).max(200)}).strict(),
+  z.object({schemaVersion:z.literal("outcome-observation-v1"),kind:z.literal("aggregate-snapshot")}).strict(),
+]);
+export type OutcomeObservationIdentity=z.infer<typeof OutcomeObservationIdentitySchema>;
+
 export const OutcomeMetricSampleSchema=z.object({
   id:z.string().min(1),
   workspaceId:z.string().min(1),
@@ -22,6 +30,7 @@ export const OutcomeMetricSampleSchema=z.object({
   segment:z.string().min(1).max(120).default("all"),
   source:z.string().min(1).max(120),
   observedAt:z.string(),
+  observation:OutcomeObservationIdentitySchema.optional(),
   metadata:z.record(z.string(),z.unknown()).default({}),
 });
 export type OutcomeMetricSample=z.infer<typeof OutcomeMetricSampleSchema>;
@@ -88,6 +97,11 @@ export const OutcomeAnalyticsResponseSchema=z.object({
   candidateId:z.string().optional(),
   checkedAt:z.string(),
   sampleCount:z.number().int().nonnegative(),
+  measurementPolicy:z.literal(OUTCOME_MEASUREMENT_POLICY).optional(),
+  independentSampleCount:z.number().int().nonnegative().optional(),
+  excludedSampleCount:z.number().int().nonnegative().optional(),
+  droppedSampleCount:z.number().int().nonnegative().optional(),
+  observationConflictCount:z.number().int().nonnegative().optional(),
   minimumSamplesPerArm:z.number().int().positive(),
   metrics:z.array(OutcomeMetricAnalysisSchema),
   drift:z.array(OutcomeDriftAnalysisSchema),

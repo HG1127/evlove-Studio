@@ -39,7 +39,7 @@ function metricContract(sample:OutcomeMetricBatchRequest["samples"][number]){
 export function bindOutcomeMetricBatchToMission(
   project:EvolveProject,
   raw:OutcomeMetricBatchRequest,
-  options?:{now?:number;maxFutureSkewMs?:number},
+  options?:{now?:number;maxFutureSkewMs?:number;origin?:"server-telemetry"},
 ):OutcomeMetricBatchRequest{
   const input=OutcomeMetricBatchRequestSchema.parse(raw);
   if(input.missionId!==project.id)fail("Outcome batch missionId does not match Mission");
@@ -52,6 +52,9 @@ export function bindOutcomeMetricBatchToMission(
   const maxFutureSkewMs=options?.maxFutureSkewMs??PRODUCTION_OUTCOME_MAX_FUTURE_SKEW_MS;
   const metricContracts=new Map<string,string>();
   const samples=input.samples.map((sample,index)=>{
+    if(sample.source.trim().startsWith("outcome-telemetry:")&&options?.origin!=="server-telemetry"){
+      fail("Configured telemetry sources cannot be claimed through manual Outcome ingestion");
+    }
     if(sample.candidateId&&sample.candidateId!==candidateId){
       fail("Outcome sample "+index+" candidateId does not match current Release Candidate");
     }
