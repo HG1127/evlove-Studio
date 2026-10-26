@@ -1,10 +1,10 @@
 import type {AcceptanceCriterion,Candidate,EvolveProject,FrozenArtifact} from "@evolution/contracts";
 import {evidenceFingerprint,htmlKnownSemanticComponents,htmlRepairBodyContext,htmlRepairTextNodeContext,resolveBoundHtmlBodyNodeEdits,indexUniqueById,reconcileAcceptedOfflineChampion} from "@evolution/core";
 import {isKnownHtmlNativeSubject} from "@evolution/adapters/html-native-profile";
-import {measuredDocumentObservations,runServerArtifactAcceptance,type ServerArtifactVerification} from "@evolution/harness";
+import {measuredDocumentObservations,runServerArtifactAcceptance,runServerVisibleRepair,type ServerArtifactVerification} from "@evolution/harness";
 import {runServerAi} from "./ai-gateway";
 import {getServerArtifactStore} from "./artifact-runtime";
-import {materializeServerCandidateArtifacts,readServerCandidateParentText,readServerCandidateParentNativeStructure,verifyServerCandidateFrozenArtifact} from "./server-experiment-artifacts";
+import {materializeServerCandidateArtifacts,readServerCandidateParentText,readServerCandidateParentNativeStructure,serverArtifactSha256,verifyServerCandidateFrozenArtifact} from "./server-experiment-artifacts";
 
 import {buildServerCandidateTargetContext,requireServerCandidateOutputModes} from "./server-candidate-context";
 import {verifyServerIndependentFinalHoldout} from "./server-independent-final-holdout";
@@ -46,14 +46,17 @@ export async function repairServerArtifactCandidate(args:{
   candidate:Candidate;
   failedCriteria:AcceptanceCriterion[];
   attempt:number;
+  feedbackPhase?:"visible";
 }){
   const failedIds=new Set(args.failedCriteria.map((criterion)=>criterion.id));
   const authorizedBody=serverRepairMeasuredTextAuthorized(args.project.id);
+  const expectedParents=new Map<string,string>();
   const htmlParents=new Map<string,{html:string;sha256:string;nodes:ReturnType<typeof htmlRepairTextNodeContext>;components:ReturnType<typeof htmlKnownSemanticComponents>}>();
   const focused = {...args.candidate, change: args.failedCriteria.map((criterion) => `${criterion.title}: ${criterion.requirement}`).join("\n")};
   const rawContexts = await buildServerCandidateTargetContext(args.project,focused,
     async(source)=>{
       const actual=await readServerCandidateParentText(args.project,source,args.candidate);
+      expectedParents.set(source.id,await serverArtifactSha256(new TextEncoder().encode(actual)));
       if(!authorizedBody||!/^html?$/i.test(source.extension))return actual;
       const safe=htmlRepairBodyContext(actual);
       if(safe===undefined)throw new Error("HTML repair requires complete physical body boundaries before sharing mutation context");
@@ -69,6 +72,7 @@ export async function repairServerArtifactCandidate(args:{
       originalChars:parent.html.length,parentSha256:parent.sha256,htmlTextNodes:parent.nodes,htmlRendererComponents:parent.components,
       contextProjection:"complete body text nodes with physical edit IDs; no raw tags, attributes, scripts, styles or template code"}:context;
   });
+  const visibleFeedback=args.feedbackPhase==="visible"?args.project.experimentRun.candidateResults.find(result=>result.candidateId===args.candidate.id):undefined;
   const boundObservation=authorizedBody
     &&args.project.validationRun.candidateId===args.candidate.id
     &&args.project.validationRun.evidenceFingerprint===evidenceFingerprint(args.project,args.candidate);
@@ -101,12 +105,14 @@ export async function repairServerArtifactCandidate(args:{
         contextProjection:"contextProjection" in context?context.contextProjection:undefined,
         parentSha256:"parentSha256" in context?context.parentSha256:undefined,
         htmlTextNodes:"htmlTextNodes" in context?context.htmlTextNodes:undefined,
+        htmlRendererComponents:"htmlRendererComponents" in context?context.htmlRendererComponents:undefined,
       })),
     },
-    measuredCandidateDocuments:measuredDocumentObservations(boundObservation?args.project.validationRun.runs:[]),
+    feedbackPhase:args.feedbackPhase??"hidden",
+    measuredCandidateDocuments:measuredDocumentObservations(authorizedBody&&visibleFeedback?visibleFeedback.runs:boundObservation?args.project.validationRun.runs:[]),
     scopeInstruction:"Satisfy the entire supplied failed requirement in the actual document. Use complete htmlTextNodes and existing measuredCandidateDocuments to understand its full chapter/configuration scope; do not replace a request for concrete configuration detail with generic instructions telling the reader to add details. These are existing measured text observations, not quality verdicts or script/style/runtime proof. For html-body-node-edits-v1 use only exact supplied anchorIds and complete replacement plain text. The server binds the current frozen parent; do not select a parent or return a hash. Never concatenate rendered paragraphs into a raw HTML anchor. Spread concrete, accurate configuration explanations across the chapters that need them, preserving all existing facts and protected interactions. All original goals, protected items and acceptance thresholds remain binding. A new Candidate must pass the complete Visible suite, ordinary Hidden and the unchanged independent final paper before acceptance.",
     failedCriteria:args.failedCriteria.map((criterion)=>{
-      const score=args.project.validationRun.evaluation?.criterionScores?.find((item)=>item.criterionId===criterion.id);
+      const score=(visibleFeedback?.evaluation??args.project.validationRun.evaluation)?.criterionScores?.find((item)=>item.criterionId===criterion.id);
       return {
         criterionId:criterion.id,
         title:criterion.title,
@@ -151,6 +157,7 @@ export async function repairServerArtifactCandidate(args:{
     artifacts.map((artifact)=>({...artifact,buildMode:"ai-full" as const})),
     `Targeted Repair ${args.attempt}: ${response.summary}`,
     args.candidate,
+    expectedParents,
   );
 }
 
@@ -179,4 +186,10 @@ export async function recoverServerAcceptedOfflineChampion(project:EvolveProject
 export async function runServerMissionArtifactAcceptance(project:EvolveProject){
   return runServerArtifactAcceptance(project,{verifyFrozenArtifacts:verifyServerFrozenCandidateArtifacts,repairCandidate:repairServerArtifactCandidate,
     verifyIndependentFinal:verifyServerIndependentFinalHoldout});
+}
+
+/** The caller owns the revision-scoped Mission store; never construct an unbound writer here. */
+export async function runServerMissionVisibleRepair(project:EvolveProject,persistProject:(project:EvolveProject)=>Promise<unknown>){
+  return runServerVisibleRepair(project,{persistProject,repairCandidate:repairServerArtifactCandidate,
+    fingerprint:wire=>serverArtifactSha256(new TextEncoder().encode(wire)),verifyFrozenArtifact:verifyServerCandidateFrozenArtifact});
 }

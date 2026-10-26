@@ -661,6 +661,27 @@ export const ExperimentRunSchema = z.object({
 });
 export type ExperimentRun = z.infer<typeof ExperimentRunSchema>;
 
+/** A pre-debited, at-most-once Visible feedback mutation. Never an acceptance verdict. */
+export const VisibleRepairAttemptSchema = z.object({
+  version: z.literal("experiment-visible-repair-v1"),
+  id: z.string().min(1),
+  round: z.number().int().positive(),
+  attempt: z.number().int().positive(),
+  status: z.enum(["reserved", "running", "frozen", "failed"]),
+  parentCandidateId: z.string().min(1),
+  candidateId: z.string().optional(),
+  failedCriterionIds: z.array(z.string()).min(1),
+  repairedArtifactSnapshots: z.array(CandidateArtifactSnapshotSchema).optional(),
+  inputFingerprint: z.string().regex(/^[0-9a-f]{64}$/),
+  finalPaperHash: z.string().min(1),
+  experiment: ExperimentRunSchema,
+  reservedAt: z.string(),
+  estimatedCost: z.number().min(0).optional(),
+  completedAt: z.string().optional(),
+  error: z.string().optional(),
+});
+export type VisibleRepairAttempt = z.infer<typeof VisibleRepairAttemptSchema>;
+
 /** 建议效果结算：上一轮 AI 优化建议在新一轮盲测后的执行与见效情况，让"建议 → 执行 → 效果"闭环可见。 */
 export const AdviceSettlementSchema = z.object({
   settledAt: z.string(),
@@ -1121,6 +1142,8 @@ export type ProjectAiProfile = z.infer<typeof ProjectAiProfileSchema>;
 
 
 export const ExperimentPolicySchema = z.object({
+  /** Explicit opt-in; legacy trials keep their original stop/repair behavior. */
+  visibleFailureRepair: z.enum(["disabled", "experiment-visible-repair-v1"]).optional(),
   mode: z.enum(["adaptive", "full"]).default("adaptive"),
   finalistCount: z.number().int().min(2).max(6).default(2),
   screeningCaseCount: z.number().int().min(1).max(5).default(2),
@@ -1194,6 +1217,7 @@ export const EvolveProjectSchema = z.object({
   selectedCandidateIds: z.array(z.string()).default([]),
   baselineRun: BaselineRunSchema,
   experimentRun: ExperimentRunSchema,
+  visibleRepairAttempts: z.array(VisibleRepairAttemptSchema).optional(),
   validationRun: ValidationRunSchema,
   supplementalValidationEvidence: z.array(SupplementalValidationEvidenceSchema).default([]),
   /** 自主进化唯一人工中断通道；历史项目没有该字段时保持兼容。 */

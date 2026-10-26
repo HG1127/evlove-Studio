@@ -34,7 +34,8 @@ import {reserveServerMissionFinalPaper,serverFinalPaperExecutionContract} from "
 import { canReuseServerMissionBaseline, runServerMissionBaseline } from "../../apps/backend/src/services/server-baseline";
 import { runServerMissionExperiment } from "../../apps/backend/src/services/server-experiment";
 import { runServerMissionHoldout } from "../../apps/backend/src/services/server-holdout";
-import { recoverServerAcceptedOfflineChampion, runServerMissionArtifactAcceptance } from "../../apps/backend/src/services/server-artifact-acceptance";
+import { recoverServerAcceptedOfflineChampion, runServerMissionArtifactAcceptance,runServerMissionVisibleRepair } from "../../apps/backend/src/services/server-artifact-acceptance";
+import {hasServerPendingVisibleRepair} from "@evolution/harness";
 import { runServerMissionRelease } from "../../apps/backend/src/services/server-release-orchestration";
 import { runServerMissionReleaseReconciliation } from "../../apps/backend/src/services/server-release-reconciliation";
 import { nextProductionMonitorDelay } from "../../apps/backend/src/services/production-monitor";
@@ -849,6 +850,21 @@ async function executeServerControlAction(
 
     const round=campaignMission.campaign.currentRound+1;
     const campaignCheckpoint=executionLimit?undefined:campaignMission.campaign.checkpoint;
+    if(!executionLimit&&hasServerPendingVisibleRepair(campaignMission)){
+      const repairOutcome=await runServerMissionVisibleRepair(campaignMission,current=>runtime.missions.save(current));
+      campaignMission=repairOutcome.project;
+      await runtime.missions.save(campaignMission);
+      await runtime.events.append(createEvolutionEvent({
+        id:`evt-${input.controlJobId}-visible-repair-${iteration}`,missionId:input.missionId,jobId:input.controlJobId,
+        checkpointId:plan.checkpoint.id,type:repairOutcome.repaired?"ActionCompleted":"JobProgress",source:"vercel-workflow-control",
+        payload:{action,phase:"visible-repair",serverNative:true,repaired:repairOutcome.repaired,reason:repairOutcome.reason,
+          attempts:campaignMission.artifactAcceptance.attempts,maxRepairAttempts:campaignMission.artifactAcceptance.maxRepairAttempts},
+      }));
+      await runtime.jobs.put(await controlJob(input,{status:repairOutcome.control==="stop"?"waiting":"running",startedAt:input.requestedAt,
+        progress:{percent:58,detail:repairOutcome.reason.slice(0,240)}}));
+      return repairOutcome.control==="continue"?{control:"continue"}:{control:"stop",result:result(input,{
+        status:"waiting-action",iterations:iteration+1,nextAction:action,checkpointId:plan.checkpoint.id,reason:repairOutcome.reason})};
+    }
     if(campaignCheckpoint?.round===round
       && campaignCheckpoint.completedPhase==="experiment"
       && campaignMission.experimentRun.status==="completed"
@@ -943,6 +959,7 @@ async function executeServerControlAction(
           phase:"experiment",
           serverNative:true,
           readyForHoldout:experimentOutcome.readyForHoldout,
+          readyForVisibleRepair:experimentOutcome.readyForVisibleRepair,
           winnerId:experimentOutcome.winnerId,
           pendingEvidenceCandidateId:experimentOutcome.pendingEvidenceCandidateId,
           builtCount:experimentOutcome.builtCount,

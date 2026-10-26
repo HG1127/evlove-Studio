@@ -2,6 +2,8 @@
 
 Status: in progress, 2026-10-26. Green engineering checks do not establish measured evolution.
 
+The [explicit bounded Visible-failure repair path](architecture/2026-10-26-bounded-visible-failure-repair.md) now shares its repair total with Hidden/Gate F, preserves the failed Experiment and frozen parent/child identities, and requires a persisted revision claim before mutation. Synthetic tests exercise revalidation through independent final/Gate F and exact-byte packaging, including the exhausted-budget failure route. This path is disabled for existing trials. It does not reopen the sealed SOP confirmation with Safety FAIL, and no additional paid trial or actual benefit/transfer result is claimed.
+
 ## Workload and identity
 
 The first pilot uses the actual uploaded Vibe Coding SOP HTML, not a smoke-test fixture. Its Original has 264,173 bytes, 111 slide cards and SHA-256 `6605429efe92470229601adfb3196bc74ae38855f55d71c8754f8336c52b580a`. The pilot copies the existing user goal, all eight acceptance criteria, six visible cases, nine ordinary Hidden cases, protected scope and thresholds. Original user Missions remain unchanged. A separate independent final paper must be reserved before planning.

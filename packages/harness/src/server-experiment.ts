@@ -15,6 +15,7 @@ import {
   judgeServerExperimentCandidate,
   type ServerExperimentExecutionPorts,
 } from "./server-experiment-runner";
+import {prepareServerVisibleRepair} from "./server-visible-repair";
 
 import { recoverableServerExperimentRuns, restoreServerExperimentCandidate, serverExperimentBuildCheckpoint,
   serverExperimentExecutionCheckpoint, serverExperimentObservationBinding, ServerExperimentFrozenRecoveryError, type ServerExperimentRecoveryPorts } from "./server-experiment-recovery";
@@ -29,6 +30,7 @@ export type ServerExperimentOutcome = {
   experiment: ExperimentRun;
   reason: string;
   readyForHoldout: boolean;
+  readyForVisibleRepair?: boolean;
   winnerId?: string;
   pendingEvidenceCandidateId?: string;
   builtCount: number;
@@ -299,6 +301,11 @@ export async function runServerExperiment(
   };
 
   if (!winnerId) {
+    const repair=await prepareServerVisibleRepair({...project,campaign:{...project.campaign,
+      checkpoint:{round,completedPhase:"experiment",at:completedAt}}},ports,completedAt);
+    if(repair)return {control:"continue",project:repair,experiment:repair.experimentRun,
+      reason:`Round ${round} 可见失败已保留并登记有界修复；Gate F 尚未执行。`,readyForHoldout:false,readyForVisibleRepair:true,
+      builtCount:built.length,buildFailureCount:buildFailures.length};
     project = archiveNoWinnerRound(project, round, experiment, built, completedAt);
     return {
       control: "continue",

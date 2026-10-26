@@ -30,6 +30,7 @@ export * from "./campaign-scoring-input";
 export * from "./campaign-schedule";
 export * from "./evaluation-settlement";
 export * from "./experiment-winner";
+export * from "./visible-repair";
 export * from "./validation-decision";
 export * from "./artifact-acceptance-settlement";
 export * from "./acceptance-result-identity";

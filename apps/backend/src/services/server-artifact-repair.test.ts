@@ -36,6 +36,32 @@ beforeEach(() => { vi.stubEnv("EVOLUTION_AI_FULL_REPAIR_TEXT_MISSIONS","");blobs
 afterEach(()=>vi.unstubAllEnvs());
 
 describe("server targeted Artifact repair", () => {
+  it("refuses a changed full parent even when the requested local edit anchor still matches",async()=>{
+    const args=await fixture();
+    ai.mockImplementation(async()=>{
+      args.candidate.artifactSnapshots=[await snapshot("source",current.replace("保留已完成的改进。","保留另一个版本的改进。"))];
+      return output();
+    });
+    await expect(repairServerArtifactCandidate(args)).rejects.toMatchObject({code:"CANDIDATE_BUILD_PARENT_CHANGED"});
+    expect(put).not.toHaveBeenCalled();
+  });
+  it("uses Visible feedback without substituting stale Hidden scores or exposing the final paper",async()=>{
+    const args=await fixture(),base=acceptedPackageFixture(false).project;
+    args.candidate.artifactSnapshots=[await snapshot("source",'<html><body>'+before+'<script>PRIVATE_SCRIPT</script></body></html>')];
+    args.project.experimentRun={id:"visible",status:"completed",candidateResults:[{candidateId:args.candidate.id,artifactSnapshots:args.candidate.artifactSnapshots,experimentStage:"finalist",
+      evaluation:{...base.baselineRun.result!,criterionScores:[{criterionId:failed.id,score:50,pass:false,verificationStatus:"verified",evidence:["VISIBLE-EVIDENCE"],gaps:["VISIBLE-GAP"],testCaseIds:["V1"]}]},
+      runs:[{testCaseId:"V1",output:"COMPLETE CURRENT DOCUMENT TEXT OBSERVATION\nVISIBLE-BODY",verificationStatus:"verified",latencyMs:1,cost:0,trace:[{id:"candidate-semantic-snapshot-V1",stage:"candidate-document-text",status:"pass",summary:"measured"}]}]}]};
+    args.project.finalHoldout={round:1,suite:[{...base.hiddenEvalSuite[0]!,input:"FINAL-SECRET-QUESTION"}],paperHash:"paper",contractFingerprint:"contract",createdAt:"2026-10-08T00:00:00Z"};
+    vi.stubEnv("EVOLUTION_AI_FULL_REPAIR_TEXT_MISSIONS",args.project.id);
+    ai.mockImplementation(async(_op:string,payload:{feedbackPhase:string;failedCriteria:Array<{evidence:string[];gaps:string[]}>;candidate:{artifacts:Array<{htmlTextNodes:Array<{anchorId:string;text:string}>}>}})=>{
+      expect(payload.feedbackPhase).toBe("visible");expect(payload.failedCriteria[0]).toMatchObject({evidence:["VISIBLE-EVIDENCE"],gaps:["VISIBLE-GAP"]});
+      expect(JSON.stringify(payload)).not.toMatch(/FINAL-SECRET-QUESTION|PRIVATE_SCRIPT|主管确认退款后没有审批编号/);
+      const node=payload.candidate.artifacts[0]!.htmlTextNodes.find(item=>item.text==="主管确认退款后才进入执行。")!;
+      return output(JSON.stringify({kind:"html-body-node-edits-v1",edits:[{anchorId:node.anchorId,text:"主管确认退款后才进入执行，并记录审批编号。"}]}));
+    });
+    expect((await repairServerArtifactCandidate({...args,feedbackPhase:"visible"})).id).not.toBe(args.candidate.id);
+    expect(ai).toHaveBeenCalledOnce();
+  });
   it("rejects an invented later body-text anchor before freezing any earlier valid edit",async()=>{
     const args=await fixture();
     args.candidate.artifactSnapshots=[await snapshot("source",'<html><body><p>第一段配置</p><p>第二段配置</p><script>保留原脚本</script></body></html>')];

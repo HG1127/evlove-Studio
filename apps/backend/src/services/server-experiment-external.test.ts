@@ -7,7 +7,7 @@ import {runServerMissionExperiment} from "./server-experiment";
 
 const {getBlob,runSandbox}=vi.hoisted(()=>({getBlob:vi.fn(),runSandbox:vi.fn()}));
 vi.mock("@evolution/harness",async(importOriginal)=>({...await importOriginal<typeof import("@evolution/harness")>(),runServerExperiment:(_project:unknown,ports:unknown)=>ports}));
-vi.mock("@evolution/adapters/sandbox",()=>({runVercelSandboxCodebaseValidation:runSandbox}));
+vi.mock("@evolution/adapters/sandbox",async(importOriginal)=>({...await importOriginal<typeof import("@evolution/adapters/sandbox")>(),runVercelSandboxCodebaseValidation:runSandbox}));
 vi.mock("./artifact-runtime",()=>({getServerArtifactStore:()=>({get:getBlob})}));
 vi.mock("./connector-target-source",()=>({serverConnectorTargetEnabled:()=>false}));
 vi.mock("./server-connector-target-execution",()=>({runServerConnectorTargetBatch:vi.fn(),stageServerConnectorCandidate:vi.fn()}));

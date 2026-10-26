@@ -1,9 +1,11 @@
 import type { EvolveProject } from "@evolution/contracts";
 import { campaignRepairLimitStopReason, evidenceFingerprint, hasFullHiddenMeasurement, htmlNativeCaseSource, independentFinalReadiness, verifiedValidationFailures } from "@evolution/core";
 import { hasCompleteServerExperimentFrozenSet, serverFrozenRepairCandidate } from "./server-experiment-recovery";
+import {hasServerPendingVisibleRepair} from "./server-visible-repair";
 
 /** Structural routing only. Holdout/Gate F still re-read the exact physical files. */
 export function hasServerFrozenValidationCheckpoint(project: EvolveProject) {
+  if(hasServerPendingVisibleRepair(project))return true;
   if (serverFrozenRepairCandidate(project)) return true;
   const checkpoint = project.campaign.checkpoint;
   if (project.targetConnection.adapter !== "artifact"
@@ -24,6 +26,7 @@ export function hasServerFrozenValidationCheckpoint(project: EvolveProject) {
 export function hasServerFrozenVerifiedRejection(project:EvolveProject){
   if(!["idle","running"].includes(project.campaign.status)||campaignRepairLimitStopReason(project)
     ||!hasServerFrozenValidationCheckpoint(project)||project.validationRun.evaluation?.safety==="FAIL")return false;
+  if(hasServerPendingVisibleRepair(project))return true;
   const id=project.experimentRun.winnerId??project.experimentRun.pendingEvidenceCandidateId;
   const candidate=project.candidates.find(item=>item.id===id);
   return Boolean(candidate&&project.validationRun.candidateId===id

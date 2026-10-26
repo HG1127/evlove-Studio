@@ -5,14 +5,14 @@ import type {ServerHarnessPlan} from "@evolution/harness";
 import {demoProject} from "../../../../src/features/evolve/data/mock-project";
 import {executeServerControlStep} from "../../../../workflows/evolution-mission/steps";
 
-const mocks=vi.hoisted(()=>({get:vi.fn(),save:vi.fn(),job:vi.fn(),put:vi.fn(),append:vi.fn(),baseline:vi.fn(),reuse:vi.fn(),frozen:vi.fn(),prepare:vi.fn(),experiment:vi.fn(),holdout:vi.fn(),accept:vi.fn(),ai:vi.fn()}));
+const mocks=vi.hoisted(()=>({get:vi.fn(),save:vi.fn(),job:vi.fn(),put:vi.fn(),append:vi.fn(),baseline:vi.fn(),reuse:vi.fn(),frozen:vi.fn(),prepare:vi.fn(),experiment:vi.fn(),holdout:vi.fn(),accept:vi.fn(),visibleRepair:vi.fn(),ai:vi.fn()}));
 vi.mock("./production-runtime",()=>({getServerProductionRuntime:()=>({missions:{get:mocks.get,save:mocks.save},jobs:{get:mocks.job,put:mocks.put},events:{append:mocks.append}})}));
 vi.mock("./server-ai-connection",()=>({serverAiConnectionConfigured:async()=>true}));
 vi.mock("./ai-gateway",async original=>({...await original<typeof import("./ai-gateway")>(),serverAiScoringRouteFingerprint:async()=>"route",runServerAi:mocks.ai}));
 vi.mock("./server-baseline",()=>({canReuseServerMissionBaseline:mocks.reuse,runServerMissionBaseline:mocks.baseline}));
 vi.mock("./server-experiment",()=>({runServerMissionExperiment:mocks.experiment}));
 vi.mock("./server-holdout",()=>({runServerMissionHoldout:mocks.holdout}));
-vi.mock("./server-artifact-acceptance",()=>({runServerMissionArtifactAcceptance:mocks.accept,recoverServerAcceptedOfflineChampion:vi.fn()}));
+vi.mock("./server-artifact-acceptance",()=>({runServerMissionArtifactAcceptance:mocks.accept,runServerMissionVisibleRepair:mocks.visibleRepair,recoverServerAcceptedOfflineChampion:vi.fn()}));
 vi.mock("@evolution/core",async original=>({...await original<typeof import("@evolution/core")>(),campaignScoringInputBlocker:()=>undefined}));
 vi.mock("@evolution/harness",async original=>{
   const actual=await original<typeof import("@evolution/harness")>();
@@ -34,9 +34,31 @@ beforeEach(()=>{
   mocks.reuse.mockReturnValue(false);
   mocks.frozen.mockReturnValue(false);
   mocks.baseline.mockRejectedValue(new Error("Unexpected costly Baseline"));
-  for(const fn of [mocks.experiment,mocks.holdout,mocks.accept,mocks.ai])fn.mockRejectedValue(new Error("Unexpected execution after limit"));
+  for(const fn of [mocks.experiment,mocks.holdout,mocks.accept,mocks.visibleRepair,mocks.ai])fn.mockRejectedValue(new Error("Unexpected execution after limit"));
 });
 describe("campaign limits before paid execution",()=>{
+  function visibleRepairProject(){
+    const p=project();p.campaign.checkpoint={round:1,completedPhase:"experiment",at:input.requestedAt};
+    p.experimentRun={...p.experimentRun,status:"completed",winnerId:undefined,pendingEvidenceCandidateId:undefined};
+    p.visibleRepairAttempts=[{version:"experiment-visible-repair-v1",id:"repair",round:1,attempt:1,status:"reserved",parentCandidateId:"parent",
+      failedCriterionIds:["CONTENT"],inputFingerprint:"a".repeat(64),finalPaperHash:"paper",experiment:p.experimentRun,reservedAt:input.requestedAt}];
+    return p;
+  }
+  it("routes a persisted Visible reservation through the revision-scoped writer before another experiment",async()=>{
+    const p=visibleRepairProject();mocks.get.mockResolvedValue(p);mocks.frozen.mockReturnValue(true);
+    mocks.visibleRepair.mockImplementation(async(current:EvolveProject,persist:(p:EvolveProject)=>Promise<void>)=>{
+      await persist(current);return {control:"continue",project:current,repaired:true,reason:"new frozen child awaits full Visible"};
+    });
+    expect((await executeServerControlStep(input,plan,0)).control).toBe("continue");
+    expect(mocks.visibleRepair).toHaveBeenCalledOnce();expect(mocks.save).toHaveBeenCalledTimes(2);
+    for(const fn of [mocks.baseline,mocks.experiment,mocks.holdout,mocks.accept,mocks.ai])expect(fn).not.toHaveBeenCalled();
+    expect(mocks.append).toHaveBeenLastCalledWith(expect.objectContaining({payload:expect.objectContaining({phase:"visible-repair",repaired:true})}));
+  });
+  it("does not use a Visible reservation to reopen an expired trial",async()=>{
+    const p=visibleRepairProject();p.campaign.startedAt=new Date(Date.now()-31*60000).toISOString();mocks.get.mockResolvedValue(p);
+    expect((await executeServerControlStep(input,plan,0)).control).toBe("stop");
+    expect(mocks.visibleRepair).not.toHaveBeenCalled();expect(mocks.baseline).not.toHaveBeenCalled();
+  });
   it.each(["rounds","patience","wall-time","cost","projected-cost"])("settles the %s limit without running another Baseline",async kind=>{
     const p=project();
     if(kind==="rounds"){p.campaign.currentRound=1;p.campaign.stopCriteria.maxRounds=1;}

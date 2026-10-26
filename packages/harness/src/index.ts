@@ -8,6 +8,7 @@ export * from "./candidate-snapshot-evidence";
 export * from "./server-campaign-preparation";
 export * from "./server-baseline";
 export * from "./server-experiment";
+export * from "./server-visible-repair";
 // Public deterministic Candidate test runner used by the Server composition root.
 export {executeServerExperimentCandidate} from "./server-experiment-runner";
 export * from "./server-current-artifact-runner";
