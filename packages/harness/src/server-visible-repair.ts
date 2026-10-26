@@ -1,5 +1,5 @@
-import type {Candidate,EvolveProject,VisibleRepairAttempt} from "@evolution/contracts";
-import {EvolveProjectSchema,VisibleRepairAttemptSchema} from "@evolution/contracts";
+import type {Candidate,EvolveProject,ExperimentRun,VisibleRepairAttempt} from "@evolution/contracts";
+import {EvolveProjectSchema,RepairEvidenceArchiveInputSchema,RepairEvidenceReferenceSchema,VisibleRepairAttemptSchema} from "@evolution/contracts";
 import {campaignRepairLimitStopReason,estimateNextRoundCost,visibleRepairTarget} from "@evolution/core";
 import {hasCompleteServerExperimentFrozenSet,type ServerExperimentRecoveryPorts} from "./server-experiment-recovery";
 import type {ServerArtifactAcceptancePorts} from "./server-artifact-acceptance";
@@ -9,9 +9,10 @@ function canonical(value:unknown):unknown{
   if(!value||typeof value!=="object")return value;
   return Object.fromEntries(Object.entries(value).sort(([a],[b])=>a.localeCompare(b)).map(([key,item])=>[key,canonical(item)]));
 }
-async function binding(project:EvolveProject,record:Pick<VisibleRepairAttempt,"round"|"attempt"|"parentCandidateId"|"experiment"|"failedCriterionIds"|"finalPaperHash">,ports:ServerExperimentRecoveryPorts){
+type RepairBasis=Pick<VisibleRepairAttempt,"round"|"attempt"|"parentCandidateId"|"failedCriterionIds"|"finalPaperHash">&{experiment:ExperimentRun};
+async function binding(project:EvolveProject,record:RepairBasis,ports:ServerExperimentRecoveryPorts,version:VisibleRepairAttempt["version"]){
   const parent=project.candidates.filter(candidate=>candidate.id===record.parentCandidateId);
-  const wire={version:"experiment-visible-repair-v1",missionId:project.id,record,parent,
+  const wire={version,missionId:project.id,record,parent,
     goal:project.goal,command:project.evolutionCommand,protectedItems:project.protectedItems,editableItems:project.editableItems,
     rubric:project.acceptanceRubric,sources:project.sourceArtifacts,baseline:project.baselineRun,
     visible:project.evalSuite,hidden:project.hiddenEvalSuite,final:project.finalHoldout,policy:project.experimentPolicy,
@@ -47,14 +48,16 @@ export async function prepareServerVisibleRepair(project:EvolveProject,ports:Ser
   const attempt=project.artifactAcceptance.attempts+1,round=project.campaign.currentRound+1;
   const basis={round,attempt,parentCandidateId:target.candidate.id,experiment:project.experimentRun,
     failedCriterionIds:target.failedCriteria.map(c=>c.id),finalPaperHash:project.finalHoldout!.paperHash};
-  const inputFingerprint=await binding(project,basis,ports);
-  if(!inputFingerprint)return undefined;
-  const record:VisibleRepairAttempt={...basis,version:"experiment-visible-repair-v1",id:`visible-repair-r${round}-${attempt}-${inputFingerprint.slice(0,16)}`,
-    status:"reserved",inputFingerprint,reservedAt:now};
+  const inputFingerprint=await binding(project,basis,ports,"experiment-visible-repair-v2");
+  const experimentFingerprint=await ports.fingerprint?.(JSON.stringify(canonical(project.experimentRun)));
+  if(!inputFingerprint||!experimentFingerprint||!/^[0-9a-f]{64}$/.test(experimentFingerprint))return undefined;
+  const record:VisibleRepairAttempt={round,attempt,parentCandidateId:basis.parentCandidateId,failedCriterionIds:basis.failedCriterionIds,finalPaperHash:basis.finalPaperHash,
+    version:"experiment-visible-repair-v2",id:`visible-repair-r${round}-${attempt}-${inputFingerprint.slice(0,16)}`,
+    status:"reserved",inputFingerprint,experimentFingerprint,reservedAt:now};
   return {...project,visibleRepairAttempts:[...(project.visibleRepairAttempts??[]),record],
     artifactAcceptance:{...project.artifactAcceptance,attempts:attempt,summary:`Visible Repair ${attempt}/${project.artifactAcceptance.maxRepairAttempts} 已登记；Gate F 尚未执行。`},updatedAt:now};
 }
-export type ServerVisibleRepairPorts=ServerExperimentRecoveryPorts&{
+export type ServerVisibleRepairPorts=ServerExperimentRecoveryPorts&Pick<ServerArtifactAcceptancePorts,"archiveRepairEvidence">&{
   /** Compare-and-swap the loaded Mission revision before I/O. Conflict/unavailable storage must throw. */
   persistProject(project:EvolveProject):Promise<unknown>;
   repairCandidate(args:Parameters<ServerArtifactAcceptancePorts["repairCandidate"]>[0]&{feedbackPhase:"visible"}):Promise<Candidate>;
@@ -76,15 +79,28 @@ export async function runServerVisibleRepair(input:EvolveProject,ports:ServerVis
   const target=visibleRepairTarget(beforeDebit);
   if(input.artifactAcceptance.attempts!==record.attempt||!target||target.candidate.id!==record.parentCandidateId
     ||JSON.stringify(target.failedCriteria.map(c=>c.id))!==JSON.stringify(record.failedCriterionIds)
-    ||JSON.stringify(input.experimentRun)!==JSON.stringify(record.experiment)
+    ||(record.version==="experiment-visible-repair-v1"?JSON.stringify(input.experimentRun)!==JSON.stringify(record.experiment)
+      :await ports.fingerprint?.(JSON.stringify(canonical(input.experimentRun)))!==record.experimentFingerprint)
     ||await binding(input,{round:record.round,attempt:record.attempt,parentCandidateId:record.parentCandidateId,
-      experiment:record.experiment,failedCriterionIds:record.failedCriterionIds,finalPaperHash:record.finalPaperHash},ports)!==record.inputFingerprint
+      experiment:input.experimentRun,failedCriterionIds:record.failedCriterionIds,finalPaperHash:record.finalPaperHash},ports,record.version)!==record.inputFingerprint
     ||!hasCompleteServerExperimentFrozenSet(input,target.candidate)||!ports.verifyFrozenArtifact)return pause("修复输入、预算、父代或失败证据已变化。");
   try{
     for(const snapshot of target.candidate.artifactSnapshots){
       if(!await ports.verifyFrozenArtifact(snapshot))return pause("冻结父代回读失败；禁止基于替代字节修复。");
     }
   }catch{return pause("冻结父代回读不可用。");}
+  if(record.version==="experiment-visible-repair-v2"){
+    if(!ports.archiveRepairEvidence||!ports.fingerprint)return pause("完整失败证据归档能力不可用；保留登记次数，未调用 AI。");
+    try{
+      const content=JSON.stringify(canonical({version:"repair-feedback-evidence-v1",missionId:project.id,candidateId:record.parentCandidateId,phase:"visible",
+        round:record.round,attempt:record.attempt,inputFingerprint:record.inputFingerprint,experiment:project.experimentRun}));
+      const sha256=await ports.fingerprint(content),size=new TextEncoder().encode(content).byteLength;
+      const evidence=RepairEvidenceReferenceSchema.parse(await ports.archiveRepairEvidence(RepairEvidenceArchiveInputSchema.parse({
+        version:"repair-evidence-archive-v1",missionId:project.id,candidateId:record.parentCandidateId,phase:"visible",attempt:record.attempt,content,sha256,size})));
+      if(evidence.missionId!==project.id||evidence.candidateId!==record.parentCandidateId||evidence.sha256!==sha256||evidence.size!==size)throw Error("归档身份或字节不一致");
+      record={...record,evidence};
+    }catch{return pause("完整失败证据归档或回读失败；保留登记次数及原报告，未调用 AI。");}
+  }
   // Storage verification can take time. Enforce the same window again immediately before provider I/O.
   const afterReadLimit=campaignRepairLimitStopReason(input);
   if(afterReadLimit)return pause(afterReadLimit);

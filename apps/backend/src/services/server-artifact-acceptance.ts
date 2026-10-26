@@ -193,5 +193,6 @@ export async function runServerMissionArtifactAcceptance(project:EvolveProject,p
 /** The caller owns the revision-scoped Mission store; never construct an unbound writer here. */
 export async function runServerMissionVisibleRepair(project:EvolveProject,persistProject:(project:EvolveProject)=>Promise<unknown>){
   return runServerVisibleRepair(project,{persistProject,repairCandidate:repairServerArtifactCandidate,
-    fingerprint:wire=>serverArtifactSha256(new TextEncoder().encode(wire)),verifyFrozenArtifact:verifyServerCandidateFrozenArtifact});
+    fingerprint:wire=>serverArtifactSha256(new TextEncoder().encode(wire)),verifyFrozenArtifact:verifyServerCandidateFrozenArtifact,
+    archiveRepairEvidence:archiveServerRepairEvidence});
 }

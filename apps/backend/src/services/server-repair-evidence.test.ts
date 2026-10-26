@@ -8,11 +8,11 @@ import {archiveServerRepairEvidence} from "./server-repair-evidence";
 const m=vi.hoisted(()=>({blobs:new Map<string,Blob>(),metadata:new Map<string,ArtifactMetadata>(),put:vi.fn(),get:vi.fn(),hasMetadata:true}));
 vi.mock("./artifact-runtime",()=>({getServerArtifactStore:()=>({put:m.put,get:m.get,getMetadata:m.hasMetadata?async(id:string)=>m.metadata.get(id):undefined})}));
 const sha=(wire:string)=>createHash("sha256").update(wire).digest("hex");
-function input():RepairEvidenceArchiveInput{
+function input(phase:"visible"|"hidden"="hidden"):RepairEvidenceArchiveInput{
   const {project:p,current:c}=acceptedPackageFixture(false);
-  const content=JSON.stringify({version:"repair-feedback-evidence-v1",missionId:p.id,candidateId:c.id,phase:"hidden",round:1,attempt:1,inputFingerprint:sha("synthetic-input"),
-    experiment:p.experimentRun,validation:p.validationRun,acceptance:p.artifactAcceptance});
-  return {version:"repair-evidence-archive-v1",missionId:p.id,candidateId:c.id,phase:"hidden",attempt:1,content,sha256:sha(content),size:Buffer.byteLength(content)};
+  const content=JSON.stringify({version:"repair-feedback-evidence-v1",missionId:p.id,candidateId:c.id,phase,round:1,attempt:1,inputFingerprint:sha("synthetic-input"),
+    experiment:p.experimentRun,...(phase==="hidden"?{validation:p.validationRun,acceptance:p.artifactAcceptance}:{})});
+  return {version:"repair-evidence-archive-v1",missionId:p.id,candidateId:c.id,phase,attempt:1,content,sha256:sha(content),size:Buffer.byteLength(content)};
 }
 beforeEach(()=>{
   m.blobs.clear();m.metadata.clear();m.hasMetadata=true;m.get.mockReset().mockImplementation(async(id:string)=>m.blobs.get(id));
@@ -22,12 +22,12 @@ beforeEach(()=>{
   });
 });
 describe("private repair evidence archive",()=>{
-  it("preserves the complete report and reads back Mission-bound metadata and exact bytes",async()=>{
-    const data=input(),ref=await archiveServerRepairEvidence(data);
+  it.each(["visible","hidden"] as const)("preserves the complete %s report and reads back Mission-bound metadata and exact bytes",async phase=>{
+    const data=input(phase),ref=await archiveServerRepairEvidence(data);
     expect(ref).toMatchObject({missionId:data.missionId,candidateId:data.candidateId,sha256:data.sha256,size:data.size});
     expect(await m.blobs.get(ref.artifactId)!.text()).toBe(data.content);
     expect(m.put).toHaveBeenCalledWith(ref.artifactId,expect.any(Blob),{missionId:data.missionId,kind:"candidate-repair-evidence"});
-    expect(JSON.stringify(ref).length).toBeLessThan(data.content.length);
+    expect(ref).not.toHaveProperty("content");expect(ref).not.toHaveProperty("experiment");
     await archiveServerRepairEvidence(data);expect(m.put).toHaveBeenCalledOnce();
   });
   it.each(["size","sha","mission","candidate","phase","attempt"])("rejects %s mismatch before writing",async field=>{

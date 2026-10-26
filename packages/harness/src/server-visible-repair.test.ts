@@ -1,6 +1,6 @@
 import {createHash} from "node:crypto";
 import {describe,expect,it,vi} from "vitest";
-import {EvolveProjectSchema,IndependentFinalEvidenceSchema,TestCaseSchema,type EvolveProject,type EvaluateAiResult} from "@evolution/contracts";
+import {EvolveProjectSchema,IndependentFinalEvidenceSchema,TestCaseSchema,VisibleRepairAttemptSchema,type EvolveProject,type EvaluateAiResult,type RepairEvidenceArchiveInput} from "@evolution/contracts";
 import {evidenceFingerprint,finalHoldoutContractFingerprint,finalHoldoutPaperHash,materializeAcceptedChampionPackage,visibleRepairTarget} from "@evolution/core";
 import {experimentRecoveryFixture} from "@evolution/testkit";
 import {runServerExperiment} from "./server-experiment";
@@ -26,9 +26,15 @@ function fixture(){
   p.finalHoldout={round:1,suite,paperHash:finalHoldoutPaperHash(suite),contractFingerprint:finalHoldoutContractFingerprint(p),createdAt:new Date(Date.now()-1000).toISOString()};
   x.current.finalHoldoutPaperHash=p.finalHoldout.paperHash;
   const verifyFrozenArtifact=vi.fn(async()=>true);
+  const archives=new Map<string,string>();
+  const archiveRepairEvidence=vi.fn(async(input:RepairEvidenceArchiveInput)=>{
+    archives.set(input.sha256,input.content);
+    return {version:"repair-evidence-reference-v1" as const,artifactId:`evidence-${input.sha256}`,missionId:input.missionId,candidateId:input.candidateId,
+      sha256:input.sha256,size:input.size,mimeType:"application/json" as const};
+  });
   const ports={fingerprint,verifyFrozenArtifact,buildCandidate:vi.fn(async()=>x.current),
-    executeSemanticBatch:async()=>({results:[]}),judge:async()=>judge(50)};
-  return {...x,p,ports};
+    archiveRepairEvidence,executeSemanticBatch:async()=>({results:[]}),judge:async()=>judge(50)};
+  return {...x,p,ports,archives};
 }
 async function reserved(){
   const x=fixture(),out=await runServerExperiment(x.p,x.ports);
@@ -49,30 +55,40 @@ describe("bounded Visible feedback repair",()=>{
     expect(legacy.project.visibleRepairAttempts).toBeUndefined();expect(legacy.project.artifactAcceptance.attempts).toBe(0);
     const fresh=await reserved(),stored=EvolveProjectSchema.parse(fresh.project);
     expect(stored.visibleRepairAttempts?.[0]).toMatchObject({status:"reserved",attempt:1,parentCandidateId:fresh.current.id});
-    expect(stored.visibleRepairAttempts?.[0]?.experiment).toEqual(stored.experimentRun);
+    expect(stored.visibleRepairAttempts?.[0]).toMatchObject({version:"experiment-visible-repair-v2",experimentFingerprint:expect.stringMatching(/^[0-9a-f]{64}$/)});
+    expect(stored.visibleRepairAttempts?.[0]).not.toHaveProperty("experiment");expect(fresh.ports.archiveRepairEvidence).not.toHaveBeenCalled();
     expect(stored.artifactAcceptance.attempts).toBe(1);expect(stored.campaign.currentRound).toBe(0);
     expect(hasServerPendingVisibleRepair(stored)).toBe(true);expect(hasServerFrozenValidationCheckpoint(stored)).toBe(true);
     expect(await prepareServerVisibleRepair(stored,fresh.ports,new Date().toISOString())).toBeUndefined();
   });
   it("persists a claim before AI, preserves failure evidence, and measures the exact child before Hidden",async()=>{
-    const x=await reserved(),ports=execution(x),old=structuredClone(x.project.visibleRepairAttempts![0]!.experiment);
+    const x=await reserved(),ports=execution(x),old=structuredClone(x.project.experimentRun);
     ports.repairCandidate.mockImplementation(async()=>{
       expect(ports.persistProject).toHaveBeenCalledOnce();
       expect(ports.persistProject.mock.calls[0]![0].visibleRepairAttempts?.[0]?.status).toBe("running");
+      expect(ports.persistProject.mock.calls[0]![0].visibleRepairAttempts?.[0]).toHaveProperty("evidence");
+      expect(EvolveProjectSchema.parse(ports.persistProject.mock.calls[0]![0]).visibleRepairAttempts?.[0]).toEqual(ports.persistProject.mock.calls[0]![0].visibleRepairAttempts?.[0]);
+      expect(ports.archiveRepairEvidence).toHaveBeenCalledOnce();
       return {...x.prior,finalHoldoutPaperHash:x.project.finalHoldout!.paperHash};
     });
     const repaired=await runServerVisibleRepair(EvolveProjectSchema.parse(x.project),ports);
     expect(repaired.repaired).toBe(true);expect(repaired.project.campaign.currentRound).toBe(0);
     expect(repaired.project.artifactAcceptance).toMatchObject({status:"repairing",attempts:1,hardGatePass:false});
     expect(repaired.project.campaign.estimatedCost).toBeGreaterThanOrEqual(x.project.campaign.estimatedCost);
-    expect(repaired.project.visibleRepairAttempts?.[0]).toMatchObject({status:"frozen",parentCandidateId:x.current.id,candidateId:x.prior.id,experiment:old});
+    const record=VisibleRepairAttemptSchema.parse(repaired.project.visibleRepairAttempts?.[0]);
+    expect(record).toMatchObject({status:"frozen",parentCandidateId:x.current.id,candidateId:x.prior.id});
+    if(record.version!=="experiment-visible-repair-v2")throw Error("Expected v2 history");
+    const report=x.archives.get(record.evidence!.sha256)!;
+    expect(JSON.parse(report).experiment).toEqual(old);expect(await fingerprint(report)).toBe(record.evidence!.sha256);
+    expect(report).not.toContain("independent scenario kept secret");
+    expect(record).not.toHaveProperty("experiment");
     expect(repaired.project.finalHoldout).toEqual(x.project.finalHoldout);
     const rebuild=vi.fn(async()=>{throw Error("must not regenerate frozen child");});
     const measured=await runServerExperiment(repaired.project,{...x.ports,buildCandidate:rebuild,judge:async()=>judge(95)});
     expect(rebuild).not.toHaveBeenCalled();expect(measured.readyForHoldout).toBe(true);
     expect(measured.winnerId).toBe(x.prior.id);expect(measured.project.outputArtifacts).toHaveLength(0);
     expect(measured.project.validationRun.status).toBe("idle");expect(measured.project.artifactAcceptance.status).not.toBe("passed");
-    expect(measured.project.visibleRepairAttempts?.[0]?.experiment).toEqual(old);
+    expect(measured.project.visibleRepairAttempts?.[0]).toEqual(record);expect(JSON.parse(report).experiment).toEqual(old);
     expect(measured.project.artifactAcceptance.attempts).toBe(1);
   });
   it.each([95,50])("runs the repaired child through Hidden (%i) and shares the remaining Gate F budget",async score=>{
@@ -133,6 +149,62 @@ describe("bounded Visible feedback repair",()=>{
   it("never calls the provider when the revision claim conflicts",async()=>{
     const x=await reserved(),ports=execution(x);ports.persistProject.mockRejectedValue(new Error("revision conflict"));
     await expect(runServerVisibleRepair(x.project,ports)).rejects.toThrow("revision conflict");expect(ports.repairCandidate).not.toHaveBeenCalled();
+  });
+  it.each(["report","fingerprint"])("rejects changed %s evidence without archiving or calling AI",async kind=>{
+    const x=await reserved(),ports=execution(x),p=structuredClone(x.project);
+    if(kind==="report")p.experimentRun.candidateResults[0]!.runs[0]!.output="altered measured body";
+    else{
+      const record=p.visibleRepairAttempts![0]!;
+      if(record.version!=="experiment-visible-repair-v2")throw Error("Expected v2 history");
+      record.experimentFingerprint="0".repeat(64);
+    }
+    expect((await runServerVisibleRepair(p,ports)).repaired).toBe(false);
+    expect(ports.archiveRepairEvidence).not.toHaveBeenCalled();expect(ports.persistProject).not.toHaveBeenCalled();expect(ports.repairCandidate).not.toHaveBeenCalled();
+  });
+  it.each(["unavailable","wrong-mission","wrong-parent","wrong-sha","wrong-size"])("keeps the reserved report and never calls AI on %s archive",async kind=>{
+    const x=await reserved(),ports=execution(x),before=structuredClone(x.project.experimentRun);
+    if(kind==="unavailable")ports.archiveRepairEvidence.mockRejectedValue(Error("storage unavailable"));
+    else ports.archiveRepairEvidence.mockImplementation(async input=>({version:"repair-evidence-reference-v1",artifactId:"evidence",mimeType:"application/json",
+      missionId:kind==="wrong-mission"?"foreign":input.missionId,candidateId:kind==="wrong-parent"?"foreign":input.candidateId,
+      sha256:kind==="wrong-sha"?"0".repeat(64):input.sha256,size:input.size+(kind==="wrong-size"?1:0)}));
+    const out=await runServerVisibleRepair(x.project,ports);
+    expect(out.reason).toContain("归档或回读失败");expect(out.project.experimentRun).toEqual(before);
+    expect(out.project.visibleRepairAttempts?.[0]?.status).toBe("reserved");expect(out.project.artifactAcceptance.attempts).toBe(1);
+    expect(out.project.campaign.estimatedCost).toBe(x.project.campaign.estimatedCost);
+    expect(ports.persistProject).not.toHaveBeenCalled();expect(ports.repairCandidate).not.toHaveBeenCalled();
+  });
+  it("requires the archive capability before claiming paid work",async()=>{
+    const x=await reserved(),ports=execution(x);
+    const out=await runServerVisibleRepair(x.project,{...ports,archiveRepairEvidence:undefined});
+    expect(out.reason).toContain("归档能力不可用");expect(ports.repairCandidate).not.toHaveBeenCalled();expect(ports.persistProject).not.toHaveBeenCalled();
+  });
+  it("can explicitly resume the same reservation after archive recovery without another debit",async()=>{
+    const x=await reserved(),ports=execution(x);
+    ports.archiveRepairEvidence.mockRejectedValueOnce(Error("temporary archive failure"));
+    const paused=await runServerVisibleRepair(x.project,ports);
+    expect(paused.project.visibleRepairAttempts?.[0]?.status).toBe("reserved");expect(ports.repairCandidate).not.toHaveBeenCalled();
+    const resumed=await runServerVisibleRepair({...paused.project,campaign:{...paused.project.campaign,status:"running",stopReason:undefined}},ports);
+    expect(resumed.repaired).toBe(true);expect(resumed.project.visibleRepairAttempts).toHaveLength(1);
+    expect(resumed.project.visibleRepairAttempts?.[0]?.id).toBe(x.project.visibleRepairAttempts?.[0]?.id);
+    expect(resumed.project.artifactAcceptance.attempts).toBe(1);expect(ports.persistProject).toHaveBeenCalledOnce();expect(ports.repairCandidate).toHaveBeenCalledOnce();
+  });
+  it("rechecks the original deadline after evidence archive I/O",async()=>{
+    const x=await reserved(),ports=execution(x),at=Date.now(),clock=vi.spyOn(Date,"now"),archive=ports.archiveRepairEvidence.getMockImplementation()!;
+    try{
+      ports.archiveRepairEvidence.mockImplementation(async input=>{const ref=await archive(input);clock.mockReturnValue(at+31*60000);return ref;});
+      const out=await runServerVisibleRepair(x.project,ports);
+      expect(out.reason).toContain("最长运行时间");expect(out.project.experimentRun).toEqual(x.project.experimentRun);
+      expect(ports.repairCandidate).not.toHaveBeenCalled();expect(ports.persistProject).not.toHaveBeenCalled();
+    }finally{clock.mockRestore();}
+  });
+  it("keeps v1 inline storage readable while requiring a reference for started v2 rows",async()=>{
+    const x=await reserved(),record=x.project.visibleRepairAttempts![0]!;
+    if(record.version!=="experiment-visible-repair-v2")throw Error("Expected v2 history");
+    expect(VisibleRepairAttemptSchema.safeParse({...record,status:"running"}).success).toBe(false);
+    expect(VisibleRepairAttemptSchema.safeParse({...record,experiment:x.project.experimentRun}).success).toBe(false);
+    const legacy=VisibleRepairAttemptSchema.parse({...record,version:"experiment-visible-repair-v1",experiment:x.project.experimentRun});
+    expect(legacy.version).toBe("experiment-visible-repair-v1");expect(legacy).toHaveProperty("experiment",x.project.experimentRun);
+    expect(EvolveProjectSchema.parse({...x.project,visibleRepairAttempts:[legacy]}).visibleRepairAttempts?.[0]).toEqual(legacy);
   });
   it("rechecks the time window after a slow revision claim",async()=>{
     const x=await reserved(),ports=execution(x),at=Date.now(),clock=vi.spyOn(Date,"now");

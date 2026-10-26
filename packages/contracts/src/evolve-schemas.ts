@@ -661,9 +661,13 @@ export const ExperimentRunSchema = z.object({
 });
 export type ExperimentRun = z.infer<typeof ExperimentRunSchema>;
 
-/** A pre-debited, at-most-once Visible feedback mutation. Never an acceptance verdict. */
-export const VisibleRepairAttemptSchema = z.object({
-  version: z.literal("experiment-visible-repair-v1"),
+export const RepairEvidenceReferenceSchema=z.object({
+  version:z.literal("repair-evidence-reference-v1"),artifactId:z.string().min(1).max(200),missionId:z.string().min(1),candidateId:z.string().min(1),
+  sha256:z.string().regex(/^[0-9a-f]{64}$/),size:z.number().int().positive().max(20*1024*1024),mimeType:z.literal("application/json"),
+}).strict();
+export type RepairEvidenceReference=z.infer<typeof RepairEvidenceReferenceSchema>;
+
+const visibleRepairAttemptFields = {
   id: z.string().min(1),
   round: z.number().int().positive(),
   attempt: z.number().int().positive(),
@@ -674,12 +678,22 @@ export const VisibleRepairAttemptSchema = z.object({
   repairedArtifactSnapshots: z.array(CandidateArtifactSnapshotSchema).optional(),
   inputFingerprint: z.string().regex(/^[0-9a-f]{64}$/),
   finalPaperHash: z.string().min(1),
-  experiment: ExperimentRunSchema,
   reservedAt: z.string(),
   estimatedCost: z.number().min(0).optional(),
   completedAt: z.string().optional(),
   error: z.string().optional(),
-});
+};
+/** Stored v1 rows retain their complete inline report; never reinterpret them as references. */
+const VisibleRepairAttemptV1Schema=z.object({...visibleRepairAttemptFields,
+  version:z.literal("experiment-visible-repair-v1"),experiment:ExperimentRunSchema});
+/** A reserved v2 row still has its report in experimentRun. Archive it before the running claim. */
+const VisibleRepairAttemptV2Schema=z.object({...visibleRepairAttemptFields,
+  version:z.literal("experiment-visible-repair-v2"),experimentFingerprint:z.string().regex(/^[0-9a-f]{64}$/),
+  evidence:RepairEvidenceReferenceSchema.optional(),
+}).strict().refine(row=>row.status==="reserved"||Boolean(row.evidence),
+  {message:"A started Visible repair requires the complete archived failure evidence",path:["evidence"]});
+/** A pre-debited, at-most-once Visible feedback mutation. Never an acceptance verdict. */
+export const VisibleRepairAttemptSchema=z.discriminatedUnion("version",[VisibleRepairAttemptV1Schema,VisibleRepairAttemptV2Schema]);
 export type VisibleRepairAttempt = z.infer<typeof VisibleRepairAttemptSchema>;
 
 /** 建议效果结算：上一轮 AI 优化建议在新一轮盲测后的执行与见效情况，让"建议 → 执行 → 效果"闭环可见。 */
@@ -785,11 +799,6 @@ export const RepairEvidenceArchiveInputSchema=z.object({
   content:z.string().min(1),sha256:z.string().regex(/^[0-9a-f]{64}$/),size:z.number().int().positive().max(20*1024*1024),
 }).strict().refine(input=>new TextEncoder().encode(input.content).byteLength===input.size,{message:"Repair evidence UTF-8 size mismatch",path:["size"]});
 export type RepairEvidenceArchiveInput=z.infer<typeof RepairEvidenceArchiveInputSchema>;
-export const RepairEvidenceReferenceSchema=z.object({
-  version:z.literal("repair-evidence-reference-v1"),artifactId:z.string().min(1).max(200),missionId:z.string().min(1),candidateId:z.string().min(1),
-  sha256:z.string().regex(/^[0-9a-f]{64}$/),size:z.number().int().positive().max(20*1024*1024),mimeType:z.literal("application/json"),
-}).strict();
-export type RepairEvidenceReference=z.infer<typeof RepairEvidenceReferenceSchema>;
 export const RepairFeedbackEvidenceSchema=z.object({
   version:z.literal("repair-feedback-evidence-v1"),missionId:z.string().min(1),candidateId:z.string().min(1),phase:z.enum(["visible","hidden"]),
   round:z.number().int().positive(),attempt:z.number().int().positive(),inputFingerprint:z.string().regex(/^[0-9a-f]{64}$/),
