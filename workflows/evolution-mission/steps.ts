@@ -1,5 +1,5 @@
 import { FatalError } from "workflow";
-import { campaignScoringInputBlocker,selectPlanningLessons,productionGoalReadiness } from "@evolution/core";
+import { campaignScoringInputBlocker,campaignRepairLimitStopReason,selectPlanningLessons,productionGoalReadiness } from "@evolution/core";
 import {
   EvolutionJobSchema,
   PRODUCTION_SCHEMA_VERSIONS,
@@ -803,7 +803,10 @@ async function executeServerControlAction(
       campaignMission={...campaignMission,campaign:{...campaignMission.campaign,startedAt:input.requestedAt},updatedAt:now};
       await runtime.missions.save(campaignMission);
     }
-    if(!hasServerFrozenValidationCheckpoint(campaignMission)
+    // Resource limits apply before billable execution, including a fresh Baseline.
+    // Evidence gaps remain eligible for their separately governed frozen-run recovery.
+    const executionLimit=campaignRepairLimitStopReason(campaignMission);
+    if(!executionLimit&&!hasServerFrozenValidationCheckpoint(campaignMission)
       &&!canReuseServerMissionBaseline(campaignMission,scoringRouteFingerprint)){
       const baselineOutcome=await runServerMissionBaseline(campaignMission);
       campaignMission=baselineOutcome.project;
@@ -845,7 +848,7 @@ async function executeServerControlAction(
     }
 
     const round=campaignMission.campaign.currentRound+1;
-    const campaignCheckpoint=campaignMission.campaign.checkpoint;
+    const campaignCheckpoint=executionLimit?undefined:campaignMission.campaign.checkpoint;
     if(campaignCheckpoint?.round===round
       && campaignCheckpoint.completedPhase==="experiment"
       && campaignMission.experimentRun.status==="completed"
@@ -977,6 +980,9 @@ async function executeServerControlAction(
     });
     await runtime.missions.save(outcome.project);
     const phasePercent=outcome.phase==="problem"?32:outcome.phase==="diagnose"?42:outcome.phase==="plan"?52:outcome.phase==="experiment"?60:outcome.phase==="settled"?80:24;
+    const preparedCheckpoint=outcome.project.campaign.checkpoint;
+    const completedPhase=outcome.control==="continue"&&preparedCheckpoint?.round===outcome.project.campaign.currentRound+1
+      ?preparedCheckpoint.completedPhase:undefined;
     await runtime.events.append(createEvolutionEvent({
       id:`evt-${input.controlJobId}-campaign-${iteration}-${outcome.phase}`,
       missionId:input.missionId,jobId:input.controlJobId,checkpointId:plan.checkpoint.id,
@@ -987,6 +993,8 @@ async function executeServerControlAction(
         serverNative:true,
         conditional:true,
         phase:outcome.phase,
+        completedPhase,
+        nextPhase:outcome.control==="continue"?outcome.phase:undefined,
         reason:outcome.reason,
         candidateCount:outcome.candidateCount,
         ungroundedCount:outcome.ungroundedCount,
@@ -1006,7 +1014,7 @@ async function executeServerControlAction(
       await runtime.jobs.put(await controlJob(input,{
         status:"running",
         startedAt:input.requestedAt,
-        progress:{percent:phasePercent,detail:`Server Campaign · ${outcome.phase} 已完成，继续下一阶段`},
+        progress:{percent:phasePercent,detail:outcome.reason.slice(0,240)},
       }));
       return {control:"continue"};
     }
