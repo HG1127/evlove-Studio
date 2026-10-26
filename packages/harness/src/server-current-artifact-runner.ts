@@ -19,7 +19,7 @@ import { indexUniqueBatchResults } from "./server-batch-results";
 import { groundedOriginalCitationDefect, groundedOriginalDocumentProtection } from "./server-grounded-baseline-defect";
 import { currentHtmlDocumentTextObservation } from "./server-current-document-evidence";
 import { measuredDocumentObservations, SERVER_MEASURED_REVIEW_VERSION } from "./server-measured-review-evidence";
-import {collectServerHtmlNativeRuns,type ServerHtmlNativePort} from "./server-html-native-runs";
+import {collectServerHtmlNativeRuns,bindServerHtmlNativeOriginalReferences,type ServerHtmlNativePort} from "./server-html-native-runs";
 
 export type ServerCurrentArtifactPorts = ServerHtmlNativePort & {
   executeSemanticBatch(args: {
@@ -49,6 +49,7 @@ export async function executeServerCurrentArtifactSuite(
   ports:ServerCurrentArtifactPorts,
 ){
   const ordered=await collectServerHtmlNativeRuns(project,testCases,ports);
+  bindServerHtmlNativeOriginalReferences(ordered,project.baselineRun.originalReferences??[],project.id);
   const semanticCases:TestCase[]=[];
   const externalCases:TestCase[]=[];
   for(const testCase of testCases){

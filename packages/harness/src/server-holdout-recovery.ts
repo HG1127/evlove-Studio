@@ -1,6 +1,7 @@
 import type { Candidate, EvaluationResult, EvolveProject, TargetRunResult, TestCase, ValidationRun } from "@evolution/contracts";
 import { criteriaRequiringJudge, evidenceFingerprint, fastHash, LIVE_TARGET_OBSERVATION_MAX_AGE_MS, verifiedValidationFailures } from "@evolution/core";
 import { SERVER_MEASURED_REVIEW_VERSION } from "./server-measured-review-evidence";
+import {serverHtmlNativeRunsMatchOriginal} from "./server-html-native-runs";
 
 export type ServerHoldoutArtifactReader = (args: { project: EvolveProject; candidate: Candidate }) => Promise<string | undefined>;
 
@@ -21,6 +22,9 @@ export function serverHoldoutExecutionEvidenceFingerprint(prior: Pick<Validation
 
 /** A complete negative Candidate verdict does not require a passing/complete comparison verdict. */
 export function knownServerHoldoutRejection(project:EvolveProject,suite:TestCase[],prior:ValidationRun){
+  const candidates=project.candidates.filter(item=>item.id===prior.candidateId),candidate=candidates.length===1?candidates[0]:undefined;
+  if(!serverHtmlNativeRunsMatchOriginal(project,prior.baselineRuns)
+    ||prior.runs.some(run=>run.nativeHtmlProof)&&(!candidate||!serverHtmlNativeRunsMatchOriginal(project,prior.runs,candidate)))return false;
   return prior.status==="completed"&&Boolean(prior.baselineEvaluation&&!prior.baselineEvaluation.demoJudged)
     &&Boolean(prior.evaluation&&!prior.evaluation.demoJudged&&prior.evaluation.measuredReviewVersion===SERVER_MEASURED_REVIEW_VERSION)
     &&verifiedValidationFailures(project,prior).some(criterion=>{
@@ -44,6 +48,7 @@ export function recoverableServerHoldout(
     || prior.status === "completed" && prior.summary?.startsWith("[server-campaign-holdout-review-pending]")
     || knownFailure;
   if (project.targetConnection.adapter !== "artifact" || !pending || !artifactFingerprint || prior.executionArtifactFingerprint !== artifactFingerprint
+    || !serverHtmlNativeRunsMatchOriginal(project,prior.runs,candidate)||!serverHtmlNativeRunsMatchOriginal(project,prior.baselineRuns)
     || prior.id !== "validation-server-r"+round || prior.validationMode !== "full"
     || prior.candidateId !== candidate.id || prior.evidenceFingerprint !== evidenceFingerprint(project, candidate)
     || prior.baselineContextFingerprint !== baselineFingerprint

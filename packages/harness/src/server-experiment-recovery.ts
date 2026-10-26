@@ -2,6 +2,7 @@ import type { Candidate, EvolveProject, ExperimentCandidateCheckpoint, TargetRun
 import { ExperimentCandidateCheckpointSchema } from "@evolution/contracts";
 import { LIVE_TARGET_OBSERVATION_MAX_AGE_MS } from "@evolution/core";
 import type { ServerExperimentExecutionPorts } from "./server-experiment-runner";
+import {serverHtmlNativeRunsMatchOriginal} from "./server-html-native-runs";
 
 export type ServerExperimentRecoveryPorts = Pick<ServerExperimentExecutionPorts, "verifyFrozenArtifact"> & {
   /** Cryptographic digest supplied by composition; no provider or browser dependency in Harness. */
@@ -134,6 +135,7 @@ export async function recoverableServerExperimentRuns(project: EvolveProject, ca
     || execution.artifactFingerprint !== await physicalBinding(project, candidate, ports)
     || execution.evidenceFingerprint !== await digest(ports, { runs: execution.runs, observedAt: execution.observedAt })
     || project.evalSuite.length === 0 || execution.runs.length !== project.evalSuite.length
+    || !serverHtmlNativeRunsMatchOriginal(project,execution.runs,candidate)
     || new Set(project.evalSuite.map(t => t.id)).size !== project.evalSuite.length) return undefined;
   return project.evalSuite.every((t, i) => {
     const run = execution.runs[i];

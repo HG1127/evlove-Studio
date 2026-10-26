@@ -501,6 +501,26 @@ describe("server baseline",()=>{
 });
 
 describe("server Baseline evidence provenance", () => {
+  it("rechecks a cached native Baseline's physical Original binding even when the measurement fingerprint is unchanged",async()=>{
+    const measured=await runServerBaseline(fixture(),{
+      executeSemanticBatch:async({testCases})=>({results:testCases.map(testCase=>({testCaseId:testCase.id,output:"当前说明包含安装步骤，但验证与回滚说明不足。",trace:[]}))}),
+      judge:async()=>judge(),
+    });
+    expect(measured.ready).toBe(true);
+    const project=measured.project,run=htmlNativeEvidenceFixture();
+    run.testCaseId=project.evalSuite[0]!.id;
+    run.nativeHtmlProof!.testCaseId=run.testCaseId;
+    run.nativeHtmlProof!.sourceArtifactId="source";
+    run.renderedDocumentEvidence!.sourceArtifactId="source";
+    run.nativeHtmlProof!.observation.original.sha256=run.artifactHash!;
+    project.baselineRun.runs[0]=run;
+    project.baselineRun.originalReferences=[{schemaVersion:"original-artifact-reference-v1",missionId:project.id,sourceArtifactId:"source",blobId:"original",sha256:run.artifactHash!,sizeBytes:100}];
+    project.baselineRun.measurementFingerprint=serverBaselineFingerprint(project);
+    expect(canReuseServerBaseline(project)).toBe(true);
+    run.nativeHtmlProof!.observation.original.sha256="f".repeat(64);
+    expect(project.baselineRun.measurementFingerprint).toBe(serverBaselineFingerprint(project));
+    expect(canReuseServerBaseline(project)).toBe(false);
+  });
   it("requires a fresh Baseline after the former prefix-only context policy",async()=>{
     const project=fixture();
     const legacy=fastHash({

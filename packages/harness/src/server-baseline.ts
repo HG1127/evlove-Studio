@@ -34,7 +34,7 @@ import {
 } from "./server-baseline-evidence";
 import { indexUniqueBatchResults } from "./server-batch-results";
 import {groundedOriginalCitationDefect,groundedOriginalDocumentProtection} from "./server-grounded-baseline-defect";
-import {collectServerHtmlNativeRuns,bindServerHtmlNativeOriginalReferences,type ServerHtmlNativePort} from "./server-html-native-runs";
+import {collectServerHtmlNativeRuns,bindServerHtmlNativeOriginalReferences,serverHtmlNativeRunsMatchOriginal,type ServerHtmlNativePort} from "./server-html-native-runs";
 import { serverExperimentRecoveryCheckpoint } from "./server-experiment-wait";
 import {currentHtmlDocumentTextObservation} from "./server-current-document-evidence";
 
@@ -52,6 +52,7 @@ export function canReuseServerBaseline(project: EvolveProject, routeFingerprint?
     || !campaignLiveObservationFresh(project, project.baselineRun.completedAt, nowMs))) return false;
 
   return baselineReadiness(project).ready
+    &&serverHtmlNativeRunsMatchOriginal(project,project.baselineRun.runs)
     && project.baselineRun.measurementFingerprint === serverBaselineFingerprint(project, routeFingerprint);
 }
 export type ServerBaselinePorts = ServerHtmlNativePort & {
