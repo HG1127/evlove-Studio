@@ -1,6 +1,6 @@
 // @vitest-environment node
 import {createHash} from "node:crypto";
-import {SERVER_SEMANTIC_CONTEXT_VERSION} from "@evolution/harness";
+import {SERVER_SEMANTIC_CONTEXT_VERSION,SERVER_MEASURED_REVIEW_VERSION} from "@evolution/harness";
 import {withExplicitServerAiConnection} from "./server-ai-connection";
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
 import {isServerAiUnavailable,runServerAi,serverAiScoringRouteFingerprint,serverAiUnavailableReason} from "./ai-gateway";
@@ -49,9 +49,11 @@ describe("server AI scoring route identity",()=> {
     process.env.EVOLUTION_AI_BASE_URL="https://ai.example.test/v1";
     const route=["openai-compatible","https://ai.example.test/v1","model-a"];
     const legacy=createHash("sha256").update(JSON.stringify(route)).digest("hex");
-    const expected=createHash("sha256").update(JSON.stringify({route,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION})).digest("hex");
+    const contextOnly=createHash("sha256").update(JSON.stringify({route,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION})).digest("hex");
+    const expected=createHash("sha256").update(JSON.stringify({route,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION})).digest("hex");
     expect(await serverAiScoringRouteFingerprint()).toBe(expected);
     expect(await serverAiScoringRouteFingerprint()).not.toBe(legacy);
+    expect(await serverAiScoringRouteFingerprint()).not.toBe(contextOnly);
   });
 
   it("changes with provider/model but excludes credentials and timeout",async()=> {

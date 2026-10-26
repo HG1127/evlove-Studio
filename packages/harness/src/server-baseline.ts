@@ -37,6 +37,7 @@ import {groundedOriginalCitationDefect,groundedOriginalDocumentProtection} from 
 import {collectServerHtmlNativeRuns,bindServerHtmlNativeOriginalReferences,serverHtmlNativeRunsMatchOriginal,type ServerHtmlNativePort} from "./server-html-native-runs";
 import { serverExperimentRecoveryCheckpoint } from "./server-experiment-wait";
 import {currentHtmlDocumentTextObservation} from "./server-current-document-evidence";
+import {measuredDocumentObservations,SERVER_MEASURED_REVIEW_VERSION,SERVER_NATIVE_REVIEW_INSTRUCTION} from "./server-measured-review-evidence";
 
 export { trustedServerBaselineChampion, serverBaselineFingerprint } from "./server-baseline-evidence";
 
@@ -309,6 +310,8 @@ export async function runServerBaseline(
   const effectiveCriteria = judgeCriteria.filter((criterion) => judgeCases.some((testCase) => testCase.criterionIds.includes(criterion.id)));
   const judgePayload = {
     mode: "server-baseline",
+    measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION,
+    measuredCurrentDocuments:measuredDocumentObservations(judgeRuns),
     project: {
       goal: project.goal,
       metrics: project.metrics,
@@ -316,7 +319,7 @@ export async function runServerBaseline(
     },
     acceptanceRubric: effectiveCriteria,
     artifactContext:currentArtifactContext,
-    evaluatorInstruction: "Judge only supplied current Baseline evidence. Independently inspect artifactContext when provided, rather than trusting an execution model's summary as source truth. Respect its representation, truncation and excluded runtime/visual scope. Never cite diagnosis, plans or patches. UNVERIFIED tests are omitted and must not be invented as failures. PARTIAL evidence cannot fully satisfy a hard gate.",
+    evaluatorInstruction: "Judge only supplied current Baseline evidence. Independently inspect artifactContext when provided, rather than trusting an execution model's summary as source truth. Respect its representation, truncation and excluded runtime/visual scope. Never cite diagnosis, plans or patches. UNVERIFIED tests are omitted and must not be invented as failures. PARTIAL evidence cannot fully satisfy a hard gate. "+SERVER_NATIVE_REVIEW_INSTRUCTION,
     testCases: judgeCases.map((testCase) => ({
       id: testCase.id,
       title: testCase.title,
@@ -350,7 +353,7 @@ export async function runServerBaseline(
       });
     } else {
       const judged = await ports.judge(judgePayload);
-      evaluation = settleAiEvaluation({
+      evaluation = {...settleAiEvaluation({
         criteria: project.acceptanceRubric,
         testCases: scoringCases,
         runs,
@@ -362,7 +365,7 @@ export async function runServerBaseline(
             ? ["部分测试仍缺真实执行能力；对应 Criterion 保持 UNVERIFIED/PARTIAL，不按产品失败处理。"]
             : []),
         ],
-      });
+      }),measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION};
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

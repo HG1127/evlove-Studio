@@ -25,7 +25,7 @@ import {
 } from "./server-experiment-evidence";
 import { normalizeLocallyVerifiableCandidateRuns } from "./candidate-snapshot-evidence";
 import { indexUniqueBatchResults } from "./server-batch-results";
-import { measuredDocumentObservations, SERVER_MEASURED_REVIEW_VERSION } from "./server-measured-review-evidence";
+import { measuredDocumentObservations, SERVER_MEASURED_REVIEW_VERSION,SERVER_NATIVE_REVIEW_INSTRUCTION } from "./server-measured-review-evidence";
 import {collectServerHtmlNativeRuns,type ServerHtmlNativePort} from "./server-html-native-runs";
 
 export type ServerExperimentExecutionPorts = ServerHtmlNativePort & {
@@ -254,19 +254,24 @@ export async function judgeServerExperimentCandidate(
   const effectiveCriteria = judgeCriteria.filter((criterion) =>
     judgeCases.some((testCase) => testCase.criterionIds.includes(criterion.id)));
   if (!judgeCases.length || !effectiveCriteria.length) return deterministicOnlyEvaluation(project, testCases, runs);
+  const nativeBindings=candidate.artifactSnapshots.flatMap(snapshot=>{
+    const frozen=snapshot.frozenArtifact;if(!frozen||frozen.sourceArtifactId!==snapshot.sourceArtifactId||!/^[a-f0-9]{64}$/.test(frozen.sha256))return [];
+    const originals=project.baselineRun.originalReferences?.filter(reference=>reference.sourceArtifactId===snapshot.sourceArtifactId)??[];
+    return [{sourceArtifactId:snapshot.sourceArtifactId,subjectSha256:frozen.sha256,originalSha256:originals.length===1?originals[0]!.sha256:undefined}];
+  });
   const payload = {
     mode,
     measuredReviewVersion: SERVER_MEASURED_REVIEW_VERSION,
-    measuredCandidateDocuments: measuredDocumentObservations(runs.filter(run => judgeCaseIds.has(run.testCaseId))),
+    measuredCandidateDocuments: measuredDocumentObservations(runs.filter(run => judgeCaseIds.has(run.testCaseId)),undefined,nativeBindings),
     measuredComparisonDocuments: measuredDocumentObservations(comparisonRuns),
-    candidate: { id: candidate.id },
+    candidate: { id: candidate.id,artifactBindings:nativeBindings },
     project: {
       goal: project.goal,
       metrics: project.metrics,
       acceptanceRubric: effectiveCriteria,
     },
     acceptanceRubric: effectiveCriteria,
-    evaluatorInstruction: "Judge only the supplied exact Candidate evidence. Read the existing measuredCandidateDocuments and measuredComparisonDocuments before treating compact output excerpts as missing document content. Comparison observations are the measured current Baseline, not Candidate claims. Respect their scope and omissions; missing comparison, script/style, visual or runtime proof stays unknown. Never cite diagnosis, plan, patches or expected impact as observed proof. UNVERIFIED tests are omitted and must not be invented as failures. PARTIAL evidence cannot fully satisfy a hard gate.",
+    evaluatorInstruction: "Judge only the supplied exact Candidate evidence. Read the existing measuredCandidateDocuments and measuredComparisonDocuments before treating compact output excerpts as missing document content. Comparison observations are the measured current Baseline, not Candidate claims. Respect their scope and omissions; missing comparison, script/style, visual or runtime proof stays unknown. Never cite diagnosis, plan, patches or expected impact as observed proof. UNVERIFIED tests are omitted and must not be invented as failures. PARTIAL evidence cannot fully satisfy a hard gate. "+SERVER_NATIVE_REVIEW_INSTRUCTION,
     testCases: judgeCases.map((testCase) => ({
       id: testCase.id,
       title: testCase.title,

@@ -5,6 +5,7 @@ import { runServerExperiment } from "./server-experiment";
 import { executeServerExperimentCandidate, judgeServerExperimentCandidate } from "./server-experiment-runner";
 import { normalizeLocallyVerifiableCandidateRuns } from "./candidate-snapshot-evidence";
 import { candidateLocalEvidence } from "./server-experiment-evidence";
+import {htmlNativeEvidenceFixture} from "@evolution/testkit";
 
 function fixture(executionMode:"artifact-runtime"|"external-runner"|"visual-review"="artifact-runtime"):EvolveProject{
   const now="2026-09-20T13:00:00.000Z";
@@ -60,6 +61,28 @@ function judge(score:number):EvaluateAiResult{
 }
 
 describe("server experiment",()=>{
+  function nativeReviewFixture(){
+    const p=fixture(),run=htmlNativeEvidenceFixture(),candidate=frozenCandidate(p.candidates[0]!,"RAW-SNAPSHOT-SCRIPT-MUST-NOT-ENTER-JUDGE");
+    p.sourceArtifacts[0]={...p.sourceArtifacts[0]!,extension:"html",mimeType:"text/html",name:"source.html"};
+    run.testCaseId="V1";run.nativeHtmlProof!.testCaseId="V1";run.nativeHtmlProof!.sourceArtifactId="source";run.renderedDocumentEvidence!.sourceArtifactId="source";
+    candidate.artifactSnapshots[0]!.mimeType="text/html";candidate.artifactSnapshots[0]!.frozenArtifact!.mimeType="text/html";candidate.artifactSnapshots[0]!.frozenArtifact!.sha256=run.artifactHash!;
+    return {p,run,candidate};
+  }
+  it("gives the Judge bound physical facts while retaining a negative independent semantic score",async()=>{
+    const {p,run,candidate}=nativeReviewFixture(),payloads:unknown[]=[];
+    const result=await judgeServerExperimentCandidate(p,candidate,[run],{executeSemanticBatch:async()=>({results:[]}),judge:async payload=>{payloads.push(payload);return judge(40);}});
+    expect(payloads[0]).toMatchObject({measuredCandidateDocuments:{nativeObservations:[{testCaseIds:["V1"],facts:{sourceArtifactId:"source",profilePass:true,styleComparison:[{propertyCount:50},{propertyCount:50}]}}]}});
+    expect(JSON.stringify(payloads)).not.toContain("RAW-SNAPSHOT-SCRIPT-MUST-NOT-ENTER-JUDGE");
+    expect(result.criterionScores?.find(c=>c.criterionId==="CONTENT")).toMatchObject({score:40,pass:false});
+  });
+  it.each(["subject","source","frozen-source"])("does not pass %s-mismatched native facts to the Candidate Judge",async kind=>{
+    const {p,run,candidate}=nativeReviewFixture(),payloads:unknown[]=[];
+    if(kind==="subject")candidate.artifactSnapshots[0]!.frozenArtifact!.sha256="f".repeat(64);
+    if(kind==="source"){run.nativeHtmlProof!.sourceArtifactId="foreign";run.renderedDocumentEvidence!.sourceArtifactId="foreign";}
+    if(kind==="frozen-source")candidate.artifactSnapshots[0]!.frozenArtifact!.sourceArtifactId="foreign";
+    await judgeServerExperimentCandidate(p,candidate,[run],{executeSemanticBatch:async()=>({results:[]}),judge:async payload=>{payloads.push(payload);return judge(40);}});
+    expect(payloads[0]).toMatchObject({measuredCandidateDocuments:{observations:[],nativeObservations:[],omittedNativeTestCaseIds:["V1"]}});
+  });
   it("gives the independent Judge the already measured Candidate and current Baseline bodies without reading raw snapshots",async()=>{
     const p=fixture();
     const baseline:TargetRunResult={testCaseId:"V1",output:"COMPLETE CURRENT DOCUMENT TEXT OBSERVATION\n"+"original text ".repeat(1000)+"ORIGINAL-END",
@@ -76,7 +99,7 @@ describe("server experiment",()=>{
     const wire=JSON.stringify(independentJudge.mock.calls);
     expect(wire).toContain("ORIGINAL-END");expect(wire).toContain("EVOLVED-END");
     expect(wire).not.toContain("RAW-SOURCE-MUST-NOT-BE-ADDED");
-    expect(result.measuredReviewVersion).toBe("server-measured-document-review-v2");
+    expect(result.measuredReviewVersion).toBe("server-measured-document-review-v3-native-facts");
     independentJudge.mockClear();
     await judgeServerExperimentCandidate(p,frozenCandidate(p.candidates[0]!),[run],{
       executeSemanticBatch:async()=>({results:[]}),judge:independentJudge,

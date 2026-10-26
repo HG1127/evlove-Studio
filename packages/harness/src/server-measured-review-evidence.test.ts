@@ -10,6 +10,14 @@ function observed(id:string,body:string):TargetRunResult {
     trace:[{id:`candidate-semantic-snapshot-${id}`,stage:"semantic-evidence",status:"pass",summary:"measured document"}]};
 }
 describe("existing measured document review",()=>{
+  it("retains the actual browser and computed-style observations for the independent Judge",()=>{
+    const result=measuredDocumentObservations([htmlNativeEvidenceFixture()]);
+    const wire=JSON.stringify(result);
+    expect(wire).toContain('"nativeObservations"');
+    expect(wire).toContain('all-copy-controls-write-real-clipboard');
+    expect(wire).toContain('"propertyCount":50');
+    expect(wire).toContain('"styleSignature"');
+  });
   it("includes bound rendered paragraph facts once without converting observations to a quality pass",()=>{
     const run=htmlNativeEvidenceFixture();
     const result=measuredDocumentObservations([run,structuredClone(run)]);

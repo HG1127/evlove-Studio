@@ -18,7 +18,7 @@ import {
 import { indexUniqueBatchResults } from "./server-batch-results";
 import { groundedOriginalCitationDefect, groundedOriginalDocumentProtection } from "./server-grounded-baseline-defect";
 import { currentHtmlDocumentTextObservation } from "./server-current-document-evidence";
-import { measuredDocumentObservations, SERVER_MEASURED_REVIEW_VERSION } from "./server-measured-review-evidence";
+import { measuredDocumentObservations, SERVER_MEASURED_REVIEW_VERSION,SERVER_NATIVE_REVIEW_INSTRUCTION } from "./server-measured-review-evidence";
 import {collectServerHtmlNativeRuns,bindServerHtmlNativeOriginalReferences,type ServerHtmlNativePort} from "./server-html-native-runs";
 
 export type ServerCurrentArtifactPorts = ServerHtmlNativePort & {
@@ -138,7 +138,7 @@ export async function judgeServerCurrentArtifactSuite(
     measuredCurrentDocuments:measuredDocumentObservations(runs.filter(run=>judgeCaseIds.has(run.testCaseId))),
     project:{goal:project.goal,metrics:project.metrics,acceptanceRubric:effectiveCriteria},
     acceptanceRubric:effectiveCriteria,
-    evaluatorInstruction:"Judge only supplied CURRENT VERSION evidence from the hidden same-paper baseline. Read existing measuredCurrentDocuments before treating compact excerpts as missing document content. Respect their omissions: document text cannot establish scripts, styles, visual or runtime behavior. UNVERIFIED tests are omitted and must not be invented as failures. Never cite diagnosis, plan or Candidate claims.",
+    evaluatorInstruction:"Judge only supplied CURRENT VERSION evidence from the hidden same-paper baseline. Read existing measuredCurrentDocuments before treating compact excerpts as missing document content. Respect their omissions: document text cannot establish scripts, styles, visual or runtime behavior. UNVERIFIED tests are omitted and must not be invented as failures. Never cite diagnosis, plan or Candidate claims. "+SERVER_NATIVE_REVIEW_INSTRUCTION,
     testCases:judgeCases.map((testCase)=>({id:testCase.id,title:testCase.title,input:testCase.input.slice(0,1600),expected:testCase.expected,tags:testCase.tags,criterionIds:testCase.criterionIds,executionMode:testCase.executionMode,evidenceScope:testCase.evidenceScope})),
     runs:runs.filter((run)=>judgeCaseIds.has(run.testCaseId)).map((run)=>{
       const testCase=testCases.find((item)=>item.id===run.testCaseId);

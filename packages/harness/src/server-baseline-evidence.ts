@@ -2,6 +2,7 @@ import type { EvolveProject, TargetRunResult, TestCase } from "@evolution/contra
 import { campaignScoringInputFingerprint, citesHistoricalEvidence, fastHash, isTextArtifactExtension, isZipArtifact, requiresIndependentFormatValidation } from "@evolution/core";
 
 import { compactServerSourceText, serverSemanticContextQuery, SERVER_SEMANTIC_CONTEXT_VERSION } from "./server-source-context";
+import {SERVER_MEASURED_REVIEW_VERSION} from "./server-measured-review-evidence";
 
 // Delimited files are structured spreadsheets, not text snapshots that prove format.
 
@@ -287,6 +288,7 @@ export function serverBaselineFingerprint(project: EvolveProject, scoringRouteFi
   return fastHash({
     version: "server-baseline-v3",
     semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION,
+    measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION,
     scoringInputFingerprint: campaignScoringInputFingerprint(project),
     scoringRouteFingerprint,
     goal: project.goal,

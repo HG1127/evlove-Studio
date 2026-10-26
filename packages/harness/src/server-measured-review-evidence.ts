@@ -1,17 +1,19 @@
 import {DOCUMENT_TEXT_OBSERVATION_MAX_CHARS,type TargetRunResult} from "@evolution/contracts";
-import {inspectHtmlNativeEvidence} from "@evolution/core";
+import {inspectMeasuredNativeRun,measuredNativeObservations,type MeasuredNativeBinding} from "./server-measured-native-review";
 
-export const SERVER_MEASURED_REVIEW_VERSION = "server-measured-document-review-v2";
+export const SERVER_MEASURED_REVIEW_VERSION = "server-measured-document-review-v3-native-facts";
+export const SERVER_NATIVE_REVIEW_INSTRUCTION="Read nativeObservations as measured physical facts bound to their own source, hashes and testCaseIds. Excluding raw scripts/styles does not erase observed interactions, script/style signatures or computed-style comparisons. A profile pass is not a semantic, pixel-visual or overall Criterion pass; it does not replace another test's explicit assertions. Missing, omitted or out-of-scope evidence remains unknown.";
 
 /** Reuse only existing document observations. No Artifact/Source reads or raw HTML reconstruction. */
-export function measuredDocumentObservations(runs: TargetRunResult[], budget = DOCUMENT_TEXT_OBSERVATION_MAX_CHARS) {
+export function measuredDocumentObservations(runs: TargetRunResult[], budget = DOCUMENT_TEXT_OBSERVATION_MAX_CHARS,bindings?:readonly MeasuredNativeBinding[]) {
   const observations: Array<{testCaseId:string;artifactHash?:string;output:string}> = [];
   const omittedTestCaseIds: string[] = [];
   const seen = new Set<string>();
   let remaining = budget;
   for (const run of runs) {
     if (run.error || run.verificationStatus !== "verified") continue;
-    const native=inspectHtmlNativeEvidence(run,run.testCaseId);
+    const native=inspectMeasuredNativeRun(run,bindings);
+    if(run.nativeHtmlProof&&!native?.complete)continue;
     if(native?.complete){
       const key=`rendered:${native.document.artifactSha256}:${native.document.textFingerprint}`;
       if(seen.has(key))continue;
@@ -38,7 +40,8 @@ export function measuredDocumentObservations(runs: TargetRunResult[], budget = D
     observations.push({testCaseId:run.testCaseId,artifactHash:run.artifactHash,output:run.output});
     remaining -= run.output.length;
   }
-  return {observations,omittedTestCaseIds,
+  const native=measuredNativeObservations(runs,undefined,bindings);
+  return {observations,omittedTestCaseIds,nativeObservations:native.observations,omittedNativeTestCaseIds:native.omittedTestCaseIds,
     limitations:["Existing measured document observations only; rendered text/paragraph facts require a bound native observer receipt. Raw scripts/styles are excluded.",
-      "A document observation is not a quality verdict. Judge the unchanged rubric independently."]};
+      "A document observation is not a quality verdict. Judge the unchanged rubric independently.",SERVER_NATIVE_REVIEW_INSTRUCTION]};
 }
