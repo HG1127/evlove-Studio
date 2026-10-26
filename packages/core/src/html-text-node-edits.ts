@@ -1,5 +1,5 @@
 import {parse,type DefaultTreeAdapterTypes} from "parse5";
-import {HtmlBodyNodeEditsSchema,HtmlTextNodeEditsSchema} from "@evolution/contracts";
+import {HtmlBodyEditAnchorSchema,HtmlBodyNodeEditsSchema,HtmlTextNodeEditsSchema} from "@evolution/contracts";
 import {applyExactEdits} from "./exact-edits";
 
 interface BodyTextNode {
@@ -46,6 +46,14 @@ export function htmlRepairTextNodeContext(html:string,parentSha256?:string){
   // Fail closed instead of silently dropping chapters or giving an incomplete edit index.
   if(nodes.length>4096||JSON.stringify(nodes).length>240_000)throw new Error("HTML complete body text edit index exceeds the repair context capacity");
   return nodes;
+}
+
+/** Read every chapter while retaining exact raw-text anchors and full-source offsets for the builder. */
+export function htmlBuildBodyEditAnchors(html:string,parentSha256:string){
+  const nodes=bodyTextNodes(html,parentSha256).map(({anchorId,element,section,start,end})=>({anchorId,element,section,start,end,before:html.slice(start,end)}));
+  const parsed=HtmlBodyEditAnchorSchema.array().min(1).max(4096).parse(nodes);
+  if(JSON.stringify(parsed).length>320_000)throw new Error("Complete HTML body edit index exceeds the build context capacity; no chapters were truncated");
+  return parsed;
 }
 
 /** Resolve model IDs against the same physical parent and preflight exact edits before any write. */

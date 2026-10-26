@@ -9,6 +9,14 @@ const subject=original.replace('<p>old</p>','<p>new_configuration</p>');
 const identity=htmlNativeProgramIdentity(original,nativeHtmlSha256);
 const profiles:HtmlNativeProfile[]=[{id:HTML_NATIVE_PROFILE_ID,programSignature:identity.signature,styleSignature:identity.styleSignature}];
 describe("pure native renderer profile identification",()=>{
+  it("rejects a known component's third paragraph before deriving or freezing bytes, while preserving unknown-renderer behavior",()=>{
+    const component='<div class="content-block"><div class="text-lines"><p>非常适合</p><p>内部工具</p></div></div>';
+    const source=original.replace("<p>old</p>",component),broken=source.replace("<p>内部工具</p>","<p>内部工具</p><p>完成检查</p>");
+    expect(compileKnownHtmlDerivedMetadata(source,broken).html).toBe(broken);
+    expect(()=>compileKnownHtmlDerivedMetadata(source,broken,profiles)).toThrow(/two-paragraph/);
+    const corrected=source.replace(component,component+"<p>完成检查：记录负责人。</p>");
+    expect(compileKnownHtmlDerivedMetadata(source,corrected,profiles).html).toContain("完成检查：记录负责人。");
+  });
   it("leaves an unknown renderer unchanged rather than assuming its data-search attribute is executable coverage",()=>{
     expect(isKnownHtmlNativeSubject(subject)).toBe(false);
     expect(compileKnownHtmlDerivedMetadata(original,subject)).toEqual({html:subject,updatedIds:[],reflowedIds:[]});

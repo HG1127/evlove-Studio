@@ -1,5 +1,6 @@
 import type {AcceptanceCriterion,Candidate,EvolveProject,FrozenArtifact} from "@evolution/contracts";
-import {evidenceFingerprint,htmlRepairBodyContext,htmlRepairTextNodeContext,resolveBoundHtmlBodyNodeEdits,indexUniqueById,reconcileAcceptedOfflineChampion} from "@evolution/core";
+import {evidenceFingerprint,htmlKnownSemanticComponents,htmlRepairBodyContext,htmlRepairTextNodeContext,resolveBoundHtmlBodyNodeEdits,indexUniqueById,reconcileAcceptedOfflineChampion} from "@evolution/core";
+import {isKnownHtmlNativeSubject} from "@evolution/adapters/html-native-profile";
 import {measuredDocumentObservations,runServerArtifactAcceptance,type ServerArtifactVerification} from "@evolution/harness";
 import {runServerAi} from "./ai-gateway";
 import {getServerArtifactStore} from "./artifact-runtime";
@@ -48,7 +49,7 @@ export async function repairServerArtifactCandidate(args:{
 }){
   const failedIds=new Set(args.failedCriteria.map((criterion)=>criterion.id));
   const authorizedBody=serverRepairMeasuredTextAuthorized(args.project.id);
-  const htmlParents=new Map<string,{html:string;sha256:string;nodes:ReturnType<typeof htmlRepairTextNodeContext>}>();
+  const htmlParents=new Map<string,{html:string;sha256:string;nodes:ReturnType<typeof htmlRepairTextNodeContext>;components:ReturnType<typeof htmlKnownSemanticComponents>}>();
   const focused = {...args.candidate, change: args.failedCriteria.map((criterion) => `${criterion.title}: ${criterion.requirement}`).join("\n")};
   const rawContexts = await buildServerCandidateTargetContext(args.project,focused,
     async(source)=>{
@@ -58,14 +59,14 @@ export async function repairServerArtifactCandidate(args:{
       if(safe===undefined)throw new Error("HTML repair requires complete physical body boundaries before sharing mutation context");
       const sha256=args.candidate.artifactSnapshots.find(snapshot=>snapshot.sourceArtifactId===source.id)?.frozenArtifact?.sha256;
       if(!sha256)throw new Error("HTML body repair requires the verified frozen parent SHA-256");
-      htmlParents.set(source.id,{html:actual,sha256,nodes:htmlRepairTextNodeContext(actual,sha256)});
+      htmlParents.set(source.id,{html:actual,sha256,nodes:htmlRepairTextNodeContext(actual,sha256),components:isKnownHtmlNativeSubject(actual)?htmlKnownSemanticComponents(actual):[]});
       return safe;
     },args.candidate,
-    (source)=>readServerCandidateParentNativeStructure(args.project,source,args.candidate));
+    (source)=>readServerCandidateParentNativeStructure(args.project,source,args.candidate),{completeHtmlBuildContext:false});
   const contexts=rawContexts.map(context=>{
     const parent=htmlParents.get(context.id);
     return parent?{...context,content:"",structuredContext:undefined,mutationMode:"html-body-node-edits-v1",truncated:false,
-      originalChars:parent.html.length,parentSha256:parent.sha256,htmlTextNodes:parent.nodes,
+      originalChars:parent.html.length,parentSha256:parent.sha256,htmlTextNodes:parent.nodes,htmlRendererComponents:parent.components,
       contextProjection:"complete body text nodes with physical edit IDs; no raw tags, attributes, scripts, styles or template code"}:context;
   });
   const boundObservation=authorizedBody
@@ -117,7 +118,7 @@ export async function repairServerArtifactCandidate(args:{
       };
     }),
     instruction:"Change only the VERIFIED failed criteria above. Preserve every other artifact behavior and protected item. Return exactly one artifact for every supplied target. For an unchanged DOCX/PPTX/XLSX/XLS/ODS/CSV/TSV/ZIP target return JSON {kind:'keep-parent',sourceArtifactId:'EXACT target id'} so the server reuses the verified frozen bytes; never reconstruct native file bytes from an excerpt. For other unchanged targets return their current content; for unchanged excerpted text targets return one exact text-edit with identical before/after. For changed DOCX targets return {kind:'document',parts:[{path:'word/document.xml',textRuns:[{index:0,text:'new text'}]}]}; for PPTX return {kind:'presentation',slides:[{number:1,textRuns:[{index:0,text:'new text'}]}]}, using only real indexed paths/slides from structuredContext. For changed spreadsheets return {kind:'spreadsheet',sheets:[{name:'Existing Sheet',cells:[{address:'A1',value:'new value'}]}]} using only real Sheet/A1 locations and preserving formulas; do not fabricate calculated formula caches. Every changed native target must have actual differences. For codebase/package targets return a JSON overlay {kind:'codebase',overlay:true,files:[{path,content}],deletions:[path]} containing only actual changes/deletions. For text artifacts with mutationMode text-edits, return content JSON {kind:'text-edits',edits:[{before,after,start?,end?}]}, anchored verbatim to current Candidate chunks without chunk markers or ellipses. The server applies edits to the complete tested Candidate, preserving untouched bytes. Do not rewrite a whole artifact from excerpts. The output becomes a NEW Candidate and must be re-tested on the full Hidden Holdout.",
-    htmlBodyInstruction:"For mutationMode html-body-node-edits-v1, artifact.content MUST be JSON {kind:'html-body-node-edits-v1',edits:[{anchorId:'EXACT supplied ID',text:'complete replacement plain text'}]}. Return only changed nodes. DO NOT include parentSha256 or any parent/hash field: the server owns that binding. Text is plain prose, never HTML markup; the server escapes it and preserves all surrounding markup/code/styles. Do not use text-edits or rendered text as a raw HTML anchor for these targets.",
+    htmlBodyInstruction:"For mutationMode html-body-node-edits-v1, artifact.content MUST be JSON {kind:'html-body-node-edits-v1',edits:[{anchorId:'EXACT supplied ID',text:'complete replacement plain text'}]}. Return only changed nodes. DO NOT include parentSha256 or any parent/hash field: the server owns that binding. Text is plain prose, never HTML markup; the server escapes it and preserves all surrounding markup/code/styles. Preserve htmlRendererComponents labels and their two paragraph slots; new text beside those slots inside their content-block would be discarded by the renderer. Do not use text-edits or rendered text as a raw HTML anchor for these targets.",
   });
   const artifacts=response.artifacts.map(artifact=>{
     const parent=htmlParents.get(artifact.sourceArtifactId);

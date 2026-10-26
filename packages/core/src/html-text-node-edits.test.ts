@@ -1,6 +1,6 @@
 import {describe,expect,it} from "vitest";
 import {applyExactEdits} from "./exact-edits";
-import {htmlRepairTextNodeContext,resolveBoundHtmlBodyNodeEdits,resolveHtmlTextNodeEdits} from "./html-text-node-edits";
+import {htmlBuildBodyEditAnchors,htmlRepairTextNodeContext,resolveBoundHtmlBodyNodeEdits,resolveHtmlTextNodeEdits} from "./html-text-node-edits";
 
 const sha="a".repeat(64);
 const html='<html><head><script>HEAD_PRIVATE</script></head><body><article id="c01" style="STYLE_PRIVATE" onclick="EVENT_PRIVATE">'
@@ -10,6 +10,18 @@ const html='<html><head><script>HEAD_PRIVATE</script></head><body><article id="c
 const payload=(edits:Array<{anchorId:string;text:string}>,parentSha256=sha)=>JSON.stringify({kind:"html-text-node-edits",parentSha256,edits});
 
 describe("frozen HTML body text edit anchors",()=>{
+  it("supplies complete exact builder anchors across duplicate text, entities and physical source offsets",()=>{
+    const nodes=htmlBuildBodyEditAnchors(html,sha);
+    expect(nodes).toHaveLength(htmlRepairTextNodeContext(html).length);
+    expect(nodes.at(-1)?.before).toBe("完整配置收尾");expect(JSON.stringify(nodes)).not.toMatch(/PRIVATE|onclick|<script/);
+    const entity=nodes.find(node=>node.before.includes("&amp;"))!;
+    expect(html.slice(entity.start,entity.end)).toBe(entity.before);
+    const duplicate=nodes.filter(node=>node.before==="相同说明")[1]!;
+    const result=applyExactEdits(html,JSON.stringify({kind:"text-edits",edits:[{before:duplicate.before,start:duplicate.start,end:duplicate.end,after:"准确修改第二个位置"}]}),{strict:true});
+    expect(result).toContain('<p>相同说明</p><p>准确修改第二个位置</p>');
+    expect(()=>htmlBuildBodyEditAnchors("<p>fragment</p>",sha)).toThrow();
+    expect(()=>htmlBuildBodyEditAnchors('<html><body>'+"<p>正文</p>".repeat(4097)+"</body></html>",sha)).toThrow();
+  });
   it("binds parent selection on the server and refuses stale IDs or model-supplied parent fields",()=>{
     const node=htmlRepairTextNodeContext(html,sha)[0]!;
     const edits=[{anchorId:node.anchorId,text:"先填写配置项，再保存并检查。"}];

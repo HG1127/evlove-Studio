@@ -23,11 +23,21 @@ const edits = (beforeText = before, afterText = after) => JSON.stringify({kind: 
 beforeEach(() => {blobs.clear(); ai.mockReset();});
 
 describe("server full text Candidate construction", () => {
+  it("rejects a changed physical parent even when the supplied anchor still matches and byte size is unchanged",async()=>{
+    const {project,candidate}=fixture();
+    ai.mockImplementationOnce(async()=>{
+      const changed=original.replace("原有说明","新的说明");expect(Buffer.byteLength(changed)).toBe(Buffer.byteLength(original));
+      blobs.set("source",new Blob([changed],{type:"text/html"}));return output(edits());
+    });
+    await expect(buildServerExperimentCandidate(project,candidate)).rejects.toMatchObject({code:"CANDIDATE_BUILD_PARENT_CHANGED"});
+    expect(ai).toHaveBeenCalledTimes(1);expect(blobs.size).toBe(1);
+  });
   it("corrects one invented anchor against the same source before any frozen write",async()=>{
     const {project,candidate}=fixture();
     ai.mockResolvedValueOnce(output(edits("<p>必须连接正式配置。</p>")))
       .mockImplementationOnce(async(_operation,payload)=>{
         expect(blobs.size).toBe(1);expect(await blobs.get("source")!.text()).toBe(original);
+        expect(payload.outputInstruction).toContain("Only when a text target has mutationMode full");
         expect(payload.project.currentTargets).toEqual(ai.mock.calls[0]![1].project.currentTargets);
         expect(payload.constructionCorrection).toMatchObject({code:"TEXT_EDIT_ANCHOR_INVALID",editIndex:0});
         expect(JSON.stringify(payload)).not.toContain("finalHoldout");

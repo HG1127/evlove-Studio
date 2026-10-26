@@ -2,6 +2,7 @@ import type { Candidate, EvolveProject, SourceArtifact } from "@evolution/contra
 import { buildExactCandidateTextEdits, isTextArtifactExtension, isZipArtifact } from "@evolution/core";
 import { retrieveTextContext, trustedServerBaselineChampion } from "@evolution/harness";
 import {serverStructuredTargetContext} from "./server-structured-target-context";
+import {serverHtmlBuildBodyContext} from "./server-html-build-context";
 
 export function isServerTextEditBlueprint(content: string) {
   try { return (JSON.parse(content) as { kind?: unknown })?.kind === "text-edits"; }
@@ -36,10 +37,12 @@ export async function buildServerCandidateTargetContext(
   project:EvolveProject,candidate:Candidate,readCurrentText:(source:SourceArtifact)=>Promise<string>,
   parentCandidate?:Candidate,
   readVerifiedNativeParent?:(source:SourceArtifact)=>Promise<SourceArtifact>,
+  options?:{completeHtmlBuildContext?:boolean},
 ){
   const champion = parentCandidate ?? trustedServerBaselineChampion(project);
   const championBySource = new Map((champion?.artifactSnapshots ?? []).map((snapshot) => [snapshot.sourceArtifactId, snapshot]));
   let remaining = 72_000;
+  let bodyIndexRemaining=320_000;
   const result = [];
   for (const artifact of project.sourceArtifacts.filter((artifact) => artifact.role === "target")) {
     const parent = championBySource.get(artifact.id);
@@ -57,9 +60,14 @@ export async function buildServerCandidateTargetContext(
       ?await readVerifiedNativeParent(artifact):undefined;
     const source = textTarget ? await readCurrentText(artifact)
       :liveParent?.textContent??parent?.content??artifact.textContent??artifact.textExcerpt??"";
+    const htmlBody=textTarget&&options?.completeHtmlBuildContext!==false?serverHtmlBuildBodyContext(project.id,artifact.extension,source):undefined;
+    if(htmlBody){
+      bodyIndexRemaining-=JSON.stringify(htmlBody.context).length;
+      if(bodyIndexRemaining<0)throw new Error("Complete authorized HTML body indexes exceed the build context capacity; no chapters were truncated");
+    }
     const allowance = Math.max(0, Math.min(22_000, remaining));
     const query = [project.goal, project.evolutionCommand, candidate.title, candidate.change, candidate.hypothesis, ...(candidate.designRationale?.sourceEvidence ?? []), ...candidate.patches.filter((patch) => !patch.artifactId || patch.artifactId === artifact.id).map((patch) => `${patch.target} ${patch.rationale}`)].join(" ");
-    const content = textTarget ? retrieveTextContext(source, query, { maxChars: allowance, maxChunks: 6 }) : source.slice(0, allowance);
+    const content = textTarget ? retrieveTextContext(htmlBody?.markup??source, query, { maxChars: allowance, maxChunks: 6 }) : source.slice(0, allowance);
     remaining = Math.max(0, remaining - content.length);
     const indexedContext=serverStructuredTargetContext(liveParent??artifact,candidate,
       liveParent?undefined:parent?.content);
@@ -79,8 +87,10 @@ export async function buildServerCandidateTargetContext(
       content,
       originalChars: source.length,
       truncated: content.length < source.length,
-      mutationMode: textTarget && content.length < source.length ? "text-edits" : "full",
-      structuredContext:indexedContext??compactStructured(artifact,candidate),
+      mutationMode: htmlBody||textTarget&&content.length<source.length?"text-edits":"full",
+      structuredContext:htmlBody?undefined:indexedContext??compactStructured(artifact,candidate),
+      ...(htmlBody?{htmlBuildBodyContext:htmlBody.context,bodyIndexComplete:true,
+        contentRepresentation:"non-executable body markup projection",chunkOffsetsAreProjectionOnly:true}:{}),
     });
   }
   return result;

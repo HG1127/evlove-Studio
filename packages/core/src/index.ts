@@ -69,4 +69,5 @@ export * from "./outcome-observation-identity";
 export * from "./html-derived-search-index";
 export * from "./html-native-evidence";
 export * from "./html-native-browser-assertions";
+export * from "./html-semantic-layout";
 export * from "./ai-usage-ledger";

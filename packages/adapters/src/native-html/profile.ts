@@ -1,6 +1,6 @@
 import {createHash} from "node:crypto";
 import {HTML_NATIVE_PROFILE_ID} from "@evolution/contracts";
-import {htmlCandidateProtection,htmlNativeCodeRetention,htmlNativeProgramIdentity,separateHtmlAppendedProse,synchronizeHtmlCardSearchIndex} from "@evolution/core";
+import {assertHtmlKnownSemanticLayout,htmlCandidateProtection,htmlNativeCodeRetention,htmlNativeProgramIdentity,separateHtmlAppendedProse,synchronizeHtmlCardSearchIndex} from "@evolution/core";
 
 export const nativeHtmlSha256=(bytes:Uint8Array|string)=>createHash("sha256").update(bytes).digest("hex");
 export const KNOWN_HTML_NATIVE_PROFILES=[{
@@ -32,6 +32,8 @@ export function identifyHtmlNativeSubjects(originalHtml:string,subjectHtml:strin
 /** Preserve all model-authored text, original note bytes and the known renderer's derived index. */
 export function compileKnownHtmlDerivedMetadata(originalHtml:string,subjectHtml:string,profiles?:readonly HtmlNativeProfile[]){
   if(!identifyHtmlNativeSubjects(originalHtml,subjectHtml,profiles))return {html:subjectHtml,updatedIds:[] as string[],reflowedIds:[] as string[]};
+  assertHtmlKnownSemanticLayout(originalHtml,subjectHtml);
   const layout=separateHtmlAppendedProse(originalHtml,subjectHtml);
+  assertHtmlKnownSemanticLayout(originalHtml,layout.html);
   return {...synchronizeHtmlCardSearchIndex(originalHtml,layout.html),reflowedIds:layout.reflowedIds};
 }

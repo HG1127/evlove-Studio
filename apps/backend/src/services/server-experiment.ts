@@ -1,6 +1,7 @@
 import {withServerAiConnection} from "./server-ai-connection";
 import {executeServerArtifactExternal} from "./server-artifact-external";
 import type { Candidate, EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
+import {HTML_BUILD_BODY_CONTEXT_VERSION} from "@evolution/contracts";
 
 import { runServerExperiment, SERVER_SEMANTIC_CONTEXT_VERSION, SERVER_MEASURED_REVIEW_VERSION } from "@evolution/harness";
 import { runServerAi, serverAiScoringRouteFingerprint } from "./ai-gateway";
@@ -43,7 +44,7 @@ export async function runServerMissionExperiment(project: EvolveProject) {
     fingerprint: (wire) => serverArtifactSha256(new TextEncoder().encode(wire)),
     readExecutionArtifactFingerprint,
     scoringRouteFingerprint: await serverAiScoringRouteFingerprint(),
-    executionRuntimeFingerprint: JSON.stringify([process.env.VERCEL_GIT_COMMIT_SHA ?? "local", SERVER_SEMANTIC_CONTEXT_VERSION, SERVER_MEASURED_REVIEW_VERSION, HTML_PRESERVATION_EXECUTION_VERSION,HTML_NATIVE_KERNEL_SHA256,HTML_NATIVE_EVIDENCE_POLICY_VERSION]),
+    executionRuntimeFingerprint: JSON.stringify([process.env.VERCEL_GIT_COMMIT_SHA ?? "local", SERVER_SEMANTIC_CONTEXT_VERSION, SERVER_MEASURED_REVIEW_VERSION, HTML_PRESERVATION_EXECUTION_VERSION,HTML_NATIVE_KERNEL_SHA256,HTML_NATIVE_EVIDENCE_POLICY_VERSION,HTML_BUILD_BODY_CONTEXT_VERSION]),
     buildCandidate: async({ project: current, candidate }) => {
       const built=await buildServerExperimentCandidate(current,candidate);
       return serverConnectorTargetEnabled(current)
