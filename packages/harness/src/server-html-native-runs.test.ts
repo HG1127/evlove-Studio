@@ -8,6 +8,7 @@ import {executeServerExperimentCandidate} from "./server-experiment-runner";
 import {executeServerCurrentArtifactSuite} from "./server-current-artifact-runner";
 import {recoverableServerExperimentRuns,serverExperimentBuildCheckpoint,serverExperimentExecutionCheckpoint,serverExperimentObservationBinding} from "./server-experiment-recovery";
 import {recoverableServerHoldout,serverHoldoutExecutionEvidenceFingerprint} from "./server-holdout-recovery";
+import {hasServerNativeHtmlHoldoutRetry} from "./server-frozen-validation-checkpoint";
 
 function fixture(){
   const {project,current:candidate}=acceptedPackageFixture(false),run=htmlNativeEvidenceFixture();
@@ -24,6 +25,25 @@ function fixture(){
   return {project,candidate,run,test};
 }
 describe("injected native HTML execution",()=>{
+  it("remeasures only an explicitly resumed, same-contract frozen native capability failure",()=>{
+    const {project,candidate,test}=fixture();
+    project.campaign={...project.campaign,status:"idle",currentRound:0,startedAt:undefined,checkpoint:{round:1,completedPhase:"experiment",at:"2026-10-26T00:00:00.000Z"}};
+    project.experimentRun={...project.experimentRun,status:"completed",winnerId:candidate.id};
+    project.hiddenEvalSuite=[{...test,hidden:true}];
+    project.validationRun={...project.validationRun,status:"completed",candidateId:candidate.id,independentFinal:undefined,
+      evidenceFingerprint:evidenceFingerprint(project,candidate),runs:[{testCaseId:test.id,verificationStatus:"unverified",error:"NATIVE_HTML_EVIDENCE_INVALID",output:"Missing native evidence",trace:[],latencyMs:0,cost:0}]};
+    expect(hasServerNativeHtmlHoldoutRetry(project)).toBe(true);
+    for(const mutate of [
+      (p:typeof project)=>{p.campaign.status="paused";},
+      (p:typeof project)=>{p.campaign.status="running";},
+      (p:typeof project)=>{p.validationRun.evidenceFingerprint="changed";},
+      (p:typeof project)=>{p.validationRun.runs[0]!.error="OTHER_CAPABILITY_MISSING";},
+      (p:typeof project)=>{p.validationRun.runs.push(p.validationRun.runs[0]!);},
+      (p:typeof project)=>{p.hiddenEvalSuite[0]!.browserSteps=[{action:"visible",selector:"#custom"}];},
+      (p:typeof project)=>{p.validationRun.evaluation!.safety="FAIL";},
+      (p:typeof project)=>{p.campaign.startedAt="2026-01-01T00:00:00.000Z";p.campaign.stopCriteria.maxWallMinutes=1;},
+    ]){const changed=structuredClone(project);mutate(changed);expect(hasServerNativeHtmlHoldoutRetry(changed)).toBe(false);}
+  });
   it.each(["missing","stale","duplicate","wrong-mission"])("cannot lock %s physical Original references using native observations",kind=>{
     const {run}=fixture(),ordered=new Map([[run.testCaseId,run]]);
     const reference={schemaVersion:"original-artifact-reference-v1" as const,missionId:"mission",sourceArtifactId:"source-html",blobId:"original",sha256:kind==="stale"?"f".repeat(64):run.artifactHash!,sizeBytes:100};

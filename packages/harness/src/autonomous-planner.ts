@@ -1,5 +1,5 @@
 import type { AttentionRequest, EvolveProject, Stage } from "@evolution/contracts";
-import {hasServerFrozenVerifiedRejection} from "./server-frozen-validation-checkpoint";
+import {hasServerFrozenVerifiedRejection,hasServerNativeHtmlHoldoutRetry} from "./server-frozen-validation-checkpoint";
 import {
   campaignGoalSatisfied,
   campaignPreflightStopReason,
@@ -609,6 +609,10 @@ export function deriveAutonomousDecision(project: EvolveProject): AutonomousDeci
 
   const clarifications = autonomousClarificationPlan(project);
   if (clarifications.auto.length) return { action: "adopt-defaults", reason: `自动采用 ${clarifications.auto.length} 条低风险默认假设`, stage: "target", autoClarifications: clarifications.auto };
+
+  if(hasServerNativeHtmlHoldoutRetry(project))return {
+    action:"run-campaign",stage:"validation",reason:"明确恢复后重测同一冻结 HTML 的原生证据；保留旧判定，不生成 Candidate 或推断通过。",
+  };
 
   const request = deriveAttentionRequest(project);
   if(evidenceCanWaitDuringRepair(project,request)){
