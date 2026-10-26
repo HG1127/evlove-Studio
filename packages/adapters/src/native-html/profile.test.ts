@@ -1,7 +1,7 @@
 // @vitest-environment node
 import {describe,expect,it} from "vitest";
 import {HTML_NATIVE_PROFILE_ID} from "@evolution/contracts";
-import {htmlNativeProgramIdentity} from "@evolution/core";
+import {htmlNativeCodeRetention,htmlNativeProgramIdentity} from "@evolution/core";
 import {compileKnownHtmlDerivedMetadata,identifyHtmlNativeSubjects,isKnownHtmlNativeSubject,nativeHtmlSha256,type HtmlNativeProfile} from "./profile";
 
 const original='<html><head><style>p{color:red}</style><script>const keep=true;</script></head><body><article class="slide-card" id="slide-1" data-search="old"><div class="slide-body"><p>old</p><pre>  exact code</pre></div></article></body></html>';
@@ -11,7 +11,7 @@ const profiles:HtmlNativeProfile[]=[{id:HTML_NATIVE_PROFILE_ID,programSignature:
 describe("pure native renderer profile identification",()=>{
   it("leaves an unknown renderer unchanged rather than assuming its data-search attribute is executable coverage",()=>{
     expect(isKnownHtmlNativeSubject(subject)).toBe(false);
-    expect(compileKnownHtmlDerivedMetadata(original,subject)).toEqual({html:subject,updatedIds:[]});
+    expect(compileKnownHtmlDerivedMetadata(original,subject)).toEqual({html:subject,updatedIds:[],reflowedIds:[]});
     expect(identifyHtmlNativeSubjects(original,subject)).toBeUndefined();
   });
   it("recognizes matching program/style surfaces separately from semantic quality",()=>{
@@ -34,5 +34,15 @@ describe("pure native renderer profile identification",()=>{
     const result=identifyHtmlNativeSubjects(source,next,profiles)!;
     expect(result.original.codeBlockDigests).not.toEqual(result.subject.codeBlockDigests);
     expect(result).toMatchObject({originalCodeBlocksRetained:true,codeBlockRetention:{exactCount:0,extendedInstructionCount:1}});
+  });
+  it("places appended body prose outside the original plain-language preformatted note before freezing",()=>{
+    const source=original.replace('<pre>  exact code</pre>','<pre class="code-block"><code>下一步建议：准备需求模板与验收清单。</code></pre>');
+    const next=source.replace('验收清单。</code>','验收清单。\n\n完成检查：保留结果，记录负责人和下一次重试条件。</code>');
+    expect(htmlNativeCodeRetention(source,next).retained).toBe(false);
+    expect(compileKnownHtmlDerivedMetadata(source,next).html).toBe(next);
+    const compiled=compileKnownHtmlDerivedMetadata(source,next,profiles);
+    expect(compiled.html).toContain('<pre class="code-block"><code>下一步建议：准备需求模板与验收清单。</code></pre><p>\n\n完成检查：保留结果，记录负责人和下一次重试条件。</p>');
+    expect(htmlNativeCodeRetention(source,compiled.html)).toMatchObject({retained:true,exactCount:2,extendedInstructionCount:0});
+    expect(compileKnownHtmlDerivedMetadata(source,compiled.html,profiles).html).toBe(compiled.html);
   });
 });

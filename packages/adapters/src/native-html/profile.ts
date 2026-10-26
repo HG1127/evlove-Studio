@@ -1,6 +1,6 @@
 import {createHash} from "node:crypto";
 import {HTML_NATIVE_PROFILE_ID} from "@evolution/contracts";
-import {htmlCandidateProtection,htmlNativeCodeRetention,htmlNativeProgramIdentity,synchronizeHtmlCardSearchIndex} from "@evolution/core";
+import {htmlCandidateProtection,htmlNativeCodeRetention,htmlNativeProgramIdentity,separateHtmlAppendedProse,synchronizeHtmlCardSearchIndex} from "@evolution/core";
 
 export const nativeHtmlSha256=(bytes:Uint8Array|string)=>createHash("sha256").update(bytes).digest("hex");
 export const KNOWN_HTML_NATIVE_PROFILES=[{
@@ -29,8 +29,9 @@ export function identifyHtmlNativeSubjects(originalHtml:string,subjectHtml:strin
   return {profile,original,subject,originalCodeBlocksRetained:codeBlockRetention.retained,codeBlockRetention,protection:protection.nativeObservation};
 }
 
-/** Preserve model-authored prose and compile only the known renderer's derived index. */
-export function compileKnownHtmlDerivedMetadata(originalHtml:string,subjectHtml:string){
-  if(!identifyHtmlNativeSubjects(originalHtml,subjectHtml))return {html:subjectHtml,updatedIds:[] as string[]};
-  return synchronizeHtmlCardSearchIndex(originalHtml,subjectHtml);
+/** Preserve all model-authored text, original note bytes and the known renderer's derived index. */
+export function compileKnownHtmlDerivedMetadata(originalHtml:string,subjectHtml:string,profiles?:readonly HtmlNativeProfile[]){
+  if(!identifyHtmlNativeSubjects(originalHtml,subjectHtml,profiles))return {html:subjectHtml,updatedIds:[] as string[],reflowedIds:[] as string[]};
+  const layout=separateHtmlAppendedProse(originalHtml,subjectHtml);
+  return {...synchronizeHtmlCardSearchIndex(originalHtml,layout.html),reflowedIds:layout.reflowedIds};
 }

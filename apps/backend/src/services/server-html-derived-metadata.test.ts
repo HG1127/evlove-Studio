@@ -17,4 +17,9 @@ describe("pre-freeze derived HTML compilation",()=>{
     const result=await compileServerHtmlDerivedMetadata({extension:kind==="other-format"?"md":"html",content:kind==="unchanged"?"parent":"changed",parentText:"parent",readOriginal});
     expect(result.content).toBe(kind==="unchanged"?"parent":"changed");expect(readOriginal).not.toHaveBeenCalled();expect(compile).not.toHaveBeenCalled();
   });
+  it("records a text-preserving layout change even when the existing search index is already current",async()=>{
+    known.mockReturnValue(true);compile.mockReturnValue({html:"lossless-layout",updatedIds:[],reflowedIds:["slide-112"]});
+    const result=await compileServerHtmlDerivedMetadata({extension:"html",content:"model-proposal",parentText:"parent",readOriginal:async()=>"original"});
+    expect(result.content).toBe("lossless-layout");expect(result.checks).toEqual([expect.stringContaining("保持原块字节")]);
+  });
 });

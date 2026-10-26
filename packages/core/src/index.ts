@@ -64,6 +64,7 @@ export * from "./html-text-node-edits";
 export * from "./html-readable-body";
 export * from "./html-native-program-identity";
 export * from "./html-native-code-retention";
+export * from "./html-appended-prose-layout";
 export * from "./outcome-observation-identity";
 export * from "./html-derived-search-index";
 export * from "./html-native-evidence";
