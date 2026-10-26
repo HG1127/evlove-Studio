@@ -33,6 +33,7 @@ import { restoreServerControlAiWait } from "../../apps/backend/src/services/serv
 import {reserveServerMissionFinalPaper,serverFinalPaperExecutionContract} from "../../apps/backend/src/services/server-final-paper";
 import { canReuseServerMissionBaseline, runServerMissionBaseline } from "../../apps/backend/src/services/server-baseline";
 import { runServerMissionExperiment } from "../../apps/backend/src/services/server-experiment";
+import {buildServerPlanningDocuments} from "../../apps/backend/src/services/server-planning-documents";
 import { runServerMissionHoldout } from "../../apps/backend/src/services/server-holdout";
 import { recoverServerAcceptedOfflineChampion, runServerMissionArtifactAcceptance,runServerMissionVisibleRepair } from "../../apps/backend/src/services/server-artifact-acceptance";
 import {hasServerPendingVisibleRepair} from "@evolution/harness";
@@ -989,6 +990,7 @@ async function executeServerControlAction(
       return {control:"continue"};
     }
     const outcome=await advanceServerCampaignPreparation(campaignMission,{
+      loadPlanningDocuments:buildServerPlanningDocuments,
       finalHoldoutExecution:serverFinalPaperExecutionContract(campaignMission),
       reserveFinalHoldout:payload=>reserveServerMissionFinalPaper(campaignMission,payload,value=>runServerAi("eval-suite",value)),
       problemAnalysis:(payload)=>runServerAi("problem-analysis",payload),

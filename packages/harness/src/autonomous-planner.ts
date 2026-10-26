@@ -270,7 +270,7 @@ export function deriveAttentionRequest(project: EvolveProject): AttentionRequest
   }
 
   const serverCampaignCapabilityPending = project.campaign.status === "paused"
-    && /\[server-campaign-(?:ai-pending|baseline-evidence-pending|baseline-judge-pending|contract-pending|diagnosis-pending|plan-grounding-pending|experiment-build-pending|experiment-judge-pending|holdout-contract-pending|holdout-artifact-pending|holdout-judge-pending|holdout-review-pending|holdout-evidence-pending|artifact-acceptance-candidate-pending|artifact-acceptance-evidence-pending|artifact-acceptance-integrity-failed|artifact-repair-pending)\]/.test(project.campaign.stopReason ?? "");
+    && /\[server-campaign-(?:ai-pending|baseline-evidence-pending|baseline-judge-pending|contract-pending|diagnosis-pending|plan-grounding-pending|planning-context-pending|experiment-build-pending|experiment-judge-pending|holdout-contract-pending|holdout-artifact-pending|holdout-judge-pending|holdout-review-pending|holdout-evidence-pending|artifact-acceptance-candidate-pending|artifact-acceptance-evidence-pending|artifact-acceptance-integrity-failed|artifact-repair-pending)\]/.test(project.campaign.stopReason ?? "");
   if (serverCampaignCapabilityPending) {
     return attention({
       type: "capability",

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it,vi } from "vitest";
 import {CandidateSchema,TestCaseSchema,type EvolveProject} from "@evolution/contracts";
 import { campaignScoringInputFingerprint } from "@evolution/core";
 import {integrateDistilledLesson} from "@evolution/core";
@@ -34,6 +34,28 @@ function fixture(): EvolveProject {
 }
 
 describe("server campaign preparation",()=>{
+  it("gives Plan the current whole-goal criteria and measured gaps without promoting old advice into a narrower contract",async()=>{
+    const p=fixture();p.evolutionCommand="细化各章节配置\n[旧自动建议] 只修入门并约束 JSON 格式";
+    p.acceptanceRubric[0]={...p.acceptanceRubric[0]!,minScore:85,requirement:"各章节配置细节得到有效细化"};
+    p.baselineRun.result!.criterionScores![0]={...p.baselineRun.result!.criterionScores![0]!,score:88,pass:true,gaps:["后续章节缺默认值、依赖关系和逐项检查"]};
+    p.acceptanceRubric.push({...p.acceptanceRubric[0]!,id:"SYS-PAIRWISE",source:"system-integrity",judgeType:"pairwise"});
+    p.evalSuite.push({...p.evalSuite[0]!,id:"V-PAIR",criterionIds:["SYS-PAIRWISE"]});
+    p.baselineRun.runs.push({testCaseId:"V-PAIR",output:"Original-only comparison deferred",latencyMs:0,cost:0,trace:[],verificationStatus:"unverified"});
+    p.baselineRun.result!.failures.push("SYS-PAIRWISE: comparison deferred");
+    p.baselineRun.result!.criterionScores!.push({criterionId:"SYS-PAIRWISE",score:0,pass:false,verificationStatus:"unverified",evidence:[],gaps:["not paired"],testCaseIds:["V-PAIR"]});
+    p.diagnosis={problemId:"P",rootCause:"旧诊断只看入门章节",summary:"局部假设",affectedComponent:"source",confidence:0.9,evidence:["流程缺口"],evidenceRefs:[],counterEvidence:[],falsifier:"不改善",suggestedScopes:["prompt"],trace:[]};
+    p.campaign.checkpoint={round:1,completedPhase:"diagnose",at:p.updatedAt};
+    const before=structuredClone(p),never=async()=>{throw Error("completed phase");};
+    await advanceServerCampaignPreparation(p,{problemAnalysis:never,diagnose:never,plan:async payload=>{
+      expect(payload).toMatchObject({acceptanceRubric:[{id:"CONTENT",minScore:85,requirement:"各章节配置细节得到有效细化"},{id:"SYS-PAIRWISE"}],
+        baseline:{id:"baseline"},planningBaseline:{schemaVersion:"planning-baseline-evidence-v1",criteria:[{criterionId:"CONTENT",score:88,status:"verified",gaps:["后续章节缺默认值、依赖关系和逐项检查"]}]}});
+      const context=payload as {baselineFailures:string[];planningInstruction:string;project:{evolutionCommand:string}};
+      expect(context.baselineFailures).not.toContain("SYS-PAIRWISE: comparison deferred");expect(context.project.evolutionCommand).toBe(p.evolutionCommand);
+      expect(context.planningInstruction).toContain("does not narrow");
+      return {candidates:[],recommendedCandidateIds:[],summary:"checked",experimentDesign:[]};
+    }});
+    expect(p).toEqual(before);
+  });
   it("reserves the final paper before planning and never includes it in the mutation payload",async()=>{
     const project=fixture();project.diagnosis={problemId:"P",rootCause:"gap",summary:"gap",affectedComponent:"source",confidence:0.9,evidence:["流程缺口"],evidenceRefs:[],counterEvidence:[],falsifier:"no gap",suggestedScopes:["code"],trace:[]};
     project.campaign.checkpoint={round:1,completedPhase:"diagnose",at:project.updatedAt};
@@ -123,7 +145,7 @@ describe("server campaign preparation",()=>{
     project.diagnosis={problemId:"P",rootCause:"缺少闭环",summary:"补齐闭环",affectedComponent:"source",confidence:0.9,evidence:["流程缺口"],evidenceRefs:[],counterEvidence:[],falsifier:"仍有缺口",suggestedScopes:["code"],trace:[]};
     const artifact=project.sourceArtifacts[0]!;
     project.sourceArtifacts=Array.from({length:14},(_,index)=>({
-      ...artifact,id:"source-"+index,role:index===0?"reference" as const:"target" as const,
+      ...artifact,id:"source-"+index,role:index<2?"reference" as const:"target" as const,
       textContent:("unrelated content "+index+"\n").repeat(5000),
     }));
     const originals=project.sourceArtifacts.map((source)=>source.textContent);
@@ -140,12 +162,20 @@ describe("server campaign preparation",()=>{
         expect(artifacts.every((source)=>source.role==="target")).toBe(true);
         expect(artifacts.every((source)=>source.content.length<=10_000&&source.truncated)).toBe(true);
         expect(artifacts.reduce((total,source)=>total+source.content.length,0)).toBeLessThanOrEqual(48_000);
-        expect(artifacts.some((source)=>source.content==="")).toBe(true);
+        expect(artifacts.every((source)=>source.content.trim().length>0)).toBe(true);
         return {candidates:[],recommendedCandidateIds:[],summary:"checked",experimentDesign:[]};
       },
     });
     expect(called).toBe(true);
     expect(project.sourceArtifacts.map((source)=>source.textContent)).toEqual(originals);
+  });
+  it("stops before model planning when the source-count limit would omit a Target",async()=>{
+    const p=fixture();p.diagnosis={problemId:"P",rootCause:"gap",summary:"gap",affectedComponent:"source",confidence:0.9,evidence:["流程缺口"],evidenceRefs:[],counterEvidence:[],falsifier:"gap",suggestedScopes:["code"],trace:[]};
+    p.campaign.checkpoint={round:1,completedPhase:"diagnose",at:p.updatedAt};
+    p.sourceArtifacts=Array.from({length:13},(_,i)=>({...p.sourceArtifacts[0]!,id:`source-${i}`}));
+    const plan=vi.fn(),never=async()=>{throw Error("completed phase");};
+    const out=await advanceServerCampaignPreparation(p,{problemAnalysis:never,diagnose:never,plan});
+    expect(out.control).toBe("stop");expect(out.reason).toContain("cannot omit a Target");expect(plan).not.toHaveBeenCalled();
   });
 
   it("retrieves late selected-problem evidence for diagnosis too",async()=>{

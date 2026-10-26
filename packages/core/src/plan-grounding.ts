@@ -1,11 +1,15 @@
 import type { EvolveProject, PlanAiResult } from "@evolution/contracts";
+import {planningBaselineEvidence,planningBaselineFailures,PLANNING_EVIDENCE_INSTRUCTION} from "./planning-baseline";
 
 export function planGroundingContext(project: EvolveProject, selectedProblemId?: string) {
   const selected = project.problems.find((problem) => problem.id === (selectedProblemId ?? project.selectedProblemId)) ?? project.problems[0];
   return {
-    acceptanceRubric: project.acceptanceRubric.map((criterion) => ({ title: criterion.title, requirement: criterion.requirement, hardGate: criterion.hardGate, weight: criterion.weight, category: criterion.category })),
+    acceptanceRubric: project.acceptanceRubric.map((criterion) => ({ id:criterion.id,title: criterion.title, requirement: criterion.requirement, minScore:criterion.minScore,
+      hardGate: criterion.hardGate, weight: criterion.weight, category: criterion.category,source:criterion.source,
+      validationMethod:criterion.validationMethod,protectedConstraint:criterion.protectedConstraint,artifactIds:[...(criterion.artifactIds??[])] })),
     metrics: project.metrics.map((metric) => ({ key: metric.key, label: metric.label, value: metric.value, target: metric.target, unit: metric.unit, direction: metric.direction })),
-    baselineFailures: project.baselineRun?.result?.failures ?? [],
+    baselineFailures: planningBaselineFailures(project),
+    planningBaseline:planningBaselineEvidence(project),planningInstruction:PLANNING_EVIDENCE_INSTRUCTION,
     selectedProblem: selected ? { id: selected.id, title: selected.title, summary: selected.summary, rootCause: selected.rootCause, evidence: selected.evidence } : undefined,
   };
 }

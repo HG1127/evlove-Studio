@@ -17,13 +17,16 @@ import {
   prioritizeProblems,
   resolveEvidenceRefs,
   selectPlanningLessons,
+  planningDeferredCriterionIds,planningBaselineFailures,
+  planningBaselineEvidence,PLANNING_EVIDENCE_INSTRUCTION,
 } from "@evolution/core";
 
-import { retrieveTextContext } from "./context-retrieval";
+import {serverCampaignArtifacts,planningNarrative,type ServerPlanningDocumentLoader} from "./server-campaign-context";
 import {scopeCandidateIdsForRound} from "./candidate-round-identity";
 import {prepareServerIndependentFinalPaper} from "./server-final-paper";
 
 export type ServerCampaignAiPort = {
+  loadPlanningDocuments?:ServerPlanningDocumentLoader;
   finalHoldoutExecution?:IndependentFinalExecutionContract;
   reserveFinalHoldout?(payload:unknown):Promise<TestCase[]>;
   problemAnalysis(payload: unknown): Promise<ProblemAnalysisAiResult>;
@@ -69,7 +72,7 @@ function compactBaseline(project: EvolveProject) {
   // Problem/Diagnosis agents can hallucinate a scoring-system fault from an
   // intentional comparison-only 0 / UNVERIFIED row.
   // Do not alter stored Baseline or the final Hidden/Pairwise safety contract.
-  const pendingPairwiseIds=new Set(["SYS-PAIRWISE",...(project.baselineRun.referenceOnlyCriterionIds??[])]);
+  const pendingPairwiseIds=planningDeferredCriterionIds(project);
   const comparisonCaseIds=new Set(project.evalSuite.filter(test=>test.criterionIds.length>0
     &&test.criterionIds.every(id=>pendingPairwiseIds.has(id))).map(test=>test.id));
   const currentResult=project.baselineRun.result;
@@ -77,7 +80,7 @@ function compactBaseline(project: EvolveProject) {
     ...currentResult,
     criterionScores:currentResult.criterionScores?.filter(c=>!pendingPairwiseIds.has(c.criterionId)),
     unverifiedCriterionIds:currentResult.unverifiedCriterionIds?.filter(id=>!pendingPairwiseIds.has(id)),
-    failures:currentResult.failures.filter(line=>![...pendingPairwiseIds].some(id=>line.includes(id))),
+    failures:planningBaselineFailures(project),
   }:undefined;
   return {
     id:project.baselineRun.id,
@@ -95,41 +98,6 @@ function compactBaseline(project: EvolveProject) {
         trace:run.trace.slice(0,8),
       })),
   };
-}
-
-function compactCampaignArtifacts(project: EvolveProject) {
-  const problem = project.problems.find((item) => item.id === project.selectedProblemId) ?? project.problems[0];
-  // Put specific evidence before general goals: retrieval limits query tokens as well as output.
-  const query = [
-    ...(problem?.evidence ?? []),
-    ...(project.diagnosis?.evidence ?? []),
-    problem?.title, problem?.summary, problem?.rootCause,
-    project.diagnosis?.rootCause, project.diagnosis?.summary,
-    ...(compactBaseline(project).result?.failures ?? []),
-    project.problemStatement, project.goal, project.evolutionCommand,
-    ...project.acceptanceRubric.map((criterion) => criterion.requirement),
-  ].filter(Boolean).join("\n");
-  const championBySource = new Map((project.searchChampion?.candidate?.artifactSnapshots ?? []).map((snapshot) => [snapshot.sourceArtifactId, snapshot]));
-  const ordered = [...project.sourceArtifacts].sort((a, b) => Number(b.role === "target") - Number(a.role === "target"));
-  let remaining = 48_000;
-  return ordered.slice(0, 12).map((artifact) => {
-    const champion = championBySource.get(artifact.id);
-    const full = champion?.content || artifact.textContent || artifact.textExcerpt || "";
-    const allowance = Math.max(0, Math.min(10_000, remaining));
-    const content = retrieveTextContext(full, query, { maxChars: allowance, maxChunks: 4 });
-    remaining = Math.max(0, remaining - content.length);
-    return {
-      id: artifact.id,
-      name: artifact.name,
-      role: artifact.role,
-      artifactKind: artifact.artifactKind,
-      structure: artifact.structure.slice(0, 40),
-      content,
-      contentSource: champion ? `search-champion:${project.searchChampion?.versionLabel ?? project.searchChampion?.id}` : "source",
-      originalChars: full.length,
-      truncated: content !== full,
-    };
-  });
 }
 
 function selectedCandidateCount(project: EvolveProject) {
@@ -177,6 +145,18 @@ function capabilityPause(project: EvolveProject, reason: string, stage: EvolvePr
       schedule: { ...project.campaign.schedule, enabled: false, nextRunAt: undefined },
     },
   }, now);
+}
+
+async function planningArtifacts(project:EvolveProject,ai:ServerCampaignAiPort,phase:"problem"|"diagnose"|"plan",now:string,preservedProject=project){
+  try{
+    const artifacts=await serverCampaignArtifacts(project,ai.loadPlanningDocuments);
+    const limit=campaignPreflightStopReason(preservedProject);
+    if(limit)return {ready:false as const,outcome:{control:"stop" as const,phase:"settled" as const,project:capabilityPause(preservedProject,limit,preservedProject.stage,now),reason:limit}};
+    return {ready:true as const,artifacts};
+  }catch(error){
+    const reason="[server-campaign-planning-context-pending] "+(error instanceof Error?error.message:String(error));
+    return {ready:false as const,outcome:{control:"stop" as const,phase,project:capabilityPause(preservedProject,reason,phase==="diagnose"?"diagnosis":phase,now),reason}};
+  }
 }
 
 /**
@@ -241,6 +221,8 @@ export async function advanceServerCampaignPreparation(
       problems = [{ ...direct, evidenceRefs: resolveEvidenceRefs(project, direct.evidence) }];
       recommendedProblemId = direct.id;
     } else {
+      const context=await planningArtifacts(project,ai,"problem",now);
+      if(!context.ready)return context.outcome;
       const generated = await ai.problemAnalysis({
         project: {
           goal: project.goal,
@@ -252,9 +234,10 @@ export async function advanceServerCampaignPreparation(
           editableItems: project.editableItems,
           acceptanceRubric: project.acceptanceRubric,
           inputUnderstanding: project.inputUnderstanding,
-          artifacts: compactCampaignArtifacts(project),
+          artifacts: context.artifacts,
         },
         baseline: compactBaseline(project),
+        planningBaseline:planningBaselineEvidence(project),planningInstruction:PLANNING_EVIDENCE_INSTRUCTION,
         previousRounds: project.roundHistory.slice(-8),
         archive: project.evolutionArchive.slice(-16).map((entry) => ({
           round: entry.round,
@@ -294,6 +277,8 @@ export async function advanceServerCampaignPreparation(
       const reason = "[server-campaign-problem-pending] 找不到本轮选中问题，无法进入根因诊断。";
       return { control: "stop", phase: "problem", project: capabilityPause(project, reason, "problem", now), reason };
     }
+    const context=await planningArtifacts(project,ai,"diagnose",now);
+    if(!context.ready)return context.outcome;
     const generated = await ai.diagnose({
       project: {
         goal: project.goal,
@@ -304,10 +289,11 @@ export async function advanceServerCampaignPreparation(
         protectedItems: project.protectedItems,
         editableItems: project.editableItems,
         acceptanceRubric: project.acceptanceRubric,
-        artifacts: compactCampaignArtifacts(project),
+        artifacts: context.artifacts,
       },
-      problem: selected,
+      problem: planningNarrative(project,selected),
       baseline: compactBaseline(project),
+      planningBaseline:planningBaselineEvidence(project),planningInstruction:PLANNING_EVIDENCE_INSTRUCTION,
       previousRounds: project.roundHistory.slice(-8),
     });
     const diagnosis = { ...generated, evidenceRefs: resolveEvidenceRefs(project, generated.evidence) };
@@ -326,10 +312,12 @@ export async function advanceServerCampaignPreparation(
     }
     if(ai.reserveFinalHoldout){
       try{
+      const originalContext=await planningArtifacts({...project,searchChampion:undefined,problems:[],diagnosis:undefined,selectedProblemId:undefined,
+        problemStatement:"",baselineRun:{...project.baselineRun,result:undefined}},ai,"plan",now,project);
+      if(!originalContext.ready)return originalContext.outcome;
       const prepared=await prepareServerIndependentFinalPaper(project,{round,at:now,reserve:ai.reserveFinalHoldout,
         executionContract:ai.finalHoldoutExecution,
-        artifacts:compactCampaignArtifacts({...project,searchChampion:undefined,problems:[],diagnosis:undefined,selectedProblemId:undefined,
-          problemStatement:"",baselineRun:{...project.baselineRun,result:undefined}}),
+        artifacts:originalContext.artifacts,
       });
       if(prepared.reserved)return {control:"continue",phase:"plan",project:prepared.project,reason:"独立终验题集已在 Candidate 规划前预留并持久化。"};
       }catch(error){
@@ -337,6 +325,8 @@ export async function advanceServerCampaignPreparation(
         return {control:"stop",phase:"plan",project:capabilityPause(project,reason,"plan",now),reason};
       }
     }
+    const context=await planningArtifacts(project,ai,"plan",now);
+    if(!context.ready)return context.outcome;
     const generated = await ai.plan({
       project: {
         goal: project.goal,
@@ -350,9 +340,10 @@ export async function advanceServerCampaignPreparation(
           intentRestatement: project.inputUnderstanding.intentRestatement,
           acceptanceFocus: project.inputUnderstanding.acceptanceFocus,
         } : undefined,
-        sourceArtifacts: compactCampaignArtifacts(project),
+        sourceArtifacts: context.artifacts,
       },
-      diagnosis: project.diagnosis,
+      diagnosis: planningNarrative(project,project.diagnosis),
+      baseline:compactBaseline(project),
       ...planGroundingContext(project, project.selectedProblemId),
       candidateCount: selectedCandidateCount(project),
       search: {
