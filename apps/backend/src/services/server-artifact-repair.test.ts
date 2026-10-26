@@ -6,6 +6,7 @@ import { repairServerArtifactCandidate } from "./server-artifact-acceptance";
 import { serverArtifactSha256, verifyServerCandidateFrozenArtifact } from "./server-experiment-artifacts";
 import {evidenceFingerprint} from "@evolution/core";
 import {acceptedPackageFixture} from "@evolution/testkit";
+import {serverAiRepairContract} from "./server-ai-repair-contract";
 
 const { blobs, ai, put } = vi.hoisted(() => ({ blobs: new Map<string, Blob>(), ai: vi.fn(), put: vi.fn() }));
 vi.mock("./artifact-runtime", () => ({ getServerArtifactStore: () => ({ get: async (id: string) => blobs.get(id), put }) }));
@@ -73,7 +74,11 @@ describe("server targeted Artifact repair", () => {
       const target=payload.candidate.artifacts[0]!;
       if(target.mutationMode==="html-body-node-edits-v1"){
         const anchor=target.htmlTextNodes!.find(node=>node.text==='主管确认退款后才进入执行。')!;
-        return output(JSON.stringify({kind:"html-body-node-edits-v1",edits:[{anchorId:anchor.anchorId,text:"主管确认退款后才进入执行，并记录审批编号。"}]}));
+        const response=output(JSON.stringify({kind:"html-body-node-edits-v1",edits:[{anchorId:anchor.anchorId,text:"主管确认退款后才进入执行，并记录审批编号。"}]}));
+        const contract=serverAiRepairContract(payload);
+        expect(contract.parser.safeParse(response).success).toBe(true);
+        expect(contract.parser.safeParse(output(JSON.stringify({kind:"html-body-node-edits-v1",edits:[{anchorId:anchor.anchorId+"-mistyped",text:"完整配置"}]}))).success).toBe(false);
+        return response;
       }
       return output();
     });

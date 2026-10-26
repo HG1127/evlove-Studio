@@ -216,6 +216,7 @@ export const HTML_NATIVE_KERNEL_SOURCE=[
   "    pass:changedNamed.length===0&&missingGroups.length===0&&source.infiniteAnimations===0&&candidate.infiniteAnimations===0};",
   "});",
   "fs.writeFileSync(new URL('../private/protection-observations.json',import.meta.url),JSON.stringify({at:new Date().toISOString(),results,styleComparison},null,2));",
-  "console.log(JSON.stringify({observedAt:new Date().toISOString(),results:results.map(r=>({label:r.label,sha256:r.sha256,inventory:r.inventory,checks:r.checks,failures:r.failures,fatal:r.fatal,elapsedMs:r.elapsedMs,renderedParagraphs:r.renderedParagraphs,bodyText:r.bodyText})),styleComparison}));",
+  "const payload=Buffer.from(JSON.stringify({observedAt:new Date().toISOString(),results:results.map(r=>({label:r.label,sha256:r.sha256,inventory:r.inventory,checks:r.checks,failures:r.failures,fatal:r.fatal,elapsedMs:r.elapsedMs,renderedParagraphs:r.renderedParagraphs,bodyText:r.bodyText})),styleComparison}),'utf8');",
+  "console.log(JSON.stringify({schemaVersion:'native-html-output-v1',sizeBytes:payload.length,sha256:hash(payload),payloadBase64:payload.toString('base64')}));",
   "",
 ].join("\n");

@@ -8,4 +8,4 @@ Harness now recognizes a narrowly scoped recovery: the campaign has been explici
 
 The next failed capability attempt pauses again. Verified negative evidence retains the existing repair/reuse rules. The prior Hidden result is not cleared to make the planner proceed, and the pre-reserved final paper and initial Candidate allowance remain unchanged. Any extension must be separately authorized and preregistered; elapsed time and old bounds are not reset.
 
-All 69 focused native/Harness/planner tests, architecture checks, affected-file lint and the complete TypeScript/Vite/Nitro build pass. Actual continuation and resulting hashes are recorded separately in the acceptance log after execution.
+All 69 focused native/Harness/planner tests, architecture checks, affected-file lint and the complete TypeScript/Vite/Nitro build pass. The actual continuation remeasured all nine ordinary Hidden cases, then exhausted the sole repair on an invalid physical anchor before writing a new file. Its 73-entry signed outcome and unchanged frozen/final identities are recorded in [the acceptance log](../real-evolution-acceptance.md). The Window is not automatically extended again.

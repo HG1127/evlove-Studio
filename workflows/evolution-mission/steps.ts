@@ -13,7 +13,6 @@ import {
   compactServerSourceArtifacts,
   SERVER_SOURCE_CONTEXT_INSTRUCTION,
   serverCampaignScoringRouteBlocker,
-  canReuseServerBaseline,
   hasServerFrozenValidationCheckpoint,
   buildServerHarnessPlan,
   buildWorkflowControlJobUpdate,
@@ -32,7 +31,7 @@ import {withServerAiUsageScope} from "../../apps/backend/src/services/server-ai-
 import { runServerControlAi as runServerAi, ServerControlAiUnavailableError } from "../../apps/backend/src/services/server-control-ai";
 import { restoreServerControlAiWait } from "../../apps/backend/src/services/server-control-ai-recovery";
 import {reserveServerMissionFinalPaper,serverFinalPaperExecutionContract} from "../../apps/backend/src/services/server-final-paper";
-import { runServerMissionBaseline } from "../../apps/backend/src/services/server-baseline";
+import { canReuseServerMissionBaseline, runServerMissionBaseline } from "../../apps/backend/src/services/server-baseline";
 import { runServerMissionExperiment } from "../../apps/backend/src/services/server-experiment";
 import { runServerMissionHoldout } from "../../apps/backend/src/services/server-holdout";
 import { recoverServerAcceptedOfflineChampion, runServerMissionArtifactAcceptance } from "../../apps/backend/src/services/server-artifact-acceptance";
@@ -805,7 +804,7 @@ async function executeServerControlAction(
       await runtime.missions.save(campaignMission);
     }
     if(!hasServerFrozenValidationCheckpoint(campaignMission)
-      &&!canReuseServerBaseline(campaignMission,scoringRouteFingerprint)){
+      &&!canReuseServerMissionBaseline(campaignMission,scoringRouteFingerprint)){
       const baselineOutcome=await runServerMissionBaseline(campaignMission);
       campaignMission=baselineOutcome.project;
       await runtime.missions.save(campaignMission);

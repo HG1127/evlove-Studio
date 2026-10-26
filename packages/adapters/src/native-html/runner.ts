@@ -8,6 +8,8 @@ import {identifyHtmlNativeSubjects,nativeHtmlSha256,type HtmlNativeProfile} from
 
 const RawSubject=HtmlNativeSubjectSchema.omit({bodyTextFingerprint:true}).extend({label:z.enum(["original","candidate"]),bodyText:z.string().min(1).max(64_000),fatal:z.object({name:z.string().max(160),message:z.string().max(500)}).nullish()}).strip();
 const RawObservation=z.object({observedAt:z.iso.datetime(),results:z.array(RawSubject).length(2),styleComparison:z.array(HtmlNativeStyleComparisonSchema).length(2)}).strict();
+const NativeWire=z.object({schemaVersion:z.literal("native-html-output-v1"),sizeBytes:z.number().int().positive().max(1_000_000),
+  sha256:z.string().regex(/^[a-f0-9]{64}$/),payloadBase64:z.string().min(1).max(1_333_336).regex(/^[A-Za-z0-9+/]*={0,2}$/)}).strict();
 export const HTML_NATIVE_KERNEL_SHA256=nativeHtmlSha256(HTML_NATIVE_KERNEL_SOURCE);
 
 /** createSandbox is supplied by the existing Sandbox composition; the host only transports bytes. */
@@ -38,8 +40,12 @@ export async function runKnownHtmlNativeProfile(raw:SandboxHtmlNativeRequest,cre
     ]);
     const command=await sandbox.runCommand({cmd:"node",args:[cwd+"/.evolution/runtime/native-html-profile.mjs"],cwd,timeoutMs:170_000});
     if(command.exitCode!==0)return unavailable("The isolated native profile could not complete; no acceptance verdict is inferred.");
-    const stdout=await command.stdout();if(stdout.length>1_000_000)return unavailable("Native profile result exceeds its observation boundary.");
-    const parsed=RawObservation.safeParse(JSON.parse(stdout));if(!parsed.success)return unavailable("Native profile result is incomplete or has an unsupported observation shape.");
+    const stdout=await command.stdout();if(stdout.length>1_400_000)return unavailable("Native profile result exceeds its observation boundary.");
+    const wire=NativeWire.safeParse(JSON.parse(stdout));if(!wire.success)return unavailable("Native profile result has no complete byte-verified transport envelope.");
+    const payload=Buffer.from(wire.data.payloadBase64,"base64");
+    if(payload.length!==wire.data.sizeBytes||nativeHtmlSha256(payload)!==wire.data.sha256||payload.toString("base64")!==wire.data.payloadBase64)
+      return unavailable("Native profile transport byte count or SHA-256 differs; no document evidence is inferred.");
+    const parsed=RawObservation.safeParse(JSON.parse(decoder.decode(payload)));if(!parsed.success)return unavailable("Native profile result is incomplete or has an unsupported observation shape.");
     const measured=parsed.data,original=measured.results.find(row=>row.label==="original"),subject=measured.results.find(row=>row.label==="candidate");
     if(!original||!subject||original.fatal||subject.fatal||original.sha256!==args.expectedOriginalSha256||subject.sha256!==args.expectedSubjectSha256)return unavailable("Native profile result has a missing/mismatched physical subject.");
     const observation=HtmlNativeObservationSchema.parse({

@@ -18,12 +18,35 @@ function rawResult(){
   return {observedAt:"2026-10-23T13:00:00.000Z",results:[measured("original",nativeHtmlSha256(original)),measured("candidate",nativeHtmlSha256(subject))],
     styleComparison:[1440,390].map(width=>({width,propertyCount:50,namedElementsCompared:1,styleGroupsCompared:2,changedNamed:[],missingGroups:[],infiniteAnimations:0,pass:true}))};
 }
-function runtime(result=rawResult(),exitCode=0){
-  const writeFiles=vi.fn(),stop=vi.fn(),runCommand=vi.fn(async(args:{cmd:string})=>args.cmd==="mkdir"?{exitCode:0}:{exitCode,stdout:async()=>JSON.stringify(result)});
+function envelope(payload:Uint8Array){return {schemaVersion:"native-html-output-v1",sizeBytes:payload.length,sha256:nativeHtmlSha256(payload),payloadBase64:Buffer.from(payload).toString("base64")};}
+function runtime(result=rawResult(),exitCode=0,wire=envelope(Buffer.from(JSON.stringify(result)))){
+  const writeFiles=vi.fn(),stop=vi.fn(),runCommand=vi.fn(async(args:{cmd:string})=>args.cmd==="mkdir"?{exitCode:0}:{exitCode,stdout:async()=>JSON.stringify(wire)});
   const sandbox={cwd:"/vercel",writeFiles,stop,runCommand} as unknown as Sandbox;
   return {sandbox,writeFiles,stop,runCommand,create:vi.fn(async()=>sandbox)};
 }
 describe("known isolated native HTML transport",()=>{
+  it("preserves multibyte body text across every possible log byte boundary",async()=>{
+    const raw=rawResult(),text="中文配置：提交后检查 🚀 é；原文包含真实替换字符 �";
+    raw.results[1]!.bodyText=text;
+    const encoded=Buffer.from(JSON.stringify(envelope(Buffer.from(JSON.stringify(raw)))));
+    for(let split=0;split<=encoded.length;split++){
+      const received=encoded.subarray(0,split).toString("utf8")+encoded.subarray(split).toString("utf8");
+      expect(JSON.parse(received)).toEqual(JSON.parse(encoded.toString("utf8")));
+    }
+    const result=await runKnownHtmlNativeProfile(args(),runtime(raw).create,profiles);
+    expect(result.status==="observed"&&result.subjectText).toBe(text);
+  });
+  it.each(["size","hash","payload","legacy","invalid-utf8"])("rejects %s wire corruption and stops the VM",async kind=>{
+    const raw=rawResult();let wire:object=envelope(Buffer.from(JSON.stringify(raw)));
+    if(kind==="size")wire={...wire,sizeBytes:1};
+    if(kind==="hash")wire={...wire,sha256:"f".repeat(64)};
+    if(kind==="payload")wire={...wire,payloadBase64:"e30="};
+    if(kind==="legacy")wire=raw;
+    if(kind==="invalid-utf8")wire=envelope(new Uint8Array([0xff]));
+    const vm=runtime(raw,0,wire as ReturnType<typeof envelope>);
+    expect((await runKnownHtmlNativeProfile(args(),vm.create,profiles)).status).toBe("unavailable");
+    expect(vm.stop).toHaveBeenCalledTimes(1);
+  });
   it("transports exact source bytes and emits observations without claiming acceptance or monetary cost",async()=>{
     const vm=runtime();const result=await runKnownHtmlNativeProfile(args(),vm.create,profiles);
     expect(result.status).toBe("observed");if(result.status!=="observed")throw Error("missing observed result");

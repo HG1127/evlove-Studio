@@ -3,7 +3,8 @@ import {executeServerArtifactExternal,resolveServerZipTargetBinding} from "./ser
 import {isZipArtifact} from "@evolution/core";
 import type { EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
 
-import { runServerBaseline } from "@evolution/harness";
+import { canReuseServerBaseline, runServerBaseline } from "@evolution/harness";
+import {HTML_NATIVE_KERNEL_SHA256} from "@evolution/adapters/sandbox";
 import { runServerAi, serverAiScoringRouteFingerprint } from "./ai-gateway";
 import {runServerEvidenceJudge} from "./server-evidence-judge";
 
@@ -15,6 +16,12 @@ import { runServerHttpTargetBatch, serverHttpTargetEnabled } from "./server-http
 import {runServerConnectorTargetBatch} from "./server-connector-target-execution";
 import {serverConnectorTargetEnabled} from "./connector-target-source";
 import {executeServerHtmlNativeBatch} from "./server-html-native-execution";
+
+/** Native text from an older, unverified wire must not be reused as the Original comparison. */
+export function canReuseServerMissionBaseline(project:EvolveProject,routeFingerprint?:string){
+  return project.baselineRun.runs.every(run=>!run.nativeHtmlProof||run.nativeHtmlProof.observation.kernelSha256===HTML_NATIVE_KERNEL_SHA256)
+    &&canReuseServerBaseline(project,routeFingerprint);
+}
 
 export function resolveServerBaselineCodebaseBinding(project:EvolveProject){
   const sources=project.sourceArtifacts.filter(source=>source.role==="target"&&isZipArtifact(source));
