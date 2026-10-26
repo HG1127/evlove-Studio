@@ -19,7 +19,11 @@ export function sourceGroundedHtmlProtectionSteps(project: EvolveProject, criter
   const scopedIds = new Set(criteria.flatMap((criterion) => criterion.artifactIds));
   const targets = project.sourceArtifacts.filter((artifact) => artifact.role === "target" && (!scopedIds.size || scopedIds.has(artifact.id)));
   if (targets.length !== 1 || !/^(html|htm)$/i.test(targets[0]!.extension)) return undefined;
-  const html = targets[0]!.textContent ?? "";
+  return sourceGroundedHtmlSearchSteps(targets[0]!.textContent ?? "");
+}
+
+/** The plan depends only on complete Original source bytes, never on a reserved evaluation question. */
+export function sourceGroundedHtmlSearchSteps(html: string) {
   if (!/<html\b/i.test(html) || !/<\/html\s*>/i.test(html) || !/<body\b/i.test(html) || !/<\/body\s*>/i.test(html)) return undefined;
   const slides = slideIds(html);
   // Do not turn arbitrary markup into a fake behavior check. The selectors and the

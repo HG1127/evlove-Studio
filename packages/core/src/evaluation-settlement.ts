@@ -77,7 +77,7 @@ export function deriveCriterionScores(
     // Preserve the Runner's truthful assertion result while limiting criterion-level claims.
     const nativeFor=(testCase:TestCase)=>{
       const run=runMap.get(testCase.id);
-      return run&&inspectHtmlNativeEvidence(run,testCase.id,criterion.artifactIds.length===1?criterion.artifactIds[0]:undefined);
+      return run&&inspectHtmlNativeEvidence(run,testCase.id,criterion.artifactIds.length===1?criterion.artifactIds[0]:undefined,undefined,testCase.browserSteps);
     };
     const limitedCoverage = mappedTests.some((testCase) => testCase.tags?.includes("source-grounded-html-assertions")&&!nativeFor(testCase)?.complete);
     const coverageGaps = limitedCoverage ? ["自动生成的 HTML 检查仅覆盖搜索交互，尚未覆盖该保护标准的全部要求；需补齐对应的执行、视觉或人工证据"] : [];

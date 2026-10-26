@@ -1,7 +1,7 @@
-import {OriginalArtifactReferenceProofSchema,SandboxHtmlNativeResponseSchema,TargetRunResultSchema,
+import {HtmlNativeBrowserAssertionsSchema,OriginalArtifactReferenceProofSchema,SandboxHtmlNativeResponseSchema,TargetRunResultSchema,
   type ArtifactStorePort,type Candidate,type CandidateArtifactSnapshot,type EvolveProject,
   type SandboxHtmlNativeRequest,type SandboxHtmlNativeResponse,type SourceArtifact,type TargetRunResult,type TestCase} from "@evolution/contracts";
-import {fastHash,htmlNativeCaseSource} from "@evolution/core";
+import {fastHash,htmlNativeBrowserPlanKey,htmlNativeCaseSource,isSourceGroundedHtmlSearchPlan} from "@evolution/core";
 import {runVercelSandboxHtmlNativeProfile} from "@evolution/adapters/sandbox";
 import {getServerArtifactStore} from "./artifact-runtime";
 import {serverArtifactSha256,verifyServerCandidateFrozenArtifact} from "./server-experiment-artifacts";
@@ -55,12 +55,21 @@ export function createServerHtmlNativeExecutor(ports:Ports){
           subject=new Uint8Array(await blob.arrayBuffer());subjectSha=await serverArtifactSha256(subject);
           if(subjectSha!==receipt.sha256||subject.byteLength!==receipt.size)throw Error("Candidate physical SHA differs");
         }
+        const plans=new Map<string,NonNullable<TestCase["browserSteps"]>>();
+        for(const test of tests){
+          if(!test.browserSteps?.length)continue;
+          // Recheck against the fetched, SHA-verified Original rather than a possibly stale text projection.
+          if(!isSourceGroundedHtmlSearchPlan(new TextDecoder("utf-8",{fatal:true}).decode(original.bytes),test.browserSteps))throw Error("Declared browser predicates differ from physical Original");
+          plans.set(htmlNativeBrowserPlanKey(test.browserSteps)!,test.browserSteps);
+        }
+        const browserAssertions=plans.size?HtmlNativeBrowserAssertionsSchema.parse({schemaVersion:"source-grounded-browser-assertions-v1",plans:[...plans.values()]}):undefined;
         const result=SandboxHtmlNativeResponseSchema.parse(await ports.execute({original:original.bytes,subject,
-          expectedOriginalSha256:original.sha256,expectedSubjectSha256:subjectSha}));
+          expectedOriginalSha256:original.sha256,expectedSubjectSha256:subjectSha,...(browserAssertions?{browserAssertions}:{})}));
         if(result.status!=="observed")continue;
         const observation=result.observation;
         if(observation.original.sha256!==original.sha256||observation.subject.sha256!==subjectSha
-          ||observation.subject.bodyTextFingerprint!==fastHash(result.subjectText))throw Error("Native observation physical subjects differ");
+          ||observation.subject.bodyTextFingerprint!==fastHash(result.subjectText)
+          ||JSON.stringify(observation.browserAssertions)!==JSON.stringify(browserAssertions))throw Error("Native observation physical subjects or declared predicates differ");
         for(const test of tests)runs.push(TargetRunResultSchema.parse({testCaseId:test.id,artifactHash:subjectSha,
           output:"NATIVE HTML OBSERVATIONS: exact physical subjects observed in a network-denied ephemeral Sandbox. Tool assertions do not establish semantic quality or final acceptance.",
           verificationStatus:"verified",latencyMs:observation.subject.elapsedMs,cost:0,trace:[],

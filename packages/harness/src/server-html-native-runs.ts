@@ -23,18 +23,20 @@ function unavailableOriginalReference(run:TargetRunResult):TargetRunResult{
 }
 
 /** Recheck stored receipts before reuse; matching cache digests do not prove their Original binding. */
-export function serverHtmlNativeRunsMatchOriginal(project:EvolveProject,runs:TargetRunResult[],candidate?:Candidate){
+export function serverHtmlNativeRunsMatchOriginal(project:EvolveProject,runs:TargetRunResult[],candidate?:Candidate,testCases:TestCase[]=project.evalSuite){
   return runs.every(run=>{
     if(!run.nativeHtmlProof)return true;
     const parsed=HtmlNativeRunProofSchema.safeParse(run.nativeHtmlProof);
     if(!parsed.success)return false;
     const sourceId=parsed.data.sourceArtifactId;
+    const tests=testCases.filter(test=>test.id===run.testCaseId),test=tests.length===1?tests[0]:undefined;
+    if(!test||!htmlNativeCaseSource(project,test))return false;
     const sources=project.sourceArtifacts.filter(source=>source.role==="target"&&source.id===sourceId);
     const snapshots=candidate?.artifactSnapshots.filter(snapshot=>snapshot.sourceArtifactId===sourceId);
     const frozen=snapshots?.length===1?snapshots[0]?.frozenArtifact:undefined;
     const sha=candidate?(frozen?.sourceArtifactId===sourceId?frozen.sha256:undefined):parsed.data.observation.original.sha256;
     return sources.length===1&&Boolean(sha)&&matchesLockedOriginal(run,project.baselineRun.originalReferences??[],project.id)
-      &&inspectHtmlNativeEvidence(run,run.testCaseId,sourceId,sha)?.complete===true;
+      &&inspectHtmlNativeEvidence(run,run.testCaseId,sourceId,sha,test.browserSteps)?.complete===true;
   });
 }
 
@@ -54,7 +56,7 @@ export async function collectServerHtmlNativeRuns(project:EvolveProject,testCase
     const snapshots=candidate?.artifactSnapshots.filter(snapshot=>snapshot.sourceArtifactId===source.id);
     const frozen=snapshots?.length===1?snapshots[0]?.frozenArtifact:undefined;
     const sha=candidate&&frozen?.sourceArtifactId===source.id?frozen.sha256:undefined;
-    const proof=run&&inspectHtmlNativeEvidence(run,test.id,source.id,sha);
+    const proof=run&&inspectHtmlNativeEvidence(run,test.id,source.id,sha,test.browserSteps);
     if(!duplicateIds.has(test.id)&&proof?.complete&&(candidate?Boolean(sha):proof.proof.observation.original.sha256===proof.proof.subjectSha256)){
       ordered.set(test.id,candidate&&!matchesLockedOriginal(run!,project.baselineRun.originalReferences??[],project.id)
         ?unavailableOriginalReference(run!):run!);

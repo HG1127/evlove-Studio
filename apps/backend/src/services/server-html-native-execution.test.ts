@@ -6,6 +6,7 @@ import {acceptedPackageFixture,htmlNativeEvidenceFixture} from "@evolution/testk
 import {executeServerExperimentCandidate} from "@evolution/harness";
 import {createServerHtmlNativeExecutor,executeServerHtmlNativeBatch} from "./server-html-native-execution";
 import {serverHtmlNativeAuthorized} from "./server-html-native-consent";
+import {sourceGroundedHtmlSearchSteps} from "@evolution/core";
 
 const sha=(text:string)=>createHash("sha256").update(text).digest("hex");
 function fixture(){
@@ -34,7 +35,45 @@ function fixture(){
   return {project,candidate,test,source,original,subject,metadata,blobs,ports,response};
 }
 afterEach(()=>vi.unstubAllEnvs());
+function withSearchPlan(){
+  const x=fixture();
+  x.original='<html><head><style>.search-hidden{display:none}</style></head><body><input id="search"><span id="searchCount"></span><article class="slide-card" id="slide-2" data-search="intro">Intro</article><article class="slide-card" id="slide-3" data-search="end">End</article><script>search.addEventListener("input",()=>card.dataset.search.includes(search.value));</script></body></html>';
+  Object.assign(x.source,{textContent:x.original,size:Buffer.byteLength(x.original)});
+  Object.assign(x.metadata,{sha256:sha(x.original),sizeBytes:x.source.size});
+  Object.assign(x.project.baselineRun.originalReferences![0]!,{sha256:sha(x.original),sizeBytes:x.source.size});
+  x.blobs.set("original",new Blob([x.original]));x.response.observation.original.sha256=sha(x.original);
+  x.test.browserSteps=sourceGroundedHtmlSearchSteps(x.original)!;x.test.tags=["source-grounded-html-assertions"];
+  return x;
+}
 describe("Mission-authorized native HTML composition",()=>{
+  it("executes both frozen search plans with the shared physical profile, without transmitting TestCase prose",async()=>{
+    const x=withSearchPlan(),legacy={...x.test,id:"legacy",browserSteps:x.test.browserSteps!.filter((_,index)=>![3,4,9].includes(index))};
+    const plain={...x.test,id:"plain",browserSteps:undefined};x.project.evalSuite=[x.test,legacy,plain];
+    const assertions={schemaVersion:"source-grounded-browser-assertions-v1" as const,plans:[x.test.browserSteps!,legacy.browserSteps]};
+    x.response.observation.browserAssertions=assertions as NonNullable<typeof x.response.observation.browserAssertions>;
+    for(const subject of [x.response.observation.original,x.response.observation.subject])subject.checks.push(...assertions.plans.flatMap((plan,p)=>plan.map((_,s)=>({id:`declared-browser-${p}-${s}`,pass:true,tested:1,failed:0}))));
+    const native=createServerHtmlNativeExecutor(x.ports);
+    const runs=await executeServerExperimentCandidate(x.project,x.candidate,{executeNativeHtmlBatch:native,executeSemanticBatch:vi.fn(),judge:vi.fn()});
+    expect(runs.map(run=>run.testCaseId)).toEqual([x.test.id,legacy.id,plain.id]);
+    expect(runs.every(run=>run.verificationStatus==="verified")).toBe(true);
+    expect(x.ports.execute).toHaveBeenCalledTimes(1);
+    const request=x.ports.execute.mock.calls[0]![0];
+    expect(request.browserAssertions).toEqual(assertions);
+    expect(Object.keys(request)).toEqual(["original","subject","expectedOriginalSha256","expectedSubjectSha256","browserAssertions"]);
+    expect(x.test.browserSteps).toHaveLength(12);expect(legacy.browserSteps).toHaveLength(9);
+  });
+  it.each(["physical-original","missing-receipt","altered-predicate"])("never substitutes the native profile for %s predicates",async kind=>{
+    const x=withSearchPlan();
+    if(kind==="physical-original"){
+      const changed=x.original.replaceAll("slide-2","slide-9");x.blobs.set("original",new Blob([changed]));
+      x.metadata.sha256=sha(changed);x.project.baselineRun.originalReferences![0]!.sha256=sha(changed);
+    }
+    if(kind==="altered-predicate")x.test.browserSteps![0]!.selector="#custom";
+    const runs=await createServerHtmlNativeExecutor(x.ports)({...x,testCases:[x.test]});
+    if(kind==="altered-predicate"){expect(runs).toEqual([]);expect(x.ports.execute).not.toHaveBeenCalled();}
+    else expect(runs[0]).toMatchObject({verificationStatus:"unverified",error:"NATIVE_HTML_EXECUTION_UNAVAILABLE"});
+    if(kind==="physical-original")expect(x.ports.execute).not.toHaveBeenCalled();
+  });
   it("is off by default and never reads files or creates a VM without the exact Mission opt-in",async()=>{
     const x=fixture();x.ports.authorized.mockReturnValue(false);
     expect(await createServerHtmlNativeExecutor(x.ports)({...x,testCases:[x.test]})).toEqual([]);

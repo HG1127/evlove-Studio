@@ -9,6 +9,34 @@ const test=TestCaseSchema.parse({id:"native-case",title:"保护测试",input:"�
 const judge=[{criterionId:criterion.id,score:99,pass:true,evidence:["Independent semantic review"],gaps:[],testCaseIds:[test.id]}];
 
 describe("bound native HTML evidence",()=>{
+  it("does not reuse an old physical report for newly declared browser predicates",()=>{
+    const run=htmlNativeEvidenceFixture(),stepped={...test,browserSteps:[{action:"visible" as const,selector:"#search"}]};
+    expect(inspectHtmlNativeEvidence(run,test.id,undefined,undefined,stepped.browserSteps)).toBeUndefined();
+    expect(deriveCriterionScores([criterion],[stepped],[],[run],judge).criterionScores[0]).toMatchObject({pass:false,verificationStatus:"partial"});
+  });
+  it("requires every declared predicate on both physical subjects, preserves negative steps, and still requires Judge",()=>{
+    const run=htmlNativeEvidenceFixture(),o=run.nativeHtmlProof!.observation;
+    const steps=[{action:"visible" as const,selector:"#search"},{action:"count" as const,selector:".slide-card.search-hidden",count:0}];
+    const stepped={...test,browserSteps:steps};
+    o.browserAssertions={schemaVersion:"source-grounded-browser-assertions-v1",plans:[steps]};
+    for(const subject of [o.original,o.subject])subject.checks.push(...steps.map((_,index)=>({id:`declared-browser-0-${index}`,pass:true,tested:1,failed:0})));
+    expect(inspectHtmlNativeEvidence(run,test.id,undefined,undefined,steps)).toMatchObject({complete:true,pass:true});
+    expect(deriveCriterionScores([criterion],[stepped],[],[run]).criterionScores[0]).toMatchObject({pass:false,verificationStatus:"unverified"});
+    expect(deriveCriterionScores([criterion],[stepped],[],[run],judge).criterionScores[0]).toMatchObject({pass:true,verificationStatus:"verified"});
+    const last=o.subject.checks.at(-1)!;last.pass=false;last.failed=1;o.subject.failures=[last.id];
+    expect(deriveCriterionScores([criterion],[stepped],[],[run],judge).criterionScores[0]).toMatchObject({score:0,pass:false,verificationStatus:"verified"});
+    expect(inspectHtmlNativeEvidence(run,test.id,undefined,undefined,[...steps].reverse())).toBeUndefined();
+    o.original.checks.pop();
+    expect(inspectHtmlNativeEvidence(run,test.id,undefined,undefined,steps)).toBeUndefined();
+  });
+  it("rejects duplicate plans and a declared step with no execution count",()=>{
+    const run=htmlNativeEvidenceFixture(),o=run.nativeHtmlProof!.observation,steps=[{action:"visible" as const,selector:"#search"}];
+    o.browserAssertions={schemaVersion:"source-grounded-browser-assertions-v1",plans:[steps,steps]};
+    expect(inspectHtmlNativeEvidence(run,test.id)).toBeUndefined();
+    o.browserAssertions.plans=[steps];
+    for(const subject of [o.original,o.subject])subject.checks.push({id:"declared-browser-0-0",pass:true});
+    expect(inspectHtmlNativeEvidence(run,test.id)).toBeUndefined();
+  });
   it("does not accept contradictory code retention counts",()=>{
     const run=htmlNativeEvidenceFixture();
     run.nativeHtmlProof!.observation.codeBlockRetention={policy:"original-text-with-numbered-instruction-append-v1",originalCount:2,retainedCount:2,exactCount:1,extendedInstructionCount:1,retained:true};

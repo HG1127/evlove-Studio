@@ -1,8 +1,9 @@
 import {HtmlNativeRunProofSchema,HtmlRenderedDocumentEvidenceSchema,type EvolveProject,type TargetRunResult,type TestCase} from "@evolution/contracts";
 import {fastHash} from "./stable-hash";
 import {criterionCanUseLocalSnapshotEvidence} from "./criterion-evidence";
+import {htmlNativeBrowserPlanKey,isSourceGroundedHtmlSearchPlan} from "./html-native-browser-assertions";
 
-export const HTML_NATIVE_EVIDENCE_POLICY_VERSION="html-native-evidence-v2-measured-retention-loss";
+export const HTML_NATIVE_EVIDENCE_POLICY_VERSION="html-native-evidence-v3-declared-browser-assertions";
 
 const protectedIds=new Set(["PROTECT-ALL","SYS-INTEGRITY","ART-1-STRUCTURE","SEM-CROSS-CONSISTENCY"]);
 const fixedChecks=["initial-card-inventory","search-positive","search-negative","search-reset","mobile-menu-opens","mobile-menu-closes-on-navigation",
@@ -13,7 +14,6 @@ const fixedChecks=["initial-card-inventory","search-positive","search-negative",
 
 export function htmlNativeCaseSource(project:EvolveProject,test:TestCase){
   if(project.targetConnection?.adapter!=="artifact"||!test.criterionIds.length
-    ||test.browserSteps?.length
     ||!["artifact-runtime","external-runner","visual-review","static-evidence"].includes(test.executionMode))return undefined;
   const criteria=project.acceptanceRubric.filter(c=>test.criterionIds.includes(c.id));
   if(criteria.length!==new Set(test.criterionIds).size||criteria.some(c=>c.validationMethod==="manual-review"
@@ -22,14 +22,19 @@ export function htmlNativeCaseSource(project:EvolveProject,test:TestCase){
   const ids=new Set(criteria.flatMap(c=>c.artifactIds));
   const targets=project.sourceArtifacts.filter(source=>source.role==="target"&&(!ids.size||ids.has(source.id)));
   if(targets.length!==1||ids.size>1||!/^html?$/i.test(targets[0]!.extension)||!["document","knowledge","generic"].includes(targets[0]!.artifactKind))return undefined;
+  if(test.browserSteps?.length&&(!test.tags.includes("source-grounded-html-assertions")||test.executionMode!=="external-runner"
+    ||!isSourceGroundedHtmlSearchPlan(targets[0]!.textContent??"",test.browserSteps)))return undefined;
   return targets[0];
 }
 
 /** Verify observation completeness/binding, never infer semantic quality from passing tool checks. */
-export function inspectHtmlNativeEvidence(run:TargetRunResult,testCaseId:string,sourceArtifactId?:string,subjectSha256?:string){
+export function inspectHtmlNativeEvidence(run:TargetRunResult,testCaseId:string,sourceArtifactId?:string,subjectSha256?:string,browserSteps?:TestCase["browserSteps"]){
   const parsed=HtmlNativeRunProofSchema.safeParse(run.nativeHtmlProof),document=HtmlRenderedDocumentEvidenceSchema.safeParse(run.renderedDocumentEvidence);
   if(!parsed.success||!document.success||run.error)return undefined;
   const proof=parsed.data,observation=proof.observation,body=document.data;
+  const plans=observation.browserAssertions?.plans??[];
+  if(new Set(plans.map(htmlNativeBrowserPlanKey)).size!==plans.length
+    ||browserSteps?.length&&(!htmlNativeBrowserPlanKey(browserSteps)||!plans.some(plan=>htmlNativeBrowserPlanKey(plan)===htmlNativeBrowserPlanKey(browserSteps))))return undefined;
   const retention=observation.codeBlockRetention;
   if(retention&&(retention.retainedCount!==retention.exactCount+retention.extendedInstructionCount
     ||retention.retainedCount>retention.originalCount||retention.retained!==(retention.retainedCount===retention.originalCount)
@@ -43,8 +48,10 @@ export function inspectHtmlNativeEvidence(run:TargetRunResult,testCaseId:string,
   if(new Set(queries.map(item=>item.cardId)).size!==queries.length)return undefined;
   const complete=(subject:typeof observation.subject,expectedMatched:boolean)=>{
     const inventory=subject.inventory,checks=new Map(subject.checks.map(check=>[check.id,check]));
-    const expected=[...fixedChecks,...inventory.internalLinks.map(href=>"navigation-"+href),...queries.map(item=>"content-search-#"+item.cardId)];
+    const expected=[...fixedChecks,...inventory.internalLinks.map(href=>"navigation-"+href),...queries.map(item=>"content-search-#"+item.cardId),
+      ...plans.flatMap((plan,planIndex)=>plan.map((_,stepIndex)=>`declared-browser-${planIndex}-${stepIndex}`))];
     if(checks.size!==subject.checks.length||new Set(expected).size!==expected.length||expected.some(id=>!checks.has(id)))return false;
+    if(plans.some((plan,planIndex)=>plan.some((_,stepIndex)=>checks.get(`declared-browser-${planIndex}-${stepIndex}`)?.tested!==1)))return false;
     if(subject.checks.some(check=>check.failed!==undefined&&(check.failed>0)===check.pass))return false;
     const observedFailures=subject.checks.filter(check=>!check.pass).map(check=>check.id).sort();
     if(fastHash(observedFailures)!==fastHash([...subject.failures].sort()))return false;

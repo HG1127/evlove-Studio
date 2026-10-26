@@ -502,7 +502,9 @@ describe("server baseline",()=>{
 
 describe("server Baseline evidence provenance", () => {
   it("rechecks a cached native Baseline's physical Original binding even when the measurement fingerprint is unchanged",async()=>{
-    const measured=await runServerBaseline(fixture(),{
+    const input=fixture();
+    Object.assign(input.sourceArtifacts[0]!,{extension:"html",mimeType:"text/html"});
+    const measured=await runServerBaseline(input,{
       executeSemanticBatch:async({testCases})=>({results:testCases.map(testCase=>({testCaseId:testCase.id,output:"当前说明包含安装步骤，但验证与回滚说明不足。",trace:[]}))}),
       judge:async()=>judge(),
     });

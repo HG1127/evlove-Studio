@@ -1,7 +1,7 @@
 import {createHash} from "node:crypto";
 import {describe,expect,it,vi} from "vitest";
-import {AcceptanceCriterionSchema,TestCaseSchema,ValidationRunSchema} from "@evolution/contracts";
-import {evidenceFingerprint} from "@evolution/core";
+import {AcceptanceCriterionSchema,HtmlNativeBrowserAssertionsSchema,TestCaseSchema,ValidationRunSchema} from "@evolution/contracts";
+import {evidenceFingerprint,sourceGroundedHtmlSearchSteps} from "@evolution/core";
 import {acceptedPackageFixture,htmlNativeEvidenceFixture} from "@evolution/testkit";
 import {collectServerHtmlNativeRuns,bindServerHtmlNativeOriginalReferences,serverHtmlNativeRunsMatchOriginal} from "./server-html-native-runs";
 import {executeServerExperimentCandidate} from "./server-experiment-runner";
@@ -25,6 +25,24 @@ function fixture(){
   return {project,candidate,run,test};
 }
 describe("injected native HTML execution",()=>{
+  it("cannot reuse or normalize a profile-only receipt for a frozen source-grounded search plan",async()=>{
+    const {project,candidate,run,test}=fixture();
+    const html='<html><head><style>.search-hidden{display:none}</style></head><body><input id="search"><span id="searchCount"></span><article class="slide-card" id="slide-2" data-search="intro">Intro</article><article class="slide-card" id="slide-3" data-search="end">End</article><script>search.addEventListener("input",()=>card.dataset.search.includes(search.value));</script></body></html>';
+    project.sourceArtifacts[0]!.textContent=html;
+    test.browserSteps=sourceGroundedHtmlSearchSteps(html)!.filter((_,index)=>![3,4,9].includes(index));
+    expect(serverHtmlNativeRunsMatchOriginal(project,[run],candidate)).toBe(false);
+    const ports={executeNativeHtmlBatch:vi.fn(async()=>[run]),executeSemanticBatch:vi.fn(),judge:vi.fn()};
+    const runs=await executeServerExperimentCandidate(project,candidate,ports);
+    expect(runs[0]).toMatchObject({verificationStatus:"unverified",error:"NATIVE_HTML_EVIDENCE_INVALID"});
+    const o=run.nativeHtmlProof!.observation;
+    o.browserAssertions=HtmlNativeBrowserAssertionsSchema.parse({schemaVersion:"source-grounded-browser-assertions-v1",plans:[test.browserSteps]});
+    for(const subject of [o.original,o.subject])subject.checks.push(...test.browserSteps.map((_,index)=>({id:`declared-browser-0-${index}`,pass:true,tested:1,failed:0})));
+    expect(serverHtmlNativeRunsMatchOriginal(project,[run],candidate)).toBe(true);
+    expect((await executeServerExperimentCandidate(project,candidate,ports))[0]?.nativeHtmlProof).toEqual(run.nativeHtmlProof);
+    // The declared order is part of evidence identity even when test ID and physical hashes have not changed.
+    test.browserSteps.reverse();
+    expect(serverHtmlNativeRunsMatchOriginal(project,[run],candidate)).toBe(false);
+  });
   it("remeasures only an explicitly resumed, same-contract frozen native capability failure",()=>{
     const {project,candidate,test}=fixture();
     project.campaign={...project.campaign,status:"idle",currentRound:0,startedAt:undefined,checkpoint:{round:1,completedPhase:"experiment",at:"2026-10-26T00:00:00.000Z"}};

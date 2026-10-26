@@ -5,6 +5,21 @@ const count=z.number().int().nonnegative();
 export const HTML_NATIVE_PROFILE_ID="vibe-sop-browser-v1";
 export const HTML_NATIVE_OBSERVATION_VERSION="html-native-observation-v1";
 
+// Only source-derived search predicates may accompany the known native profile.
+// This is deliberately separate from TestCase: no question, expected answer or case prose enters the VM.
+const selector=z.string().min(1).max(160);
+export const HtmlNativeBrowserStepSchema=z.discriminatedUnion("action",[
+  z.object({action:z.literal("visible"),selector}).strict(),
+  z.object({action:z.literal("fill"),selector,value:z.string().max(80)}).strict(),
+  z.object({action:z.literal("text"),selector,value:z.string().max(80)}).strict(),
+  z.object({action:z.literal("count"),selector,count}).strict(),
+]);
+export const HtmlNativeBrowserAssertionsSchema=z.object({
+  schemaVersion:z.literal("source-grounded-browser-assertions-v1"),
+  plans:z.array(z.array(HtmlNativeBrowserStepSchema).min(1).max(12)).min(1).max(2),
+}).strict().refine(value=>new Set(value.plans.map(plan=>JSON.stringify(plan))).size===value.plans.length,"Duplicate browser plans");
+export type HtmlNativeBrowserAssertions=z.infer<typeof HtmlNativeBrowserAssertionsSchema>;
+
 export const HtmlNativeInventorySchema=z.object({
   cards:count,menu:count,top:count,progress:count,pageCopy:count,promptCopy:count,editablePrompts:count,
   checkItems:count,checkPanels:count,details:count,
@@ -52,6 +67,7 @@ export const HtmlNativeObservationSchema=z.object({
   originalSlideCardOrderRetained:z.boolean(),original:HtmlNativeSubjectSchema,subject:HtmlNativeSubjectSchema,
   contentSearchQueries:z.array(z.object({cardId:z.string().regex(/^slide-\d+$/),query:z.string().min(1).max(80)}).strict()).max(12),
   styleComparison:z.array(HtmlNativeStyleComparisonSchema).length(2),
+  browserAssertions:HtmlNativeBrowserAssertionsSchema.optional(),
   billingStatus:z.literal("unavailable"),limitations:z.array(z.string().max(500)).max(12),
 }).strict();
 export type HtmlNativeObservation=z.infer<typeof HtmlNativeObservationSchema>;
@@ -74,6 +90,7 @@ export const SandboxHtmlNativeRequestSchema=z.object({
   original:z.instanceof(Uint8Array).refine(bytes=>bytes.byteLength>0&&bytes.byteLength<=12_000_000),
   subject:z.instanceof(Uint8Array).refine(bytes=>bytes.byteLength>0&&bytes.byteLength<=12_000_000),
   expectedOriginalSha256:sha,expectedSubjectSha256:sha,
+  browserAssertions:HtmlNativeBrowserAssertionsSchema.optional(),
 }).strict();
 export type SandboxHtmlNativeRequest=z.infer<typeof SandboxHtmlNativeRequestSchema>;
 

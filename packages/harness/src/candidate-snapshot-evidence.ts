@@ -102,7 +102,7 @@ export function normalizeLocallyVerifiableCandidateRuns(
       const source=htmlNativeCaseSource(project,testCase);
       const snapshots=candidate.artifactSnapshots.filter(snapshot=>snapshot.sourceArtifactId===source?.id);
       const sha=snapshots.length===1?snapshots[0]?.frozenArtifact?.sha256:undefined;
-      const proof=source&&sha?inspectHtmlNativeEvidence(run,testCase.id,source.id,sha):undefined;
+      const proof=source&&sha?inspectHtmlNativeEvidence(run,testCase.id,source.id,sha,testCase.browserSteps):undefined;
       return proof?.complete?run:{...run,verificationStatus:"unverified",nativeHtmlProof:undefined,renderedDocumentEvidence:undefined,
         output:"UNVERIFIED: 原生 HTML 观察未绑定本题当前唯一冻结文件，或执行覆盖不完整。"};
     }

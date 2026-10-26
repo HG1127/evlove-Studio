@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { EvolveProject, TestCase } from "@evolution/contracts";
-import { sourceGroundedHtmlProtectionSteps } from "./html-protection-browser-steps";
+import { sourceGroundedHtmlProtectionSteps,sourceGroundedHtmlSearchSteps } from "./html-protection-browser-steps";
+import {htmlNativeBrowserPlanKey,isSourceGroundedHtmlSearchPlan} from "./html-native-browser-assertions";
 import { normalizeEvalSuiteForProject } from "./eval-suite-normalization";
 
 const html = `<html><head><style>.search-hidden{display:none}</style></head><body>
@@ -16,6 +17,19 @@ const testCase = { id: "protect", title: "保护交互", input: "检查搜索", 
 const project = { sourceArtifacts: [{ id: "html", name: "guide.html", role: "target", extension: "html", textContent: html }], acceptanceRubric: [criterion] } as EvolveProject;
 
 describe("source-grounded HTML protection steps", () => {
+  it("recognizes all original predicates of both frozen plans, without trusting a tag or accepting a changed assertion",()=>{
+    const steps=sourceGroundedHtmlSearchSteps(html)!,legacy=steps.filter((_,index)=>![3,4,9].includes(index));
+    expect(legacy).toHaveLength(9);
+    expect(isSourceGroundedHtmlSearchPlan(html,steps)).toBe(true);
+    expect(isSourceGroundedHtmlSearchPlan(html,legacy)).toBe(true);
+    for(const altered of [steps.slice(1),[...steps].reverse(),steps.map((step,index)=>index===7?{...step,value:"different"}:step),
+      steps.map((step,index)=>index===6?{...step,count:1}:step),[...steps,{action:"visible" as const,selector:"#custom"}]]){
+      expect(isSourceGroundedHtmlSearchPlan(html,altered)).toBe(false);
+    }
+    expect(isSourceGroundedHtmlSearchPlan(html.replace("slide-2","slide-9"),legacy)).toBe(false);
+    expect(htmlNativeBrowserPlanKey([{selector:"#search",action:"visible"}])).toBe(htmlNativeBrowserPlanKey([{action:"visible",selector:"#search"}]));
+    expect(htmlNativeBrowserPlanKey([{action:"click",selector:"#search"}])).toBeUndefined();
+  });
   it("adds a real fill-and-assert interaction to an empty Runner contract", () => {
     const steps = sourceGroundedHtmlProtectionSteps(project, [criterion], testCase)!;
     expect(steps).toContainEqual({ action: "visible", selector: "#slide-2" });

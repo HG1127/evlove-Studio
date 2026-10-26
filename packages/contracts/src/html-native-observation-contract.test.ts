@@ -1,8 +1,19 @@
 import {describe,expect,it} from "vitest";
 import {htmlNativeEvidenceFixture} from "@evolution/testkit";
 import {ExecuteArtifactAiResultSchema,ExecuteArtifactBatchAiResultSchema} from "./ai-schemas";
+import {HtmlNativeBrowserAssertionsSchema} from "./html-native-observation-contract";
 
 describe("native observation trust boundary",()=>{
+  it("accepts only a bounded, versioned predicate plan, without arbitrary actions, question prose or duplicate plans",()=>{
+    const plan={schemaVersion:"source-grounded-browser-assertions-v1",plans:[[{action:"visible",selector:"#search"}]]};
+    expect(HtmlNativeBrowserAssertionsSchema.parse(plan)).toEqual(plan);
+    for(const value of [{...plan,question:"reserved"},{...plan,plans:[[{action:"click",selector:"#search"}]]},
+      {...plan,plans:[[{action:"count",selector:"#search"}]]},{...plan,plans:[plan.plans[0],plan.plans[0]]},
+      {...plan,plans:[[{action:"fill",selector:"#search",value:"x".repeat(81)}]]},
+      {...plan,plans:[[{action:"visible",selector:"#search",expected:"secret answer"}]]}]){
+      expect(HtmlNativeBrowserAssertionsSchema.safeParse(value).success).toBe(false);
+    }
+  });
   it("does not accept server-only native or rendered-document proof from a single AI execute response",()=>{
     const {nativeHtmlProof,renderedDocumentEvidence}=htmlNativeEvidenceFixture();
     const result=ExecuteArtifactAiResultSchema.parse({output:"Model claim",nativeHtmlProof,renderedDocumentEvidence});

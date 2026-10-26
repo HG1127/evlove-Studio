@@ -1,8 +1,8 @@
 // @vitest-environment node
 import type {Sandbox} from "@vercel/sandbox";
 import {describe,expect,it,vi} from "vitest";
-import {HTML_NATIVE_PROFILE_ID,ExecuteArtifactAiResultSchema,ExecuteArtifactBatchAiResultSchema} from "@evolution/contracts";
-import {htmlNativeProgramIdentity} from "@evolution/core";
+import {HTML_NATIVE_PROFILE_ID,ExecuteArtifactAiResultSchema,ExecuteArtifactBatchAiResultSchema,type HtmlNativeBrowserAssertions} from "@evolution/contracts";
+import {htmlNativeProgramIdentity,sourceGroundedHtmlSearchSteps} from "@evolution/core";
 import {nativeHtmlSha256,type HtmlNativeProfile} from "./profile";
 import {runKnownHtmlNativeProfile} from "./runner";
 
@@ -25,6 +25,27 @@ function runtime(result=rawResult(),exitCode=0,wire=envelope(Buffer.from(JSON.st
   return {sandbox,writeFiles,stop,runCommand,create:vi.fn(async()=>sandbox)};
 }
 describe("known isolated native HTML transport",()=>{
+  it("transports only source-derived plans and refuses a missing or substituted execution receipt",async()=>{
+    const source=original.replace("<body>",'<body><input id="search"><span id="searchCount"></span>').replace("p{color:red}","p{color:red}.search-hidden{display:none}")
+      .replace("const keep=true;","const keep=true;search.addEventListener('input',()=>card.dataset.search.includes(search.value));");
+    const id=htmlNativeProgramIdentity(source,nativeHtmlSha256),steps=sourceGroundedHtmlSearchSteps(source)!;
+    const assertions:HtmlNativeBrowserAssertions={schemaVersion:"source-grounded-browser-assertions-v1",plans:[steps]};
+    const request={original:Buffer.from(source),subject:Buffer.from(source),expectedOriginalSha256:nativeHtmlSha256(source),expectedSubjectSha256:nativeHtmlSha256(source),browserAssertions:assertions};
+    const allowed:HtmlNativeProfile[]=[{id:HTML_NATIVE_PROFILE_ID,programSignature:id.signature,styleSignature:id.styleSignature}];
+    const raw:ReturnType<typeof rawResult>&{browserAssertions?:HtmlNativeBrowserAssertions}=rawResult();
+    for(const subject of raw.results)subject.sha256=nativeHtmlSha256(source);
+    const missing=runtime(raw);expect((await runKnownHtmlNativeProfile(request,missing.create,allowed)).status).toBe("unavailable");
+    expect(missing.stop).toHaveBeenCalledTimes(1);
+    raw.browserAssertions=assertions;
+    const vm=runtime(raw),result=await runKnownHtmlNativeProfile(request,vm.create,allowed);
+    expect(result.status==="observed"&&result.observation.browserAssertions).toEqual(assertions);
+    const files=vm.writeFiles.mock.calls[0]![0] as Array<{path:string;content:Buffer}>;
+    const input=JSON.parse(files.find(file=>file.path.endsWith("native-input.json"))!.content.toString());
+    expect(input.browserAssertions).toEqual(assertions);expect(input).not.toHaveProperty("testCases");
+    const changed=structuredClone(request);changed.browserAssertions.plans[0]![0]!.selector="#custom";
+    const rejected=runtime(raw);expect((await runKnownHtmlNativeProfile(changed,rejected.create,allowed)).status).toBe("unavailable");
+    expect(rejected.create).not.toHaveBeenCalled();
+  });
   it("preserves multibyte body text across every possible log byte boundary",async()=>{
     const raw=rawResult(),text="中文配置：提交后检查 🚀 é；原文包含真实替换字符 �";
     raw.results[1]!.bodyText=text;

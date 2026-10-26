@@ -1,7 +1,7 @@
 import {DOCUMENT_TEXT_OBSERVATION_MAX_CHARS,type TargetRunResult} from "@evolution/contracts";
 import {inspectMeasuredNativeRun,measuredNativeObservations,type MeasuredNativeBinding} from "./server-measured-native-review";
 
-export const SERVER_MEASURED_REVIEW_VERSION = "server-measured-document-review-v3-native-facts";
+export const SERVER_MEASURED_REVIEW_VERSION = "server-measured-document-review-v4-declared-browser-assertions";
 export const SERVER_NATIVE_REVIEW_INSTRUCTION="Read nativeObservations as measured physical facts bound to their own source, hashes and testCaseIds. Excluding raw scripts/styles does not erase observed interactions, script/style signatures or computed-style comparisons. A profile pass is not a semantic, pixel-visual or overall Criterion pass; it does not replace another test's explicit assertions. Missing, omitted or out-of-scope evidence remains unknown.";
 
 /** Reuse only existing document observations. No Artifact/Source reads or raw HTML reconstruction. */

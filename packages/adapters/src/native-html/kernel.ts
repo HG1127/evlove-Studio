@@ -1,5 +1,7 @@
 // Trusted VM-only kernel. This string is written to a network-denied Sandbox; never evaluated on the host.
+import {HTML_NATIVE_DECLARED_STEPS_SOURCE} from "./declared-steps";
 export const HTML_NATIVE_KERNEL_SOURCE=[
+  HTML_NATIVE_DECLARED_STEPS_SOURCE,
   "import fs from 'node:fs';",
   "import {createHash} from 'node:crypto';",
   "import {chromium} from '../browser/node_modules/playwright/index.mjs';",
@@ -27,6 +29,7 @@ export const HTML_NATIVE_KERNEL_SOURCE=[
   "      const page=await context.newPage();page.setDefaultTimeout(3500);",
   "      page.on('pageerror',error=>pageErrors.push(error.name+': '+error.message.slice(0,180)));",
   "      await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded',timeout:12000});",
+  "      await runDeclaredBrowserPlans(page,inputs.browserAssertions,record);",
   "      const inventory=await page.evaluate(()=>({",
   "        cards:document.querySelectorAll('article.slide-card').length,",
   "        menu:document.querySelectorAll('#menuBtn').length,",
@@ -216,7 +219,7 @@ export const HTML_NATIVE_KERNEL_SOURCE=[
   "    pass:changedNamed.length===0&&missingGroups.length===0&&source.infiniteAnimations===0&&candidate.infiniteAnimations===0};",
   "});",
   "fs.writeFileSync(new URL('../private/protection-observations.json',import.meta.url),JSON.stringify({at:new Date().toISOString(),results,styleComparison},null,2));",
-  "const payload=Buffer.from(JSON.stringify({observedAt:new Date().toISOString(),results:results.map(r=>({label:r.label,sha256:r.sha256,inventory:r.inventory,checks:r.checks,failures:r.failures,fatal:r.fatal,elapsedMs:r.elapsedMs,renderedParagraphs:r.renderedParagraphs,bodyText:r.bodyText})),styleComparison}),'utf8');",
+  "const payload=Buffer.from(JSON.stringify({observedAt:new Date().toISOString(),results:results.map(r=>({label:r.label,sha256:r.sha256,inventory:r.inventory,checks:r.checks,failures:r.failures,fatal:r.fatal,elapsedMs:r.elapsedMs,renderedParagraphs:r.renderedParagraphs,bodyText:r.bodyText})),styleComparison,browserAssertions:inputs.browserAssertions}),'utf8');",
   "console.log(JSON.stringify({schemaVersion:'native-html-output-v1',sizeBytes:payload.length,sha256:hash(payload),payloadBase64:payload.toString('base64')}));",
   "",
 ].join("\n");
