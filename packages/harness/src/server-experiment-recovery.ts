@@ -51,20 +51,22 @@ function pending(project: EvolveProject, round: number) {
 
 /** Newly frozen repair construction is not a Visible winner. It must be measured first. */
 export function serverFrozenRepairCandidate(project: EvolveProject, round = project.campaign.currentRound + 1) {
-  const visibleRepair=project.visibleRepairAttempts?.find(item=>item.round===round&&item.status==="frozen"
+  const records=[...(project.visibleRepairAttempts??[]),...(project.artifactRepairAttempts??[])].filter(item=>item.round===round&&item.status==="frozen"
     &&item.candidateId===project.selectedCandidateIds[0]);
+  if(records.length>1)return undefined;
+  const repair=records[0];
   if (project.targetConnection.adapter !== "artifact" || project.campaign.checkpoint?.round !== round
     || project.campaign.checkpoint.completedPhase !== "plan" || project.artifactAcceptance.status !== "repairing"
     || project.selectedCandidateIds.length !== 1
     || !(project.experimentRun.status === "idle" && (project.experimentRun.summary?.startsWith("[server-campaign-artifact-repair-visible-pending]")
-      ||visibleRepair&&project.experimentRun.summary?.startsWith("[server-campaign-visible-repair-visible-pending]"))
+      ||repair?.version==="experiment-visible-repair-v1"&&project.experimentRun.summary?.startsWith("[server-campaign-visible-repair-visible-pending]"))
       || pending(project, round))) return undefined;
   const id = project.selectedCandidateIds[0];
   const candidates = project.candidates.filter(candidate => candidate.id === id);
   if (candidates.length !== 1 || project.artifactAcceptance.candidateId !== id
-    ||visibleRepair&&(candidates[0]?.finalHoldoutPaperHash!==visibleRepair.finalPaperHash
-      ||project.finalHoldout?.paperHash!==visibleRepair.finalPaperHash
-      ||JSON.stringify(candidates[0]?.artifactSnapshots)!==JSON.stringify(visibleRepair.repairedArtifactSnapshots))
+    ||repair&&(candidates[0]?.finalHoldoutPaperHash!==repair.finalPaperHash
+      ||project.finalHoldout?.paperHash!==repair.finalPaperHash
+      ||JSON.stringify(candidates[0]?.artifactSnapshots)!==JSON.stringify(repair.repairedArtifactSnapshots))
     || project.validationRun.status !== "idle" || project.validationRun.candidateId !== id
     || project.validationRun.id !== "validation-repair-pending-" + id
     || !hasCompleteServerExperimentFrozenSet(project, candidates[0]!)) return undefined;
@@ -72,8 +74,8 @@ export function serverFrozenRepairCandidate(project: EvolveProject, round = proj
 }
 /** Restore only the checkpoint-bound frozen construction; expired measurements do not change these bytes. */
 export async function restoreServerExperimentCandidate(project: EvolveProject, candidate: Candidate, round: number, ports: ServerExperimentRecoveryPorts) {
-  if(project.visibleRepairAttempts?.some(item=>item.round===round&&item.status==="frozen"&&item.candidateId===candidate.id)
-    &&serverFrozenRepairCandidate(project,round)?.id!==candidate.id)throw new ServerExperimentFrozenRecoveryError("Visible Repair 冻结身份或断点已改变，禁止重新生成替代文件。");
+  if([...(project.visibleRepairAttempts??[]),...(project.artifactRepairAttempts??[])].some(item=>item.round===round&&item.status==="frozen"&&item.candidateId===candidate.id)
+    &&serverFrozenRepairCandidate(project,round)?.id!==candidate.id)throw new ServerExperimentFrozenRecoveryError("Repair 冻结身份或断点已改变，禁止重新生成替代文件。");
   const freshRepair = serverFrozenRepairCandidate(project, round)?.id === candidate.id
     && !project.experimentRun.executionCheckpoints?.some(checkpoint => checkpoint.candidateId === candidate.id);
   if (freshRepair) {

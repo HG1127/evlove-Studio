@@ -907,7 +907,7 @@ async function executeServerControlAction(
     if(campaignCheckpoint?.round===round
       && campaignCheckpoint.completedPhase==="validation"
       && campaignMission.validationRun.status==="completed"){
-      const acceptanceOutcome=await runServerMissionArtifactAcceptance(campaignMission);
+      const acceptanceOutcome=await runServerMissionArtifactAcceptance(campaignMission,current=>runtime.missions.save(current));
       campaignMission=acceptanceOutcome.project;
       await runtime.missions.save(campaignMission);
       await runtime.events.append(createEvolutionEvent({

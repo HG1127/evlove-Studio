@@ -52,6 +52,7 @@ describe("frozen validation Workflow routing",()=>{
     expect(m.baseline).not.toHaveBeenCalled();
     expect(m.holdout).toHaveBeenCalledTimes(phase==="experiment"?1:0);
     expect(m.acceptance).toHaveBeenCalledTimes(phase==="validation"?1:0);
+    if(phase==="validation")expect(typeof m.acceptance.mock.calls[0]![1]).toBe("function");
     expect(m.experiment).toHaveBeenCalledTimes(phase==="repair"?1:0);
     expect(m.save.mock.calls[0]![0].candidates[0].artifactSnapshots).toEqual(candidate.artifactSnapshots);
     expect(m.save.mock.calls[0]![0].campaign.startedAt).toBe(input.requestedAt);

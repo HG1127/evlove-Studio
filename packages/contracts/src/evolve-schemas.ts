@@ -779,6 +779,35 @@ export const ValidationRunSchema = z.object({
 });
 export type ValidationRun = z.infer<typeof ValidationRunSchema>;
 
+export const RepairEvidenceArchiveInputSchema=z.object({
+  version:z.literal("repair-evidence-archive-v1"),missionId:z.string().min(1),candidateId:z.string().min(1),
+  phase:z.enum(["visible","hidden"]),attempt:z.number().int().positive(),
+  content:z.string().min(1),sha256:z.string().regex(/^[0-9a-f]{64}$/),size:z.number().int().positive().max(20*1024*1024),
+}).strict().refine(input=>new TextEncoder().encode(input.content).byteLength===input.size,{message:"Repair evidence UTF-8 size mismatch",path:["size"]});
+export type RepairEvidenceArchiveInput=z.infer<typeof RepairEvidenceArchiveInputSchema>;
+export const RepairEvidenceReferenceSchema=z.object({
+  version:z.literal("repair-evidence-reference-v1"),artifactId:z.string().min(1).max(200),missionId:z.string().min(1),candidateId:z.string().min(1),
+  sha256:z.string().regex(/^[0-9a-f]{64}$/),size:z.number().int().positive().max(20*1024*1024),mimeType:z.literal("application/json"),
+}).strict();
+export type RepairEvidenceReference=z.infer<typeof RepairEvidenceReferenceSchema>;
+export const RepairFeedbackEvidenceSchema=z.object({
+  version:z.literal("repair-feedback-evidence-v1"),missionId:z.string().min(1),candidateId:z.string().min(1),phase:z.enum(["visible","hidden"]),
+  round:z.number().int().positive(),attempt:z.number().int().positive(),inputFingerprint:z.string().regex(/^[0-9a-f]{64}$/),
+  experiment:ExperimentRunSchema,validation:ValidationRunSchema.optional(),acceptance:ArtifactAcceptanceSchema.optional(),
+}).strict().refine(input=>input.phase!=="hidden"||Boolean(input.validation&&input.acceptance&&input.validation.candidateId===input.candidateId),
+  {message:"Hidden repair archive requires the bound validation and acceptance reports"});
+
+/** Persisted before a feedback mutation; an interrupted running invocation must not be replayed. */
+export const ArtifactRepairAttemptSchema=z.object({
+  version:z.literal("artifact-targeted-repair-v1"),id:z.string().min(1),round:z.number().int().positive(),attempt:z.number().int().positive(),
+  status:z.enum(["running","frozen","failed"]),parentCandidateId:z.string().min(1),candidateId:z.string().optional(),
+  inputFingerprint:z.string().regex(/^[0-9a-f]{64}$/),finalPaperHash:z.string().min(1),failedCriterionIds:z.array(z.string()).min(1),
+  evidence:RepairEvidenceReferenceSchema,
+  estimatedCost:z.number().min(0),startedAt:z.string(),completedAt:z.string().optional(),error:z.string().optional(),
+  repairedArtifactSnapshots:z.array(CandidateArtifactSnapshotSchema).optional(),
+});
+export type ArtifactRepairAttempt=z.infer<typeof ArtifactRepairAttemptSchema>;
+
 export const ReleaseAdapterResultSchema = z.object({
   ok: z.boolean(),
   trafficPercent: z.number().min(0).max(100),
@@ -1218,6 +1247,7 @@ export const EvolveProjectSchema = z.object({
   baselineRun: BaselineRunSchema,
   experimentRun: ExperimentRunSchema,
   visibleRepairAttempts: z.array(VisibleRepairAttemptSchema).optional(),
+  artifactRepairAttempts: z.array(ArtifactRepairAttemptSchema).optional(),
   validationRun: ValidationRunSchema,
   supplementalValidationEvidence: z.array(SupplementalValidationEvidenceSchema).default([]),
   /** 自主进化唯一人工中断通道；历史项目没有该字段时保持兼容。 */

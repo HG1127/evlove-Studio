@@ -9,6 +9,7 @@ import {materializeServerCandidateArtifacts,readServerCandidateParentText,readSe
 import {buildServerCandidateTargetContext,requireServerCandidateOutputModes} from "./server-candidate-context";
 import {verifyServerIndependentFinalHoldout} from "./server-independent-final-holdout";
 import {serverRepairMeasuredTextAuthorized} from "./server-ai-repair-consent";
+import {archiveServerRepairEvidence} from "./server-repair-evidence";
 
 export async function verifyServerFrozenCandidateArtifacts({project,candidate}:{project:EvolveProject;candidate:Candidate}):Promise<ServerArtifactVerification>{
   const targetIds=project.sourceArtifacts.filter((artifact)=>artifact.role==="target").map((artifact)=>artifact.id);
@@ -183,9 +184,10 @@ export async function recoverServerAcceptedOfflineChampion(project:EvolveProject
   return recovered;
 }
 
-export async function runServerMissionArtifactAcceptance(project:EvolveProject){
+export async function runServerMissionArtifactAcceptance(project:EvolveProject,persistProject?:(project:EvolveProject)=>Promise<unknown>){
   return runServerArtifactAcceptance(project,{verifyFrozenArtifacts:verifyServerFrozenCandidateArtifacts,repairCandidate:repairServerArtifactCandidate,
-    verifyIndependentFinal:verifyServerIndependentFinalHoldout});
+    verifyIndependentFinal:verifyServerIndependentFinalHoldout,persistProject,
+    fingerprint:wire=>serverArtifactSha256(new TextEncoder().encode(wire)),archiveRepairEvidence:archiveServerRepairEvidence});
 }
 
 /** The caller owns the revision-scoped Mission store; never construct an unbound writer here. */

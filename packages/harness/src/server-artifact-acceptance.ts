@@ -4,6 +4,8 @@ import type {
   EvolveProject,
   FrozenArtifact,
   IndependentFinalEvidence,
+  RepairEvidenceArchiveInput,
+  RepairEvidenceReference,
 } from "@evolution/contracts";
 import {
   campaignObservesLiveTarget,
@@ -16,6 +18,7 @@ import {
   hasAuthoritativeHiddenRelease,
   hasFullHiddenMeasurement,
 } from "@evolution/core";
+import {runServerTargetedArtifactRepair} from "./server-artifact-repair";
 
 export type ServerArtifactVerification={
   verified:FrozenArtifact[];
@@ -24,6 +27,10 @@ export type ServerArtifactVerification={
 };
 
 export type ServerArtifactAcceptancePorts={
+  /** Compare-and-swap the loaded Mission revision; required before any mutation request. */
+  persistProject?(project:EvolveProject):Promise<unknown>;
+  fingerprint?(canonicalWire:string):Promise<string>;
+  archiveRepairEvidence?(input:RepairEvidenceArchiveInput):Promise<RepairEvidenceReference>;
   verifyIndependentFinal?(args:{project:EvolveProject;candidate:Candidate}):Promise<IndependentFinalEvidence>;
   verifyFrozenArtifacts(args:{project:EvolveProject;candidate:Candidate}):Promise<ServerArtifactVerification>;
   repairCandidate(args:{
@@ -252,43 +259,7 @@ export async function runServerArtifactAcceptance(
   const attempt=(inputProject.artifactAcceptance.attempts??0)+1;
   const max=inputProject.artifactAcceptance.maxRepairAttempts??3;
   if(failedCriteria.length&&attempt<=max){
-    // A completed failed provider/build attempt consumes the same repair budget as a successful one.
-    project={...project,artifactAcceptance:{...acceptance,attempts:attempt}};
-    try{
-      const repaired=await ports.repairCandidate({project:inputProject,candidate,failedCriteria,attempt});
-      if(repaired.id===candidate.id)throw new Error("Repair Candidate 必须使用新的 Candidate identity");
-      const validation={
-        id:`validation-repair-pending-${repaired.id}`,
-        status:"idle" as const,
-        candidateId:repaired.id,
-        runs:[],
-        baselineRuns:[],
-        checks:[],
-        recommendation:"hold" as const,
-        previousEvaluation:inputProject.validationRun.evaluation,
-        summary:"Server targeted Repair 已生成新的 frozen Artifact；必须先重新运行 Visible Experiment，再运行 authoritative Hidden Holdout。",
-      };
-      project={
-        ...project,
-        candidates:[...project.candidates,repaired],
-        selectedCandidateIds:[repaired.id],
-        experimentRun:{id:`experiment-r${round}-server`,status:"idle",candidateResults:[],summary:"[server-campaign-artifact-repair-visible-pending] 新 Repair 文件必须重新完成 Visible Experiment。"},
-        validationRun:validation,
-        artifactAcceptance:{...acceptance,status:"repairing",candidateId:repaired.id,attempts:attempt,summary:`Targeted Repair ${attempt}/${max} 已生成新 Candidate；等待重新 Hidden Holdout。`},
-        stage:"experiment",
-        campaign:{
-          ...project.campaign,
-          status:"running",
-          stopReason:undefined,
-          checkpoint:{round,completedPhase:"plan",at:now},
-        },
-        updatedAt:now,
-      };
-      return {control:"continue",project,reason:`Gate F 已证实 ${failedCriteria.length} 个 Criterion 失败；Targeted Repair ${attempt}/${max} 已生成新 Candidate ${repaired.id}，先重新运行 Visible Experiment，再运行 Hidden Holdout。`,accepted:false,repaired:true};
-    }catch(error){
-      const reason=`[server-campaign-artifact-repair-pending] 已保留 Gate F/Hidden 失败证据，但 Targeted Repair 未完成：${error instanceof Error?error.message:String(error)}`;
-      return pause(project,reason,now);
-    }
+    return runServerTargetedArtifactRepair(project,ports,()=>options?.now?.()??new Date().toISOString());
   }
 
   const settled=settleRound(project,candidate,false,now);

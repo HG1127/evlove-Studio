@@ -1,6 +1,7 @@
 import {describe,expect,it,vi} from "vitest";
-import {InputUnderstandingSchema,type Candidate,type EvolveProject} from "@evolution/contracts";
-import {campaignGoalSatisfied,campaignStopReason,completeAutonomousMission,evidenceFingerprint,materializeAcceptedChampionPackage,reconcileAcceptedOfflineChampion} from "@evolution/core";
+import {createHash} from "node:crypto";
+import {EvolveProjectSchema,InputUnderstandingSchema,type Candidate,type EvolveProject,type RepairEvidenceArchiveInput} from "@evolution/contracts";
+import {campaignGoalSatisfied,campaignStopReason,completeAutonomousMission,evidenceFingerprint,finalHoldoutContractFingerprint,finalHoldoutPaperHash,materializeAcceptedChampionPackage,reconcileAcceptedOfflineChampion} from "@evolution/core";
 import {runServerArtifactAcceptance} from "./server-artifact-acceptance";
 import {buildServerHarnessPlan} from "./server-plan";
 import {deriveAttentionRequest,reconcileAttentionRequest} from "./autonomous-planner";
@@ -30,16 +31,29 @@ function fixture(pass=true){
   return {project,candidate,frozen};
 }
 
+function repairContract(x:ReturnType<typeof fixture>){
+  x.candidate.change="补齐配置与验证步骤";
+  const p=x.project,suite=[{...p.hiddenEvalSuite[0]!,id:"F1",input:"independent preplanning scenario"}];
+  p.finalHoldout={round:1,suite,paperHash:finalHoldoutPaperHash(suite),contractFingerprint:finalHoldoutContractFingerprint(p),createdAt:p.updatedAt};
+  x.candidate.finalHoldoutPaperHash=p.finalHoldout.paperHash;p.validationRun.evidenceFingerprint=evidenceFingerprint(p,x.candidate);
+  x.project=EvolveProjectSchema.parse(p);x.candidate=x.project.candidates.find(c=>c.id===x.candidate.id)!;
+  return {fingerprint:async(wire:string)=>createHash("sha256").update(wire).digest("hex"),persistProject:async()=>undefined,
+    archiveRepairEvidence:async(input:RepairEvidenceArchiveInput)=>({version:"repair-evidence-reference-v1" as const,artifactId:`evidence-${input.sha256}`,
+      missionId:input.missionId,candidateId:input.candidateId,sha256:input.sha256,size:input.size,mimeType:"application/json" as const}),
+    verifyFrozenArtifacts:async({candidate}:{candidate:Candidate})=>({verified:candidate.artifactSnapshots.map(s=>s.frozenArtifact!),unavailable:[] as string[],failed:[] as string[]})};
+}
+
 describe("server artifact acceptance",()=>{
   it("retains failed construction attempts so retries cannot bypass the repair limit",async()=>{
     const x=fixture(false);
+    const claim=repairContract(x);
     const repair=vi.fn().mockRejectedValue(new Error("third anchor is absent"));
-    const ports={verifyFrozenArtifacts:async()=>({verified:[x.frozen],unavailable:[],failed:[]}),repairCandidate:repair};
+    const ports={...claim,repairCandidate:repair};
     const first=await runServerArtifactAcceptance(x.project,ports);
     expect(first.project.artifactAcceptance.attempts).toBe(1);
     expect(first.project.candidates).toEqual(x.project.candidates);
     expect(first.project.validationRun).toEqual(x.project.validationRun);
-    const second=await runServerArtifactAcceptance(first.project,ports);
+    const second=await runServerArtifactAcceptance({...first.project,campaign:{...first.project.campaign,status:"idle"}},ports);
     expect(second.project.artifactAcceptance.attempts).toBe(2);
     const exhausted=await runServerArtifactAcceptance(second.project,ports);
     expect(exhausted.accepted).toBe(false);expect(exhausted.repaired).toBe(false);
@@ -303,9 +317,10 @@ describe("server artifact acceptance",()=>{
 
   it("repairs only verified failures into a new Candidate and forces Visible before Hidden again",async()=>{
     const x=fixture(false);
+    const claim=repairContract(x);
     const repaired={...x.candidate,id:"C1-repair-1",name:"repair",status:"draft" as const,artifactSnapshots:[{...x.candidate.artifactSnapshots[0]!,id:"snap-repair",content:"fixed",contentHash:"hash2",frozenArtifact:{...x.frozen,blobId:"blob2",sha256:"sha2",snapshotHash:"hash2"}}]} as Candidate;
     const outcome=await runServerArtifactAcceptance(x.project,{
-      verifyFrozenArtifacts:async()=>({verified:[x.frozen],unavailable:[],failed:[]}),
+      ...claim,
       repairCandidate:async({failedCriteria})=>{
         expect(failedCriteria.map((item)=>item.id)).toEqual(["CONTENT"]);
         return repaired;
@@ -329,12 +344,14 @@ describe("server artifact acceptance",()=>{
     x.project.validationRun.evaluation!.criterionScores!.push({criterionId:"PROTECT",score:93,pass:false,verificationStatus:"partial",evidence:["search only"],gaps:["remaining interactions unobserved"],testCaseIds:["H1"]});
     x.project.validationRun.evaluation!.unverifiedCriterionIds=["PROTECT"];
     x.project.validationRun.evidenceFingerprint=evidenceFingerprint(x.project,x.candidate);
+    const claim=repairContract(x);
     const evaluation=structuredClone(x.project.validationRun.evaluation);
     const repair=vi.fn(async({failedCriteria}:{failedCriteria:EvolveProject["acceptanceRubric"]})=>{
       expect(failedCriteria.map((item:{id:string})=>item.id)).toEqual(["CONTENT"]);
-      return {...x.candidate,id:"C1-repair",status:"draft" as const};
+      return {...x.candidate,id:"C1-repair",status:"draft" as const,artifactSnapshots:x.candidate.artifactSnapshots.map(snapshot=>({...snapshot,content:"fixed configuration",
+        contentHash:"hash-fixed",frozenArtifact:{...snapshot.frozenArtifact!,sha256:"sha-fixed",snapshotHash:"hash-fixed",blobId:"blob-fixed"}}))};
     });
-    const ports={verifyFrozenArtifacts:async()=>({verified:[x.frozen],unavailable:[],failed:[]}),repairCandidate:repair};
+    const ports={...claim,repairCandidate:repair};
     const outcome=await runServerArtifactAcceptance(x.project,ports);
     expect(outcome).toMatchObject({control:"continue",accepted:false,repaired:true});
     expect(outcome.project.validationRun.previousEvaluation).toEqual(evaluation);
