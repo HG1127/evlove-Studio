@@ -5,6 +5,7 @@ import {
   type EvolutionJob,
 } from "@evolution/contracts";
 import type {ServerControlRuntime} from "./production-runtime";
+import {abortServerControlExecutions} from "./server-control-execution";
 import {
   cancelBoundWorkflowRun,
   type WorkflowRunCancelResult,
@@ -36,6 +37,7 @@ export async function cancelServerJobWithWorkflow(
   }
 
   const current=await runtime.jobs.get(job.id)??job;
+  if(["completed","partial","failed","cancelled"].includes(current.status))abortServerControlExecutions(current);
   if(job.missionId){
     await runtime.events.append(createEvolutionEvent({
       missionId:job.missionId,

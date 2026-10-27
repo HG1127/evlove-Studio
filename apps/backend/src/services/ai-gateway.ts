@@ -2,6 +2,7 @@ import type { ZodType } from "zod";
 import { aiProviderTransportFailure,parseStructuredAiOutput } from "@evolution/adapters";
 import { createHash } from "node:crypto";
 import {serverAiRepairContract} from "./server-ai-repair-contract";
+import {ServerControlExecutionStoppedError,serverControlExecutionSignal} from "./server-control-execution";
 import {
   AiOperationSchema,
   ArtifactAcceptanceAiResultSchema,
@@ -204,6 +205,7 @@ async function callVercelGateway<T>(args:{
       name:args.contract.schema.name,
     }),
     maxOutputTokens:10_000,
+    abortSignal:serverControlExecutionSignal(),
     timeout:args.config.timeoutMs,
   }));
   return args.contract.parser.parse(generated.output);
@@ -324,6 +326,7 @@ async function structured<T>(operation:AiOperation,payload:unknown,schema:Contra
       return await invoke(failedFields?.length?failedFields:[code==="AI_OUTPUT_INVALID_JSON"?"JSON syntax or truncated JSON response":code??"invalid AI output"]);
     }
   }catch(error){
+    if(error instanceof ServerControlExecutionStoppedError)throw error;
     const original=error as {message?:string;httpStatus?:number;code?:string};
     const transportFailure=aiProviderTransportFailure(error);
     const message=(transportFailure?serverAiUnavailableMessage(transportFailure):(original.message??String(error))).replaceAll(config.apiKey,"[REDACTED]");

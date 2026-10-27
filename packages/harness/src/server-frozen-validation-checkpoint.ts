@@ -15,11 +15,11 @@ export function hasServerFrozenValidationCheckpoint(project: EvolveProject) {
   const candidates = project.candidates.filter(candidate => candidate.id === id);
   if (candidates.length !== 1 || !hasCompleteServerExperimentFrozenSet(project, candidates[0]!)) return false;
   if (checkpoint.completedPhase === "experiment") return true;
-  // An old failure is actionable, never a fresh success or a basis for delivery.
+  // Routing must preserve every bound complete verdict, including a relative
+  // regression with passing absolute scores. Acceptance still rechecks all gates.
   return checkpoint.completedPhase === "validation"
     && project.validationRun.evidenceFingerprint === evidenceFingerprint(project, candidates[0]!)
-    && hasFullHiddenMeasurement(project.validationRun, id!, project.hiddenEvalSuite)
-    && verifiedValidationFailures(project, project.validationRun).length > 0;
+    && hasFullHiddenMeasurement(project.validationRun, id!, project.hiddenEvalSuite);
 }
 
 /** Continue actionable negative evidence without resolving an unrelated evidence request. */

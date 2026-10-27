@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AcceptanceCriterionSchema, SourceArtifactSchema, EvolutionJobSchema, type AiUsageLedgerRecord,type EvolveProject } from "@evolution/contracts";
 import { buildServerHarnessPlan, serverControlCapabilityWaitPlan, type ServerHarnessPlan } from "@evolution/harness";
 import {demoProject} from "../../../../src/features/evolve/data/mock-project";
-import { executeServerControlStep, planMissionStep } from "../../../../workflows/evolution-mission/steps";
+import { executeServerControlStep, planMissionStep,prepareScheduledTriggerStep,settleScheduledManualRoundStep } from "../../../../workflows/evolution-mission/steps";
 import {fetchServerAiProviderUsage,withServerAiUsageScope} from "./server-ai-usage";
 
 const mocks = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn(), jobGet: vi.fn(), put: vi.fn(), append: vi.fn(), probe: vi.fn(), passive: vi.fn(), ai: vi.fn() }));
@@ -34,6 +34,25 @@ beforeEach(() => {
   mocks.ai.mockRejectedValue(Object.assign(new Error("provider health temporarily unavailable"), { status: 503 }));
 });
 describe("Durable Workflow AI capability wait", () => {
+  it.each(["trigger","settle"])("fences the scheduled %s when cancellation happens during the Mission read",async phase=>{
+    const p=structuredClone(demoProject);p.id=input.missionId;
+    p.campaign={...p.campaign,status:"running",currentRound:1,stopCriteria:{...p.campaign.stopCriteria,maxRounds:1},
+      schedule:{...p.campaign.schedule,enabled:true,nextRunAt:at,durableScheduledFor:at,durableJobId:input.controlJobId}};
+    mocks.get.mockImplementation(async()=>{mocks.jobGet.mockResolvedValue({...job,status:"cancelled"});return p;});
+    const run=phase==="trigger"?prepareScheduledTriggerStep(input,at,0):settleScheduledManualRoundStep(input,1,0);
+    await expect(run).rejects.toMatchObject({code:"SERVER_CONTROL_EXECUTION_STOPPED"});
+    expect(mocks.save).not.toHaveBeenCalled();expect(mocks.put).not.toHaveBeenCalled();expect(mocks.append).not.toHaveBeenCalled();
+  });
+  it("discards a successful AI result if the control Job was cancelled while it was pending",async()=>{
+    mocks.ai.mockImplementation(async()=>{
+      mocks.jobGet.mockResolvedValue({...job,status:"cancelled"});
+      return {summary:"late successful result",confidence:0.9};
+    });
+    expect(await executeServerControlStep(input,plan,0)).toMatchObject({control:"stop",result:{status:"blocked"}});
+    expect(mocks.save).not.toHaveBeenCalled();
+    expect(mocks.put).not.toHaveBeenCalled();
+    expect(mocks.append).not.toHaveBeenCalled();
+  });
   it("binds provider accounting to the trusted control Job and checkpoint rather than the model payload",async()=>{
     const records:AiUsageLedgerRecord[]=[];
     mocks.probe.mockResolvedValue({ready:true,status:"ready"});
@@ -155,7 +174,7 @@ describe("new durable run resumes the actual stored AI wait",()=>{
   });
   it.each([undefined,{...job,status:"cancelled"},{...job,generation:2},{...job,missionId:"another"}])("does not recover an inactive or replaced control generation",async(current)=>{
     mocks.get.mockResolvedValue(fullPausedMission());mocks.jobGet.mockResolvedValue(current);
-    await expect(planMissionStep(input,0)).rejects.toThrow("控制 Job 不再活动");
+    await expect(planMissionStep(input,0)).rejects.toMatchObject({code:"SERVER_CONTROL_EXECUTION_STOPPED"});
     expect(mocks.probe).not.toHaveBeenCalled();expect(mocks.save).not.toHaveBeenCalled();expect(mocks.append).not.toHaveBeenCalled();
   });
   it("keeps unknown runtime errors on the retry path without clearing the pause",async()=>{

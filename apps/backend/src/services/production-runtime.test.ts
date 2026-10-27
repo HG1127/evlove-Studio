@@ -2,6 +2,7 @@
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
 import {demoProject} from "../../../../src/features/evolve/data/mock-project";
 import {createEvolutionEvent,EvolutionJobSchema,missionEnvelope,type EvolutionJob} from "@evolution/contracts";
+import {withServerControlExecution} from "./server-control-execution";
 import {
   bindServerJobWorkflowRun,
   compareAndSwapServerMissionEnvelopeWithEvent,
@@ -67,6 +68,21 @@ describe("server Mission revision CAS",()=>{
     process.env={...originalEnv};
     resetServerProductionRuntime();
     vi.unstubAllGlobals();
+  });
+
+  it.each([false,true])("uses the atomic control Job fence for a Mission commit (cancelled at commit: %s)",async cancelled=>{
+    const input={missionId:demoProject.id,controlJobId:"control",requestedAt:at};
+    const control={...baseJob,id:"control",generation:1,idempotencyKey:"workflow-control:control"};
+    const fetchMock=vi.fn(async(url:RequestInfo|URL,init?:RequestInit)=>{
+      expect(String(url)).toContain("/rpc/compare_and_swap_control_mission");
+      expect(JSON.parse(String(init?.body))).toMatchObject({p_id:demoProject.id,p_control_job_id:"control",p_control_generation:1});
+      return new Response(JSON.stringify([cancelled?{applied:false,control_active:false}:{applied:true,control_active:true,mission:missionRow(1)}]));
+    });
+    vi.stubGlobal("fetch",fetchMock);
+    const run=withServerControlExecution(input,async()=>control,()=>getServerProductionRuntime().missions.save(demoProject));
+    if(cancelled)await expect(run).rejects.toMatchObject({code:"SERVER_CONTROL_EXECUTION_STOPPED"});
+    else await expect(run).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("uses the Supabase secret API key without a bearer token for REST reads",async()=>{

@@ -10,7 +10,7 @@ const m=vi.hoisted(()=>({get:vi.fn(),save:vi.fn(),job:vi.fn(),put:vi.fn(),append
 vi.mock("./production-runtime",()=>({getServerProductionRuntime:()=>({missions:{get:m.get,save:m.save},jobs:{get:m.job,put:m.put},events:{append:m.append}})}));
 vi.mock("./ai-gateway",async original=>({...await original<typeof import("./ai-gateway")>(),serverAiScoringRouteFingerprint:async()=>"b".repeat(64)}));
 vi.mock("../server-env",async original=>({...await original<typeof import("../server-env")>(),serverAiConfigured:async()=>true}));
-vi.mock("./server-baseline",()=>({runServerMissionBaseline:m.baseline}));
+vi.mock("./server-baseline",()=>({runServerMissionBaseline:m.baseline,canReuseServerMissionBaseline:()=>false}));
 vi.mock("./server-holdout",()=>({runServerMissionHoldout:m.holdout}));
 vi.mock("./server-artifact-acceptance",()=>({runServerMissionArtifactAcceptance:m.acceptance,recoverServerAcceptedOfflineChampion:vi.fn()}));
 vi.mock("./server-experiment",()=>({runServerMissionExperiment:m.experiment}));
@@ -24,11 +24,12 @@ beforeEach(()=>{
 });
 
 describe("frozen validation Workflow routing",()=>{
-  it.each(["experiment","validation","repair"] as const)("resumes %s before an expired preparatory Visible baseline",async phase=>{
+  it.each(["experiment","validation","validation-relative-hold","validation-release","repair"] as const)("resumes %s before an expired preparatory Visible baseline",async phase=>{
     const x=experimentRecoveryFixture(),p=x.project,candidate=x.current;
     p.candidates=[candidate];p.selectedCandidateIds=[candidate.id];
     p.stage="validation";
-    p.campaign.checkpoint={round:1,completedPhase:phase==="repair"?"plan":phase,at};
+    const validationPhase=phase.startsWith("validation");
+    p.campaign.checkpoint={round:1,completedPhase:phase==="repair"?"plan":validationPhase?"validation":"experiment",at};
     p.baselineRun.completedAt=at;
     p.baselineRun.measurementFingerprint="expired-preparatory-baseline";
     p.hiddenEvalSuite=[{...p.evalSuite[0]!,id:"H1",hidden:true}];
@@ -37,6 +38,12 @@ describe("frozen validation Workflow routing",()=>{
     const runs=[{testCaseId:"H1",output:"known measured content",verificationStatus:"verified" as const,latencyMs:1,cost:0,trace:[]}];
     p.validationRun={id:"validation-server-r1",status:"completed",validationMode:"full",candidateId:candidate.id,recommendation:"hold",evaluation,runs,baselineRuns:runs,baselineEvaluation:evaluation,baselineSuiteIds:["H1"],baselineContextFingerprint:"same-paper",baselineObservedAt:Date.parse(at),checks:[]};
     p.validationRun.evidenceFingerprint=evidenceFingerprint(p,candidate);
+    if(phase==="validation-relative-hold"||phase==="validation-release"){
+      p.validationRun.evaluation={...evaluation,criterionScores:[{...evaluation.criterionScores[0]!,score:95,pass:true}]};
+      p.validationRun.baselineEvaluation={...evaluation,criterionScores:[{...evaluation.criterionScores[0]!,score:97,pass:true}]};
+      p.validationRun.recommendation=phase==="validation-release"?"release":"hold";
+      p.validationRun.checks=[{label:"same-paper comparison",status:phase==="validation-release"?"pass":"fail",detail:"Candidate 95 vs current 97"}];
+    }
     if(phase==="repair"){
       p.stage="experiment";
       p.artifactAcceptance={...p.artifactAcceptance,status:"repairing",candidateId:candidate.id,attempts:1};
@@ -51,8 +58,11 @@ describe("frozen validation Workflow routing",()=>{
     expect(outcome).toMatchObject({control:"stop",result:{status:"waiting-action"}});
     expect(m.baseline).not.toHaveBeenCalled();
     expect(m.holdout).toHaveBeenCalledTimes(phase==="experiment"?1:0);
-    expect(m.acceptance).toHaveBeenCalledTimes(phase==="validation"?1:0);
-    if(phase==="validation")expect(typeof m.acceptance.mock.calls[0]![1]).toBe("function");
+    expect(m.acceptance).toHaveBeenCalledTimes(validationPhase?1:0);
+    if(validationPhase){
+      expect(typeof m.acceptance.mock.calls[0]![1]).toBe("function");
+      expect(m.acceptance.mock.calls[0]![0].validationRun).toEqual(p.validationRun);
+    }
     expect(m.experiment).toHaveBeenCalledTimes(phase==="repair"?1:0);
     expect(m.save.mock.calls[0]![0].candidates[0].artifactSnapshots).toEqual(candidate.artifactSnapshots);
     expect(m.save.mock.calls[0]![0].campaign.startedAt).toBe(input.requestedAt);

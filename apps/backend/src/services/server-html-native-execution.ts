@@ -6,6 +6,7 @@ import {runVercelSandboxHtmlNativeProfile} from "@evolution/adapters/sandbox";
 import {getServerArtifactStore} from "./artifact-runtime";
 import {serverArtifactSha256,verifyServerCandidateFrozenArtifact} from "./server-experiment-artifacts";
 import {serverHtmlNativeAuthorized} from "./server-html-native-consent";
+import {assertServerControlExecutionActive,ServerControlExecutionStoppedError} from "./server-control-execution";
 
 type Request={project:EvolveProject;testCases:TestCase[];candidate?:Candidate};
 type Ports={artifacts:ArtifactStorePort;authorized:(missionId:string)=>boolean;
@@ -63,6 +64,7 @@ export function createServerHtmlNativeExecutor(ports:Ports){
           plans.set(htmlNativeBrowserPlanKey(test.browserSteps)!,test.browserSteps);
         }
         const browserAssertions=plans.size?HtmlNativeBrowserAssertionsSchema.parse({schemaVersion:"source-grounded-browser-assertions-v1",plans:[...plans.values()]}):undefined;
+        await assertServerControlExecutionActive(project.id);
         const result=SandboxHtmlNativeResponseSchema.parse(await ports.execute({original:original.bytes,subject,
           expectedOriginalSha256:original.sha256,expectedSubjectSha256:subjectSha,...(browserAssertions?{browserAssertions}:{})}));
         if(result.status!=="observed")continue;
@@ -77,7 +79,8 @@ export function createServerHtmlNativeExecutor(ports:Ports){
           renderedDocumentEvidence:{schemaVersion:"rendered-html-document-v1",sourceArtifactId:source.id,artifactSha256:subjectSha,
             textFingerprint:fastHash(result.subjectText),text:result.subjectText,paragraphs:observation.subject.renderedParagraphs,
             complete:true,excludes:["scripts","styles","raw-attributes"]}}));
-      }catch{
+      }catch(error){
+        if(error instanceof ServerControlExecutionStoppedError)throw error;
         for(const test of tests)runs.push({testCaseId:test.id,output:"UNVERIFIED: 原生 HTML 执行未取得同一 Mission、Baseline 原版及冻结文件的完整证据。",
           verificationStatus:"unverified",error:"NATIVE_HTML_EXECUTION_UNAVAILABLE",latencyMs:0,cost:0,trace:[]});
       }

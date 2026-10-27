@@ -4,6 +4,7 @@ import { trustedServerBaselineChampion } from "@evolution/harness";
 import { readServerCandidateParentText, serverArtifactSha256 } from "./server-experiment-artifacts";
 import {resolveTestTargetArtifact as resolveServerTestTargetArtifact,fastHash} from "@evolution/core";
 import { attachServerVisualEvidence } from "./server-visual-evidence";
+import {assertServerControlExecutionActive,ServerControlExecutionStoppedError} from "./server-control-execution";
 
 export function serverHtmlArtifactTargetEnabled(project: EvolveProject) {
   const targets = project.sourceArtifacts.filter((source) => source.role === "target");
@@ -73,6 +74,7 @@ export async function runServerHtmlArtifactBatch(project: EvolveProject, testCas
       const text = await readServerCandidateParentText(project, source, parent);
       const html = new TextEncoder().encode(text);
       const expectedSha256 = await serverArtifactSha256(html);
+      await assertServerControlExecutionActive(project.id);
       const response = await runVercelSandboxHtmlValidation({
         id: `${project.id}-${parent?.id ?? "source"}-${source.id}-${fastHash(cases)}`,
         html, expectedSha256, testCases: cases,
@@ -90,6 +92,7 @@ export async function runServerHtmlArtifactBatch(project: EvolveProject, testCas
       }
       for (const testCase of cases) if (!seen.has(testCase.id)) ordered.set(testCase.id, unavailable(testCase, "Sandbox 未返回本题结果。"));
     } catch (error) {
+      if(error instanceof ServerControlExecutionStoppedError)throw error;
       const message = error instanceof Error ? error.message : String(error);
       for (const testCase of cases) ordered.set(testCase.id, unavailable(testCase, message));
     }

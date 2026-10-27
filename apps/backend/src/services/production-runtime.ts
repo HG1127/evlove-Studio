@@ -23,6 +23,7 @@ import {probeServerEventPage as probeEventPage,readServerEventRows} from "./even
 import {probeActiveJobPage,readActiveJobRows} from "./active-job-pages";
 import {readRecentParseJobRows} from "./parse-job-pages";
 import { getServerArtifactStore } from "./artifact-runtime";
+import {assertServerControlExecutionActive,serverControlExecutionBinding,ServerControlExecutionStoppedError} from "./server-control-execution";
 
 type JsonRecord=Record<string,unknown>;
 export type ServerControlRuntime=ProductionRuntimePorts;
@@ -402,8 +403,10 @@ export async function transitionServerJobWithEvent(
 
 export async function compareAndSwapServerMissionEnvelope(envelopeInput:MissionEnvelope){
   const envelope=MissionEnvelopeSchema.parse(envelopeInput);
+  await assertServerControlExecutionActive(envelope.missionId);
+  const control=serverControlExecutionBinding();
   const {request}=createRestClient();
-  const rows=await request("rpc/compare_and_swap_mission",{
+  const rows=await request(control?"rpc/compare_and_swap_control_mission":"rpc/compare_and_swap_mission",{
     method:"POST",
     body:JSON.stringify({
       p_id:envelope.missionId,
@@ -414,9 +417,11 @@ export async function compareAndSwapServerMissionEnvelope(envelopeInput:MissionE
       p_payload:envelope.payload,
       p_created_at:envelope.createdAt,
       p_updated_at:envelope.updatedAt,
+      ...(control?{p_control_job_id:control.controlJobId,p_control_generation:control.generation}:{}),
     }),
-  }) as Array<{applied?:unknown;current_revision?:unknown;mission?:unknown}>;
+  }) as Array<{applied?:unknown;current_revision?:unknown;mission?:unknown;control_active?:unknown}>;
   const result=rows?.[0];
+  if(control&&result?.control_active!==true)throw new ServerControlExecutionStoppedError();
   if(result?.applied===true&&result.mission&&typeof result.mission==="object"&&!Array.isArray(result.mission)){
     return rowMissionEnvelope(result.mission as JsonRecord);
   }
@@ -432,15 +437,19 @@ export async function compareAndSwapServerMissionEnvelopeWithEvent(
 ){
   const envelope=MissionEnvelopeSchema.parse(envelopeInput);
   const event=EvolutionEventSchema.parse(eventInput);
+  await assertServerControlExecutionActive(envelope.missionId);
+  const control=serverControlExecutionBinding();
   const {request}=createRestClient();
-  const rows=await request("rpc/compare_and_swap_mission_with_event",{
+  const rows=await request(control?"rpc/compare_and_swap_control_mission":"rpc/compare_and_swap_mission_with_event",{
     method:"POST",body:JSON.stringify({
       p_id:envelope.missionId,p_expected_revision:envelope.revision,p_schema_version:envelope.schemaVersion,
       p_stage:envelope.payload.stage,p_status:envelope.payload.campaign.status,p_payload:envelope.payload,
       p_created_at:envelope.createdAt,p_updated_at:envelope.updatedAt,p_event:event,
+      ...(control?{p_control_job_id:control.controlJobId,p_control_generation:control.generation}:{}),
     }),
-  }) as Array<{applied?:unknown;current_revision?:unknown;mission?:unknown}>;
+  }) as Array<{applied?:unknown;current_revision?:unknown;mission?:unknown;control_active?:unknown}>;
   const result=rows?.[0];
+  if(control&&result?.control_active!==true)throw new ServerControlExecutionStoppedError();
   if(result?.applied===true&&result.mission&&typeof result.mission==="object"&&!Array.isArray(result.mission)){
     return rowMissionEnvelope(result.mission as JsonRecord);
   }

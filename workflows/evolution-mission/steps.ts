@@ -28,6 +28,7 @@ import {
 import { getServerProductionRuntime } from "../../apps/backend/src/services/production-runtime";
 import { serverAiScoringRouteFingerprint } from "../../apps/backend/src/services/ai-gateway";
 import {withServerAiUsageScope} from "../../apps/backend/src/services/server-ai-usage";
+import {guardServerControlRuntime,ServerControlExecutionStoppedError,withServerControlExecution} from "../../apps/backend/src/services/server-control-execution";
 import { runServerControlAi as runServerAi, ServerControlAiUnavailableError } from "../../apps/backend/src/services/server-control-ai";
 import { restoreServerControlAiWait } from "../../apps/backend/src/services/server-control-ai-recovery";
 import {reserveServerMissionFinalPaper,serverFinalPaperExecutionContract} from "../../apps/backend/src/services/server-final-paper";
@@ -104,7 +105,11 @@ export async function prepareScheduledTriggerStep(
   | {control:"stop";result:EvolutionWorkflowResult}
 >{
   "use step";
-  const runtime=getServerProductionRuntime();
+  return withServerControlExecution(input,id=>getServerProductionRuntime().jobs.get(id),()=>prepareActiveScheduledTrigger(input,scheduledFor,cycle));
+}
+
+async function prepareActiveScheduledTrigger(input:EvolutionWorkflowRunInput,scheduledFor:string,cycle:number):ReturnType<typeof prepareScheduledTriggerStep>{
+  const runtime=guardServerControlRuntime(getServerProductionRuntime());
   const mission=await runtime.missions.get(input.missionId);
   if(!mission)throw new FatalError(`Mission 不存在：${input.missionId}`);
   const schedule=mission.campaign.schedule;
@@ -178,7 +183,11 @@ export async function settleScheduledManualRoundStep(
   | {settled:true;result:EvolutionWorkflowResult}
 >{
   "use step";
-  const runtime=getServerProductionRuntime();
+  return withServerControlExecution(input,id=>getServerProductionRuntime().jobs.get(id),()=>settleActiveScheduledRound(input,targetRound,iteration));
+}
+
+async function settleActiveScheduledRound(input:EvolutionWorkflowRunInput,targetRound:number,iteration:number):ReturnType<typeof settleScheduledManualRoundStep>{
+  const runtime=guardServerControlRuntime(getServerProductionRuntime());
   const mission=await runtime.missions.get(input.missionId);
   if(!mission)throw new FatalError(`Mission 不存在：${input.missionId}`);
   if(mission.campaign.currentRound<targetRound)return {settled:false};
@@ -327,7 +336,11 @@ export async function settleScheduledManualRoundStep(
 
 export async function planMissionStep(input:EvolutionWorkflowRunInput,iteration:number):Promise<ServerHarnessPlan>{
   "use step";
-  const runtime=getServerProductionRuntime();
+  return withServerControlExecution(input,id=>getServerProductionRuntime().jobs.get(id),()=>planActiveMission(input,iteration));
+}
+
+async function planActiveMission(input:EvolutionWorkflowRunInput,iteration:number):Promise<ServerHarnessPlan>{
+  const runtime=guardServerControlRuntime(getServerProductionRuntime());
   let mission=await runtime.missions.get(input.missionId);
   if(!mission)throw new FatalError(`Mission 不存在：${input.missionId}`);
   if(mission.targetConnection.adapter==="connector"
@@ -469,9 +482,13 @@ export async function executeServerControlStep(
 ):Promise<{control:"continue"|"stop";result?:EvolutionWorkflowResult;sleepMs?:number}>{
   "use step";
   try {
-    return await withServerAiUsageScope({missionId:input.missionId,jobId:input.controlJobId,
-      phase:plan.decision.action,stepKey:plan.checkpoint.id},()=>executeServerControlAction(input,plan,iteration));
+    return await withServerControlExecution(input,id=>getServerProductionRuntime().jobs.get(id),()=>
+      withServerAiUsageScope({missionId:input.missionId,jobId:input.controlJobId,
+        phase:plan.decision.action,stepKey:plan.checkpoint.id},()=>executeServerControlAction(input,plan,iteration)));
   } catch (error) {
+    if(error instanceof ServerControlExecutionStoppedError)return {control:"stop",result:result(input,{
+      status:"blocked",iterations:iteration+1,nextAction:plan.decision.action,checkpointId:plan.checkpoint.id,reason:error.message,
+    })};
     if (!(error instanceof ServerControlAiUnavailableError)) throw error;
     const runtime=getServerProductionRuntime();
     const currentJob=await runtime.jobs.get(input.controlJobId);
@@ -488,7 +505,7 @@ export async function executeServerControlStep(
     const waitPlan=serverControlCapabilityWaitPlan(plan,{
       stage:mission.stage,reason:error.message,at:new Date().toISOString(),
     });
-    return executeServerControlAction(input,waitPlan,iteration);
+    return withServerControlExecution(input,id=>runtime.jobs.get(id),()=>executeServerControlAction(input,waitPlan,iteration));
   }
 }
 
@@ -497,7 +514,7 @@ async function executeServerControlAction(
   plan:ServerHarnessPlan,
   iteration:number,
 ):Promise<{control:"continue"|"stop";result?:EvolutionWorkflowResult;sleepMs?:number}>{
-  const runtime=getServerProductionRuntime();
+  const runtime=guardServerControlRuntime(getServerProductionRuntime());
   const mission=await runtime.missions.get(input.missionId);
   if(!mission)throw new FatalError(`Mission 不存在：${input.missionId}`);
   const now=new Date().toISOString();
@@ -1541,13 +1558,16 @@ export async function finalizeUnexpectedWorkflowFailureStep(
   if(mission&&!(["completed","stopped"] as string[]).includes(mission.campaign.status)){
     // A temporary Mission CAS error must not strand an otherwise active Control Job.
     try{
-      await runtime.missions.save({
+      await withServerControlExecution(input,id=>runtime.jobs.get(id),()=>runtime.missions.save({
         ...mission,
         campaign:{...mission.campaign,status:"paused",stopReason:reason,
           schedule:{...mission.campaign.schedule,enabled:false,nextRunAt:undefined}},
         updatedAt:now,
-      });
-    }catch(error){console.error("Workflow failure Mission pause could not be recorded",error);}
+      }));
+    }catch(error){
+      if(error instanceof ServerControlExecutionStoppedError)return result(input,{status:"blocked",iterations,reason:error.message});
+      console.error("Workflow failure Mission pause could not be recorded",error);
+    }
   }
   const failed=result(input,{status:"failed",iterations,reason});
   const settlement=planWorkflowResultFinalization(current,failed,now);

@@ -1,7 +1,8 @@
 // @vitest-environment node
 import {createHash} from "node:crypto";
 import {afterEach,describe,expect,it,vi} from "vitest";
-import {AcceptanceCriterionSchema,ArtifactMetadataSchema,SourceArtifactSchema,TestCaseSchema,type ArtifactStorePort,type SandboxHtmlNativeRequest} from "@evolution/contracts";
+import {AcceptanceCriterionSchema,ArtifactMetadataSchema,EvolutionJobSchema,SourceArtifactSchema,TestCaseSchema,type ArtifactStorePort,type SandboxHtmlNativeRequest} from "@evolution/contracts";
+import {withServerControlExecution} from "./server-control-execution";
 import {acceptedPackageFixture,htmlNativeEvidenceFixture} from "@evolution/testkit";
 import {executeServerExperimentCandidate} from "@evolution/harness";
 import {createServerHtmlNativeExecutor,executeServerHtmlNativeBatch} from "./server-html-native-execution";
@@ -46,6 +47,15 @@ function withSearchPlan(){
   return x;
 }
 describe("Mission-authorized native HTML composition",()=>{
+  it("does not start another native Sandbox if the Job was cancelled while reading the physical Original",async()=>{
+    const x=fixture(),at="2026-10-27T00:00:00Z";
+    let job=EvolutionJobSchema.parse({schemaVersion:"job-v1",id:"control",missionId:x.project.id,type:"campaign",status:"running",label:"control",idempotencyKey:"workflow-control:control",generation:1,attempts:1,priority:70,createdAt:at,updatedAt:at});
+    x.ports.artifacts.get=async id=>{job={...job,status:"cancelled"};return x.blobs.get(id);};
+    await expect(withServerControlExecution({missionId:x.project.id,controlJobId:job.id,requestedAt:at},async()=>job,()=>
+      createServerHtmlNativeExecutor(x.ports)({project:x.project,testCases:[x.test],candidate:x.candidate})))
+      .rejects.toMatchObject({code:"SERVER_CONTROL_EXECUTION_STOPPED"});
+    expect(x.ports.execute).not.toHaveBeenCalled();
+  });
   it("executes both frozen search plans with the shared physical profile, without transmitting TestCase prose",async()=>{
     const x=withSearchPlan(),legacy={...x.test,id:"legacy",browserSteps:x.test.browserSteps!.filter((_,index)=>![3,4,9].includes(index))};
     const plain={...x.test,id:"plain",browserSteps:undefined};x.project.evalSuite=[x.test,legacy,plain];

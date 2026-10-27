@@ -4,6 +4,7 @@ import {fetchAiProvider,observeAiProviderUsage} from "@evolution/adapters";
 import {AiProviderUsageObservationSchema,AiUsageLedgerRecordSchema,AiUsageRequestStartedSchema,AiUsageScopeSchema,createEvolutionEvent,
   type AiOperation,type AiProviderUsageObservation,type AiUsageLedgerRecord,type AiUsageLedgerWriter,type AiUsageProtocol,type AiUsageRequestStarted,type AiUsageRoute,type AiUsageScope} from "@evolution/contracts";
 import type {ServerAiConfig} from "../server-env";
+import {assertServerControlExecutionActive,serverControlExecutionSignal} from "./server-control-execution";
 
 const active=new AsyncLocalStorage<{scope:AiUsageScope;write:AiUsageLedgerWriter}>();
 
@@ -56,14 +57,19 @@ async function finish(call:ActiveCall,raw:unknown,outcome:AiProviderUsageObserva
 /** Each physical connection retry gets its own durable start/result pair. */
 export async function fetchServerAiProviderUsage(config:ServerAiConfig,protocol:Exclude<AiUsageProtocol,"ai-sdk">,operation:AiOperation,url:string,init:RequestInit){
   let call:ActiveCall;
-  const response=await fetchAiProvider(url,init,active.getStore()?{
-    beforeAttempt:async attempt=>{call=await start(route(config,protocol,operation),attempt,"physical-http-attempt");},
+  const response=await fetchAiProvider(url,{...init,signal:serverControlExecutionSignal(init.signal)},{
+    beforeAttempt:async attempt=>{
+      await assertServerControlExecutionActive();
+      call=await start(route(config,protocol,operation),attempt,"physical-http-attempt");
+      await assertServerControlExecutionActive();
+    },
     failedAttempt:async(_attempt,reason)=>finish(call,undefined,"transport-error",{transportReason:reason??"unknown"}),
-  }:undefined);
+  });
   let recorded=false;
   return {response,observe:async(raw:unknown)=>{
     if(recorded)return;recorded=true;
     await finish(call,raw,"response",{httpStatus:response.status});
+    await assertServerControlExecutionActive();
   }};
 }
 
@@ -71,12 +77,17 @@ const object=(value:unknown):Record<string,unknown>=>value&&typeof value==="obje
 
 /** SDK retries remain opaque; a generation receipt never claims physical-attempt coverage. */
 export async function measureServerAiSdkUsage<T>(config:ServerAiConfig,operation:AiOperation,invoke:()=>Promise<T>):Promise<T>{
+  await assertServerControlExecutionActive();
   const call=await start(route(config,"ai-sdk",operation),1,"sdk-generation");
+  let recorded=false;
   try{
+    await assertServerControlExecutionActive();
     const result=await invoke(),generated=object(result),response=object(generated.response);
     await finish(call,{usage:generated.totalUsage??generated.usage,id:response.id,model:response.modelId},"response");
+    recorded=true;
+    await assertServerControlExecutionActive();
     return result;
   }catch(error){
-    await finish(call,{usage:object(error).usage},"sdk-error");throw error;
+    if(!recorded)await finish(call,{usage:object(error).usage},"sdk-error");throw error;
   }
 }

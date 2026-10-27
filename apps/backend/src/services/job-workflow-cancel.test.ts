@@ -7,6 +7,7 @@ import {
   type ProductionRuntimePorts,
 } from "@evolution/contracts";
 import {cancelServerJobWithWorkflow} from "./job-workflow-cancel";
+import {serverControlExecutionSignal,withServerControlExecution} from "./server-control-execution";
 
 const at="2026-09-23T04:00:00.000Z";
 function makeJob(status:EvolutionJob["status"]="running"){
@@ -42,6 +43,15 @@ function runtimeFor(initial:EvolutionJob){
 }
 
 describe("server Job + Workflow cancellation",()=>{
+  it("aborts an in-flight local execution after the durable cancellation settles",async()=>{
+    const initial={...makeJob(),generation:1,idempotencyKey:"workflow-control:job-cancel"};
+    const state=runtimeFor(initial);
+    await withServerControlExecution({missionId:initial.missionId!,controlJobId:initial.id,requestedAt:at},state.runtime.jobs.get,async()=>{
+      const signal=serverControlExecutionSignal()!;
+      await cancelServerJobWithWorkflow(state.runtime,initial,undefined,async()=>({bound:false,cancelIssued:false,reason:"workflow-run-unbound"}));
+      expect(state.job.status).toBe("cancelled");expect(signal.aborted).toBe(true);
+    });
+  });
   it("cancels an active Workflow before settling the Job cancelled",async()=>{
     const state=runtimeFor(makeJob());
     const cancelRun=vi.fn(async()=>({

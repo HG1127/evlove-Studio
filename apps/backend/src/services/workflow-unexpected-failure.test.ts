@@ -31,6 +31,12 @@ beforeEach(()=>{
   });
 });
 describe("Durable Workflow finalizes errors after Step retry exhaustion",()=>{
+  it("does not pause the Mission if cancellation arrives while loading failure context",async()=>{
+    const p=await mocks.missionGet();
+    mocks.missionGet.mockImplementation(async()=>{mocks.jobGet.mockResolvedValue({...job,status:"cancelled"});return p;});
+    expect(await finalizeUnexpectedWorkflowFailureStep(input,2)).toMatchObject({status:"blocked"});
+    expect(mocks.missionSave).not.toHaveBeenCalled();expect(mocks.jobPut).not.toHaveBeenCalled();expect(mocks.eventAppend).not.toHaveBeenCalled();
+  });
   it("records a resumable paused Mission and terminal Job without destroying evidence",async()=>{
     const outcome=await finalizeUnexpectedWorkflowFailureStep(input,4);
     expect(outcome).toMatchObject({status:"failed",iterations:4});
