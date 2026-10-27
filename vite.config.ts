@@ -29,6 +29,7 @@ export default defineConfig({
       '@evolution/harness': path.resolve(__dirname, './packages/harness/src/index.ts'),
       '@evolution/adapters/sandbox': path.resolve(__dirname, './packages/adapters/src/sandbox.ts'),
       '@evolution/adapters/html-native-profile': path.resolve(__dirname, './packages/adapters/src/native-html/profile.ts'),
+      '@evolution/adapters/outcome-telemetry': path.resolve(__dirname, './packages/adapters/src/outcome-telemetry.ts'),
       '@evolution/adapters': path.resolve(__dirname, './packages/adapters/src/index.ts'),
       '@evolution/ui': path.resolve(__dirname, './packages/ui/src/index.ts'),
       '@evolution/testkit': path.resolve(__dirname, './packages/testkit/src/index.ts'),

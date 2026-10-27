@@ -38,7 +38,16 @@ test("user can upload a source artifact and create an evolve project", async ({ 
   await expect(page.getByRole("button", { name: /1 · 输入任务/ })).toHaveAttribute("aria-pressed", "true");
 });
 
-test("release governance route renders its real Outcome entry point", async ({ page }) => {
-  await page.goto("/#/releases");
-  await expect(page.getByRole("heading", { name: "发布治理" })).toBeVisible();
+test("release governance route renders its real Outcome entry point", async ({ page },testInfo) => {
+  const errors:string[]=[],failedRequests:Array<{origin:string;path:string;error?:string}>=[];
+  page.on("pageerror",error=>errors.push(error.message));
+  page.on("requestfailed",request=>{const url=new URL(request.url());failedRequests.push({origin:url.origin,path:url.pathname,error:request.failure()?.errorText});});
+  try{
+    await page.goto("/#/releases");
+    await expect(page.getByRole("heading", { name: "发布治理" })).toBeVisible();
+    expect(errors).toEqual([]);
+  }finally{
+    const body=await page.locator("body").innerText({timeout:1000}).catch(()=>"Body unavailable");
+    await testInfo.attach("release-route-observations.json",{body:Buffer.from(JSON.stringify({errors,failedRequests,body:body.slice(0,5000)},null,2)),contentType:"application/json"});
+  }
 });

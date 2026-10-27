@@ -1,5 +1,5 @@
 import {z} from "zod";
-import {buildTelemetryRecordSamples,deduplicateTelemetrySamples} from "@evolution/adapters";
+import {buildTelemetryRecordSamples,deduplicateTelemetrySamples} from "@evolution/adapters/outcome-telemetry";
 import {
   OutcomeMetricDirectionSchema,
   OutcomeMetricKindSchema,

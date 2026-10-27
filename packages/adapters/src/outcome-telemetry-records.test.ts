@@ -1,7 +1,7 @@
 // @vitest-environment node
 import {describe,expect,it} from "vitest";
 import type {EvolveProject} from "@evolution/contracts";
-import {buildTelemetryRecordSamples,deduplicateTelemetrySamples,type OutcomeTelemetryRecordSource} from "./outcome-telemetry-records";
+import {buildTelemetryRecordSamples,deduplicateTelemetrySamples,type OutcomeTelemetryRecordSource} from "./outcome-telemetry";
 
 const project={id:"mission",release:{candidateId:"candidate",status:"canary-20",trafficPercent:20}} as EvolveProject;
 const source:OutcomeTelemetryRecordSource={id:"tasks",sampling:{kind:"independent-task",recordsPath:"tasks",taskIdPath:"id",observedAtPath:"at",deploymentIdPath:"deployment"},
