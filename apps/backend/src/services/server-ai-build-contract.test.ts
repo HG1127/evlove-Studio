@@ -1,6 +1,6 @@
 // @vitest-environment node
 import {afterEach,describe,expect,it,vi} from "vitest";
-import {applyExactEdits,bindHtmlBuildTextEditAnchors,htmlBuildBodyEditAnchors} from "@evolution/core";
+import {applyExactEdits,bindHtmlBuildBodyNodeEdits,bindHtmlBuildTextEditAnchors,htmlBuildBodyEditAnchors} from "@evolution/core";
 import {serverAiBuildContract} from "./server-ai-build-contract";
 import {runServerAi} from "./ai-gateway";
 import {withExplicitServerAiConnection} from "./server-ai-connection";
@@ -66,5 +66,46 @@ describe("request-bound HTML build ranges",()=>{
     const bodyAnchor=anchors.find(a=>a.before===body)!;
     expect(requests).toHaveLength(2);expect(requests[1]!.messages[0]!.content).toContain("expected issued body ranges");
     expect(requests[1]!.messages[0]!.content).toContain(JSON.stringify({start:bodyAnchor.start,end:bodyAnchor.end}));
+  });
+});
+
+describe("request-issued HTML build node protocol",()=>{
+  const nodeScope={project:{currentTargets:[{...target,bodyAnchorPolicy:"issued-body-nodes-v1"}]}};
+  const node=anchors.filter(a=>a.before==="重复")[1]!;
+  const nodes=(edits:unknown[])=>({...result([]),artifacts:[{...result([]).artifacts[0]!,content:JSON.stringify({kind:"html-build-body-node-edits-v1",edits})}]});
+  const edit={anchorId:node.anchorId,after:"重复</p><p>新增具体配置与检查"};
+  it("disambiguates repeated labels by issued ID while preserving raw markup replacements",()=>{
+    const parsed=serverAiBuildContract(nodeScope).parser.parse(nodes([edit]));
+    const bound=bindHtmlBuildBodyNodeEdits(parsed.artifacts[0]!.content,context);
+    expect(applyExactEdits(html,bound,{strict:true})).toBe(html.slice(0,node.start)+edit.after+html.slice(node.end));
+    expect(serverAiBuildContract(scope).parser.safeParse(nodes([edit])).success).toBe(false);
+  });
+  it("rejects unknown/duplicate IDs, raw legacy anchors and model-owned binding fields",()=>{
+    const contract=serverAiBuildContract(nodeScope);
+    for(const payload of [nodes([{...edit,anchorId:"invented"}]),nodes([edit,edit]),nodes([{...edit,before:"重复"}]),result([{before:"重复",after:"新的说明"}])])expect(contract.parser.safeParse(payload).success).toBe(false);
+    expect(()=>serverAiBuildContract({project:{currentTargets:[{id:"source",bodyAnchorPolicy:"issued-body-nodes-v1"}]}})).toThrow("body index");
+    expect(()=>serverAiBuildContract({project:{currentTargets:[{...nodeScope.project.currentTargets[0],htmlBuildBodyContext:{...context,anchors:[...anchors,anchors[0]]}}]}})).toThrow(/unique/);
+  });
+  it("keeps malformed-JSON correction instructions within the selected node protocol",()=>{
+    const response=nodes([edit]);response.artifacts[0]!.content="{";
+    const parsed=serverAiBuildContract(nodeScope).parser.safeParse(response);expect(parsed.success).toBe(false);
+    if(!parsed.success)expect(parsed.error.issues[0]!.message).toContain("html-build-body-node-edits-v1");
+  });
+  it("retains range and spreadsheet formats in a mixed request",()=>{
+    const contract=serverAiBuildContract({project:{currentTargets:[nodeScope.project.currentTargets[0],{...target,id:"range"},{id:"sheet"}]}});
+    const range={...result([{before:body,after:"完成检查"}]).artifacts[0]!,sourceArtifactId:"range"};
+    const sheet={sourceArtifactId:"sheet",name:"x.xlsx",mimeType:"application/xlsx",notes:[],content:JSON.stringify({kind:"spreadsheet",sheets:[{name:"S",cells:[{address:"A1",value:1}]}]})};
+    expect(contract.parser.parse({...nodes([edit]),artifacts:[...nodes([edit]).artifacts,range,sheet]}).artifacts[2]!.content).toBe(sheet.content);
+    expect(contract.instruction).toContain("issued-body-ranges-v1");expect(contract.instruction).toContain("issued-body-nodes-v1");
+  });
+  it.each(["corrected","still-invalid"] as const)("keeps the one schema correction bound for %s node IDs",async mode=>{
+    const requests:Array<{messages:Array<{content:string}>}>=[];
+    vi.stubGlobal("fetch",vi.fn(async(_url:unknown,init?:RequestInit)=>{
+      requests.push(JSON.parse(String(init?.body)));const response=requests.length===1||mode==="still-invalid"?nodes([{...edit,anchorId:"invented"}]):nodes([edit]);
+      return new Response(JSON.stringify({choices:[{finish_reason:"stop",message:{content:JSON.stringify(response)}}]}),{status:200});
+    }));
+    const run=withExplicitServerAiConnection({connectionId:"node-build-test",label:"Test",apiKey:"synthetic-private",baseUrl:"https://build.example.test/v1",model:"test-model",protocol:"chat-completions",responseFormat:"json-object"},()=>runServerAi("build-candidate",nodeScope));
+    if(mode==="corrected")expect((await run).artifacts[0]!.content).toBe(nodes([edit]).artifacts[0]!.content);else await expect(run).rejects.toMatchObject({code:"AI_OUTPUT_SCHEMA_MISMATCH"});
+    expect(requests).toHaveLength(2);expect(requests[1]!.messages[0]!.content).toContain("unknown or duplicate issued anchorId");
   });
 });

@@ -1,6 +1,6 @@
 // @vitest-environment node
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
-import {CandidateSchema,SourceArtifactSchema,type EvolveProject} from "@evolution/contracts";
+import {CandidateSchema,ExperimentPolicySchema,SourceArtifactSchema,type EvolveProject} from "@evolution/contracts";
 import {htmlNativeCodeRetention} from "@evolution/core";
 import {buildServerExperimentCandidate,verifyServerCandidateFrozenArtifact} from "./server-experiment-artifacts";
 
@@ -24,6 +24,23 @@ beforeEach(()=>{blobs.clear();ai.mockReset();known.mockReset();known.mockReturnV
 afterEach(()=>vi.unstubAllEnvs());
 
 describe("pre-freeze original code and instruction retention",()=>{
+  it.each([true,false])("preserves exactly one paragraph construction correction with the node protocol (corrected=%s)",async corrected=>{
+    const x=fixture();x.project.experimentPolicy=ExperimentPolicySchema.parse({htmlBuildAnchorValidation:"issued-body-nodes-v1"});
+    ai.mockImplementation(async(_operation,payload)=>{
+      const target=payload.project.currentTargets[0],node=target.htmlBuildBodyContext.anchors.find((a:{before:string})=>a.before==="后续说明。");
+      expect(target.mutationMode).toBe("html-build-body-node-edits-v1");
+      if(ai.mock.calls.length===2){
+        expect(blobs.size).toBe(1);expect(payload.project.currentTargets).toEqual(ai.mock.calls[0]![1].project.currentTargets);
+        expect(payload.constructionCorrection.code).toBe("HTML_PARAGRAPH_CONSTRUCTION_BUDGET_EXCEEDED");
+        expect(JSON.parse(payload.constructionCorrection.invalidProposal[0].content).kind).toBe("html-build-body-node-edits-v1");
+      }
+      return {summary:"配置说明",artifacts:[{sourceArtifactId:"source",name:"guide.html",mimeType:"text/html",notes:[],content:JSON.stringify({kind:"html-build-body-node-edits-v1",edits:[{anchorId:node.anchorId,after:corrected&&ai.mock.calls.length===2?"后续说明。完成后记录结果。":"字".repeat(1112)}]})}]};
+    });
+    const run=buildServerExperimentCandidate(x.project,x.candidate);
+    if(corrected){const built=await run;expect(await verifyServerCandidateFrozenArtifact(built.artifactSnapshots[0]!)).toBe(true);}
+    else{await expect(run).rejects.toMatchObject({code:"HTML_PARAGRAPH_CONSTRUCTION_BUDGET_EXCEEDED"});expect(blobs.size).toBe(1);}
+    expect(ai).toHaveBeenCalledTimes(2);
+  });
   it("rejects a wall of prose before writes and corrects it once using the same full context",async()=>{
     const x=fixture();ai.mockResolvedValueOnce(output("后续说明。","字".repeat(1112))).mockImplementationOnce(async(_operation,payload)=>{
       expect(blobs.size).toBe(1);expect(payload.project.currentTargets).toEqual(ai.mock.calls[0]![1].project.currentTargets);

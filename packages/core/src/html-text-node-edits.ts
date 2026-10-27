@@ -1,5 +1,5 @@
 import {parse,type DefaultTreeAdapterTypes} from "parse5";
-import {HtmlBodyEditAnchorSchema,HtmlBodyNodeEditsSchema,HtmlBuildBodyContextSchema,HtmlTextNodeEditsSchema,TextArtifactEditsSchema} from "@evolution/contracts";
+import {HtmlBodyEditAnchorSchema,HtmlBodyNodeEditsSchema,HtmlBuildBodyContextSchema,HtmlBuildBodyNodeEditsSchema,HtmlTextNodeEditsSchema,TextArtifactEditsSchema} from "@evolution/contracts";
 import {applyExactEdits} from "./exact-edits";
 
 interface BodyTextNode {
@@ -71,6 +71,23 @@ export function bindHtmlBuildTextEditAnchors(payload:string,issuedContext:unknow
     const matches=byText.get(edit.before);
     return matches?.length===1?{...edit,start:matches[0]!.start,end:matches[0]!.end}:edit;
   })});
+}
+
+/** IDs disambiguate repeated body text without asking the model to copy text or calculate offsets.
+ * Raw after bytes retain the existing builder's markup capability; protection remains downstream.
+ */
+export function bindHtmlBuildBodyNodeEdits(payload:string,issuedContext:unknown){
+  const context=HtmlBuildBodyContextSchema.parse(issuedContext),data=HtmlBuildBodyNodeEditsSchema.parse(JSON.parse(payload));
+  const anchors=new Map(context.anchors.map(anchor=>[anchor.anchorId,anchor]));
+  if(anchors.size!==context.anchors.length)throw new Error("Issued HTML body index has duplicate IDs");
+  const seen=new Set<string>();
+  const edits=data.edits.map(edit=>{
+    const anchor=anchors.get(edit.anchorId);
+    if(!anchor||seen.has(edit.anchorId))throw new Error("HTML build body anchor is unknown or duplicated: "+edit.anchorId);
+    seen.add(edit.anchorId);
+    return {before:anchor.before,after:edit.after,start:anchor.start,end:anchor.end};
+  });
+  return JSON.stringify(TextArtifactEditsSchema.parse({kind:"text-edits",edits}));
 }
 
 /** Resolve model IDs against the same physical parent and preflight exact edits before any write. */

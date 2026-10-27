@@ -1,7 +1,7 @@
 import {z} from "zod";
-import {BuildCandidateAiResultSchema,HtmlBuildBodyContextSchema,TextArtifactEditsSchema,jsonSchemas} from "@evolution/contracts";
+import {BuildCandidateAiResultSchema,HtmlBuildBodyContextSchema,HtmlBuildBodyNodeEditsSchema,TextArtifactEditsSchema,jsonSchemas} from "@evolution/contracts";
 
-const Target=z.object({id:z.string().min(1),bodyAnchorPolicy:z.literal("issued-body-ranges-v1").optional(),htmlBuildBodyContext:HtmlBuildBodyContextSchema.optional()});
+const Target=z.object({id:z.string().min(1),bodyAnchorPolicy:z.enum(["issued-body-ranges-v1","issued-body-nodes-v1"]).optional(),htmlBuildBodyContext:HtmlBuildBodyContextSchema.optional()});
 const Scope=z.object({project:z.object({currentTargets:z.array(Target).optional()}).optional()});
 const Envelope=z.object({project:z.object({currentTargets:z.array(z.unknown()).optional()}).optional()});
 const PolicySelection=z.object({bodyAnchorPolicy:z.unknown().optional()});
@@ -18,6 +18,8 @@ export function serverAiBuildContract(payload:unknown){
   const byId=new Map(targets.map(t=>[t.id,t]));
   if(byId.size!==targets.length)throw new Error("Build scope contains duplicate Target IDs");
   for(const t of targets)if(t.bodyAnchorPolicy&&!t.htmlBuildBodyContext)throw new Error("Issued body ranges require the complete request-bound body index");
+  for(const t of targets)if(t.bodyAnchorPolicy==="issued-body-nodes-v1"
+    &&new Set(t.htmlBuildBodyContext!.anchors.map(a=>a.anchorId)).size!==t.htmlBuildBodyContext!.anchors.length)throw new Error("Issued HTML body nodes require unique IDs");
   const parser=BuildCandidateAiResultSchema.superRefine((value,context)=>{
     const seenTargets=new Set<string>();
     for(const [artifactIndex,artifact] of value.artifacts.entries()){
@@ -26,7 +28,18 @@ export function serverAiBuildContract(payload:unknown){
       if(!target||seenTargets.has(artifact.sourceArtifactId)){reject("Build Target is unknown or duplicated; copy the exact currentTargets.id");continue;}
       seenTargets.add(artifact.sourceArtifactId);
       if(!target.bodyAnchorPolicy)continue;
-      let raw:unknown;try{raw=JSON.parse(artifact.content);}catch{reject("Use complete text-edits JSON for the issued HTML body Target");continue;}
+      let raw:unknown;try{raw=JSON.parse(artifact.content);}catch{reject(target.bodyAnchorPolicy==="issued-body-nodes-v1"
+        ?"Use complete html-build-body-node-edits-v1 JSON with edits:[{anchorId,after}] for this Target":"Use complete text-edits JSON for the issued HTML body Target");continue;}
+      if(target.bodyAnchorPolicy==="issued-body-nodes-v1"){
+        const parsed=HtmlBuildBodyNodeEditsSchema.safeParse(raw);
+        if(!parsed.success){reject("Use html-build-body-node-edits-v1 with only edits:[{anchorId,after}]. Copy an exact issued ID; never return before, offsets or parent/hash fields.");continue;}
+        const allowed=new Set(target.htmlBuildBodyContext!.anchors.map(a=>a.anchorId)),seen=new Set<string>();
+        for(const [index,edit] of parsed.data.edits.entries()){
+          if(!allowed.has(edit.anchorId)||seen.has(edit.anchorId))reject(`Edit ${index+1}: unknown or duplicate issued anchorId ${edit.anchorId}. Copy each COMPLETE ID once from this Target's body index; do not reconstruct it or select another parent.`);
+          seen.add(edit.anchorId);
+        }
+        continue;
+      }
       const parsed=TextArtifactEditsSchema.safeParse(raw);
       if(!parsed.success){reject("Use text-edits with complete before/after and optional start/end, without extra parent/hash fields");continue;}
       const anchors=target.htmlBuildBodyContext!.anchors,seen=new Set<string>();
@@ -47,5 +60,7 @@ export function serverAiBuildContract(payload:unknown){
     }
     for(const t of targets)if(!seenTargets.has(t.id))context.addIssue({code:"custom",path:["artifacts"],message:"Missing build Target: "+t.id});
   });
-  return {schema:jsonSchemas.buildCandidate,parser,instruction:instruction+" For bodyAnchorPolicy issued-body-ranges-v1, use only COMPLETE raw before values from that Target's issued body anchors. OMIT start/end for a unique body node; the server supplies its verified physical range. For repeated real body nodes copy exact start AND end from the chosen issued anchor. Do not calculate offsets, use chunk offsets, alter parent/hash fields, or select attribute copies. This uses the existing single schema correction and does not grant another Candidate, repair, final paper or time window."};
+  const ranges=targets.some(t=>t.bodyAnchorPolicy==="issued-body-ranges-v1")?" For bodyAnchorPolicy issued-body-ranges-v1, use only COMPLETE raw before values from that Target's issued body anchors. OMIT start/end for a unique body node; the server supplies its verified physical range. For repeated real body nodes copy exact start AND end from the chosen issued anchor. Do not calculate offsets, use chunk offsets, alter parent/hash fields, or select attribute copies. This uses the existing single schema correction and does not grant another Candidate, repair, final paper or time window.":"";
+  const nodes=targets.some(t=>t.bodyAnchorPolicy==="issued-body-nodes-v1")?" For bodyAnchorPolicy issued-body-nodes-v1, artifact.content MUST be complete JSON {kind:'html-build-body-node-edits-v1',edits:[{anchorId:'EXACT issued anchorId',after:'complete raw replacement'}]}. Copy the COMPLETE anchorId from that Target's htmlBuildBodyContext.anchors, even when many nodes share before text. Never calculate positions, return before/parent/hash fields, shorten IDs or invent nodes. Raw after may retain existing HTML markup/new paragraph/list capability; all protection and construction checks still apply. The server supplies exact before/start/end from this request's SHA-bound parent. This uses the existing single schema correction and grants no additional Candidate, repair, paper or window.":"";
+  return {schema:jsonSchemas.buildCandidate,parser,instruction:instruction+ranges+nodes};
 }

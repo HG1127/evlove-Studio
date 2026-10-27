@@ -4,7 +4,7 @@ import {afterEach,describe,expect,it,vi} from "vitest";
 import {acceptedPackageFixture} from "@evolution/testkit";
 import {applyExactEdits,htmlRepairTextNodeContext} from "@evolution/core";
 import {serverHtmlBuildBodyContext} from "./server-html-build-context";
-import {buildServerCandidateTargetContext} from "./server-candidate-context";
+import {buildServerCandidateTargetContext,requireServerCandidateOutputModes} from "./server-candidate-context";
 const {known}=vi.hoisted(()=>({known:vi.fn(()=>true)}));
 vi.mock("@evolution/adapters/html-native-profile",()=>({isKnownHtmlNativeSubject:known}));
 const original='<html><head><script>const HEAD_SECRET_PROGRAM=true;</script><style>p{color:magenta}</style></head><body><article class="slide-card" id="slide-11"><div class="slide-body"><div class="content-block"><div class="text-lines"><p>非常适合</p><p>内部工具 &amp; 参数 🚀</p></div></div><p>最后一个正文节点</p></div></article><script>const BODY_SECRET_PROGRAM=true;</script></body></html>';
@@ -64,5 +64,19 @@ describe("complete authorized initial HTML build context",()=>{
     expect(selected.bodyAnchorPolicy).toBe("issued-body-ranges-v1");expect(selected.htmlBuildBodyContext?.parentSha256).toBe(createHash("sha256").update(original).digest("hex"));
     vi.stubEnv("EVOLUTION_AI_FULL_REPAIR_TEXT_MISSIONS","");
     expect((await buildServerCandidateTargetContext(project,candidate,async()=>original))[0]?.bodyAnchorPolicy).toBeUndefined();
+  });
+  it("selects node IDs only by explicit policy, preserving complete body scope and other formats",async()=>{
+    const {project,current:candidate}=acceptedPackageFixture(false);vi.stubEnv("EVOLUTION_AI_FULL_REPAIR_TEXT_MISSIONS",project.id);
+    Object.assign(project.sourceArtifacts[0]!,{extension:"html",mimeType:"text/html"});project.experimentPolicy.htmlBuildAnchorValidation="issued-body-nodes-v1";
+    const [context]=await buildServerCandidateTargetContext(project,candidate,async()=>original);
+    expect(context).toMatchObject({bodyAnchorPolicy:"issued-body-nodes-v1",mutationMode:"html-build-body-node-edits-v1",bodyIndexComplete:true});
+    expect(context?.htmlBuildBodyContext?.anchors).toHaveLength(htmlRepairTextNodeContext(original).length);
+    expect(JSON.stringify(context)).not.toMatch(/SECRET_PROGRAM|magenta/);
+    const anchor=context!.htmlBuildBodyContext!.anchors[0]!;
+    expect(()=>requireServerCandidateOutputModes([context!],[{sourceArtifactId:context!.id,content:JSON.stringify({kind:"html-build-body-node-edits-v1",edits:[{anchorId:anchor.anchorId,after:anchor.before}]})}])).not.toThrow();
+    expect(()=>requireServerCandidateOutputModes([context!],[{sourceArtifactId:context!.id,content:JSON.stringify({kind:"text-edits",edits:[{before:anchor.before,after:anchor.before}]})}])).toThrow();
+    const [exactPath]=await buildServerCandidateTargetContext(project,candidate,async()=>original,undefined,undefined,{completeHtmlBuildContext:false});
+    expect(exactPath?.bodyAnchorPolicy).toBeUndefined();expect(exactPath?.mutationMode).not.toBe("html-build-body-node-edits-v1");
+    vi.stubEnv("EVOLUTION_AI_FULL_REPAIR_TEXT_MISSIONS","");await expect(buildServerCandidateTargetContext(project,candidate,async()=>original)).rejects.toThrow(/authorized body context/);
   });
 });

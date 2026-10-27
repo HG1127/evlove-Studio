@@ -1,4 +1,5 @@
 import type { Candidate, EvolveProject, SourceArtifact } from "@evolution/contracts";
+import {HtmlBuildBodyNodeEditsSchema} from "@evolution/contracts";
 import { buildExactCandidateTextEdits, isTextArtifactExtension, isZipArtifact } from "@evolution/core";
 import { retrieveTextContext, trustedServerBaselineChampion } from "@evolution/harness";
 import {serverStructuredTargetContext} from "./server-structured-target-context";
@@ -61,6 +62,9 @@ export async function buildServerCandidateTargetContext(
     const source = textTarget ? await readCurrentText(artifact)
       :liveParent?.textContent??parent?.content??artifact.textContent??artifact.textExcerpt??"";
     const htmlBody=textTarget&&options?.completeHtmlBuildContext!==false?serverHtmlBuildBodyContext(project.id,artifact.extension,source):undefined;
+    const bodyNodes=project.experimentPolicy?.htmlBuildAnchorValidation==="issued-body-nodes-v1"
+      &&/^html?$/i.test(artifact.extension)&&options?.completeHtmlBuildContext!==false;
+    if(bodyNodes&&!htmlBody)throw new Error("HTML body node construction requires complete authorized body context");
     if(htmlBody){
       bodyIndexRemaining-=JSON.stringify(htmlBody.context).length;
       if(bodyIndexRemaining<0)throw new Error("Complete authorized HTML body indexes exceed the build context capacity; no chapters were truncated");
@@ -87,10 +91,11 @@ export async function buildServerCandidateTargetContext(
       content,
       originalChars: source.length,
       truncated: content.length < source.length,
-      mutationMode: htmlBody||textTarget&&content.length<source.length?"text-edits":"full",
+      mutationMode: bodyNodes?"html-build-body-node-edits-v1":htmlBody||textTarget&&content.length<source.length?"text-edits":"full",
       structuredContext:htmlBody?undefined:indexedContext??compactStructured(artifact,candidate),
       ...(htmlBody?{htmlBuildBodyContext:htmlBody.context,bodyIndexComplete:true,
         ...(project.experimentPolicy?.htmlBuildAnchorValidation==="issued-body-ranges-v1"?{bodyAnchorPolicy:"issued-body-ranges-v1" as const}:{}),
+        ...(bodyNodes?{bodyAnchorPolicy:"issued-body-nodes-v1" as const}:{}),
         contentRepresentation:"non-executable body markup projection",chunkOffsetsAreProjectionOnly:true}:{}),
     });
   }
@@ -102,6 +107,10 @@ export function requireServerCandidateOutputModes(contexts: Array<{id: string; n
     const output = artifacts.find((artifact) => artifact.sourceArtifactId === context.id);
     if (context.mutationMode === "text-edits" && output && !isServerTextEditBlueprint(output.content)) {
       throw new Error(`${context.name} 的 AI 上下文只是原文件片段，必须返回 text-edits；禁止用片段重写完整成果。`);
+    }
+    if(context.mutationMode==="html-build-body-node-edits-v1"&&output){
+      let content:unknown;try{content=JSON.parse(output.content);}catch{throw new Error(`${context.name} must return complete html-build-body-node-edits-v1 JSON`);}
+      HtmlBuildBodyNodeEditsSchema.parse(content);
     }
   }
 }

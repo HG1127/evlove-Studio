@@ -14,6 +14,12 @@ export const TextArtifactEditsSchema = z.object({
 }).strict();
 export type TextArtifactEdit = z.infer<typeof TextArtifactEditSchema>;
 
+/** Raw HTML body replacements selected by request-issued IDs; the server owns before and positions. */
+export const HtmlBuildBodyNodeEditsSchema=z.object({
+  kind:z.literal("html-build-body-node-edits-v1"),
+  edits:z.array(z.object({anchorId:z.string().min(1).max(100),after:z.string()}).strict()).min(1).max(256),
+}).strict();
+
 /** Complete, non-executable body anchors; offsets refer to the same physical full HTML parent. */
 export const HtmlBodyEditAnchorSchema=z.object({
   anchorId:z.string().min(1).max(100),element:z.string().min(1).max(100),section:z.string().max(200),

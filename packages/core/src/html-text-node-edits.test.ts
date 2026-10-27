@@ -1,6 +1,6 @@
 import {describe,expect,it} from "vitest";
 import {applyExactEdits} from "./exact-edits";
-import {bindHtmlBuildTextEditAnchors,htmlBuildBodyEditAnchors,htmlRepairTextNodeContext,resolveBoundHtmlBodyNodeEdits,resolveHtmlTextNodeEdits} from "./html-text-node-edits";
+import {bindHtmlBuildBodyNodeEdits,bindHtmlBuildTextEditAnchors,htmlBuildBodyEditAnchors,htmlRepairTextNodeContext,resolveBoundHtmlBodyNodeEdits,resolveHtmlTextNodeEdits} from "./html-text-node-edits";
 
 const sha="a".repeat(64);
 const html='<html><head><script>HEAD_PRIVATE</script></head><body><article id="c01" style="STYLE_PRIVATE" onclick="EVENT_PRIVATE">'
@@ -104,5 +104,36 @@ describe("issued HTML build text positions",()=>{
     expect(()=>bindHtmlBuildTextEditAnchors(wire,{...context(),unissued:true})).toThrow();
     expect(()=>bindHtmlBuildTextEditAnchors('{"kind":"text-edits","edits":[]}',context())).toThrow();
     expect(()=>bindHtmlBuildTextEditAnchors("bad json",context())).toThrow();
+  });
+});
+
+describe("issued build node IDs with unchanged raw replacement capability",()=>{
+  const context={schemaVersion:"html-build-body-context-v1",parentSha256:sha,anchors:htmlBuildBodyEditAnchors(html,sha),components:[]};
+  const wire=(edits:unknown[])=>JSON.stringify({kind:"html-build-body-node-edits-v1",edits});
+  it("selects one repeated body node and retains all untouched physical bytes",()=>{
+    const node=context.anchors.filter(a=>a.before==="相同说明")[1]!,after="相同说明</p><p><strong>新增参数</strong>：A &amp; B 🚀";
+    const bound=bindHtmlBuildBodyNodeEdits(wire([{anchorId:node.anchorId,after}]),context);
+    expect(JSON.parse(bound)).toEqual({kind:"text-edits",edits:[{before:node.before,after,start:node.start,end:node.end}]});
+    expect(applyExactEdits(html,bound,{strict:true})).toBe(html.slice(0,node.start)+after+html.slice(node.end));
+    expect(applyExactEdits(html,bound,{strict:true})).toContain('<p>相同说明</p><p>相同说明</p><p><strong>新增参数</strong>');
+  });
+  it("preserves entity bytes, Unicode and intentional unchanged Target selections",()=>{
+    const node=context.anchors.find(a=>a.before.includes("&amp;"))!;
+    const after=node.before+" <b>保存后核对 🚀</b>";
+    expect(applyExactEdits(html,bindHtmlBuildBodyNodeEdits(wire([{anchorId:node.anchorId,after}]),context),{strict:true})).toContain(after);
+    expect(applyExactEdits(html,bindHtmlBuildBodyNodeEdits(wire([{anchorId:node.anchorId,after:node.before}]),context),{strict:true})).toBe(html);
+  });
+  it("rejects invented, shortened, stale, duplicate and cross-parent node identities",()=>{
+    const node=context.anchors[0]!,edit={anchorId:node.anchorId,after:"新的说明"};
+    for(const anchorId of ["invented",node.anchorId.split("-")[0]!,node.anchorId.replace(sha.slice(0,16),"b".repeat(16))])expect(()=>bindHtmlBuildBodyNodeEdits(wire([{...edit,anchorId}]),context)).toThrow(/unknown/);
+    expect(()=>bindHtmlBuildBodyNodeEdits(wire([edit,edit]),context)).toThrow(/duplicated/);
+    expect(()=>bindHtmlBuildBodyNodeEdits(wire([edit]),{...context,parentSha256:"b".repeat(64)})).toThrow();
+    expect(()=>bindHtmlBuildBodyNodeEdits(wire([edit]),{...context,anchors:[...context.anchors,context.anchors[0]]})).toThrow(/duplicate/);
+  });
+  it("refuses model-owned before/position/parent fields and leaves legacy protocols distinct",()=>{
+    const edit={anchorId:context.anchors[0]!.anchorId,after:"新的说明"};
+    for(const extra of [{before:"覆盖"},{start:0},{end:1},{parentSha256:sha}])expect(()=>bindHtmlBuildBodyNodeEdits(wire([{...edit,...extra}]),context)).toThrow();
+    expect(()=>bindHtmlBuildBodyNodeEdits(JSON.stringify({kind:"html-build-body-node-edits-v1",parentSha256:sha,edits:[edit]}),context)).toThrow();
+    expect(()=>bindHtmlBuildBodyNodeEdits(JSON.stringify({kind:"text-edits",edits:[{before:"相同说明",after:"新的说明"}]}),context)).toThrow();
   });
 });
