@@ -1,5 +1,5 @@
 import {parse,type DefaultTreeAdapterTypes} from "parse5";
-import {HtmlBodyEditAnchorSchema,HtmlBodyNodeEditsSchema,HtmlTextNodeEditsSchema} from "@evolution/contracts";
+import {HtmlBodyEditAnchorSchema,HtmlBodyNodeEditsSchema,HtmlBuildBodyContextSchema,HtmlTextNodeEditsSchema,TextArtifactEditsSchema} from "@evolution/contracts";
 import {applyExactEdits} from "./exact-edits";
 
 interface BodyTextNode {
@@ -54,6 +54,23 @@ export function htmlBuildBodyEditAnchors(html:string,parentSha256:string){
   const parsed=HtmlBodyEditAnchorSchema.array().min(1).max(4096).parse(nodes);
   if(JSON.stringify(parsed).length>320_000)throw new Error("Complete HTML body edit index exceeds the build context capacity; no chapters were truncated");
   return parsed;
+}
+
+/** Fill omitted positions only from a unique complete text node in the issued parent index. */
+export function bindHtmlBuildTextEditAnchors(payload:string,issuedContext:unknown){
+  const context=HtmlBuildBodyContextSchema.parse(issuedContext);
+  const data=TextArtifactEditsSchema.parse(JSON.parse(payload));
+  const byText=new Map<string,typeof context.anchors>();
+  for(const anchor of context.anchors){
+    const matches=byText.get(anchor.before)??[];matches.push(anchor);byText.set(anchor.before,matches);
+  }
+  return JSON.stringify({...data,edits:data.edits.map(edit=>{
+    // Explicit positions and markup/substrings retain the existing strict edit contract.
+    // Repeated real body nodes must be selected explicitly; metadata copies are not nodes.
+    if(edit.start!==undefined||edit.end!==undefined)return edit;
+    const matches=byText.get(edit.before);
+    return matches?.length===1?{...edit,start:matches[0]!.start,end:matches[0]!.end}:edit;
+  })});
 }
 
 /** Resolve model IDs against the same physical parent and preflight exact edits before any write. */

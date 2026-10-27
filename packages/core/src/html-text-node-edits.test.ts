@@ -1,6 +1,6 @@
 import {describe,expect,it} from "vitest";
 import {applyExactEdits} from "./exact-edits";
-import {htmlBuildBodyEditAnchors,htmlRepairTextNodeContext,resolveBoundHtmlBodyNodeEdits,resolveHtmlTextNodeEdits} from "./html-text-node-edits";
+import {bindHtmlBuildTextEditAnchors,htmlBuildBodyEditAnchors,htmlRepairTextNodeContext,resolveBoundHtmlBodyNodeEdits,resolveHtmlTextNodeEdits} from "./html-text-node-edits";
 
 const sha="a".repeat(64);
 const html='<html><head><script>HEAD_PRIVATE</script></head><body><article id="c01" style="STYLE_PRIVATE" onclick="EVENT_PRIVATE">'
@@ -66,5 +66,43 @@ describe("frozen HTML body text edit anchors",()=>{
     expect(()=>htmlRepairTextNodeContext('<p>fragment</p>')).toThrow(/boundaries/);
     expect(()=>htmlRepairTextNodeContext('<html><body><p>unclosed')).toThrow(/boundaries/);
     expect(()=>htmlRepairTextNodeContext('<html><body>'+'<p>正文</p>'.repeat(4097)+'</body></html>')).toThrow(/capacity/);
+  });
+});
+
+describe("issued HTML build text positions",()=>{
+  const context=(source=html)=>({schemaVersion:"html-build-body-context-v1",parentSha256:sha,anchors:htmlBuildBodyEditAnchors(source,sha),components:[]});
+  const edits=(before:string,after:string,positions={})=>JSON.stringify({kind:"text-edits",edits:[{before,after,...positions}]});
+  it("binds only exact complete raw nodes, including entity and Unicode source positions",()=>{
+    const source=html.replace('<article id="c01"','<article data-search="值为 A &amp; B。" id="c01"');
+    const result=applyExactEdits(source,bindHtmlBuildTextEditAnchors(edits("值为 A &amp; B。","值为 A &amp; B。🚀"),context(source)),{strict:true});
+    expect(result).toBe(source.replace('<p>值为 A &amp; B。</p>','<p>值为 A &amp; B。🚀</p>'));
+  });
+  it("does not guess among repeated real nodes, but preserves an explicit selection",()=>{
+    const x=context(),repeated=x.anchors.filter(a=>a.before==="相同说明"),second=repeated[1]!;
+    expect(()=>applyExactEdits(html,bindHtmlBuildTextEditAnchors(edits("相同说明","新的说明"),x),{strict:true})).toThrow(/不唯一/);
+    const result=applyExactEdits(html,bindHtmlBuildTextEditAnchors(edits("相同说明","新的说明",{start:second.start,end:second.end}),x),{strict:true});
+    expect(result).toContain('<p>相同说明</p><p>新的说明</p>');
+  });
+  it("does not overwrite supplied or partial positions with an inferred location",()=>{
+    for(const positions of [{start:0,end:4},{start:0},{end:4}]){
+      const wire=edits("相同说明","新的说明",positions);
+      expect(JSON.parse(bindHtmlBuildTextEditAnchors(wire,context()))).toEqual(JSON.parse(wire));
+      expect(()=>applyExactEdits(html,wire,{strict:true})).toThrow();
+    }
+  });
+  it("leaves markup edits and non-issued text under the existing strict matching rules",()=>{
+    for(const before of ['<p>完整配置收尾</p>',"HEAD_PRIVATE","不存在的正文","完整配置"]){
+      const wire=edits(before,"更具体的说明");
+      expect(JSON.parse(bindHtmlBuildTextEditAnchors(wire,context()))).toEqual(JSON.parse(wire));
+    }
+    const wire=edits('<p>完整配置收尾</p>','<p>完整配置收尾</p><p>新增说明</p>');
+    expect(applyExactEdits(html,bindHtmlBuildTextEditAnchors(wire,context()),{strict:true})).toContain('<p>新增说明</p>');
+  });
+  it("rejects malformed or cross-parent issued indexes and invalid model edit payloads",()=>{
+    const wire=edits("完整配置收尾","具体配置收尾");
+    expect(()=>bindHtmlBuildTextEditAnchors(wire,{...context(),parentSha256:"b".repeat(64)})).toThrow();
+    expect(()=>bindHtmlBuildTextEditAnchors(wire,{...context(),unissued:true})).toThrow();
+    expect(()=>bindHtmlBuildTextEditAnchors('{"kind":"text-edits","edits":[]}',context())).toThrow();
+    expect(()=>bindHtmlBuildTextEditAnchors("bad json",context())).toThrow();
   });
 });

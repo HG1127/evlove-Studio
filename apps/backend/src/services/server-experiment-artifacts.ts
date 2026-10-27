@@ -2,6 +2,7 @@ import JSZip from "jszip";
 import {z} from "zod";
 import {
   CandidateSchema,
+  type BuildCandidateAiResult,
   type Candidate,
   type CandidateArtifactSnapshot,
   type EvolveProject,
@@ -9,7 +10,7 @@ import {
   type SourceArtifact,
 } from "@evolution/contracts";
 import { trustedServerBaselineChampion } from "@evolution/harness";
-import { applyExactEdits, isTextArtifactExtension, isZipArtifact } from "@evolution/core";
+import { applyExactEdits, bindHtmlBuildTextEditAnchors, isTextArtifactExtension, isZipArtifact } from "@evolution/core";
 import { buildServerCandidateTargetContext, buildServerExactCandidateArtifacts, isServerTextEditBlueprint, requireServerCandidateOutputModes } from "./server-candidate-context";
 import { runServerAi } from "./ai-gateway";
 import { checkServerHtmlCandidateProtection } from "./server-html-candidate-protection";
@@ -485,10 +486,14 @@ export async function buildServerExperimentCandidate(project: EvolveProject, can
     htmlBodyContextInstruction:SERVER_HTML_BUILD_BODY_INSTRUCTION,
     outputInstruction: "Return exactly one artifact for every currentTargets item. For a text target with mutationMode text-edits, return content as JSON {kind:'text-edits',edits:[{before,after,start?,end?}]}. Copy before verbatim from the provided current source chunks, without chunk markers or ellipses; offsets are zero-based and end is exclusive. The server applies those edits to the complete current file and preserves every untouched byte. Never regenerate a whole file from truncated context. For an unchanged text Target, return one exact text-edit with identical before/after using a unique verbatim anchor; preserve that file rather than inventing another change. Only when a text target has mutationMode full, return its COMPLETE evolved standalone file (including code-file/CSS/Python/TypeScript/HTML/MD/JSON/JSONL/YAML/XML/SVG); never return a ZIP overlay for a single source file. For ZIP codebase/package targets only return content as JSON {kind:'codebase',overlay:true,files:[{path,content}],deletions:[path]} with actual changed/deleted files only; never return prose or fake test results. For a DOCX target, return content as JSON {kind:'document',subtype:'docx',parts:[{path:'word/document.xml',textRuns:[{index:0,text:'replacement'}]}]}; for a PPTX target use JSON {kind:'presentation',slides:[{number:1,textRuns:[{index:0,text:'replacement'}]}]}; use ONLY real part paths, slide numbers and zero-based run indexes shown in structuredContext. Include only the locations actually changed; preserve all other runs, slides, layout and binary assets via original-package overlay. For an XLSX/XLS/ODS/CSV/TSV target, return JSON {kind:'spreadsheet',sheets:[{name:'Existing Sheet',cells:[{address:'A1',value:'replacement'}]}]}; use real sheet names and existing A1 positions shown in structuredContext, update only desired cells and never reconstruct an entire partial sheet from preview rows. For XLSX formulas include formula:'A1*2' only when required; do not fabricate computed values or verification. CSV/TSV cannot preserve executable formulas. Each actual change must differ from the current accepted Champion, and any unmentioned content remains unchanged. If a DOCX/PPTX/spreadsheet/ZIP Target is intentionally UNCHANGED in this Candidate, return content JSON {kind:'keep-parent',sourceArtifactId:'EXACT currentTargets.id'} for that Target only. The Server then verifies and freezes its existing Source/Champion bytes; do not pretend a no-op was a successful mutation. A Candidate with ALL Targets unchanged is rejected. Do not output PDF/image/audio/video binaries as JSON or text; those targets need an external renderer and remain blocked. sourceArtifactId must exactly match currentTargets.id.",
   };
+  const bindIssuedBodyAnchors=(artifacts:BuildCandidateAiResult["artifacts"])=>artifacts.map(artifact=>{
+    const context=contexts.find(item=>item.id===artifact.sourceArtifactId)?.htmlBuildBodyContext;
+    return context?{...artifact,content:bindHtmlBuildTextEditAnchors(artifact.content,context)}:artifact;
+  });
   const response = await runServerAi("build-candidate", payload);
   requireServerCandidateOutputModes(contexts, response.artifacts);
   try{
-    return await materializeServerCandidateArtifacts(project,candidate,response.artifacts,response.summary,undefined,expectedParents);
+    return await materializeServerCandidateArtifacts(project,candidate,bindIssuedBodyAnchors(response.artifacts),response.summary,undefined,expectedParents);
   }catch(error){
     const correction=serverCandidateConstructionCorrection(error,response.artifacts);
     if(!correction)throw error;
@@ -496,6 +501,6 @@ export async function buildServerExperimentCandidate(project: EvolveProject, can
     // correction against the same supplied source, never a replacement frozen file.
     const corrected=await runServerAi("build-candidate",{...payload,constructionCorrection:correction});
     requireServerCandidateOutputModes(contexts,corrected.artifacts);
-    return materializeServerCandidateArtifacts(project,candidate,corrected.artifacts,corrected.summary,undefined,expectedParents);
+    return materializeServerCandidateArtifacts(project,candidate,bindIssuedBodyAnchors(corrected.artifacts),corrected.summary,undefined,expectedParents);
   }
 }
