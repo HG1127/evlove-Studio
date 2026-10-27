@@ -57,6 +57,73 @@ describe("bounded Visible feedback repair",()=>{
     x.ports.judge=async()=>judge(89);
     return x;
   }
+  function mixedFixture(){
+    const x=relativeFixture(),p=x.p;
+    p.experimentPolicy.visibleFailureRepair="experiment-visible-repair-v3";p.experimentPolicy.winnerGoalScope="all-user-goals-v1";
+    p.acceptanceRubric[0]!.weight=40;
+    for(const id of ["UNDERSTAND","DETAIL"]){
+      p.acceptanceRubric.push({...p.acceptanceRubric[0]!,id,title:id,weight:30});
+      p.evalSuite[0]!.criterionIds.push(id);p.hiddenEvalSuite[0]!.criterionIds.push(id);p.finalHoldout!.suite[0]!.criterionIds.push(id);
+      p.baselineRun.result!.criterionScores!.push({...p.baselineRun.result!.criterionScores![0]!,criterionId:id});
+    }
+    p.finalHoldout!.paperHash=finalHoldoutPaperHash(p.finalHoldout!.suite);p.finalHoldout!.contractFingerprint=finalHoldoutContractFingerprint(p);
+    x.current.finalHoldoutPaperHash=p.finalHoldout!.paperHash;
+    x.ports.judge=async()=>({...judge(70),criteria:[...judge(70).criteria,{...judge(89).criteria[0]!,criterionId:"UNDERSTAND"},{...judge(88).criteria[0]!,criterionId:"DETAIL"}]});
+    return x;
+  }
+  it.each([70,89])("retains truthful single-kind v3 feedback at score %i",async score=>{
+    const x=relativeFixture();x.p.experimentPolicy.visibleFailureRepair="experiment-visible-repair-v3";x.p.experimentPolicy.winnerGoalScope="all-user-goals-v1";
+    x.p.finalHoldout!.contractFingerprint=finalHoldoutContractFingerprint(x.p);x.ports.judge=async()=>judge(score);
+    const out=await runServerExperiment(x.p,x.ports),ports=execution({...x,project:out.project,out}),kind=score<80?"absolute-criterion-failure":"relative-target-regression";
+    expect(out.project.visibleRepairAttempts?.[0]).toMatchObject({version:"experiment-visible-repair-v3",feedbackKind:kind,failedCriterionIds:["CONTENT"]});
+    ports.repairCandidate.mockImplementation(async()=>{
+      const claimed=ports.persistProject.mock.calls[0]![0];
+      expect(visibleRepairFeedbackContext(claimed,x.current,["CONTENT"],1)).toEqual({kind,comparisons:score<80?[]:[{criterionId:"CONTENT",minScore:80,baselineScore:90,currentScore:89,absoluteMinimumPassed:true}]});
+      return {...x.prior,finalHoldoutPaperHash:out.project.finalHoldout!.paperHash};
+    });
+    expect((await runServerVisibleRepair(out.project,ports)).repaired).toBe(true);expect(ports.repairCandidate).toHaveBeenCalledOnce();
+  });
+  it.each([89,95])("repairs the complete mixed scope once and remeasures the same frozen child (%i)",async childScore=>{
+    const x=mixedFixture(),out=await runServerExperiment(x.p,x.ports),ports=execution({...x,project:out.project,out});
+    expect(out.readyForVisibleRepair).toBe(true);
+    expect(out.project.visibleRepairAttempts?.[0]).toMatchObject({version:"experiment-visible-repair-v3",feedbackKind:"combined-criterion-failure",failedCriterionIds:["CONTENT","UNDERSTAND","DETAIL"],attempt:1});
+    const oldScores=structuredClone(out.project.experimentRun.candidateResults[0]!.evaluation.criterionScores);
+    ports.repairCandidate.mockImplementation(async()=>{
+      const claimed=ports.persistProject.mock.calls[0]![0];
+      expect(visibleRepairFeedbackContext(claimed,x.current,["CONTENT","UNDERSTAND","DETAIL"],1)).toEqual({kind:"combined-criterion-failure",comparisons:[
+        {criterionId:"UNDERSTAND",minScore:80,baselineScore:90,currentScore:89,absoluteMinimumPassed:true},
+        {criterionId:"DETAIL",minScore:80,baselineScore:90,currentScore:88,absoluteMinimumPassed:true}]});
+      const impossibleCost={...claimed,visibleRepairAttempts:claimed.visibleRepairAttempts!.map(r=>({...r,estimatedCost:claimed.campaign.estimatedCost+1}))};
+      expect(()=>visibleRepairFeedbackContext(impossibleCost,x.current,["CONTENT","UNDERSTAND","DETAIL"],1)).toThrow("claim cost");
+      expect(claimed.experimentRun.candidateResults[0]!.evaluation.criterionScores).toEqual(oldScores);
+      expect(EvolveProjectSchema.parse(claimed).visibleRepairAttempts?.[0]).toEqual(claimed.visibleRepairAttempts?.[0]);
+      return {...x.prior,finalHoldoutPaperHash:out.project.finalHoldout!.paperHash};
+    });
+    const repaired=await runServerVisibleRepair(out.project,ports);
+    expect(repaired.repaired).toBe(true);expect(ports.persistProject).toHaveBeenCalledOnce();expect(ports.archiveRepairEvidence).toHaveBeenCalledOnce();expect(ports.repairCandidate).toHaveBeenCalledOnce();
+    expect(repaired.project.artifactAcceptance.attempts).toBe(1);expect(repaired.project.finalHoldout).toEqual(x.p.finalHoldout);
+    const rebuild=vi.fn(async()=>{throw Error("do not regenerate the frozen repair");});
+    const measured=await runServerExperiment(repaired.project,{...x.ports,buildCandidate:rebuild,judge:async()=>({...judge(95),criteria:[...judge(95).criteria,
+      {...judge(childScore).criteria[0]!,criterionId:"UNDERSTAND"},{...judge(95).criteria[0]!,criterionId:"DETAIL"}]})});
+    expect(rebuild).not.toHaveBeenCalled();expect(measured.readyForHoldout).toBe(childScore===95);expect(measured.readyForVisibleRepair).not.toBe(true);
+    expect(measured.project.artifactAcceptance.attempts).toBe(1);expect(measured.project.outputArtifacts).toHaveLength(0);expect(measured.project.finalHoldout).toEqual(x.p.finalHoldout);
+  });
+  it.each(["scope","policy","deadline"])("blocks a changed mixed %s before provider I/O",async kind=>{
+    const x=mixedFixture(),out=await runServerExperiment(x.p,x.ports),ports=execution({...x,project:out.project,out});
+    if(kind==="scope")out.project.visibleRepairAttempts![0]!.failedCriterionIds=["CONTENT"];
+    if(kind==="policy")out.project.experimentPolicy.visibleFailureRepair="experiment-visible-repair-v2";
+    if(kind==="deadline")out.project.campaign.startedAt=new Date(Date.now()-31*60000).toISOString();
+    expect((await runServerVisibleRepair(out.project,ports)).repaired).toBe(false);expect(ports.repairCandidate).not.toHaveBeenCalled();expect(ports.persistProject).not.toHaveBeenCalled();
+  });
+  it.each(["partial","wrong-case","duplicate"])("never adds a mixed regression from %s paired evidence",async kind=>{
+    const x=mixedFixture(),score=x.p.baselineRun.result!.criterionScores!.find(c=>c.criterionId==="UNDERSTAND")!;
+    if(kind==="partial")score.verificationStatus="partial";
+    if(kind==="wrong-case")score.testCaseIds=["OTHER"];
+    if(kind==="duplicate")x.p.baselineRun.result!.criterionScores!.push({...score});
+    const out=await runServerExperiment(x.p,x.ports);
+    expect(out.project.visibleRepairAttempts?.[0]?.failedCriterionIds??[]).not.toContain("UNDERSTAND");
+    expect(out.project.visibleRepairAttempts?.[0]?.failedCriterionIds??[]).not.toContain("DETAIL");
+  });
   it("reserves v2 repair for a verified regressed target whose absolute minimum still passes",async()=>{
     const x=relativeFixture(),out=await runServerExperiment(x.p,x.ports);
     expect(out.experiment.candidateResults[0]!.evaluation.criterionScores![0]).toMatchObject({score:89,pass:true,verificationStatus:"verified"});

@@ -24,11 +24,35 @@ function relativeRegressions(project:EvolveProject,candidate:Candidate,result:Ex
   });
 }
 
+/** Mixed feedback needs complete paired Original user goals; never infer a regression from missing evidence. */
+function pairedGoalRegressions(project:EvolveProject,result:ExperimentRun["candidateResults"][number]){
+  if(project.experimentPolicy.winnerGoalScope!==USER_GOAL_SCOPE_POLICY||!project.baselineRun.result)return [];
+  const progress=userGoalProgress(project,result.evaluation,project.baselineRun.result);
+  return progress.ready?project.acceptanceRubric.filter(c=>progress.regressedCriterionIds.includes(c.id)):[];
+}
+
 /** Preserve absolute PASS verdicts while explaining a separately proven target regression to mutation AI. */
 export function visibleRepairFeedbackContext(project:EvolveProject,candidate:Candidate,criterionIds:string[],attempt:number){
   const records=project.visibleRepairAttempts?.filter(r=>r.parentCandidateId===candidate.id&&r.attempt===attempt&&r.status==="running")??[];
-  if(records.length!==1&&records.some(r=>r.version==="experiment-visible-repair-v2"&&r.feedbackKind==="relative-target-regression"))throw Error("Ambiguous relative repair claim");
+  if(records.length!==1&&records.some(r=>r.version==="experiment-visible-repair-v3"||r.version==="experiment-visible-repair-v2"&&r.feedbackKind==="relative-target-regression"))throw Error("Ambiguous relative repair claim");
   const record=records.length===1?records[0]:undefined;
+  if(record?.version==="experiment-visible-repair-v3"){
+    if((record.estimatedCost??0)>project.campaign.estimatedCost)throw Error("Mixed repair claim cost exceeds the recorded campaign cost");
+    const beforeClaim={...project,visibleRepairAttempts:project.visibleRepairAttempts?.filter(r=>r.id!==record.id),
+      artifactAcceptance:{...project.artifactAcceptance,attempts:record.attempt-1},
+      campaign:{...project.campaign,estimatedCost:project.campaign.estimatedCost-(record.estimatedCost??0)}};
+    const target=visibleRepairTarget(beforeClaim);
+    if(project.experimentPolicy.visibleFailureRepair!=="experiment-visible-repair-v3"||!target||target.candidate.id!==candidate.id
+      ||record.round!==project.campaign.currentRound+1||project.artifactAcceptance.attempts!==attempt||record.attempt!==attempt
+      ||target.feedbackKind!==record.feedbackKind||JSON.stringify(record.failedCriterionIds)!==JSON.stringify(criterionIds)
+      ||JSON.stringify(target.failedCriteria.map(c=>c.id))!==JSON.stringify(criterionIds))throw Error("Mixed repair requires the unchanged complete verified Visible feedback scope");
+    const scores=target.result.evaluation.criterionScores??[];
+    const regressed=pairedGoalRegressions(project,target.result).filter(c=>criterionIds.includes(c.id)
+      &&scores.some(s=>s.criterionId===c.id&&s.pass&&s.score>=c.minScore));
+    return {kind:record.feedbackKind,comparisons:regressed.map(c=>({criterionId:c.id,minScore:c.minScore,
+      baselineScore:project.baselineRun.result!.criterionScores!.find(s=>s.criterionId===c.id)!.score,
+      currentScore:scores.find(s=>s.criterionId===c.id)!.score,absoluteMinimumPassed:true}))};
+  }
   if(record?.version!=="experiment-visible-repair-v2"||record.feedbackKind!=="relative-target-regression")return {kind:"absolute-criterion-failure" as const,comparisons:[]};
   const result=project.experimentRun.candidateResults.find(r=>r.candidateId===candidate.id);
   const qualified=result?relativeRegressions(project,candidate,result):[];
@@ -45,7 +69,7 @@ export function visibleRepairFeedbackContext(project:EvolveProject,candidate:Can
 export function visibleRepairTarget(project:EvolveProject){
   const run=project.experimentRun,round=project.campaign.currentRound+1,paper=project.finalHoldout;
   const policy=project.experimentPolicy.visibleFailureRepair;
-  if((policy!=="experiment-visible-repair-v1"&&policy!=="experiment-visible-repair-v2")
+  if((policy!=="experiment-visible-repair-v1"&&policy!=="experiment-visible-repair-v2"&&policy!=="experiment-visible-repair-v3")
     ||project.targetConnection.adapter!=="artifact"||project.campaign.status!=="running"
     ||project.campaign.checkpoint?.round!==round||project.campaign.checkpoint.completedPhase!=="experiment"
     ||run.status!=="completed"||run.winnerId||run.pendingEvidenceCandidateId
@@ -77,6 +101,14 @@ export function visibleRepairTarget(project:EvolveProject){
       return score?.verificationStatus==="verified"&&(!score.pass||score.score<criterion.minScore)&&score.testCaseIds.length>0
         &&score.testCaseIds.every(id=>suite.some(test=>test.id===id&&test.criterionIds.includes(criterion.id)));
     });
+    if(policy==="experiment-visible-repair-v3"){
+      const regressed=pairedGoalRegressions(project,result),absoluteIds=new Set(failedCriteria.map(c=>c.id));
+      const additional=regressed.filter(c=>!absoluteIds.has(c.id));
+      if(failedCriteria.length&&additional.length)return {candidate,failedCriteria:project.acceptanceRubric.filter(c=>absoluteIds.has(c.id)||additional.some(r=>r.id===c.id)),result,feedbackKind:"combined-criterion-failure" as const};
+      if(failedCriteria.length)return {candidate,failedCriteria,result,feedbackKind:"absolute-criterion-failure" as const};
+      if(regressed.length)return {candidate,failedCriteria:regressed,result,feedbackKind:"relative-target-regression" as const};
+      continue;
+    }
     if(failedCriteria.length)return {candidate,failedCriteria,result,feedbackKind:"absolute-criterion-failure" as const};
     if(policy!=="experiment-visible-repair-v2")continue;
     const regressed=relativeRegressions(project,candidate,result);

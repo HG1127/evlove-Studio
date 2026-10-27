@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AcceptanceCriterionSchema, CandidateSchema,CandidateDesignRationaleSchema, SourceArtifactSchema,TestCaseSchema,VisibleRepairAttemptSchema, type CandidateArtifactSnapshot, type EvolveProject } from "@evolution/contracts";
 import { repairServerArtifactCandidate } from "./server-artifact-acceptance";
 import { serverArtifactSha256, verifyServerCandidateFrozenArtifact } from "./server-experiment-artifacts";
-import {evidenceFingerprint} from "@evolution/core";
+import {candidateWinnerDecision,evidenceFingerprint,finalHoldoutContractFingerprint,finalHoldoutPaperHash} from "@evolution/core";
 import {acceptedPackageFixture} from "@evolution/testkit";
 import {serverAiRepairContract} from "./server-ai-repair-contract";
 
@@ -57,6 +57,40 @@ describe("server targeted Artifact repair", () => {
     args.failedCriteria=[criterion];vi.stubEnv("EVOLUTION_AI_FULL_REPAIR_TEXT_MISSIONS",args.project.id);
     return args;
   }
+  it("sends mixed absolute and paired-regression feedback with truthful per-criterion semantics",async()=>{
+    const args=await relativeFixture(),p=args.project,at=new Date().toISOString();
+    const relative={...p.acceptanceRubric[0]!,id:"UNDERSTAND",title:"易懂程度",weight:50};
+    p.acceptanceRubric[0]!.weight=50;p.acceptanceRubric.push(relative);p.evalSuite[0]!.criterionIds.push(relative.id);
+    p.experimentPolicy={...p.experimentPolicy,visibleFailureRepair:"experiment-visible-repair-v3",winnerGoalScope:"all-user-goals-v1"};
+    const first=p.baselineRun.result!.criterionScores![0]!;
+    p.baselineRun={...p.baselineRun,status:"completed",result:{...p.baselineRun.result!,criterionScores:[first,{...first,criterionId:relative.id}]}};
+    p.campaign={...p.campaign,status:"running",startedAt:at,currentRound:0,noImprovementRounds:0,estimatedCost:0,
+      checkpoint:{round:1,completedPhase:"experiment",at},stopCriteria:{...p.campaign.stopCriteria,maxRounds:1,maxEstimatedCost:100,maxWallMinutes:30}};
+    p.artifactAcceptance={...p.artifactAcceptance,status:"repairing",hardGatePass:false};p.validationRun={...p.validationRun,independentFinal:undefined};
+    const suite=[TestCaseSchema.parse({...p.evalSuite[0]!,id:"FINAL",hidden:true,input:"independent final kept private"})];
+    p.finalHoldout={round:1,suite,paperHash:finalHoldoutPaperHash(suite),contractFingerprint:finalHoldoutContractFingerprint(p),createdAt:at};args.candidate.finalHoldoutPaperHash=p.finalHoldout.paperHash;
+    const evaluation={...p.baselineRun.result!,safety:"PASS" as const,criterionScores:[{...first,score:70,pass:false},{...first,criterionId:relative.id,score:89,pass:true}]};
+    p.experimentRun={id:"mixed-visible",status:"completed",comparisonBaseline:p.baselineRun,comparisonSuite:p.evalSuite,candidateResults:[{
+      candidateId:args.candidate.id,artifactSnapshots:args.candidate.artifactSnapshots,experimentStage:"finalist",evaluation,
+      winnerDecision:candidateWinnerDecision(p,evaluation,p.baselineRun.result!,args.candidate),
+      runs:[{testCaseId:"V1",output:"measured current body",latencyMs:1,cost:0,trace:[],verificationStatus:"verified"}]}]};
+    const legacy=p.visibleRepairAttempts![0]!;
+    p.visibleRepairAttempts=[VisibleRepairAttemptSchema.parse({...legacy,version:"experiment-visible-repair-v3",feedbackKind:"combined-criterion-failure",failedCriterionIds:[failed.id,relative.id],finalPaperHash:p.finalHoldout.paperHash})];
+    args.failedCriteria=p.acceptanceRubric;
+    ai.mockImplementation(async(_op,payload)=>{
+      expect(payload.feedbackContext).toMatchObject({kind:"combined-criterion-failure",comparisons:[{criterionId:relative.id,baselineScore:90,currentScore:89,absoluteMinimumPassed:true}]});
+      expect(payload.failedCriteria).toEqual([expect.objectContaining({criterionId:failed.id,currentScore:70,feedbackKind:"absolute-criterion-failure",absoluteMinimumPassed:false}),
+        expect.objectContaining({criterionId:relative.id,currentScore:89,baselineScore:90,feedbackKind:"relative-target-regression",absoluteMinimumPassed:true})]);
+      expect(payload.feedbackInstruction).toContain("same repair");expect(JSON.stringify(payload)).not.toMatch(/PRIVATE_SCRIPT|independent final kept private/);
+      const node=payload.candidate.artifacts[0].htmlTextNodes.find((n:{text:string})=>n.text==="主管确认退款后才进入执行。")!;
+      const response={...output(JSON.stringify({kind:"html-body-node-edits-v1",edits:[{anchorId:node.anchorId,text:"主管确认退款后才进入执行，并记录审批编号。"}]})),repairedCriteria:[failed.id,relative.id]};
+      expect(serverAiRepairContract(payload).parser.safeParse({...response,repairedCriteria:["OUTSIDE"]}).success).toBe(false);
+      return serverAiRepairContract(payload).parser.parse(response);
+    });
+    const result=await repairServerArtifactCandidate({...args,feedbackPhase:"visible"});
+    expect(ai).toHaveBeenCalledOnce();expect(result.artifactSnapshots[0]!.content).toContain("并记录审批编号");
+    expect(p.experimentRun.candidateResults[0]!.evaluation.criterionScores![1]!.pass).toBe(true);expect(p.artifactAcceptance.attempts).toBe(1);
+  });
   it("tells repair AI a verified relative regression still passes its absolute minimum",async()=>{
     const args=await relativeFixture();
     ai.mockImplementation(async(_op:string,payload:{feedbackContext:unknown;feedbackInstruction:string;failedCriteria:unknown[];candidate:{artifacts:Array<{htmlTextNodes:Array<{anchorId:string;text:string}>}>}})=>{

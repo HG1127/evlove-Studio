@@ -59,7 +59,7 @@ export function serverFrozenRepairCandidate(project: EvolveProject, round = proj
     || project.campaign.checkpoint.completedPhase !== "plan" || project.artifactAcceptance.status !== "repairing"
     || project.selectedCandidateIds.length !== 1
     || !(project.experimentRun.status === "idle" && (project.experimentRun.summary?.startsWith("[server-campaign-artifact-repair-visible-pending]")
-      ||(repair?.version==="experiment-visible-repair-v1"||repair?.version==="experiment-visible-repair-v2")
+      ||(repair?.version==="experiment-visible-repair-v1"||repair?.version==="experiment-visible-repair-v2"||repair?.version==="experiment-visible-repair-v3")
         &&project.experimentRun.summary?.startsWith("[server-campaign-visible-repair-visible-pending]"))
       || pending(project, round))) return undefined;
   const id = project.selectedCandidateIds[0];

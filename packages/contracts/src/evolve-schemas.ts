@@ -685,7 +685,8 @@ const visibleRepairAttemptFields = {
   completedAt: z.string().optional(),
   error: z.string().optional(),
 };
-export const VisibleRepairFeedbackKindSchema=z.enum(["absolute-criterion-failure","relative-target-regression"]);
+const VisibleRepairFeedbackV2Schema=z.enum(["absolute-criterion-failure","relative-target-regression"]);
+export const VisibleRepairFeedbackKindSchema=z.enum(["absolute-criterion-failure","relative-target-regression","combined-criterion-failure"]);
 export type VisibleRepairFeedbackKind=z.infer<typeof VisibleRepairFeedbackKindSchema>;
 /** Stored v1 rows retain their complete inline report; never reinterpret them as references. */
 const VisibleRepairAttemptV1Schema=z.object({...visibleRepairAttemptFields,
@@ -693,12 +694,18 @@ const VisibleRepairAttemptV1Schema=z.object({...visibleRepairAttemptFields,
 /** A reserved v2 row still has its report in experimentRun. Archive it before the running claim. */
 const VisibleRepairAttemptV2Schema=z.object({...visibleRepairAttemptFields,
   version:z.literal("experiment-visible-repair-v2"),experimentFingerprint:z.string().regex(/^[0-9a-f]{64}$/),
-  feedbackKind:VisibleRepairFeedbackKindSchema.optional(),
+  feedbackKind:VisibleRepairFeedbackV2Schema.optional(),
   evidence:RepairEvidenceReferenceSchema.optional(),
 }).strict().refine(row=>row.status==="reserved"||Boolean(row.evidence),
   {message:"A started Visible repair requires the complete archived failure evidence",path:["evidence"]});
+/** Explicit mixed-scope claims do not reinterpret legacy v2 reservations. */
+const VisibleRepairAttemptV3Schema=z.object({...visibleRepairAttemptFields,
+  version:z.literal("experiment-visible-repair-v3"),experimentFingerprint:z.string().regex(/^[0-9a-f]{64}$/),
+  feedbackKind:VisibleRepairFeedbackKindSchema,evidence:RepairEvidenceReferenceSchema.optional(),
+}).strict().refine(row=>row.status==="reserved"||Boolean(row.evidence),
+  {message:"A started Visible repair requires the complete archived failure evidence",path:["evidence"]});
 /** A pre-debited, at-most-once Visible feedback mutation. Never an acceptance verdict. */
-export const VisibleRepairAttemptSchema=z.discriminatedUnion("version",[VisibleRepairAttemptV1Schema,VisibleRepairAttemptV2Schema]);
+export const VisibleRepairAttemptSchema=z.discriminatedUnion("version",[VisibleRepairAttemptV1Schema,VisibleRepairAttemptV2Schema,VisibleRepairAttemptV3Schema]);
 export type VisibleRepairAttempt = z.infer<typeof VisibleRepairAttemptSchema>;
 
 /** 建议效果结算：上一轮 AI 优化建议在新一轮盲测后的执行与见效情况，让"建议 → 执行 → 效果"闭环可见。 */
@@ -1192,7 +1199,7 @@ export const ExperimentPolicySchema = z.object({
   /** Explicit opt-in: the frozen user contract, rather than Candidate self-description, defines Visible focus. */
   winnerGoalScope: z.literal("all-user-goals-v1").optional(),
   /** Explicit opt-in; legacy trials keep their original stop/repair behavior. */
-  visibleFailureRepair: z.enum(["disabled", "experiment-visible-repair-v1", "experiment-visible-repair-v2"]).optional(),
+  visibleFailureRepair: z.enum(["disabled", "experiment-visible-repair-v1", "experiment-visible-repair-v2", "experiment-visible-repair-v3"]).optional(),
   mode: z.enum(["adaptive", "full"]).default("adaptive"),
   finalistCount: z.number().int().min(2).max(6).default(2),
   screeningCaseCount: z.number().int().min(1).max(5).default(2),
