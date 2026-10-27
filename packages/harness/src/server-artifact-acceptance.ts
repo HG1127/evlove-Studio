@@ -193,7 +193,9 @@ export async function runServerArtifactAcceptance(
   }
   if(hasAuthoritativeHiddenRelease(inputProject.validationRun,candidate.id,inputProject.hiddenEvalSuite,inputProject.acceptanceRubric)){
     let final=independentFinalReadiness(inputProject,candidate);
-    if(!final.ready&&!final.failed&&candidate.finalHoldoutPaperHash&&ports.verifyIndependentFinal){
+    // A completed blind assessment is final, including mixed failure/partial evidence.
+    // Resuming must not reroll its scores or replace its original receipts.
+    if(!final.ready&&!final.failed&&inputProject.validationRun.independentFinal?.status!=="completed"&&candidate.finalHoldoutPaperHash&&ports.verifyIndependentFinal){
       try{
         const proof=await ports.verifyIndependentFinal({project:inputProject,candidate});
         inputProject={...inputProject,validationRun:{...inputProject.validationRun,independentFinal:proof}};

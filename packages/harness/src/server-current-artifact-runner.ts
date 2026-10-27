@@ -54,6 +54,10 @@ export async function executeServerCurrentArtifactSuite(
   const externalCases:TestCase[]=[];
   for(const testCase of testCases){
     if(ordered.has(testCase.id))continue;
+    if(testCase.browserSteps?.length&&!["external-runner","visual-review"].includes(testCase.executionMode)){
+      ordered.set(testCase.id,{...unavailableBaselineRun(testCase,"声明的浏览器断言必须经真实浏览器执行通道完成，不能回落为语义/静态证据。"),error:"SERVER_BROWSER_ASSERTION_MODE_UNAVAILABLE"});
+      continue;
+    }
     const stored=await storedBaselineEvidence(project,testCase,ports.executeStoredEvidence);
     if(stored){ordered.set(testCase.id,stored);continue;}
     const gap=testCase.executionMode==="artifact-runtime"&&ports.buildCurrentArtifactContext

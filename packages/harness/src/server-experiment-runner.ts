@@ -84,6 +84,10 @@ export async function executeServerExperimentCandidate(
   const externalCases: TestCase[] = [];
   for (const testCase of testCases) {
     if(ordered.has(testCase.id))continue;
+    if(testCase.browserSteps?.length&&!["external-runner","visual-review"].includes(testCase.executionMode)){
+      ordered.set(testCase.id,{...unavailableExperimentRun(testCase,"声明的浏览器断言必须经真实浏览器执行通道完成，不能回落为语义/静态证据。"),error:"SERVER_BROWSER_ASSERTION_MODE_UNAVAILABLE"});
+      continue;
+    }
     const criterionIds = new Set(testCase.criterionIds);
     const staticScope = new Set(project.acceptanceRubric.filter((criterion) => criterionIds.has(criterion.id)).flatMap((criterion) => criterion.artifactIds));
     const codebaseStaticCase = testCase.executionMode === "static-evidence"

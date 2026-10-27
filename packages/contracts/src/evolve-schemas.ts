@@ -506,6 +506,7 @@ export const IndependentFinalExecutionContractSchema=z.object({
   schemaVersion:z.literal("independent-final-execution-v1"),
   supportedModes:z.array(z.enum(["artifact-runtime","static-evidence","external-runner","roundtrip","visual-review","manual"])).min(1),
   requireBrowserStepsForExternal:z.boolean(),
+  browserAssertionModes:z.array(z.enum(["artifact-runtime","static-evidence","external-runner","roundtrip","visual-review","manual"])).min(1).optional(),
   limitations:z.array(z.string()),
 });
 export type IndependentFinalExecutionContract=z.infer<typeof IndependentFinalExecutionContractSchema>;

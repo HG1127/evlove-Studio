@@ -66,6 +66,15 @@ describe("independent final reservation execution contract",()=>{
   suite[0]!.browserSteps=[{action:"count",selector:"article",count:111}];
   expect(()=>assertIndependentFinalExecution(suite,execution)).not.toThrow();
  });
+ it("fingerprints the optional browser-mode binding without changing historical contracts",()=>{
+  const suite=paper();suite[0]!.browserSteps=[{action:"visible",selector:"#actual"}];
+  expect(()=>assertIndependentFinalExecution(suite,execution)).not.toThrow();
+  const bound={...execution,browserAssertionModes:["external-runner" as const]};
+  expect(finalHoldoutExecutionFingerprint(bound)).not.toBe(finalHoldoutExecutionFingerprint(execution));
+  expect(()=>assertIndependentFinalExecution(suite,bound)).toThrow("浏览器断言");
+  suite[0]!.executionMode="external-runner";
+  expect(()=>assertIndependentFinalExecution(suite,bound)).not.toThrow();
+ });
  it("archives an unattempted legacy reservation and never sends its private cases to generation",async()=>{
   const p=fixture(),old=paper("OLD","PRIVATE-OLD-FINAL");old[0]!.executionMode="manual";
   p.finalHoldout={round:1,suite:old,paperHash:finalHoldoutPaperHash(old),contractFingerprint:finalHoldoutContractFingerprint(p),createdAt:at};

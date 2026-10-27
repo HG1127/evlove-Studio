@@ -1,7 +1,8 @@
 import {IndependentFinalEvidenceSchema,IndependentFinalExecutionContractSchema,type IndependentFinalExecutionContract,type Candidate,type EvolveProject,type TestCase,type ValidationRun} from "@evolution/contracts";
 import {fastHash} from "./stable-hash";
 import {evidenceFingerprint} from "./evidence-binding";
-import {hasAuthoritativeHiddenRelease} from "./hidden-validation-evidence";
+import {hasAuthoritativeHiddenRelease,hasFullHiddenMeasurement} from "./hidden-validation-evidence";
+import {indexScopedAcceptanceResults} from "./acceptance-result-identity";
 import {validationDecision} from "./validation-decision";
 import {rubricSuiteCoverage} from "./rubric-readiness";
 
@@ -10,11 +11,37 @@ export const finalHoldoutExecutionFingerprint=(contract:IndependentFinalExecutio
 export function assertIndependentFinalExecution(suite:TestCase[],contract:IndependentFinalExecutionContract){
   const checked=IndependentFinalExecutionContractSchema.parse(contract);
   const unavailable=suite.filter(test=>!checked.supportedModes.includes(test.executionMode)
+    ||test.browserSteps?.length&&checked.browserAssertionModes&&!checked.browserAssertionModes.includes(test.executionMode)
     ||(checked.requireBrowserStepsForExternal&&["external-runner","visual-review"].includes(test.executionMode)
       &&(!test.browserSteps?.some(step=>["visible","text","count"].includes(step.action))
         ||test.browserSteps.some(step=>step.action==="text"&&!step.value?.trim())
         ||test.browserSteps.some(step=>step.action==="count"&&step.count===undefined))));
   if(unavailable.length)throw Object.assign(Error("独立终验缺少已绑定执行能力或浏览器断言："+unavailable.map(t=>`${t.id.slice(0,120)} (${t.executionMode})`).join("、")),{code:"INDEPENDENT_FINAL_EXECUTION_UNAVAILABLE"});
+}
+/** An independently bound hard failure survives unrelated missing evidence. */
+function hasBoundFinalHardFailure(project:EvolveProject,candidate:Candidate,measured:ValidationRun,suite:TestCase[]){
+  if(!hasFullHiddenMeasurement(measured,candidate.id,suite))return false;
+  const scores=indexScopedAcceptanceResults([{requestedCriterionIds:project.acceptanceRubric.map(c=>c.id),results:measured.evaluation?.criterionScores??[]}]).byId;
+  return project.acceptanceRubric.some(criterion=>{
+    const score=scores.get(criterion.id),mapped=suite.filter(test=>test.criterionIds.includes(criterion.id));
+    if(!criterion.hardGate||project.acceptanceRubric.filter(item=>item.id===criterion.id).length!==1
+      ||measured.evaluation?.unverifiedCriterionIds?.includes(criterion.id)
+      ||score?.verificationStatus!=="verified"||score.pass&&score.score>=criterion.minScore
+      ||!mapped.length||score.testCaseIds.length!==mapped.length||new Set(score.testCaseIds).size!==score.testCaseIds.length)return false;
+    return mapped.every(test=>{
+      const run=measured.runs.find(item=>item.testCaseId===test.id);
+      if(!score.testCaseIds.includes(test.id)||run?.verificationStatus!=="verified"||run.error||!run.output.trim())return false;
+      // A declared browser predicate cannot be proven by an unbound semantic summary.
+      if(test.browserSteps?.length){
+        if(!["external-runner","visual-review"].includes(test.executionMode))return false;
+        const sources=project.sourceArtifacts.filter(source=>source.role==="target"&&(!criterion.artifactIds.length||criterion.artifactIds.includes(source.id)));
+        const snapshots=candidate.artifactSnapshots.filter(snapshot=>sources.some(source=>source.id===snapshot.sourceArtifactId));
+        return sources.length===1&&snapshots.length===1&&Boolean(run.artifactHash
+          &&snapshots[0]!.frozenArtifact?.sourceArtifactId===sources[0]!.id&&snapshots[0]!.frozenArtifact.sha256===run.artifactHash);
+      }
+      return true;
+    });
+  });
 }
 export function independentFinalReplacementBlocker(project:EvolveProject,round:number){
   if(project.finalHoldout?.round!==round)return undefined;
@@ -72,6 +99,8 @@ export function independentFinalReadiness(project:EvolveProject,candidate:Candid
     ||proof.paperHash!==candidate.finalHoldoutPaperHash||finalHoldoutPaperHash(proof.suite)!==proof.paperHash)return pending("独立终验的题集、候选或输入指纹不一致。");
   try{assertIndependentFinalPaper(project,proof.suite);}catch(error){return pending((error as Error).message);}
   const measured:ValidationRun={...proof,id:"independent-final",checks:[],validationMode:"full",plannedCases:proof.suite.length,executedCases:proof.runs.length};
+  if(hasBoundFinalHardFailure(project,candidate,measured,proof.suite))return {ready:false,failed:true,reason:"独立终验存在已绑定同卷执行证据的硬指标失败；禁止使用终验反馈继续定向修复。"};
+  if(proof.suite.some(test=>test.browserSteps?.length&&!["external-runner","visual-review"].includes(test.executionMode)))return pending("独立终验声明了浏览器断言，但未使用已绑定的浏览器执行通道；语义评审不能替代这些断言。");
   if(!proof.evaluation||!proof.baselineEvaluation)return pending("独立终验尚未完成双侧评审。");
   const decision=validationDecision(project,proof.evaluation,proof.baselineEvaluation);
   const belowHardMinimum=project.acceptanceRubric.some(criterion=>criterion.hardGate&&proof.evaluation!.criterionScores?.some(score=>score.criterionId===criterion.id&&score.verificationStatus==="verified"&&score.score<criterion.minScore));

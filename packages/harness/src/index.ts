@@ -15,6 +15,7 @@ export * from "./server-current-artifact-runner";
 export * from "./server-holdout";
 export * from "./server-frozen-validation-checkpoint";
 export * from "./server-artifact-acceptance";
+export * from "./server-final-paper";
 export * from "./server-release-orchestration";
 export * from "./server-release-reconciliation";
 

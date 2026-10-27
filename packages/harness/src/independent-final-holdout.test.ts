@@ -65,3 +65,88 @@ it("enforces hard minima even if a Judge supplies a contradictory pass flag",()=
   proof.evaluation!.criterionScores![0]!.score=20;
   expect(independentFinalReadiness(p,c)).toMatchObject({ready:false,failed:true});
 });
+
+function mixedFinal(){
+  const f=fixture(),{p,c,proof}=f;
+  p.acceptanceRubric.push({...p.acceptanceRubric[0]!,id:"OTHER"});
+  proof.suite.push({...proof.suite[0]!,id:"F2",input:"separate protection scenario",criterionIds:["OTHER"]});
+  proof.runs.push({...proof.runs[0]!,testCaseId:"F2",verificationStatus:"partial"});
+  proof.baselineRuns.push({...proof.baselineRuns[0]!,testCaseId:"F2",verificationStatus:"unverified"});
+  proof.baselineSuiteIds=["F1","F2"];
+  proof.evaluation!.criterionScores!.push({...proof.evaluation!.criterionScores![0]!,criterionId:"OTHER",verificationStatus:"partial",testCaseIds:["F2"]});
+  proof.evaluation!.criterionScores![0]={...proof.evaluation!.criterionScores![0]!,score:30,pass:false};
+  proof.recommendation="hold";
+  proof.suite=proof.suite.map(test=>TestCaseSchema.parse(test));
+  proof.paperHash=finalHoldoutPaperHash(proof.suite);c.finalHoldoutPaperHash=proof.paperHash;
+  proof.inputFingerprint=evidenceFingerprint(p,c);p.validationRun.independentFinal=proof;
+  p.validationRun.evidenceFingerprint=evidenceFingerprint(p,c);
+  return f;
+}
+it("retains a same-paper hard failure when unrelated evidence or the baseline is missing",()=>{
+  for(const baselineMissing of [false,true]){
+    const {p,c,proof}=mixedFinal();
+    if(baselineMissing)proof.baselineEvaluation=undefined;
+    expect(independentFinalReadiness(p,c)).toMatchObject({ready:false,failed:true});
+    expect(proof.runs[1]!.verificationStatus).toBe("partial");
+  }
+});
+it.each(["duplicate-score","duplicate-criterion","contradictory-status","unknown-case","wrong-criterion-case","duplicate-case-ref","partial-run","errored-run","duplicate-run","missing-run","empty-run","demo","wrong-candidate","wrong-input","browser-summary"])("does not strengthen an unbound mixed final failure: %s",kind=>{
+  const {p,c,proof}=mixedFinal(),score=proof.evaluation!.criterionScores![0]!;
+  if(kind==="duplicate-score")proof.evaluation!.criterionScores!.push({...score});
+  if(kind==="duplicate-criterion"){
+    p.acceptanceRubric.push({...p.acceptanceRubric[0]!});proof.inputFingerprint=evidenceFingerprint(p,c);
+  }
+  if(kind==="contradictory-status")proof.evaluation!.unverifiedCriterionIds=["CONTENT"];
+  if(kind==="unknown-case")score.testCaseIds=["orphan"];
+  if(kind==="wrong-criterion-case")score.testCaseIds=["F2"];
+  if(kind==="duplicate-case-ref")score.testCaseIds=["F1","F1"];
+  if(kind==="partial-run")proof.runs[0]!.verificationStatus="partial";
+  if(kind==="errored-run")proof.runs[0]!.error="unavailable";
+  if(kind==="duplicate-run")proof.runs.push({...proof.runs[0]!});
+  if(kind==="missing-run")proof.runs.shift();
+  if(kind==="empty-run")proof.runs[0]!.output=" ";
+  if(kind==="demo")proof.evaluation!.demoJudged=true;
+  if(kind==="wrong-candidate")proof.candidateId="other";
+  if(kind==="wrong-input")proof.inputFingerprint="changed";
+  if(kind==="browser-summary"){
+    proof.suite[0]!.browserSteps=[{action:"visible",selector:"#actual"}];
+    proof.suite=proof.suite.map(test=>TestCaseSchema.parse(test));
+    proof.paperHash=finalHoldoutPaperHash(proof.suite);c.finalHoldoutPaperHash=proof.paperHash;
+    proof.inputFingerprint=evidenceFingerprint(p,c);
+  }
+  expect(independentFinalReadiness(p,c)).toMatchObject({ready:false,failed:false});
+});
+it("settles a bound mixed final failure without another final execution or targeted repair",async()=>{
+  const {p,verify}=mixedFinal(),repair=vi.fn(),final=vi.fn();
+  const result=await runServerArtifactAcceptance(p,{verifyFrozenArtifacts:verify,repairCandidate:repair,verifyIndependentFinal:final});
+  expect(result.accepted).toBe(false);expect(result.reason).toContain("禁止");
+  expect(final).not.toHaveBeenCalled();expect(repair).not.toHaveBeenCalled();
+  expect(result.project.validationRun.independentFinal).toEqual(p.validationRun.independentFinal);
+});
+it("never rerolls a completed partial final assessment on resume",async()=>{
+  const {p,c,proof,verify}=fixture(),final=vi.fn(),repair=vi.fn();
+  proof.runs[0]!.verificationStatus="partial";proof.recommendation="hold";
+  p.validationRun.independentFinal=proof;
+  const first=await runServerArtifactAcceptance(p,{verifyFrozenArtifacts:verify,repairCandidate:repair,verifyIndependentFinal:final});
+  const second=await runServerArtifactAcceptance(first.project,{verifyFrozenArtifacts:verify,repairCandidate:repair,verifyIndependentFinal:final});
+  expect(second.accepted).toBe(false);expect(second.project.validationRun.independentFinal).toEqual(proof);
+  expect(final).not.toHaveBeenCalled();expect(repair).not.toHaveBeenCalled();expect(independentFinalReadiness(p,c).ready).toBe(false);
+});
+it("does not promote a completed semantic pass that declared unexecuted browser predicates",()=>{
+  const {p,c,proof}=fixture();
+  proof.suite[0]!.browserSteps=[{action:"visible",selector:"#actual"}];
+  proof.suite=proof.suite.map(test=>TestCaseSchema.parse(test));
+  proof.paperHash=finalHoldoutPaperHash(proof.suite);c.finalHoldoutPaperHash=proof.paperHash;
+  proof.inputFingerprint=evidenceFingerprint(p,c);p.validationRun.independentFinal=proof;
+  expect(independentFinalReadiness(p,c)).toMatchObject({ready:false,failed:false,reason:expect.stringContaining("浏览器")});
+});
+it.each(["bound","missing-hash","wrong-hash","duplicate-snapshot"])("requires scoped physical identity for a browser hard failure: %s",kind=>{
+  const {p,c,proof}=mixedFinal();
+  proof.suite[0]!.executionMode="external-runner";proof.suite[0]!.browserSteps=[{action:"visible",selector:"#actual"}];
+  if(kind!=="missing-hash")proof.runs[0]!.artifactHash=kind==="wrong-hash"?"0".repeat(64):c.artifactSnapshots[0]!.frozenArtifact!.sha256;
+  if(kind==="duplicate-snapshot")c.artifactSnapshots.push({...c.artifactSnapshots[0]!});
+  proof.suite=proof.suite.map(test=>TestCaseSchema.parse(test));
+  proof.paperHash=finalHoldoutPaperHash(proof.suite);c.finalHoldoutPaperHash=proof.paperHash;
+  proof.inputFingerprint=evidenceFingerprint(p,c);
+  expect(independentFinalReadiness(p,c)).toMatchObject({ready:false,failed:kind==="bound"});
+});
