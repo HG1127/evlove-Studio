@@ -1,12 +1,13 @@
 import {createError} from "nitro/h3";
 import type {EvolveProject,SandboxBrowserHealth,SandboxHealth} from "@evolution/contracts";
 import {hasAmbiguousAutoProxyHtmlTarget} from "@evolution/core";
-import {checkVercelSandboxBrowserHealth,checkVercelSandboxHealth} from "@evolution/adapters/sandbox";
+import {checkVercelSandboxBrowserHealth,checkVercelSandboxHealth,sandboxCredentialWindowIssue,type SandboxCredentialWindowIssue} from "@evolution/adapters/sandbox";
 import {serverHtmlArtifactTargetEnabled} from "./server-html-artifact-execution";
 import {assertServerHtmlCampaignAdmissionReady} from "./html-campaign-admission-readiness";
 import {assertServerArtifactEvidenceReady} from "./artifact-evidence-readiness";
 
 type HtmlProbePorts={
+  credentials:(windowMs:number)=>SandboxCredentialWindowIssue|undefined;
   admission:()=>Promise<void>;
   evidence:(missionId:string)=>Promise<void>;
   sandbox:()=>Promise<SandboxHealth>;
@@ -14,6 +15,7 @@ type HtmlProbePorts={
 };
 
 const defaultPorts:HtmlProbePorts={
+  credentials:sandboxCredentialWindowIssue,
   admission:assertServerHtmlCampaignAdmissionReady,
   evidence:assertServerArtifactEvidenceReady,
   sandbox:checkVercelSandboxHealth,
@@ -43,6 +45,21 @@ export async function assertServerHtmlBrowserExecutionReady(
     });
   }
   if(!serverHtmlArtifactTargetEnabled(project))return;
+
+  const maxWallMinutes=project.campaign?.stopCriteria?.maxWallMinutes;
+  const windowMs=maxWallMinutes===undefined?0:maxWallMinutes*60_000;
+  const assertCredentialWindow=()=>{
+    const credentialIssue=ports.credentials(windowMs);
+    if(credentialIssue){
+      throw createError({statusCode:503,
+        statusMessage:"HTML Sandbox 凭据不能覆盖当前任务，进化任务尚未启动",
+        data:{code:"HTML_SANDBOX_NOT_READY",credentialIssue:credentialIssue.code,
+          ...(credentialIssue.expiresAt?{expiresAt:credentialIssue.expiresAt}:{}),
+          action:credentialIssue.message},
+      });
+    }
+  };
+  assertCredentialWindow();
 
   // Fail before allocating billable resources when the durable database or evidence chain cannot finish the run.
   await ports.admission();
@@ -97,4 +114,6 @@ export async function assertServerHtmlBrowserExecutionReady(
         action:"在进化闭环完整性中心完成 Browser Health 的真实 Chromium Steps 检测；不得以截图或本地演示代替。"},
     });
   }
+  // Admission and actual VM probes can be slow; check again immediately before Job creation.
+  assertCredentialWindow();
 }

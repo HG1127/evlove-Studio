@@ -19,10 +19,39 @@ const browser=(overrides:Partial<SandboxBrowserHealth>={})=>({
   previewHealthy:true,browserStepsVerified:true,browserStepsExecuted:2,...overrides,
 }) as SandboxBrowserHealth;
 function probes(s:SandboxHealth=sandbox(true),b:SandboxBrowserHealth=browser()){
-  return {admission:vi.fn(async()=>{}),evidence:vi.fn<(missionId:string)=>Promise<void>>().mockResolvedValue(undefined),sandbox:vi.fn(async()=>s),browser:vi.fn(async()=>b)};
+  return {credentials:vi.fn<NonNullable<Parameters<typeof assertServerHtmlBrowserExecutionReady>[1]>["credentials"]>().mockReturnValue(undefined),admission:vi.fn(async()=>{}),evidence:vi.fn<(missionId:string)=>Promise<void>>().mockResolvedValue(undefined),sandbox:vi.fn(async()=>s),browser:vi.fn(async()=>b)};
 }
 
 describe("HTML Mission execution preflight - actual Browser capability",()=>{
+  it("rejects a fixed local credential that cannot cover the Campaign before any database, Sandbox or Browser probes",async()=>{
+    const project=mission([source("real-sop","html")]);
+    project.campaign={stopCriteria:{maxWallMinutes:30}} as EvolveProject["campaign"];
+    const ports=probes();
+    ports.credentials.mockReturnValue({code:"VERCEL_OIDC_WINDOW_TOO_SHORT",expiresAt:"2026-10-27T12:37:26.000Z",message:"refresh the linked project credential"});
+    await expect(assertServerHtmlBrowserExecutionReady(project,ports)).rejects.toMatchObject({status:503,
+      data:{code:"HTML_SANDBOX_NOT_READY",credentialIssue:"VERCEL_OIDC_WINDOW_TOO_SHORT",expiresAt:"2026-10-27T12:37:26.000Z"}});
+    expect(ports.credentials).toHaveBeenCalledExactlyOnceWith(1_800_000);
+    expect(ports.admission).not.toHaveBeenCalled();expect(ports.evidence).not.toHaveBeenCalled();
+    expect(ports.sandbox).not.toHaveBeenCalled();expect(ports.browser).not.toHaveBeenCalled();
+  });
+  it("keeps actual provider probes mandatory after the credential window check",async()=>{
+    const project=mission([source("real-sop","html")]);
+    project.campaign={stopCriteria:{maxWallMinutes:30}} as EvolveProject["campaign"];
+    const ports=probes();
+    await assertServerHtmlBrowserExecutionReady(project,ports);
+    expect(ports.credentials).toHaveBeenCalledTimes(2);
+    expect(ports.credentials).toHaveBeenNthCalledWith(1,1_800_000);
+    expect(ports.credentials).toHaveBeenNthCalledWith(2,1_800_000);
+    expect(ports.sandbox).toHaveBeenCalledOnce();expect(ports.browser).toHaveBeenCalledOnce();
+  });
+  it("rechecks after slow real probes, refusing a credential that no longer covers the task",async()=>{
+    const project=mission([source("real-sop","html")]);
+    project.campaign={stopCriteria:{maxWallMinutes:30}} as EvolveProject["campaign"];
+    const ports=probes();
+    ports.credentials.mockReturnValueOnce(undefined).mockReturnValueOnce({code:"VERCEL_OIDC_WINDOW_TOO_SHORT",expiresAt:"2026-10-27T12:37:26.000Z",message:"refresh credential"});
+    await expect(assertServerHtmlBrowserExecutionReady(project,ports)).rejects.toMatchObject({status:503,data:{credentialIssue:"VERCEL_OIDC_WINDOW_TOO_SHORT"}});
+    expect(ports.sandbox).toHaveBeenCalledOnce();expect(ports.browser).toHaveBeenCalledOnce();expect(ports.credentials).toHaveBeenCalledTimes(2);
+  });
   it("stops before metered probes when the real database admission migration is missing",async()=>{
     const ports=probes();
     ports.admission.mockRejectedValueOnce(new Error("HTML_CAMPAIGN_MIGRATION_REQUIRED"));
@@ -42,6 +71,7 @@ describe("HTML Mission execution preflight - actual Browser capability",()=>{
   it("does not create or probe a Sandbox for normal Markdown/paste Missions",async()=>{
     const ports=probes();
     await expect(assertServerHtmlBrowserExecutionReady(mission([source("document","md")]),ports)).resolves.toBeUndefined();
+    expect(ports.credentials).not.toHaveBeenCalled();
     expect(ports.sandbox).not.toHaveBeenCalled();
     expect(ports.browser).not.toHaveBeenCalled();
   });

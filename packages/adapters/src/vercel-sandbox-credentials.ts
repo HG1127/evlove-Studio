@@ -1,4 +1,5 @@
 import {SandboxAuthorizationDiagnosticSchema,type SandboxAuthorizationDiagnostic} from "@evolution/contracts";
+import {z} from "zod";
 
 /** Passive, secret-free diagnostics for project-scoped Vercel Sandbox OIDC.
  * JWT claims here are deliberately NOT signature-validated and MUST NEVER be
@@ -100,6 +101,36 @@ export function sandboxCredentialIssue(
       message:"OIDC 凭证所属 Team 与运行环境不一致；请使用目标项目所属团队的账号重新授权。"};
   }
   return undefined; // Not proof of provider authorization; health probe is still required.
+}
+
+export type SandboxCredentialWindowIssue=SandboxCredentialIssue|{
+  code:"VERCEL_OIDC_WINDOW_TOO_SHORT";
+  message:string;
+  expiresAt:string;
+};
+
+/** A fixed local JWT must cover a bounded Campaign, plus the existing two-minute margin.
+ * Platform OIDC may be refreshed by the deployment; Access Token authorization remains remote.
+ * This can deny an unsafe start, never establish cloud authorization or successful execution.
+ */
+export function sandboxCredentialWindowIssue(
+  windowMs:number,
+  env:Readonly<Record<string,string|undefined>>=process.env,
+  nowMs=Date.now(),
+):SandboxCredentialWindowIssue|undefined{
+  if(!Number.isSafeInteger(windowMs)||windowMs<0||!Number.isFinite(nowMs))throw new Error("Invalid Sandbox credential window");
+  const issue=sandboxCredentialIssue(env,nowMs);
+  if(issue)return issue;
+  const deployment=env.VERCEL==="1"&&["production","preview"].includes(env.VERCEL_ENV??"");
+  if(env.EVOLUTION_SANDBOX_AUTH_MODE==="access-token"||deployment||!env.VERCEL_OIDC_TOKEN?.trim())return undefined;
+  // sandboxCredentialIssue already validated this payload and its finite expiration.
+  const claims=z.object({exp:z.number().finite().min(1e9)}).parse(JSON.parse(Buffer.from(env.VERCEL_OIDC_TOKEN.trim().split(".")[1]!,"base64url").toString("utf8")));
+  if(claims.exp*1000<=nowMs+windowMs+120_000){
+    const expiresAt=new Date(claims.exp*1000).toISOString();
+    return {code:"VERCEL_OIDC_WINDOW_TOO_SHORT",expiresAt,
+      message:"本地 VERCEL_OIDC_TOKEN 的剩余有效期不足以覆盖本轮任务及两分钟余量（到期 UTC "+expiresAt+"）；请用正确项目/团队的 Vercel CLI 重新拉取凭据并重启本地服务。"};
+  }
+  return undefined;
 }
 
 /** Read-only configuration report. Never returns an OIDC bearer token or asserts provider authorization. */

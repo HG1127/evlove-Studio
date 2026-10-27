@@ -1,5 +1,5 @@
 import {describe,expect,it} from "vitest";
-import {getExplicitSandboxCredentials,getVercelSandboxAuthorizationDiagnostic,sandboxCredentialIssue} from "./vercel-sandbox-credentials";
+import {getExplicitSandboxCredentials,getVercelSandboxAuthorizationDiagnostic,sandboxCredentialIssue,sandboxCredentialWindowIssue} from "./vercel-sandbox-credentials";
 
 const NOW=Date.parse("2026-10-20T10:00:00Z");
 const jwt=(claims:Record<string,unknown>)=>{
@@ -104,5 +104,34 @@ describe("Vercel Sandbox passive OIDC denial diagnostics",()=>{
   it("blocks future-not-before clocks",()=>{
     expect(sandboxCredentialIssue(env(jwt({exp:future,nbf:Math.floor(NOW/1000)+900})),NOW)?.code)
       .toBe("VERCEL_OIDC_NOT_YET_VALID");
+  });
+  it("rejects the C12 start-time counterexample even while ordinary two-minute diagnostics pass",()=>{
+    const at=Date.parse("2026-10-27T12:32:35.815Z"),expiry=Date.parse("2026-10-27T12:37:26.000Z"),token=jwt({exp:expiry/1000});
+    expect(sandboxCredentialIssue(env(token),at)).toBeUndefined();
+    const issue=sandboxCredentialWindowIssue(1_800_000,env(token),at);
+    expect(issue).toMatchObject({code:"VERCEL_OIDC_WINDOW_TOO_SHORT",expiresAt:new Date(expiry).toISOString()});
+    expect(JSON.stringify(issue)).not.toContain(token);
+  });
+  it("requires the full bounded window plus two minutes, retaining the exact expiry boundary",()=>{
+    const token=jwt({exp:(NOW+1_920_000)/1000});
+    expect(sandboxCredentialWindowIssue(1_800_000,env(token),NOW)?.code).toBe("VERCEL_OIDC_WINDOW_TOO_SHORT");
+    expect(sandboxCredentialWindowIssue(1_799_999,env(token),NOW)).toBeUndefined();
+    expect(sandboxCredentialWindowIssue(0,env(jwt({exp:expired})),NOW)?.code).toBe("VERCEL_OIDC_EXPIRED");
+  });
+  it("preserves scope and malformed credential denials before the window check",()=>{
+    expect(sandboxCredentialWindowIssue(1_800_000,env("invalid"),NOW)?.code).toBe("VERCEL_OIDC_INVALID");
+    expect(sandboxCredentialWindowIssue(1_800_000,env(jwt({exp:future,project_id:"prj_a"}),{VERCEL_PROJECT_ID:"prj_b"}),NOW)?.code).toBe("VERCEL_PROJECT_SCOPE_MISMATCH");
+  });
+  it("does not infer a deployment refresh or Access Token lifetime from local JWT claims",()=>{
+    const token=jwt({exp:(NOW+600_000)/1000});
+    expect(sandboxCredentialWindowIssue(1_800_000,env(token,{VERCEL:"1",VERCEL_ENV:"production"}),NOW)).toBeUndefined();
+    expect(sandboxCredentialWindowIssue(1_800_000,{VERCEL:"1",VERCEL_ENV:"preview"},NOW)).toBeUndefined();
+    expect(sandboxCredentialWindowIssue(1_800_000,env(token,{VERCEL_ENV:"production"}),NOW)?.code).toBe("VERCEL_OIDC_WINDOW_TOO_SHORT");
+    expect(sandboxCredentialWindowIssue(1_800_000,env(token,{VERCEL:"1",VERCEL_ENV:"development"}),NOW)?.code).toBe("VERCEL_OIDC_WINDOW_TOO_SHORT");
+    expect(sandboxCredentialWindowIssue(1_800_000,env(jwt({exp:expired}),{EVOLUTION_SANDBOX_AUTH_MODE:"access-token",VERCEL_TOKEN:"synthetic",VERCEL_PROJECT_ID:"prj_example",VERCEL_TEAM_ID:"team_example"}),NOW)).toBeUndefined();
+    expect(sandboxCredentialWindowIssue(1_800_000,{EVOLUTION_SANDBOX_AUTH_MODE:"access-token"},NOW)?.code).toBe("VERCEL_ACCESS_TOKEN_INCOMPLETE");
+  });
+  it.each([-1,NaN,Infinity,1.5])("rejects an invalid credential window %s",window=>{
+    expect(()=>sandboxCredentialWindowIssue(window,{},NOW)).toThrow("Invalid Sandbox credential window");
   });
 });
