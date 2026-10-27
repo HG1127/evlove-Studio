@@ -55,4 +55,14 @@ describe("complete authorized initial HTML build context",()=>{
     expect(context?.htmlBuildBodyContext?.anchors.at(-1)?.before).toContain("第40章");
     expect(JSON.stringify(context)).not.toContain("HEAD_SECRET_PROGRAM");expect(JSON.stringify(context)).not.toContain("RAW_STRUCTURED_SECRET");
   });
+  it("selects request-owned range validation only for an explicit Mission policy and complete body context",async()=>{
+    const {project,current:candidate}=acceptedPackageFixture(false);vi.stubEnv("EVOLUTION_AI_FULL_REPAIR_TEXT_MISSIONS",project.id);
+    Object.assign(project.sourceArtifacts[0]!,{extension:"html",mimeType:"text/html"});
+    expect((await buildServerCandidateTargetContext(project,candidate,async()=>original))[0]?.bodyAnchorPolicy).toBeUndefined();
+    project.experimentPolicy.htmlBuildAnchorValidation="issued-body-ranges-v1";
+    const selected=(await buildServerCandidateTargetContext(project,candidate,async()=>original))[0]!;
+    expect(selected.bodyAnchorPolicy).toBe("issued-body-ranges-v1");expect(selected.htmlBuildBodyContext?.parentSha256).toBe(createHash("sha256").update(original).digest("hex"));
+    vi.stubEnv("EVOLUTION_AI_FULL_REPAIR_TEXT_MISSIONS","");
+    expect((await buildServerCandidateTargetContext(project,candidate,async()=>original))[0]?.bodyAnchorPolicy).toBeUndefined();
+  });
 });

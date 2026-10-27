@@ -1184,6 +1184,8 @@ export type ProjectAiProfile = z.infer<typeof ProjectAiProfileSchema>;
 
 
 export const ExperimentPolicySchema = z.object({
+  /** Validate model-authored HTML text ranges against this request's issued body index before construction. */
+  htmlBuildAnchorValidation: z.literal("issued-body-ranges-v1").optional(),
   /** One pre-write construction correction inside an already claimed repair; legacy attempts stay terminal. */
   repairConstructionCorrection: z.literal("repair-construction-correction-v1").optional(),
   /** Explicit opt-in: the frozen user contract, rather than Candidate self-description, defines Visible focus. */

@@ -2,11 +2,11 @@ import type { ZodType } from "zod";
 import { aiProviderTransportFailure,parseStructuredAiOutput } from "@evolution/adapters";
 import { createHash } from "node:crypto";
 import {serverAiRepairContract} from "./server-ai-repair-contract";
+import {serverAiBuildContract} from "./server-ai-build-contract";
 import {ServerControlExecutionStoppedError,serverControlExecutionSignal} from "./server-control-execution";
 import {
   AiOperationSchema,
   ArtifactAcceptanceAiResultSchema,
-  BuildCandidateAiResultSchema,
   CommandAiResultSchema,
   CopilotAiResultSchema,
   DistillAiResultSchema,
@@ -110,7 +110,7 @@ function contract(operation:ServerAiOperation,payload:unknown):Contract<unknown>
   if(operation==="target")return{schema:jsonSchemas.target,parser:TargetAiResultSchema,instruction:"Compile source understanding and command into an executable target contract with goal, metrics, protected/editable scope, acceptance criteria and risks. Use only supplied evidence."};
   if(operation==="rubric")return{schema:jsonSchemas.rubric,parser:RubricAiResultSchema,instruction:"Compile a compact project-specific Acceptance Rubric from user intent, business object, protected scope, artifact structures and current goal. Criteria are user/business outcomes, not parser details."};
   if(operation==="eval-suite")return{schema:jsonSchemas.evalSuite,parser:EvalSuiteAiResultSchema,instruction:"Create a compact discriminative Eval Suite mapped to the Acceptance Rubric: validationCases must contain 3-12 cases; hiddenCases must contain 2-8 cases. One case may cover multiple related criteria. Cover every criterion and hard gate with truthful execution modes."};
-  if(operation==="build-candidate")return{schema:jsonSchemas.buildCandidate,parser:BuildCandidateAiResultSchema,instruction:"Construct exact Candidate artifacts from the CURRENT target version and Candidate plan. Preserve protected/untouched scope; never claim tests passed."};
+  if(operation==="build-candidate")return serverAiBuildContract(payload);
   if(operation==="execute-artifact")return{schema:jsonSchemas.executeArtifact,parser:ExecuteArtifactAiResultSchema,instruction:"Inspect or execute one supplied current artifact against the test intent. Return concrete output/trace from supplied evidence; say UNVERIFIED when behavior cannot be established."};
   if(operation==="repair-artifact")return serverAiRepairContract(payload);
   if(operation==="execute-artifact-batch")return{schema:jsonSchemas.executeArtifactBatch,parser:ExecuteArtifactBatchAiResultSchema,instruction:"Inspect CURRENT artifact evidence against each supplied test. Return concrete observations only; missing evidence is UNVERIFIED, not invented failure."};

@@ -90,6 +90,7 @@ export async function buildServerCandidateTargetContext(
       mutationMode: htmlBody||textTarget&&content.length<source.length?"text-edits":"full",
       structuredContext:htmlBody?undefined:indexedContext??compactStructured(artifact,candidate),
       ...(htmlBody?{htmlBuildBodyContext:htmlBody.context,bodyIndexComplete:true,
+        ...(project.experimentPolicy?.htmlBuildAnchorValidation==="issued-body-ranges-v1"?{bodyAnchorPolicy:"issued-body-ranges-v1" as const}:{}),
         contentRepresentation:"non-executable body markup projection",chunkOffsetsAreProjectionOnly:true}:{}),
     });
   }
