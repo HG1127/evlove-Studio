@@ -1,5 +1,5 @@
-import type {AcceptanceCriterion,Candidate,EvolveProject,FrozenArtifact} from "@evolution/contracts";
-import {evidenceFingerprint,htmlKnownSemanticComponents,htmlRepairBodyContext,htmlRepairTextNodeContext,resolveBoundHtmlBodyNodeEdits,indexUniqueById,reconcileAcceptedOfflineChampion,visibleRepairFeedbackContext,userGoalScopeContext,userGoalProgress} from "@evolution/core";
+import type {AcceptanceCriterion,Candidate,EvolveProject,FrozenArtifact,RepairArtifactAiResult} from "@evolution/contracts";
+import {campaignRepairLimitStopReason,evidenceFingerprint,htmlKnownSemanticComponents,htmlRepairBodyContext,htmlRepairTextNodeContext,resolveBoundHtmlBodyNodeEdits,indexUniqueById,reconcileAcceptedOfflineChampion,visibleRepairFeedbackContext,userGoalScopeContext,userGoalProgress} from "@evolution/core";
 import {isKnownHtmlNativeSubject} from "@evolution/adapters/html-native-profile";
 import {measuredDocumentObservations,runServerArtifactAcceptance,runServerVisibleRepair,type ServerArtifactVerification} from "@evolution/harness";
 import {runServerAi} from "./ai-gateway";
@@ -11,6 +11,8 @@ import {verifyServerIndependentFinalHoldout} from "./server-independent-final-ho
 import {serverRepairMeasuredTextAuthorized} from "./server-ai-repair-consent";
 import {archiveServerRepairEvidence} from "./server-repair-evidence";
 import {SERVER_HTML_PARAGRAPH_CONSTRUCTION_INSTRUCTION} from "./server-html-build-context";
+import {serverCandidateConstructionCorrection} from "./server-candidate-construction-feedback";
+import {assertServerControlExecutionActive} from "./server-control-execution";
 
 export async function verifyServerFrozenCandidateArtifacts({project,candidate}:{project:EvolveProject;candidate:Candidate}):Promise<ServerArtifactVerification>{
   const targetIds=project.sourceArtifacts.filter((artifact)=>artifact.role==="target").map((artifact)=>artifact.id);
@@ -80,7 +82,7 @@ export async function repairServerArtifactCandidate(args:{
   const boundObservation=authorizedBody
     &&args.project.validationRun.candidateId===args.candidate.id
     &&args.project.validationRun.evidenceFingerprint===evidenceFingerprint(args.project,args.candidate);
-  const response=await runServerAi("repair-artifact",{
+  const payload={
     ...(userGoalScopeContext(args.project)?{winnerGoalScope:userGoalScopeContext(args.project),
       userGoalProgress:visibleFeedback&&args.project.baselineRun.result?userGoalProgress(args.project,visibleFeedback.evaluation,args.project.baselineRun.result):
         boundObservation&&args.project.validationRun.evaluation&&args.project.validationRun.baselineEvaluation?
@@ -138,40 +140,57 @@ export async function repairServerArtifactCandidate(args:{
     }),
     instruction:"Change only the supplied criteria with VERIFIED evidence above. Preserve every other artifact behavior and protected item. Return exactly one artifact for every supplied target. For an unchanged DOCX/PPTX/XLSX/XLS/ODS/CSV/TSV/ZIP target return JSON {kind:'keep-parent',sourceArtifactId:'EXACT target id'} so the server reuses the verified frozen bytes; never reconstruct native file bytes from an excerpt. For other unchanged targets return their current content; for unchanged excerpted text targets return one exact text-edit with identical before/after. For changed DOCX targets return {kind:'document',parts:[{path:'word/document.xml',textRuns:[{index:0,text:'new text'}]}]}; for PPTX return {kind:'presentation',slides:[{number:1,textRuns:[{index:0,text:'new text'}]}]}, using only real indexed paths/slides from structuredContext. For changed spreadsheets return {kind:'spreadsheet',sheets:[{name:'Existing Sheet',cells:[{address:'A1',value:'new value'}]}]} using only real Sheet/A1 locations and preserving formulas; do not fabricate calculated formula caches. Every changed native target must have actual differences. For codebase/package targets return a JSON overlay {kind:'codebase',overlay:true,files:[{path,content}],deletions:[path]} containing only actual changes/deletions. For text artifacts with mutationMode text-edits, return content JSON {kind:'text-edits',edits:[{before,after,start?,end?}]}, anchored verbatim to current Candidate chunks without chunk markers or ellipses. The server applies edits to the complete tested Candidate, preserving untouched bytes. Do not rewrite a whole artifact from excerpts. The output becomes a NEW Candidate and must be re-tested on the full Hidden Holdout.",
     htmlBodyInstruction:"For mutationMode html-body-node-edits-v1, artifact.content MUST be JSON {kind:'html-body-node-edits-v1',edits:[{anchorId:'EXACT supplied ID',text:'complete replacement plain text'}]}. Return only changed nodes. DO NOT include parentSha256 or any parent/hash field: the server owns that binding. Text is plain prose, never HTML markup; the server escapes it and preserves all surrounding markup/code/styles. Preserve htmlRendererComponents labels and their two paragraph slots; new text beside those slots inside their content-block would be discarded by the renderer. Do not use text-edits or rendered text as a raw HTML anchor for these targets.",
-  });
-  const artifacts=response.artifacts.map(artifact=>{
-    const parent=htmlParents.get(artifact.sourceArtifactId);
-    return parent?{...artifact,content:resolveBoundHtmlBodyNodeEdits(parent.html,artifact.content,parent.sha256)}:artifact;
-  });
-  requireServerCandidateOutputModes(contexts,artifacts);
-  if(response.repairedCriteria.some((id)=>!failedIds.has(id))){
-    throw new Error(`Repair AI attempted out-of-scope criteria: ${response.repairedCriteria.filter((id)=>!failedIds.has(id)).join("、")}`);
-  }
-  if(!response.repairedCriteria.length)throw new Error("Repair AI did not acknowledge any VERIFIED failed criterion");
-  const currentBySource=new Map(args.candidate.artifactSnapshots.map((snapshot)=>[snapshot.sourceArtifactId,snapshot.content.trim()]));
-  if(response.artifacts.length&&response.artifacts.every((artifact)=>currentBySource.get(artifact.sourceArtifactId)===artifact.content.trim())){
-    throw new Error("Repair AI returned a no-op artifact; refusing to mint a new Candidate identity");
-  }
-  const suffix=`${args.attempt}-${Date.now()}`;
-  const next:Candidate={
-    ...args.candidate,
-    id:`${args.candidate.id}-repair-${suffix}`,
-    name:`${args.candidate.name} · Repair ${args.attempt}`,
-    title:`${args.candidate.title??args.candidate.name} · Server Repair ${args.attempt}`,
-    status:"draft",
-    artifactSnapshots:[],
-    artifactBuildStatus:"idle",
-    artifactBuildSummary:undefined,
-    notes:[...args.candidate.notes,`Server Targeted Repair ${args.attempt}: ${response.summary}`],
   };
-  return materializeServerCandidateArtifacts(
-    args.project,
-    next,
-    artifacts.map((artifact)=>({...artifact,buildMode:"ai-full" as const})),
-    `Targeted Repair ${args.attempt}: ${response.summary}`,
-    args.candidate,
-    expectedParents,
-  );
+  const nextId=`${args.candidate.id}-repair-${args.attempt}-${Date.now()}`;
+  const construct=async(response:RepairArtifactAiResult)=>{
+    const artifacts=response.artifacts.map(artifact=>{
+      const parent=htmlParents.get(artifact.sourceArtifactId);
+      return parent?{...artifact,content:resolveBoundHtmlBodyNodeEdits(parent.html,artifact.content,parent.sha256)}:artifact;
+    });
+    requireServerCandidateOutputModes(contexts,artifacts);
+    if(response.repairedCriteria.some((id)=>!failedIds.has(id))){
+      throw new Error(`Repair AI attempted out-of-scope criteria: ${response.repairedCriteria.filter((id)=>!failedIds.has(id)).join("、")}`);
+    }
+    if(!response.repairedCriteria.length)throw new Error("Repair AI did not acknowledge any VERIFIED failed criterion");
+    const currentBySource=new Map(args.candidate.artifactSnapshots.map((snapshot)=>[snapshot.sourceArtifactId,snapshot.content.trim()]));
+    if(response.artifacts.length&&response.artifacts.every((artifact)=>currentBySource.get(artifact.sourceArtifactId)===artifact.content.trim())){
+      throw new Error("Repair AI returned a no-op artifact; refusing to mint a new Candidate identity");
+    }
+    const next:Candidate={
+      ...args.candidate,
+      id:nextId,
+      name:`${args.candidate.name} · Repair ${args.attempt}`,
+      title:`${args.candidate.title??args.candidate.name} · Server Repair ${args.attempt}`,
+      status:"draft",
+      artifactSnapshots:[],
+      artifactBuildStatus:"idle",
+      artifactBuildSummary:undefined,
+      notes:[...args.candidate.notes,`Server Targeted Repair ${args.attempt}: ${response.summary}`],
+    };
+    return materializeServerCandidateArtifacts(
+      args.project,
+      next,
+      artifacts.map((artifact)=>({...artifact,buildMode:"ai-full" as const})),
+      `Targeted Repair ${args.attempt}: ${response.summary}`,
+      args.candidate,
+      expectedParents,
+    );
+  };
+  const response=await runServerAi("repair-artifact",payload);
+  try{return await construct(response);}
+  catch(error){
+    if(args.project.experimentPolicy?.repairConstructionCorrection!=="repair-construction-correction-v1")throw error;
+    const correction=serverCandidateConstructionCorrection(error,response.artifacts);
+    if(!correction)throw error;
+    const limit=campaignRepairLimitStopReason(args.project);
+    if(limit)throw new Error("修复构造纠错前已达到试验限额："+limit,{cause:error});
+    await assertServerControlExecutionActive(args.project.id);
+    // These typed errors occur during all-target preflight, before the first Blob write.
+    // Keep one Candidate identity and the existing repair debit; never retry evaluation or persistence.
+    const corrected=await runServerAi("repair-artifact",{...payload,constructionCorrection:{...correction,
+      instruction:correction.instruction+" For html-body-node-edits-v1, use the SAME supplied htmlTextNodes anchorIds and plain text replacements. This is the only pre-write construction correction inside this already claimed repair; no additional repair, paper, Candidate or time window is authorized."}});
+    return construct(corrected);
+  }
 }
 
 /**

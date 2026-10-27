@@ -1,8 +1,8 @@
 import {ExactEditAnchorError,HtmlOriginalCodeRetentionError,HtmlSemanticLayoutError,HtmlParagraphConstructionError} from "@evolution/core";
-import type {BuildCandidateAiResult} from "@evolution/contracts";
+import type {RepairArtifactAiResult} from "@evolution/contracts";
 
 /** One pre-write construction correction; actual evaluation failures must retain their own repair budget. */
-export function serverCandidateConstructionCorrection(error:unknown,invalidProposal:BuildCandidateAiResult["artifacts"]){
+export function serverCandidateConstructionCorrection(error:unknown,invalidProposal:RepairArtifactAiResult["artifacts"]){
   if(error instanceof HtmlParagraphConstructionError)return {code:error.code,policy:error.policy,issues:error.issues.slice(0,20),invalidProposal,
     instruction:"No file was written. The known SOP renderer requires every new or edited paragraph to fit the declared 240-character construction budget. Keep introductions short; distribute concrete inputs, operations, outputs, checks and exceptions across existing step/card-detail anchors throughout the required chapters. Preserve all Original facts and the complete goal. Do not shorten by dropping required configuration, hide overflow, change scripts/styles or exceed a renderer's two-paragraph slots. Newlines inside one HTML paragraph collapse; they are not separate rendered paragraphs. Use the SAME supplied anchors and return one complete corrected proposal. This shares the existing single pre-write correction and does not establish semantic quality or native verification."};
   if(error instanceof HtmlOriginalCodeRetentionError)return {code:error.code,retention:error.retention,invalidProposal,
