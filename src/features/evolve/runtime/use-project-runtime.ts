@@ -1,4 +1,4 @@
-import {candidateMetricDeltas,selectPlanningLessons,productionGoalReadiness} from "@evolution/core";
+import {candidateMetricDeltas,selectProjectPlanningLessons,productionGoalReadiness,lessonDistillationSource} from "@evolution/core";
 import {parseStoredEvolveProject} from "@evolution/adapters";
 import {checkpointCandidateBuild} from "@evolution/core";
 import { campaignObservesLiveTarget, campaignRootBaselineForMeasurement, materializeAcceptedCandidatePackage, campaignScoringInputBlocker, campaignScoringInputFingerprint, applyProductionLearningGovernance, applyReleaseResultToProject, beginReleaseCycle, completeAutonomousMission, experimentNeedsEvidenceRepair, buildExperimentGapAdvicePayload, buildGapAdvicePayload, fallbackExperimentAdvice, integrateDistilledLesson, mergeGovernedNextQueue, nextDurableReleaseAction, prepareCampaignRetry, productionOutcomeFreshness, productionOutcomeTrend, projectHasStableHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, projectUsesConnectorRelease, projectUsesHttpRelease, projectUsesVercelRelease, transitionReleaseTarget } from "@evolution/core";
@@ -1196,9 +1196,9 @@ export function useProjectRuntime(initialProject: EvolveProject) {
 
   const distill = useCallback(async () => {
     const current = projectRef.current;
-    const winnerId = current.experimentRun.winnerId ?? current.searchChampion?.candidate?.id;
-    const currentWinner = current.candidates.find((candidate) => candidate.id === winnerId) ?? current.searchChampion?.candidate;
-    if (!currentWinner) throw new Error("没有已验证 Winner");
+    const distillationSource=lessonDistillationSource(current);
+    if(!distillationSource)throw new Error("经验来源缺少 exact Candidate / Validation 绑定，不能提炼");
+    const currentWinner=distillationSource.candidate;
     const hasLiveDecision = projectHasLiveReleaseDecision(current);
     const releaseFreshness = productionOutcomeFreshness(current);
     const releaseTrend = productionOutcomeTrend(current);
@@ -1212,7 +1212,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
       const output = await runProjectAi("distill", {
         project: { goal: current.goal, baseline: current.baselineRun.result, ...sourceEvidence(current, "提炼真正有效的改动机制、线上证据和适用边界") },
         winner: currentWinner,
-        validation: current.validationRun,
+        validation: distillationSource.validation,
         release: current.release,
         releaseFreshness,
         releaseTrend,
@@ -1247,7 +1247,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
           goal: current.goal,
           desiredOutcome: current.desiredOutcome,
           problems: current.problems.slice(0, 12).map((item) => ({ id: item.id, title: item.title, impact: item.impact, severity: item.severity, status: item.status, summary: item.summary })),
-          lessons: selectPlanningLessons(current.lessons,8),
+          lessons: selectProjectPlanningLessons(current,8),
           validation: { recommendation: current.validationRun.recommendation, summary: current.validationRun.summary, failedChecks: current.validationRun.checks.filter((item) => item.status === "fail").slice(0, 8) },
           artifactAcceptance: { status: current.artifactAcceptance.status, score: current.artifactAcceptance.overallScore, summary: current.artifactAcceptance.summary },
           release: { status: current.release.status, evidenceMode: current.release.evidenceMode, healthy: current.release.healthy, kpis: current.release.kpis.slice(0, 8) },
@@ -1762,7 +1762,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
         const searchMemory = buildSearchMemory(working);
         const planParsed = PlanAiResultSchema.parse(await runProjectAi("plan", buildFocusedPlanPayload({ ...working, diagnosis }, {
           diagnosis,
-          existingLessons: selectPlanningLessons(working.lessons),
+          existingLessons: selectProjectPlanningLessons(working),
           searchChampion: working.searchChampion,
           archive: working.evolutionArchive.slice(-32),
           parentPool,

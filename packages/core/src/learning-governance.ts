@@ -5,6 +5,7 @@ import {
 } from "./release-outcome";
 import {projectHasOnlineReleaseTarget} from "./release-target";
 import {productionGoalReadiness} from "./production-goal-evidence";
+import {buildLessonProvenance,productionLessonProvenanceBlocker} from "./lesson-provenance";
 
 export type LearningGovernanceResult={
   lessons:Lesson[];
@@ -43,31 +44,6 @@ function transitionGovernance(
   return changed
     ?{...value,history:[...history,governanceHistoryEntry(value)].slice(-40)}
     :value;
-}
-
-function buildLessonProvenance(
-  project:EvolveProject,
-  at:string,
-  supersedesLessonIds:string[]=[],
-  binding?:{candidateId?:string;deploymentId?:string},
-):NonNullable<Lesson["provenance"]>{
-  const candidateId=binding?.candidateId??project.release.candidateId??project.searchChampion?.candidate?.id??project.experimentRun.winnerId;
-  const championCandidate=project.searchChampion?.candidate;
-  const candidate=(project.candidates??[]).find((item)=>item.id===candidateId)
-    ??(championCandidate?.id===candidateId?championCandidate:undefined);
-  const snapshots=candidate?.artifactSnapshots??[];
-  return {
-    missionId:project.id,
-    candidateId,
-    deploymentId:binding?.deploymentId??project.release.deploymentId,
-    validationRunId:project.validationRun?.id,
-    artifactSnapshotIds:snapshots.map((snapshot)=>snapshot.id),
-    artifactHashes:snapshots.flatMap((snapshot)=>snapshot.contentHash?[snapshot.contentHash]:[]),
-    releaseEvidenceMode:project.release.evidenceMode,
-    releaseObservedAt:project.release.observedAt,
-    derivedAt:at,
-    supersedesLessonIds,
-  };
 }
 
 function sameReleaseBinding(lesson:Lesson,project:EvolveProject){
@@ -126,11 +102,19 @@ export function governProductionLessons(
   project:EvolveProject,
   options?:{now?:number;at?:string},
 ):LearningGovernanceResult{
-  if(!projectHasOnlineReleaseTarget(project)){
-    return {lessons:project.lessons??[],nextQueue:project.nextQueue??[],changed:false,reason:"Offline project has no production learning governance."};
-  }
   const now=options?.now??Date.now();
   const at=options?.at??new Date(now).toISOString();
+  if(!projectHasOnlineReleaseTarget(project)){
+    let changed=false;
+    const lessons=(project.lessons??[]).map(lesson=>{
+      if(lesson.status!=="verified-skill"&&lesson.governance?.status!=="active")return lesson;
+      changed=true;
+      return {...lesson,status:"lesson" as const,reusable:false,governance:transitionGovernance(lesson,{
+        ...lesson.governance,status:"degraded",reason:"离线项目缺少 Production 证据，不能保留 Verified Skill 资格。",updatedAt:at,
+      })};
+    });
+    return {lessons,nextQueue:project.nextQueue??[],changed,reason:"Offline project cannot certify a production skill."};
+  }
   const freshness=productionOutcomeFreshness(project,{now});
   const trend=productionOutcomeTrend(project,{now});
   const rolledBack=project.release.status==="rolled-back";
@@ -211,6 +195,15 @@ export function governProductionLessons(
           updatedAt:at,
         }),
       };
+    }
+    const provenanceBlocker=(lesson.status==="verified-skill"||lesson.governance.status==="active")
+      ?productionLessonProvenanceBlocker(project,lesson,now):undefined;
+    if(provenanceBlocker){
+      changed=true;
+      return {...lesson,status:"lesson" as const,reusable:false,governance:transitionGovernance(lesson,{
+        ...lesson.governance,status:"degraded",reason:provenanceBlocker,outcomeTrend:trend.status,
+        observedAt:project.release.observedAt,updatedAt:at,
+      })};
     }
     if(project.release.status==="promoted"&&trend.status==="stable-healthy"&&freshness.status==="fresh"&&productionGoalReadiness(project,now).improved){
       const active=lesson.status==="verified-skill";
@@ -296,6 +289,12 @@ export function attachLessonGovernance(
   if(!projectHasOnlineReleaseTarget(project))return {...lesson,status:lesson.status==="verified-skill"?"lesson":lesson.status,provenance};
   const trend=productionOutcomeTrend(project,{now:Date.parse(at)});
   const goal=productionGoalReadiness(project,Date.parse(at));
+  const provenanceBlocker=lesson.status==="verified-skill"
+    ?productionLessonProvenanceBlocker(project,{...lesson,provenance},Date.parse(at)):undefined;
+  if(provenanceBlocker)return {...lesson,provenance,status:"lesson",reusable:false,governance:transitionGovernance(lesson,{
+    status:"degraded",reason:provenanceBlocker,candidateId:project.release.candidateId??project.searchChampion?.candidate?.id,
+    deploymentId:project.release.deploymentId,outcomeTrend:trend.status,observedAt:project.release.observedAt,updatedAt:at,
+  })};
   if(lesson.status==="verified-skill"&&!goal.improved)lesson={...lesson,status:"lesson",reusable:false};
   const status=lesson.status==="verified-skill"&&project.release.status==="promoted"&&trend.status==="stable-healthy"&&goal.improved?"active":"pending";
   const reason=lesson.status==="verified-skill"&&project.release.status==="promoted"&&trend.status==="stable-healthy"

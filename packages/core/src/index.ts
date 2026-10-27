@@ -44,6 +44,7 @@ export * from "./release-reconciliation";
 export * from "./release-outcome";
 export * from "./outcome-statistics";
 export * from "./learning-governance";
+export * from "./lesson-provenance";
 export * from "./planning-lessons";
 export * from "./production-goal-evidence";
 export * from "./independent-final-holdout";

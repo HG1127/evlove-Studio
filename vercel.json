@@ -1,5 +1,10 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "git": {
+    "deploymentEnabled": {
+      "codex/custom-backend-models": false
+    }
+  },
   "crons": [
     {
       "path": "/api/evolution/jobs/reconcile-scheduled",

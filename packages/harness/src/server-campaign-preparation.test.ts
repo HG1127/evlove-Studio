@@ -2,6 +2,8 @@ import { describe, expect, it,vi } from "vitest";
 import {CandidateSchema,TestCaseSchema,type EvolveProject} from "@evolution/contracts";
 import { campaignScoringInputFingerprint } from "@evolution/core";
 import {integrateDistilledLesson} from "@evolution/core";
+import {attachLessonGovernance} from "@evolution/core";
+import {syntheticLearningProject,withMeasuredProductionGoal} from "@evolution/testkit";
 import { advanceServerCampaignPreparation } from "./server-campaign-preparation";
 
 function fixture(): EvolveProject {
@@ -34,6 +36,27 @@ function fixture(): EvolveProject {
 }
 
 describe("server campaign preparation",()=>{
+  it.each(["valid","foreign-mission","wrong-hash","stale"])("qualifies %s production knowledge at the actual planning port",async kind=>{
+    const template=fixture(),source=syntheticLearningProject(),at=source.release.observedAt!;
+    const p=withMeasuredProductionGoal({...template,releaseTarget:source.releaseTarget,release:source.release,
+      candidates:source.candidates,searchChampion:source.searchChampion,validationRun:source.validationRun,
+      experimentRun:{...template.experimentRun,winnerId:"C1"},metrics:source.metrics});
+    const method=attachLessonGovernance(p,{id:"learned",title:"Synthetic",summary:"identity only",reusable:true,effect:"synthetic",limit:"not transfer",
+      trigger:[],method:[],validatedOn:[],status:"verified-skill"},{at});
+    expect(method.status).toBe("verified-skill");
+    if(kind==="foreign-mission")method.provenance!.missionId="foreign";
+    if(kind==="wrong-hash")method.provenance!.artifactHashes[0]="wrong";
+    p.lessons=[method];
+    p.diagnosis={problemId:"P",rootCause:"gap",summary:"gap",affectedComponent:"source",confidence:0.9,evidence:["流程缺口"],evidenceRefs:[],counterEvidence:[],falsifier:"no gain",suggestedScopes:["code"],trace:[]};
+    p.campaign.checkpoint={round:1,completedPhase:"diagnose",at};
+    const original=JSON.stringify(p.lessons),never=async()=>{throw Error("completed phase");};
+    const plan=vi.fn(async(payload:unknown)=>{
+      expect((payload as {existingLessons:unknown[]}).existingLessons).toHaveLength(kind==="valid"?1:0);
+      return {candidates:[],recommendedCandidateIds:[],summary:"source checked",experimentDesign:[]};
+    });
+    await advanceServerCampaignPreparation(p,{problemAnalysis:never,diagnose:never,plan},{now:()=>kind==="stale"?"2026-09-20T16:00:00.000Z":at});
+    expect(plan).toHaveBeenCalledOnce();expect(JSON.stringify(p.lessons)).toBe(original);
+  });
   it.each([false,true])("only sends an explicitly enabled complete user-goal scope to Plan (%s)",async enabled=>{
     const p=fixture();if(enabled)p.experimentPolicy.winnerGoalScope="all-user-goals-v1";
     p.acceptanceRubric.push({...p.acceptanceRubric[0]!,id:"UNDERSTAND",title:"理解难度",requirement:"降低理解难度"});

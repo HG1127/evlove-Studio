@@ -1,5 +1,5 @@
 import { FatalError } from "workflow";
-import { campaignScoringInputBlocker,campaignRepairLimitStopReason,selectPlanningLessons,productionGoalReadiness } from "@evolution/core";
+import { campaignScoringInputBlocker,campaignRepairLimitStopReason,selectProjectPlanningLessons,productionGoalReadiness,lessonDistillationSource } from "@evolution/core";
 import {
   EvolutionJobSchema,
   PRODUCTION_SCHEMA_VERSIONS,
@@ -1170,9 +1170,9 @@ async function executeServerControlAction(
   }
 
   if(action==="distill"&&(await serverAiConfigured())){
-    const winnerId=mission.experimentRun.winnerId??mission.searchChampion?.candidate?.id;
-    const winner=mission.candidates.find((candidate)=>candidate.id===winnerId)??mission.searchChampion?.candidate;
-    if(!winner)throw new FatalError("没有已验证 Winner，无法提炼经验");
+    const distillationSource=lessonDistillationSource(mission);
+    if(!distillationSource)throw new FatalError("经验来源缺少 exact Candidate / Validation 绑定，不能提炼");
+    const winner=distillationSource.candidate;
     const hasLiveDecision=projectHasLiveReleaseDecision(mission);
     const releaseFreshness=productionOutcomeFreshness(mission);
     const releaseTrend=productionOutcomeTrend(mission);
@@ -1185,7 +1185,7 @@ async function executeServerControlAction(
       project:{goal:mission.goal,command:mission.evolutionCommand,artifacts:compactArtifacts(mission)},
       baseline:mission.baselineRun.result,
       winner,
-      validation:mission.validationRun,
+      validation:distillationSource.validation,
       release:mission.release,
       releaseFreshness,
       releaseTrend,
@@ -1225,7 +1225,7 @@ async function executeServerControlAction(
         goal:mission.goal,
         desiredOutcome:mission.desiredOutcome,
         problems:mission.problems.slice(0,12).map((item)=>({id:item.id,title:item.title,impact:item.impact,severity:item.severity,status:item.status,summary:item.summary})),
-        lessons:selectPlanningLessons(mission.lessons,8),
+        lessons:selectProjectPlanningLessons(mission,8,Date.parse(now)),
         validation:{recommendation:mission.validationRun.recommendation,summary:mission.validationRun.summary,failedChecks:mission.validationRun.checks.filter((item)=>item.status==="fail").slice(0,8)},
         artifactAcceptance:{status:mission.artifactAcceptance.status,score:mission.artifactAcceptance.overallScore,summary:mission.artifactAcceptance.summary},
         release:{status:mission.release.status,evidenceMode:mission.release.evidenceMode,healthy:mission.release.healthy,kpis:mission.release.kpis.slice(0,8)},

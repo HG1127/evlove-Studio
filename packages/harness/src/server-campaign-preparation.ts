@@ -16,7 +16,7 @@ import {
   planGroundingContext,
   prioritizeProblems,
   resolveEvidenceRefs,
-  selectPlanningLessons,
+  selectProjectPlanningLessons,
   planningDeferredCriterionIds,planningBaselineFailures,
   planningBaselineEvidence,PLANNING_EVIDENCE_INSTRUCTION,
   userGoalScopeContext,
@@ -371,7 +371,7 @@ export async function advanceServerCampaignPreparation(
           reason: entry.reason,
         })),
       },
-      existingLessons: selectPlanningLessons(project.lessons),
+      existingLessons: selectProjectPlanningLessons(project,6,Date.parse(now)),
       gapAdvice: project.validationRun.aiAdvice ?? project.experimentRun.aiAdvice ?? project.campaign.lastGapAdvice,
     });
     const grounded = flagUngroundedCandidates(generated);

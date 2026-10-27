@@ -2,6 +2,8 @@
 import {createHash} from "node:crypto";
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
 import type {EvolveProject,Lesson} from "@evolution/contracts";
+import {attachLessonGovernance} from "@evolution/core";
+import {syntheticLearningProject,withMeasuredProductionGoal} from "@evolution/testkit";
 import {
   capabilityRecordReadableByActor,
   getOrganizationCapabilityHealth,
@@ -92,6 +94,29 @@ describe("organization capability service",()=>{
   afterEach(()=>{
     vi.unstubAllGlobals();
     for(const key of KEYS){const value=previous.get(key);if(value===undefined)delete process.env[key];else process.env[key]=value;}
+  });
+
+  it("projects a wrong-source certificate as degraded before registry writes without modifying the Mission",async()=>{
+    process.env.SUPABASE_URL="https://supabase.test";
+    process.env.SUPABASE_PUBLISHABLE_KEY="anon-test-key-1234567890";
+    process.env.EVOLUTION_WORKSPACE_ID="workspace-test";
+    const at=new Date().toISOString(),base=syntheticLearningProject();base.release.observedAt=at;
+    base.release.observations!.forEach((observation,index)=>observation.at=new Date(Date.parse(at)-(1-index)*60_000).toISOString());
+    const p=withMeasuredProductionGoal(base);
+    const valid=attachLessonGovernance(p,{...lesson(),provenance:undefined,governance:undefined},{at});
+    expect(valid.status).toBe("verified-skill");
+    const invalid=structuredClone(valid);invalid.id="wrong-source";invalid.provenance!.missionId="foreign";
+    p.lessons=[valid,invalid];const saved=JSON.stringify(p);let rows:Array<Record<string,unknown>>=[];
+    vi.stubGlobal("fetch",vi.fn(async(_input:RequestInfo|URL,init?:RequestInit)=>{
+      if((init?.method??"GET")==="GET")return new Response("[]",{status:200});
+      if(init?.method==="POST")rows=JSON.parse(String(init.body));
+      return new Response(null,{status:204});
+    }));
+    await syncMissionCapabilities(p);
+    expect(rows[0]?.payload).toMatchObject({status:"verified-skill",reusable:true,governance:{status:"active"}});
+    expect(rows[1]?.payload).toMatchObject({status:"lesson",reusable:false,governance:{status:"degraded"},provenance:{missionId:"foreign"}});
+    expect(rows[1]?.counter_examples).toEqual(expect.arrayContaining([expect.objectContaining({lessonId:"wrong-source"})]));
+    expect(JSON.stringify(p)).toBe(saved);
   });
 
   it("stays explicitly config-blocked without a workspace/data plane",async()=>{

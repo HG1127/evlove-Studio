@@ -1,4 +1,5 @@
 import {createHash} from "node:crypto";
+import {governProductionLessons} from "@evolution/core";
 import {
   OrganizationCapabilityAccessUpdateRequestSchema,
   OrganizationCapabilityAccessUpdateResponseSchema,
@@ -350,6 +351,7 @@ export async function syncMissionCapabilities(project:EvolveProject){
   }
   const {request}=restClient();
   const now=new Date().toISOString();
+  const lessons=governProductionLessons(project,{at:now,now:Date.parse(now)}).lessons;
   const baseFilter="workspace_id=eq."+encodeURIComponent(workspaceId)
     +"&source_mission_id=eq."+encodeURIComponent(project.id);
   const existingRows=await request(
@@ -368,14 +370,14 @@ export async function syncMissionCapabilities(project:EvolveProject){
     headers:{Prefer:"return=minimal"},
     body:JSON.stringify({archived:true,updated_at:now}),
   });
-  const rows=project.lessons.map((lesson)=>{
+  const rows=lessons.map((lesson)=>{
     const row=lessonRow(workspaceId,project.id,lesson,now);
     const access=accessById.get(row.id);
     return access?{...row,...access}:row;
   });
   if(rows.length&&capabilityEmbeddingConfigured()){
     try{
-      const vectors=await embedTexts(project.lessons.map(searchText));
+      const vectors=await embedTexts(lessons.map(searchText));
       const model=getCapabilityEmbeddingConfig()?.model;
       rows.forEach((row,index)=>{
         const vector=vectors?.[index];

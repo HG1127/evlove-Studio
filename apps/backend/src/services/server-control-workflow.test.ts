@@ -5,6 +5,8 @@ import { buildServerHarnessPlan, serverControlCapabilityWaitPlan, type ServerHar
 import {demoProject} from "../../../../src/features/evolve/data/mock-project";
 import { executeServerControlStep, planMissionStep,prepareScheduledTriggerStep,settleScheduledManualRoundStep } from "../../../../workflows/evolution-mission/steps";
 import {fetchServerAiProviderUsage,withServerAiUsageScope} from "./server-ai-usage";
+import {attachLessonGovernance} from "@evolution/core";
+import {syntheticLearningProject,withMeasuredProductionGoal} from "@evolution/testkit";
 
 const mocks = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn(), jobGet: vi.fn(), put: vi.fn(), append: vi.fn(), probe: vi.fn(), passive: vi.fn(), ai: vi.fn() }));
 vi.mock("./production-runtime", () => ({ getServerProductionRuntime: () => ({
@@ -12,6 +14,7 @@ vi.mock("./production-runtime", () => ({ getServerProductionRuntime: () => ({
 }) }));
 vi.mock("./server-ai-health", () => ({ probeServerAiRuntime: mocks.probe, getPassiveServerAiHealth: mocks.passive }));
 vi.mock("./ai-gateway", async (original) => ({ ...await original<typeof import("./ai-gateway")>(), runServerAi: mocks.ai }));
+vi.mock("./organization-capability",()=>({syncMissionCapabilities:vi.fn(async()=>({configured:false,synced:0,archived:0,message:"synthetic local projection"}))}));
 vi.mock("../server-env", async (original) => ({ ...await original<typeof import("../server-env")>(), serverAiConfigured: () => true }));
 
 const at = "2026-10-08T00:00:00.000Z";
@@ -209,5 +212,54 @@ describe("durable input context for a long HTML document",()=>{
     const result=await executeServerControlStep(input,{...plan,decision:{...plan.decision,action}},0);
     expect(result.control).toBe("continue");expect(mocks.ai).toHaveBeenCalledOnce();
     expect(mocks.save.mock.calls[0][0].sourceArtifacts[0].textContent).toBe(html);
+  });
+});
+
+describe("durable learning source at Next Queue",()=>{
+  it.each(["known-source","missing-source","new-winner"])("distillation retains the exact source and existing Release guard (%s)",async mode=>{
+    const missingSource=mode==="missing-source";
+    const source=syntheticLearningProject(),at=new Date().toISOString();source.release.observedAt=at;
+    source.release.observations!.forEach((observation,index)=>observation.at=new Date(Date.parse(at)-(1-index)*60_000).toISOString());
+    const oldCandidate=structuredClone(source.candidates[0]!),oldValidation={...structuredClone(demoProject.validationRun),...source.validationRun};
+    const p=withMeasuredProductionGoal({...structuredClone(demoProject),...source,id:input.missionId,
+      candidates:[{...oldCandidate,id:"C2"}],experimentRun:{...demoProject.experimentRun,winnerId:mode==="new-winner"?"C2":"C1"},
+      validationRun:{...oldValidation,id:"validation-c2",candidateId:"C2"},
+      searchChampion:{...demoProject.searchChampion!,candidate:oldCandidate,validation:missingSource?undefined:oldValidation},lessons:[]});
+    mocks.get.mockResolvedValue(p);mocks.passive.mockResolvedValue({configured:true,ready:true,status:"ready"});
+    mocks.ai.mockImplementation(async(operation:string,payload:unknown)=>{
+      expect(operation).toBe("distill");expect(payload).toMatchObject({winner:{id:"C1"},validation:{id:"validation-c1",candidateId:"C1"}});
+      return {title:"Synthetic",summary:"source scope",reusable:true,effect:"synthetic",limit:"not transfer",trigger:[],method:[],validatedOn:[],status:"verified-skill"};
+    });
+    const run=executeServerControlStep(input,{...plan,decision:{action:"distill",stage:"learning",reason:"source qualification"}},0);
+    if(missingSource){
+      await expect(run).rejects.toThrow("经验来源");expect(mocks.ai).not.toHaveBeenCalled();expect(mocks.save).not.toHaveBeenCalled();
+    }else if(mode==="new-winner"){
+      await expect(run).rejects.toThrow("尚未完成");expect(mocks.ai).not.toHaveBeenCalled();expect(mocks.save).not.toHaveBeenCalled();
+    }else{
+      expect((await run).control).toBe("continue");expect(mocks.ai).toHaveBeenCalledOnce();
+      expect(mocks.save.mock.calls[0]?.[0].lessons[0]).toMatchObject({status:"verified-skill",provenance:{candidateId:"C1",validationRunId:"validation-c1"}});
+    }
+  });
+  it("excludes a wrong-source certificate at the actual AI port without rewriting its historical record",async()=>{
+    const source=syntheticLearningProject(),at=new Date().toISOString();
+    source.release.observedAt=at;
+    source.release.observations!.forEach((observation,index)=>observation.at=new Date(Date.parse(at)-(1-index)*60_000).toISOString());
+    const p=withMeasuredProductionGoal({...structuredClone(demoProject),...source,id:input.missionId,
+      validationRun:{...structuredClone(demoProject.validationRun),...source.validationRun}});
+    const valid=attachLessonGovernance(p,{id:"valid",title:"Synthetic",summary:"identity check",reusable:true,effect:"synthetic",limit:"not transfer",
+      trigger:[],method:[],validatedOn:[],status:"verified-skill"},{at});
+    expect(valid.status).toBe("verified-skill");
+    const invalid=structuredClone(valid);invalid.id="wrong-source";invalid.provenance!.artifactHashes[0]="wrong";
+    p.lessons=[valid,invalid];const storedLessons=JSON.stringify(p.lessons);
+    mocks.get.mockResolvedValue(p);mocks.passive.mockResolvedValue({configured:true,ready:true,status:"ready"});
+    mocks.ai.mockImplementation(async(operation:string,payload:unknown)=>{
+      expect(operation).toBe("next-queue");
+      expect((payload as {project:{lessons:Array<{id:string}>}}).project.lessons.map(l=>l.id)).toEqual(["valid"]);
+      return {items:[{id:"Q",title:"Unseen task",reason:"synthetic plan only",source:"lesson",priority:"P1",suggestedMetrics:[]}],recommendedId:"Q",summary:"local contract"};
+    });
+    const result=await executeServerControlStep(input,{...plan,decision:{action:"next-queue",stage:"learning",reason:"source qualification"}},0);
+    expect(result.control).toBe("continue");expect(mocks.ai).toHaveBeenCalledOnce();
+    expect(JSON.stringify(mocks.save.mock.calls[0]?.[0].lessons)).toBe(storedLessons);
+    expect(JSON.stringify(p.lessons)).toBe(storedLessons);
   });
 });
