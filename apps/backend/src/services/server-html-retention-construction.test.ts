@@ -1,0 +1,55 @@
+// @vitest-environment node
+import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
+import {CandidateSchema,SourceArtifactSchema,type EvolveProject} from "@evolution/contracts";
+import {htmlNativeCodeRetention} from "@evolution/core";
+import {buildServerExperimentCandidate,verifyServerCandidateFrozenArtifact} from "./server-experiment-artifacts";
+
+const {blobs,ai,known}=vi.hoisted(()=>({blobs:new Map<string,Blob>(),ai:vi.fn(),known:vi.fn()}));
+vi.mock("./artifact-runtime",()=>({getServerArtifactStore:()=>({get:async(id:string)=>blobs.get(id),put:async(id:string,blob:Blob)=>{blobs.set(id,blob);}})}));
+vi.mock("./ai-gateway",()=>({runServerAi:ai}));
+// The real renderer eligibility and lossless compilation have separate adapter tests.
+// This port keeps the compiled bytes unchanged to exercise the subsequent retention guard.
+vi.mock("@evolution/adapters/html-native-profile",()=>({isKnownHtmlNativeSubject:known,compileKnownHtmlDerivedMetadata:(_original:string,subject:string)=>({html:subject,updatedIds:[],reflowedIds:[]})}));
+const code="npm install\nnpm run build",block='<pre class="code-block"><code>'+code+'</code></pre>';
+const paragraph='<p>后续说明。</p>',explanation='<p>后续说明。完成后记录实际构建结果。</p>';
+const original='<html><head><script>const KEEP=true;</script><style>p{color:blue}</style></head><body><article class="slide-card" id="slide-43"><div class="slide-body">'+block+paragraph+'</div></article></body></html>';
+function fixture(){
+  const source=SourceArtifactSchema.parse({id:"source",name:"guide.html",extension:"html",mimeType:"text/html",artifactKind:"document",role:"target",size:Buffer.byteLength(original),inputMode:"upload",parseStatus:"ready",createdAt:"2026-10-27T00:00:00.000Z"});
+  const candidate=CandidateSchema.parse({id:"child",name:"配置说明",change:"补充完成检查",patches:[{id:"plan",component:"code",operation:"update",target:"配置说明段落",content:explanation,rationale:"保留原始命令"}]});
+  const project={id:"retention-build-mission",name:"Retention",version:"V1",sourceArtifacts:[source],goal:"细化说明并保留原有代码",evolutionCommand:"增加完成检查",protectedItems:[],editableItems:[],acceptanceRubric:[]} as unknown as EvolveProject;
+  blobs.set(source.id,new Blob([original],{type:source.mimeType}));return {project,candidate};
+}
+const output=(before=code,after=code+"\n完成检查：记录结果。")=>({summary:"补充说明",artifacts:[{sourceArtifactId:"source",name:"guide.html",mimeType:"text/html",content:JSON.stringify({kind:"text-edits",edits:[{before,after}]}),notes:[]}]});
+beforeEach(()=>{blobs.clear();ai.mockReset();known.mockReset();known.mockReturnValue(true);vi.stubEnv("EVOLUTION_AI_FULL_REPAIR_TEXT_MISSIONS","retention-build-mission");});
+afterEach(()=>vi.unstubAllEnvs());
+
+describe("pre-freeze original code and instruction retention",()=>{
+  it("rejects before writing and uses the single construction correction to put new prose outside the original block",async()=>{
+    const x=fixture();ai.mockResolvedValueOnce(output()).mockImplementationOnce(async(_operation,payload)=>{
+      expect(blobs.size).toBe(1);expect(payload.project.currentTargets).toEqual(ai.mock.calls[0]![1].project.currentTargets);
+      expect(payload.constructionCorrection).toMatchObject({code:"HTML_ORIGINAL_CODE_RETENTION_FAILED",retention:{originalCount:2,retainedCount:0,retained:false}});
+      expect(JSON.stringify(payload.constructionCorrection)).not.toContain("independentFinal");
+      return output(paragraph,explanation);
+    });
+    const built=await buildServerExperimentCandidate(x.project,x.candidate),snapshot=built.artifactSnapshots[0]!;
+    expect(snapshot.content).toBe(original.replace(paragraph,explanation));expect(ai).toHaveBeenCalledTimes(2);
+    expect(htmlNativeCodeRetention(original,snapshot.content)).toMatchObject({retained:true,exactCount:2});
+    expect(await verifyServerCandidateFrozenArtifact(snapshot)).toBe(true);
+  });
+  it("stops after one invalid construction correction with no frozen Candidate",async()=>{
+    const x=fixture();ai.mockResolvedValue(output());
+    await expect(buildServerExperimentCandidate(x.project,x.candidate)).rejects.toMatchObject({code:"HTML_ORIGINAL_CODE_RETENTION_FAILED"});
+    expect(ai).toHaveBeenCalledTimes(2);expect(blobs.size).toBe(1);
+  });
+  it("shares the same one correction with an earlier anchor error instead of adding a retention retry",async()=>{
+    const x=fixture();ai.mockResolvedValueOnce(output("absent anchor","invalid"))
+      .mockResolvedValueOnce(output());
+    await expect(buildServerExperimentCandidate(x.project,x.candidate)).rejects.toMatchObject({code:"HTML_ORIGINAL_CODE_RETENTION_FAILED"});
+    expect(ai).toHaveBeenCalledTimes(2);expect(blobs.size).toBe(1);
+  });
+  it("does not impose the known SOP policy on an unknown HTML renderer",async()=>{
+    const x=fixture();known.mockReturnValue(false);ai.mockResolvedValue(output());
+    const built=await buildServerExperimentCandidate(x.project,x.candidate);
+    expect(built.artifactSnapshots[0]!.content).toContain(code+"\n完成检查：记录结果。");expect(ai).toHaveBeenCalledTimes(1);
+  });
+});

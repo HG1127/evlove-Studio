@@ -1,8 +1,19 @@
 import {describe,expect,it} from "vitest";
-import {htmlNativeCodeRetention} from "./html-native-code-retention";
+import {assertHtmlOriginalCodeRetention,HtmlOriginalCodeRetentionError,htmlNativeCodeRetention} from "./html-native-code-retention";
 const instructions="9. 保存检查结果。\n10. 记录失败原因。";
 const html=(value:string,language="",anchor="slide-1")=>`<article id="${anchor}"><pre class="code-block"><code${language?` class="language-${language}"`:""}>${value}</code></pre></article>`;
 describe("native preformatted original text retention",()=>{
+  it("uses the identical policy for construction assertions, retaining numbered prose compatibility",()=>{
+    const original=html(instructions),subject=html(instructions+"\n补充说明：失败时保留现场。");
+    expect(assertHtmlOriginalCodeRetention(original,subject)).toEqual(htmlNativeCodeRetention(original,subject));
+    const command=html("npm install\nnpm run build"),extended=html("npm install\nnpm run build\n补充说明。");
+    try{assertHtmlOriginalCodeRetention(command,extended);throw Error("Expected a retention rejection");}
+    catch(error){
+      expect(error).toBeInstanceOf(HtmlOriginalCodeRetentionError);
+      expect(error).toMatchObject({code:"HTML_ORIGINAL_CODE_RETENTION_FAILED",retention:{originalCount:2,retainedCount:0,retained:false}});
+      expect(JSON.stringify(error)).not.toContain("npm install");
+    }
+  });
   it("distinguishes an unchanged original from an appended instruction explanation",()=>{
     expect(htmlNativeCodeRetention(html(instructions),html(instructions))).toMatchObject({retained:true,originalCount:2,exactCount:2,extendedInstructionCount:0});
     expect(htmlNativeCodeRetention(html(instructions),html(instructions+"\n补充说明：失败时保留现场。"))).toMatchObject({retained:true,exactCount:0,extendedInstructionCount:2});

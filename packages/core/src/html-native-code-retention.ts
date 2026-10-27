@@ -54,3 +54,19 @@ export function htmlNativeCodeRetention(originalHtml:string,subjectHtml:string){
   return {policy:POLICY,originalCount:original.length,retainedCount,exactCount,extendedInstructionCount,
     retained:retainedCount===original.length};
 }
+
+export class HtmlOriginalCodeRetentionError extends Error {
+  readonly code="HTML_ORIGINAL_CODE_RETENTION_FAILED";
+  readonly retention:ReturnType<typeof htmlNativeCodeRetention>;
+  constructor(retention:ReturnType<typeof htmlNativeCodeRetention>){
+    super(`原始代码／指令块未按既有策略保留：${retention.retainedCount}/${retention.originalCount}`);
+    this.name="HtmlOriginalCodeRetentionError";this.retention=retention;
+  }
+}
+
+/** Construction preflight only; the same unchanged policy remains required in native validation. */
+export function assertHtmlOriginalCodeRetention(originalHtml:string,subjectHtml:string){
+  const retention=htmlNativeCodeRetention(originalHtml,subjectHtml);
+  if(!retention.retained)throw new HtmlOriginalCodeRetentionError(retention);
+  return retention;
+}

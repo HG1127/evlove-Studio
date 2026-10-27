@@ -5,6 +5,16 @@ const {known,compile}=vi.hoisted(()=>({known:vi.fn(),compile:vi.fn()}));
 vi.mock("@evolution/adapters/html-native-profile",()=>({isKnownHtmlNativeSubject:known,compileKnownHtmlDerivedMetadata:compile}));
 beforeEach(()=>{known.mockReset();compile.mockReset();});
 describe("pre-freeze derived HTML compilation",()=>{
+  it("checks code retention after lossless layout compilation so supported prose separation still works",async()=>{
+    const original='<html><body><pre>npm install</pre></body></html>';
+    const proposed=original.replace('npm install','npm install\n完成检查。');
+    const corrected=original.replace('</pre>','</pre><p>完成检查。</p>');
+    known.mockReturnValue(true);compile.mockReturnValue({html:corrected,updatedIds:[],reflowedIds:["slide-1"]});
+    const result=await compileServerHtmlDerivedMetadata({extension:"html",content:proposed,parentText:original,readOriginal:async()=>original});
+    expect(result.content).toBe(corrected);expect(result.checks).toContainEqual(expect.stringContaining('1/1'));
+    compile.mockReturnValue({html:proposed,updatedIds:[],reflowedIds:[]});
+    await expect(compileServerHtmlDerivedMetadata({extension:"html",content:proposed,parentText:original,readOriginal:async()=>original})).rejects.toMatchObject({code:"HTML_ORIGINAL_CODE_RETENTION_FAILED"});
+  });
   it("compiles an actual proposed change from the physical Original before its hash is frozen",async()=>{
     known.mockReturnValue(true);compile.mockReturnValue({html:"compiled-new-content",updatedIds:["slide-64"]});
     const readOriginal=vi.fn(async()=>"physical-original");
