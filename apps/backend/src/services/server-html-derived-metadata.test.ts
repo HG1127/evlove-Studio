@@ -5,6 +5,16 @@ const {known,compile}=vi.hoisted(()=>({known:vi.fn(),compile:vi.fn()}));
 vi.mock("@evolution/adapters/html-native-profile",()=>({isKnownHtmlNativeSubject:known,compileKnownHtmlDerivedMetadata:compile}));
 beforeEach(()=>{known.mockReset();compile.mockReset();});
 describe("pre-freeze derived HTML compilation",()=>{
+  it("rejects an oversized paragraph after compilation, while accepting redistributed short detail",async()=>{
+    const original='<html><body><article class="slide-card" id="slide-64"><div class="slide-body"><p>介绍</p></div></article></body></html>';
+    const proposed=original.replace('介绍','字'.repeat(1112));
+    known.mockReturnValue(true);compile.mockReturnValue({html:proposed,updatedIds:[]});
+    await expect(compileServerHtmlDerivedMetadata({extension:"html",content:proposed,parentText:original,readOriginal:async()=>original}))
+      .rejects.toMatchObject({code:"HTML_PARAGRAPH_CONSTRUCTION_BUDGET_EXCEEDED",issues:[{section:"slide-64",chars:1112}]});
+    compile.mockReturnValue({html:original.replace('介绍','简短介绍'),updatedIds:[]});
+    expect((await compileServerHtmlDerivedMetadata({extension:"html",content:proposed,parentText:original,readOriginal:async()=>original})).checks)
+      .toContainEqual(expect.stringContaining('静态长度检查'));
+  });
   it("checks code retention after lossless layout compilation so supported prose separation still works",async()=>{
     const original='<html><body><pre>npm install</pre></body></html>';
     const proposed=original.replace('npm install','npm install\n完成检查。');

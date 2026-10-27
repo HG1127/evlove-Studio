@@ -24,6 +24,22 @@ beforeEach(()=>{blobs.clear();ai.mockReset();known.mockReset();known.mockReturnV
 afterEach(()=>vi.unstubAllEnvs());
 
 describe("pre-freeze original code and instruction retention",()=>{
+  it("rejects a wall of prose before writes and corrects it once using the same full context",async()=>{
+    const x=fixture();ai.mockResolvedValueOnce(output("后续说明。","字".repeat(1112))).mockImplementationOnce(async(_operation,payload)=>{
+      expect(blobs.size).toBe(1);expect(payload.project.currentTargets).toEqual(ai.mock.calls[0]![1].project.currentTargets);
+      expect(payload.htmlParagraphConstructionInstruction).toContain("known-sop-paragraph-budget-v1");
+      expect(payload.constructionCorrection).toMatchObject({code:"HTML_PARAGRAPH_CONSTRUCTION_BUDGET_EXCEEDED",issues:[{section:"slide-43",chars:1112,maxChars:240}]});
+      return output("后续说明。","后续说明。完成后记录实际构建结果。");
+    });
+    const built=await buildServerExperimentCandidate(x.project,x.candidate);
+    expect(ai).toHaveBeenCalledTimes(2);expect(await verifyServerCandidateFrozenArtifact(built.artifactSnapshots[0]!)).toBe(true);
+  });
+  it.each(["paragraph","anchor"])("shares one correction after an earlier %s error and never freezes another oversized proposal",async kind=>{
+    const x=fixture();ai.mockResolvedValueOnce(kind==="anchor"?output("absent","invalid"):output("后续说明。","字".repeat(1112)))
+      .mockResolvedValueOnce(output("后续说明。","字".repeat(1112)));
+    await expect(buildServerExperimentCandidate(x.project,x.candidate)).rejects.toMatchObject({code:"HTML_PARAGRAPH_CONSTRUCTION_BUDGET_EXCEEDED"});
+    expect(ai).toHaveBeenCalledTimes(2);expect(blobs.size).toBe(1);
+  });
   it("rejects before writing and uses the single construction correction to put new prose outside the original block",async()=>{
     const x=fixture();ai.mockResolvedValueOnce(output()).mockImplementationOnce(async(_operation,payload)=>{
       expect(blobs.size).toBe(1);expect(payload.project.currentTargets).toEqual(ai.mock.calls[0]![1].project.currentTargets);

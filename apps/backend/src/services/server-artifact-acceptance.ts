@@ -10,6 +10,7 @@ import {buildServerCandidateTargetContext,requireServerCandidateOutputModes} fro
 import {verifyServerIndependentFinalHoldout} from "./server-independent-final-holdout";
 import {serverRepairMeasuredTextAuthorized} from "./server-ai-repair-consent";
 import {archiveServerRepairEvidence} from "./server-repair-evidence";
+import {SERVER_HTML_PARAGRAPH_CONSTRUCTION_INSTRUCTION} from "./server-html-build-context";
 
 export async function verifyServerFrozenCandidateArtifacts({project,candidate}:{project:EvolveProject;candidate:Candidate}):Promise<ServerArtifactVerification>{
   const targetIds=project.sourceArtifacts.filter((artifact)=>artifact.role==="target").map((artifact)=>artifact.id);
@@ -80,6 +81,7 @@ export async function repairServerArtifactCandidate(args:{
     &&args.project.validationRun.candidateId===args.candidate.id
     &&args.project.validationRun.evidenceFingerprint===evidenceFingerprint(args.project,args.candidate);
   const response=await runServerAi("repair-artifact",{
+    htmlParagraphConstructionInstruction:SERVER_HTML_PARAGRAPH_CONSTRUCTION_INSTRUCTION,
     project:{
       name:args.project.name,
       objectType:args.project.objectType,

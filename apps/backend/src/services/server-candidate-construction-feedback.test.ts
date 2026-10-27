@@ -1,8 +1,13 @@
 // @vitest-environment node
 import {describe,expect,it} from "vitest";
-import {ExactEditAnchorError,HtmlOriginalCodeRetentionError,HtmlSemanticLayoutError,htmlNativeCodeRetention} from "@evolution/core";
+import {ExactEditAnchorError,HtmlOriginalCodeRetentionError,HtmlSemanticLayoutError,HtmlParagraphConstructionError,htmlNativeCodeRetention} from "@evolution/core";
 import {serverCandidateConstructionCorrection} from "./server-candidate-construction-feedback";
 describe("bounded pre-freeze construction feedback",()=>{
+  it("exposes a declared static paragraph budget without accepting forged errors or granting an evaluation repair",()=>{
+    const error=new HtmlParagraphConstructionError([{section:"slide-64",role:"introductory",chars:1112,maxChars:240}]);
+    expect(serverCandidateConstructionCorrection(error,[])).toMatchObject({code:error.code,issues:error.issues,policy:error.policy,invalidProposal:[]});
+    expect(serverCandidateConstructionCorrection({...error},[])).toBeUndefined();
+  });
   it("uses measured retention counts without marking actual validation failures as construction errors",()=>{
     const report=htmlNativeCodeRetention('<pre>npm install</pre>','<pre>npm install\n完成检查。</pre>');
     expect(serverCandidateConstructionCorrection(new HtmlOriginalCodeRetentionError(report),[])).toMatchObject({code:"HTML_ORIGINAL_CODE_RETENTION_FAILED",retention:report,invalidProposal:[]});

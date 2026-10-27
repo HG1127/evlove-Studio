@@ -1,8 +1,12 @@
 import {createHash} from "node:crypto";
 import {HTML_BUILD_BODY_CONTEXT_VERSION,HtmlBuildBodyContextSchema} from "@evolution/contracts";
-import {htmlBuildBodyEditAnchors,htmlKnownSemanticComponents,htmlRepairBodyContext} from "@evolution/core";
+import {htmlBuildBodyEditAnchors,htmlKnownSemanticComponents,htmlRepairBodyContext,HTML_PARAGRAPH_CONSTRUCTION_POLICY} from "@evolution/core";
 import {isKnownHtmlNativeSubject} from "@evolution/adapters/html-native-profile";
 import {serverRepairMeasuredTextAuthorized} from "./server-ai-repair-consent";
+
+export const SERVER_HTML_PARAGRAPH_CONSTRUCTION_INSTRUCTION="For the known SOP renderer only, "+HTML_PARAGRAPH_CONSTRUCTION_POLICY.version+
+  " limits every new or edited paragraph to "+HTML_PARAGRAPH_CONSTRUCTION_POLICY.maxChangedParagraphChars+
+  " normalized text characters. Leave unchanged Original long paragraphs intact. Keep introductory paragraphs brief and distribute concrete inputs, operations, outputs, checks and exceptions across existing step/card-detail anchors throughout all required chapters. A newline inside one HTML paragraph collapses; it does not create separate rendered paragraphs. Do not hide overflow, delete facts, change scripts/styles or break a component's two-paragraph slots. A focused Candidate must still satisfy every original user goal, including understandability and configuration detail. This is a pre-freeze construction budget, not a readability or acceptance verdict.";
 
 /** The existing exact-Mission body consent also bounds initial SOP construction; no provider call occurs here. */
 export function serverHtmlBuildBodyContext(missionId:string,extension:string,source:string){

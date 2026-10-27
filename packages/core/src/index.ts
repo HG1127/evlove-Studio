@@ -74,4 +74,5 @@ export * from "./html-derived-search-index";
 export * from "./html-native-evidence";
 export * from "./html-native-browser-assertions";
 export * from "./html-semantic-layout";
+export * from "./html-paragraph-construction";
 export * from "./ai-usage-ledger";
