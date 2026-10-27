@@ -7,6 +7,7 @@ import { executeServerControlStep, planMissionStep,prepareScheduledTriggerStep,s
 import {fetchServerAiProviderUsage,withServerAiUsageScope} from "./server-ai-usage";
 import {attachLessonGovernance} from "@evolution/core";
 import {syntheticLearningProject,withMeasuredProductionGoal} from "@evolution/testkit";
+import {FatalError} from "workflow";
 
 const mocks = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn(), jobGet: vi.fn(), put: vi.fn(), append: vi.fn(), probe: vi.fn(), passive: vi.fn(), ai: vi.fn() }));
 vi.mock("./production-runtime", () => ({ getServerProductionRuntime: () => ({
@@ -123,6 +124,13 @@ describe("Durable Workflow AI capability wait", () => {
     expect(mocks.save).not.toHaveBeenCalled();
     expect(mocks.put).not.toHaveBeenCalled();
     expect(mocks.append).not.toHaveBeenCalled();
+  });
+  it("preserves a permanent AI failure marker at the Step boundary without rewriting evidence",async()=>{
+    const error=new FatalError("planning output contract exhausted");
+    mocks.ai.mockRejectedValue(error);
+    await expect(executeServerControlStep(input,plan,0)).rejects.toBe(error);
+    expect(mocks.ai).toHaveBeenCalledOnce();
+    expect(mocks.save).not.toHaveBeenCalled();expect(mocks.put).not.toHaveBeenCalled();expect(mocks.append).not.toHaveBeenCalled();
   });
   it("continues the action after AI recovery", async () => {
     mocks.probe.mockResolvedValue({ ready: true, status: "ready" });

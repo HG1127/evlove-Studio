@@ -38,11 +38,16 @@ describe("Durable Workflow finalizes errors after Step retry exhaustion",()=>{
     expect(mocks.missionSave).not.toHaveBeenCalled();expect(mocks.jobPut).not.toHaveBeenCalled();expect(mocks.eventAppend).not.toHaveBeenCalled();
   });
   it("records a resumable paused Mission and terminal Job without destroying evidence",async()=>{
+    const before=await mocks.missionGet();
     const outcome=await finalizeUnexpectedWorkflowFailureStep(input,4);
     expect(outcome).toMatchObject({status:"failed",iterations:4});
     const saved=mocks.missionSave.mock.calls[0]![0];
     expect(saved.stage).toBe("diagnosis");
     expect(saved.sourceArtifacts).toEqual(demoProject.sourceArtifacts);
+    expect(saved.baselineRun).toEqual(before.baselineRun);
+    expect(saved.candidates).toEqual(before.candidates);
+    expect(saved.validationRun).toEqual(before.validationRun);
+    expect(saved.finalHoldout).toEqual(before.finalHoldout);
     expect(saved.campaign).toMatchObject({status:"paused",checkpoint:{round:1,completedPhase:"diagnose",at}});
     expect(saved.campaign.stopReason).toContain("[server-workflow-step-failed]");
     expect(saved.campaign.schedule.enabled).toBe(false);
