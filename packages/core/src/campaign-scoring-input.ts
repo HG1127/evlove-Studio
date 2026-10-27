@@ -1,5 +1,6 @@
 import type { EvaluationResult, EvolveProject } from "@evolution/contracts";
 import { fastHash } from "./stable-hash";
+import { originalUserGoalCriteria, USER_GOAL_SCOPE_POLICY } from "./user-goal-scope";
 
 /** Score comparability depends on the user contract and original Target, never on the evolving Champion. */
 export function campaignScoringInputFingerprint(project: EvolveProject): string {
@@ -24,6 +25,7 @@ export function campaignScoringInputFingerprint(project: EvolveProject): string 
       connectorSnapshot: project.targetConnection.connectorSnapshot && { connectorId: project.targetConnection.connectorSnapshot.connectorId, targetId: project.targetConnection.connectorSnapshot.targetId, versionRef: project.targetConnection.connectorSnapshot.versionRef, snapshotRef: project.targetConnection.connectorSnapshot.snapshotRef, artifactId: project.targetConnection.connectorSnapshot.artifactId },
     },
     executionPolicy: {
+      ...(project.experimentPolicy?.winnerGoalScope ? { winnerGoalScope: project.experimentPolicy.winnerGoalScope } : {}),
       batchArtifactRuntime: project.experimentPolicy?.batchArtifactRuntime,
       batchSize: project.experimentPolicy?.batchSize,
     },
@@ -66,6 +68,11 @@ export function campaignLiveObservationFresh(project: EvolveProject, completedAt
 }
 /** Old scores cannot be compared after the scoring input changes, including legacy rows without a binding. */
 export function campaignScoringInputBlocker(project: EvolveProject): string | undefined {
+  if (project.experimentPolicy?.winnerGoalScope === USER_GOAL_SCOPE_POLICY) {
+    const goals = originalUserGoalCriteria(project);
+    if (!goals.length || new Set(goals.map(c => c.id)).size !== goals.length || goals.reduce((sum, c) => sum + c.weight, 0) <= 0)
+      return "完整用户目标策略需要唯一、具有正总权重的原始用户验收标准；本步禁止调用模型。";
+  }
   if (project.campaign.currentRound === 0) return undefined;
   if (project.campaign.scoringInputFingerprint === campaignScoringInputFingerprint(project)) return undefined;
   return "目标、考卷、验收标准或 Target 来源已变化，旧 Campaign 分数不可直接比较；请在自主进化中心点击「重置搜索」，再重新运行。";

@@ -2,6 +2,7 @@ import type {Candidate,EvolveProject,ExperimentRun} from "@evolution/contracts";
 import {campaignRepairLimitStopReason} from "./campaign-control";
 import {candidateWinnerDecision,experimentEvaluationScore} from "./experiment-winner";
 import {finalHoldoutContractFingerprint, finalHoldoutPaperHash} from "./independent-final-holdout";
+import {USER_GOAL_SCOPE_POLICY,userGoalProgress} from "./user-goal-scope";
 
 function relativeRegressions(project:EvolveProject,candidate:Candidate,result:ExperimentRun["candidateResults"][number]){
   const baseline=project.baselineRun.result,scores=result.evaluation.criterionScores??[],priorScores=baseline?.criterionScores??[];
@@ -13,6 +14,7 @@ function relativeRegressions(project:EvolveProject,candidate:Candidate,result:Ex
     ||!project.acceptanceRubric.every(criterion=>scores.some(score=>score.criterionId===criterion.id&&score.verificationStatus==="verified"&&score.pass&&score.score>=criterion.minScore)))return [];
   const decision=candidateWinnerDecision(project,result.evaluation,baseline,candidate);
   if(decision.eligible)return [];
+  if(project.experimentPolicy?.winnerGoalScope===USER_GOAL_SCOPE_POLICY&&!userGoalProgress(project,result.evaluation,baseline).ready)return [];
   return project.acceptanceRubric.filter(criterion=>{
     if(criterion.protectedConstraint||!decision.targetCriterionIds.includes(criterion.id))return false;
     const score=scores.find(s=>s.criterionId===criterion.id),prior=priorScores.find(s=>s.criterionId===criterion.id);

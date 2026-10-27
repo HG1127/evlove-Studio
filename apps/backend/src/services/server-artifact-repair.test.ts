@@ -70,6 +70,21 @@ describe("server targeted Artifact repair", () => {
     expect((await repairServerArtifactCandidate({...args,feedbackPhase:"visible"})).id).not.toBe(args.candidate.id);
     expect(args.project.experimentRun.candidateResults[0]!.evaluation.criterionScores![0]!.pass).toBe(true);
   });
+  it("includes an omitted user goal and its truthful paired progress in the opted-in repair request",async()=>{
+    const args=await relativeFixture(),p=args.project;
+    p.experimentPolicy.winnerGoalScope="all-user-goals-v1";
+    args.candidate.designRationale=CandidateDesignRationaleSchema.parse({coveredCriteria:[]});
+    p.finalHoldout={round:1,suite:[TestCaseSchema.parse({id:"F1",title:"secret",input:"FINAL-PRIVATE-SCENARIO",expected:["secret"]})],paperHash:"paper",contractFingerprint:"contract",createdAt:"2026-10-08T00:00:00Z"};
+    ai.mockImplementation(async(_op,payload)=>{
+      expect(payload).toMatchObject({winnerGoalScope:{policy:"all-user-goals-v1",requiredCriteria:[{criterionId:failed.id}]},
+        userGoalProgress:{ready:true,regressedCriterionIds:[failed.id],criteria:[{criterionId:failed.id,baselineScore:90,candidateScore:89,candidateMinimumPassed:true,delta:-1}]}});
+      expect(JSON.stringify(payload)).not.toMatch(/FINAL-PRIVATE-SCENARIO|PRIVATE_SCRIPT/);
+      const node=payload.candidate.artifacts[0]!.htmlTextNodes.find((n:{text:string})=>n.text==="主管确认退款后才进入执行。")!;
+      return output(JSON.stringify({kind:"html-body-node-edits-v1",edits:[{anchorId:node.anchorId,text:"主管确认退款后才进入执行，并记录审批编号。"}]}));
+    });
+    expect((await repairServerArtifactCandidate({...args,feedbackPhase:"visible"})).id).not.toBe(args.candidate.id);
+    expect(ai).toHaveBeenCalledOnce();expect(p.experimentRun.candidateResults[0]!.evaluation.criterionScores![0]!.pass).toBe(true);
+  });
   it("does not call AI for an unapproved relative mode",async()=>{
     const args=await relativeFixture();args.project.experimentPolicy.visibleFailureRepair="experiment-visible-repair-v1";
     await expect(repairServerArtifactCandidate({...args,feedbackPhase:"visible"})).rejects.toThrow("Relative repair requires");expect(ai).not.toHaveBeenCalled();

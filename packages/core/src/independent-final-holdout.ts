@@ -28,6 +28,7 @@ export function independentFinalReplacementBlocker(project:EvolveProject,round:n
 export const finalHoldoutContractFingerprint=(project:EvolveProject)=>fastHash(JSON.stringify([
   project.goal,project.evolutionCommand,project.metrics,project.protectedItems,project.editableItems,project.acceptanceRubric,
   project.sourceArtifacts.map(source=>[source.id,source.role,source.textContent,source.structuredContent]),
+  ...(project.experimentPolicy?.winnerGoalScope?[{winnerGoalScope:project.experimentPolicy.winnerGoalScope}]:[]),
 ]));
 function caseKey(test:TestCase){
   const text=(value:string)=>value.trim().replace(/\s+/g," ").toLowerCase();

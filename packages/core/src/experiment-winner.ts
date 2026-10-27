@@ -1,5 +1,6 @@
 import type { Candidate, EvaluationResult, EvolveProject } from "@evolution/contracts";
 import { indexScopedAcceptanceResults } from "./acceptance-result-identity";
+import { originalUserGoalCriteria, USER_GOAL_SCOPE_POLICY, userGoalProgress } from "./user-goal-scope";
 
 function scoreIndex(project: EvolveProject, evaluation: EvaluationResult) {
   return indexScopedAcceptanceResults([{
@@ -42,6 +43,7 @@ function normalizedCriterionLabel(value: string) {
 }
 
 function targetCriterionIds(project: EvolveProject, candidate?: Candidate) {
+  if (project.experimentPolicy?.winnerGoalScope === USER_GOAL_SCOPE_POLICY) return originalUserGoalCriteria(project).map(c => c.id);
   if (!candidate?.designRationale?.coveredCriteria.length) return [];
   const requested = candidate.designRationale.coveredCriteria.map(normalizedCriterionLabel).filter(Boolean);
   return project.acceptanceRubric.filter((criterion) => {
@@ -111,6 +113,12 @@ export function candidateWinnerDecision(
   const targets = targetCriterionIds(project, candidate);
   const targeted = targets.length ? pairedRubricQuality(project, evaluation, baseline, targets) : undefined;
   const targetDelta = targeted ? targeted.candidate - targeted.baseline : undefined;
+  if (project.experimentPolicy?.winnerGoalScope === USER_GOAL_SCOPE_POLICY) {
+    const progress = userGoalProgress(project, evaluation, baseline);
+    if (!progress.ready) blockers.push(`原始完整用户目标缺少同卷配对证据：${progress.pendingCriterionIds.join("、") || "目标定义或权重不完整"}`);
+    if (progress.regressedCriterionIds.length) blockers.push(`原始用户目标同卷退步：${progress.regressedCriterionIds.join("、")}；最低分过线不能代替目标改善`);
+    if (progress.ready && (progress.weightedDelta ?? 0) < 1) blockers.push(`原始完整用户目标变化 ${progress.weightedDelta!.toFixed(1)} 分，未达到 1 分提升门槛`);
+  }
   const hardGateImproved = candidateHardFailures < baselineHardFailures;
   const globalImproved = globalDelta >= 1;
   const focusedImproved = targetDelta !== undefined && targetDelta >= 1 && globalDelta >= -3;

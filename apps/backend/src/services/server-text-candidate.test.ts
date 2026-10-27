@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { CandidateSchema, SourceArtifactSchema, type EvolveProject } from "@evolution/contracts";
+import { AcceptanceCriterionSchema, CandidateSchema, ExperimentPolicySchema, SourceArtifactSchema, type EvolveProject } from "@evolution/contracts";
 import { buildServerExperimentCandidate, materializeServerCandidateArtifacts, serverArtifactSha256, verifyServerCandidateFrozenArtifact } from "./server-experiment-artifacts";
 
 const {blobs, ai} = vi.hoisted(() => ({blobs: new Map<string, Blob>(), ai: vi.fn()}));
@@ -23,6 +23,18 @@ const edits = (beforeText = before, afterText = after) => JSON.stringify({kind: 
 beforeEach(() => {blobs.clear(); ai.mockReset();});
 
 describe("server full text Candidate construction", () => {
+  it.each([false,true])("preserves the complete opted-in user scope when building a narrowly described Candidate (%s)",async enabled=>{
+    const {project,candidate}=fixture();
+    project.acceptanceRubric=[AcceptanceCriterionSchema.parse({id:"DETAIL",title:"细化",requirement:"补齐配置细节"}),AcceptanceCriterionSchema.parse({id:"UNDERSTAND",title:"理解难度",requirement:"降低理解难度"})];
+    project.experimentPolicy=ExperimentPolicySchema.parse(enabled?{winnerGoalScope:"all-user-goals-v1"}:{});
+    ai.mockImplementation(async(_operation,payload)=>{
+      if(enabled)expect(payload).toMatchObject({winnerGoalScope:{requiredCriteria:[{criterionId:"DETAIL"},{criterionId:"UNDERSTAND"}]}});
+      else expect(payload).not.toHaveProperty("winnerGoalScope");
+      return output(edits());
+    });
+    const built=await buildServerExperimentCandidate(project,candidate);
+    expect(ai).toHaveBeenCalledOnce();expect(built.artifactSnapshots[0]!.content).toBe(original.replace(before,after));
+  });
   it("rejects a changed physical parent even when the supplied anchor still matches and byte size is unchanged",async()=>{
     const {project,candidate}=fixture();
     ai.mockImplementationOnce(async()=>{

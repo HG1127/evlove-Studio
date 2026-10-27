@@ -34,6 +34,24 @@ function fixture(): EvolveProject {
 }
 
 describe("server campaign preparation",()=>{
+  it.each([false,true])("only sends an explicitly enabled complete user-goal scope to Plan (%s)",async enabled=>{
+    const p=fixture();if(enabled)p.experimentPolicy.winnerGoalScope="all-user-goals-v1";
+    p.acceptanceRubric.push({...p.acceptanceRubric[0]!,id:"UNDERSTAND",title:"理解难度",requirement:"降低理解难度"});
+    p.diagnosis={problemId:"P",rootCause:"gap",summary:"gap",affectedComponent:"source",confidence:0.9,evidence:["流程缺口"],evidenceRefs:[],counterEvidence:[],falsifier:"no gain",suggestedScopes:["code"],trace:[]};
+    p.campaign.checkpoint={round:1,completedPhase:"diagnose",at:p.updatedAt};
+    const plan=vi.fn(async(payload:unknown)=>{
+      if(enabled)expect(payload).toMatchObject({winnerGoalScope:{policy:"all-user-goals-v1",requiredCriteria:[{criterionId:"CONTENT"},{criterionId:"UNDERSTAND"}]}});
+      else expect(payload).not.toHaveProperty("winnerGoalScope");
+      return {candidates:[],recommendedCandidateIds:[],summary:"scope checked",experimentDesign:[]};
+    });
+    const never=async()=>{throw Error("completed phase");};
+    await advanceServerCampaignPreparation(p,{problemAnalysis:never,diagnose:never,plan});expect(plan).toHaveBeenCalledOnce();
+  });
+  it("rejects an enabled scope without user goals before any planning provider call",async()=>{
+    const p=fixture();p.experimentPolicy.winnerGoalScope="all-user-goals-v1";p.acceptanceRubric=[];
+    const request=vi.fn();const result=await advanceServerCampaignPreparation(p,{problemAnalysis:request,diagnose:request,plan:request});
+    expect(result.control).toBe("stop");expect(result.reason).toContain("禁止调用模型");expect(request).not.toHaveBeenCalled();
+  });
   it("gives Plan the current whole-goal criteria and measured gaps without promoting old advice into a narrower contract",async()=>{
     const p=fixture();p.evolutionCommand="细化各章节配置\n[旧自动建议] 只修入门并约束 JSON 格式";
     p.acceptanceRubric[0]={...p.acceptanceRubric[0]!,minScore:85,requirement:"各章节配置细节得到有效细化"};

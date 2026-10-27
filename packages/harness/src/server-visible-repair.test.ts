@@ -80,6 +80,38 @@ describe("bounded Visible feedback repair",()=>{
     expect(measured.readyForHoldout).toBe(true);expect(measured.winnerId).toBe(x.prior.id);
     expect(measured.project.finalHoldout).toEqual(out.project.finalHoldout);expect(measured.project.outputArtifacts).toHaveLength(0);
   });
+  it.each([89,95])("routes an omitted user goal through the shared repair and remeasures the frozen child (%i)",async childScore=>{
+    const x=relativeFixture(),p=x.p;
+    p.experimentPolicy.winnerGoalScope="all-user-goals-v1";
+    p.acceptanceRubric[0]!.weight=50;
+    p.acceptanceRubric.push({...p.acceptanceRubric[0]!,id:"UNDERSTAND",title:"understandability",weight:50});
+    p.evalSuite[0]!.criterionIds.push("UNDERSTAND");p.hiddenEvalSuite[0]!.criterionIds.push("UNDERSTAND");
+    p.baselineRun.result!.criterionScores!.push({...p.baselineRun.result!.criterionScores![0]!,criterionId:"UNDERSTAND"});
+    p.finalHoldout!.suite[0]!.criterionIds.push("UNDERSTAND");
+    p.finalHoldout!.paperHash=finalHoldoutPaperHash(p.finalHoldout!.suite);
+    p.finalHoldout!.contractFingerprint=finalHoldoutContractFingerprint(p);x.current.finalHoldoutPaperHash=p.finalHoldout!.paperHash;
+    x.ports.judge=async()=>({...judge(94),criteria:[...judge(94).criteria,{...judge(89).criteria[0]!,criterionId:"UNDERSTAND"}]});
+    const out=await runServerExperiment(p,x.ports),ports=execution({...x,project:out.project,out});
+    expect(out.readyForVisibleRepair).toBe(true);
+    expect(out.project.visibleRepairAttempts?.[0]).toMatchObject({feedbackKind:"relative-target-regression",failedCriterionIds:["UNDERSTAND"],attempt:1});
+    expect(out.experiment.candidateResults[0]!.evaluation.criterionScores!.every(c=>c.pass)).toBe(true);
+    expect(x.current.designRationale!.coveredCriteria).toEqual(["CONTENT"]);
+    ports.repairCandidate.mockImplementation(async()=>{
+      const claimed=ports.persistProject.mock.calls[0]![0];
+      expect(visibleRepairFeedbackContext(claimed,x.current,["UNDERSTAND"],1)?.comparisons[0]).toMatchObject({criterionId:"UNDERSTAND",baselineScore:90,currentScore:89,absoluteMinimumPassed:true});
+      return {...x.prior,finalHoldoutPaperHash:p.finalHoldout!.paperHash};
+    });
+    const repaired=await runServerVisibleRepair(out.project,ports);
+    expect(repaired.repaired).toBe(true);expect(repaired.project.artifactAcceptance.attempts).toBe(1);
+    expect(ports.archiveRepairEvidence).toHaveBeenCalledOnce();expect(ports.persistProject).toHaveBeenCalledOnce();expect(ports.repairCandidate).toHaveBeenCalledOnce();
+    expect(repaired.project.finalHoldout).toEqual(p.finalHoldout);expect(repaired.project.outputArtifacts).toHaveLength(0);
+    const rebuild=vi.fn(async()=>{throw Error("must remeasure the exact frozen repair");});
+    const measured=await runServerExperiment(repaired.project,{...x.ports,buildCandidate:rebuild,
+      judge:async()=>({...judge(95),criteria:[...judge(95).criteria,{...judge(childScore).criteria[0]!,criterionId:"UNDERSTAND"}]})});
+    expect(rebuild).not.toHaveBeenCalled();expect(measured.readyForHoldout).toBe(childScore===95);
+    expect(measured.readyForVisibleRepair).not.toBe(true);expect(measured.project.artifactAcceptance.attempts).toBe(1);
+    expect(measured.project.finalHoldout).toEqual(p.finalHoldout);expect(measured.project.outputArtifacts).toHaveLength(0);
+  });
   it("rejects an altered feedback classification before mutation",async()=>{
     const x=relativeFixture(),out=await runServerExperiment(x.p,x.ports),ports=execution({...x,project:out.project,out});
     const record=out.project.visibleRepairAttempts![0]!;
@@ -188,13 +220,14 @@ describe("bounded Visible feedback repair",()=>{
     if(kind==="duplicate-score")p.experimentRun.candidateResults[0]!.evaluation.criterionScores!.push({...p.experimentRun.candidateResults[0]!.evaluation.criterionScores![0]!});
     expect(visibleRepairTarget(p)).toBeUndefined();expect(await prepareServerVisibleRepair(p,x.ports,new Date().toISOString())).toBeUndefined();
   });
-  it.each(["contract","counter","paper","blob","expired"])("blocks changed %s before paid I/O",async kind=>{
+  it.each(["contract","counter","paper","blob","expired","goal-scope"])("blocks changed %s before paid I/O",async kind=>{
     const x=await reserved(),ports=execution(x),p=structuredClone(x.project);
     if(kind==="contract")p.evolutionCommand="different command";
     if(kind==="counter")p.artifactAcceptance.attempts=0;
     if(kind==="paper")p.finalHoldout!.suite[0]!.expected=["changed secret"];
     if(kind==="blob")ports.verifyFrozenArtifact.mockResolvedValue(false);
     if(kind==="expired")p.campaign.startedAt=new Date(Date.now()-31*60000).toISOString();
+    if(kind==="goal-scope")p.experimentPolicy.winnerGoalScope="all-user-goals-v1";
     const out=await runServerVisibleRepair(p,ports);expect(out.control).toBe("stop");
     expect(ports.repairCandidate).not.toHaveBeenCalled();expect(ports.persistProject).not.toHaveBeenCalled();
   });

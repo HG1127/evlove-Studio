@@ -10,5 +10,6 @@ export function evidenceFingerprint(project: EvolveProject, candidate: Candidate
     project.sourceArtifacts.map((item) => [item.id, item.role, item.textContent, item.structuredContent]),
     project.goal, project.evolutionCommand, project.protectedItems, project.acceptanceRubric,
     project.hiddenEvalSuite, project.metrics.map(({ key, target, direction }) => ({ key, target, direction })),
+    ...(project.experimentPolicy?.winnerGoalScope?[{winnerGoalScope:project.experimentPolicy.winnerGoalScope}]:[]),
   ]));
 }

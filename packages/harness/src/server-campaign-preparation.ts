@@ -19,6 +19,7 @@ import {
   selectPlanningLessons,
   planningDeferredCriterionIds,planningBaselineFailures,
   planningBaselineEvidence,PLANNING_EVIDENCE_INSTRUCTION,
+  userGoalScopeContext,
 } from "@evolution/core";
 
 import {serverCampaignArtifacts,planningNarrative,type ServerPlanningDocumentLoader} from "./server-campaign-context";
@@ -328,6 +329,7 @@ export async function advanceServerCampaignPreparation(
     const context=await planningArtifacts(project,ai,"plan",now);
     if(!context.ready)return context.outcome;
     const generated = await ai.plan({
+      ...(userGoalScopeContext(project)?{winnerGoalScope:userGoalScopeContext(project)}:{}),
       project: {
         goal: project.goal,
         problemStatement: project.problemStatement,

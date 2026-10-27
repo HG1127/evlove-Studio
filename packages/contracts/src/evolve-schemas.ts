@@ -1183,6 +1183,8 @@ export type ProjectAiProfile = z.infer<typeof ProjectAiProfileSchema>;
 
 
 export const ExperimentPolicySchema = z.object({
+  /** Explicit opt-in: the frozen user contract, rather than Candidate self-description, defines Visible focus. */
+  winnerGoalScope: z.literal("all-user-goals-v1").optional(),
   /** Explicit opt-in; legacy trials keep their original stop/repair behavior. */
   visibleFailureRepair: z.enum(["disabled", "experiment-visible-repair-v1", "experiment-visible-repair-v2"]).optional(),
   mode: z.enum(["adaptive", "full"]).default("adaptive"),

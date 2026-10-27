@@ -1,5 +1,5 @@
 import type {AcceptanceCriterion,Candidate,EvolveProject,FrozenArtifact} from "@evolution/contracts";
-import {evidenceFingerprint,htmlKnownSemanticComponents,htmlRepairBodyContext,htmlRepairTextNodeContext,resolveBoundHtmlBodyNodeEdits,indexUniqueById,reconcileAcceptedOfflineChampion,visibleRepairFeedbackContext} from "@evolution/core";
+import {evidenceFingerprint,htmlKnownSemanticComponents,htmlRepairBodyContext,htmlRepairTextNodeContext,resolveBoundHtmlBodyNodeEdits,indexUniqueById,reconcileAcceptedOfflineChampion,visibleRepairFeedbackContext,userGoalScopeContext,userGoalProgress} from "@evolution/core";
 import {isKnownHtmlNativeSubject} from "@evolution/adapters/html-native-profile";
 import {measuredDocumentObservations,runServerArtifactAcceptance,runServerVisibleRepair,type ServerArtifactVerification} from "@evolution/harness";
 import {runServerAi} from "./ai-gateway";
@@ -81,6 +81,10 @@ export async function repairServerArtifactCandidate(args:{
     &&args.project.validationRun.candidateId===args.candidate.id
     &&args.project.validationRun.evidenceFingerprint===evidenceFingerprint(args.project,args.candidate);
   const response=await runServerAi("repair-artifact",{
+    ...(userGoalScopeContext(args.project)?{winnerGoalScope:userGoalScopeContext(args.project),
+      userGoalProgress:visibleFeedback&&args.project.baselineRun.result?userGoalProgress(args.project,visibleFeedback.evaluation,args.project.baselineRun.result):
+        boundObservation&&args.project.validationRun.evaluation&&args.project.validationRun.baselineEvaluation?
+          userGoalProgress(args.project,args.project.validationRun.evaluation,args.project.validationRun.baselineEvaluation,args.project.hiddenEvalSuite):undefined}:{}),
     htmlParagraphConstructionInstruction:SERVER_HTML_PARAGRAPH_CONSTRUCTION_INSTRUCTION,
     project:{
       name:args.project.name,
