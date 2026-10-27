@@ -1,7 +1,7 @@
 import {createHash} from "node:crypto";
 import {describe,expect,it,vi} from "vitest";
-import {EvolveProjectSchema,IndependentFinalEvidenceSchema,TestCaseSchema,VisibleRepairAttemptSchema,type EvolveProject,type EvaluateAiResult,type RepairEvidenceArchiveInput} from "@evolution/contracts";
-import {evidenceFingerprint,finalHoldoutContractFingerprint,finalHoldoutPaperHash,materializeAcceptedChampionPackage,visibleRepairTarget} from "@evolution/core";
+import {CandidateDesignRationaleSchema,EvolveProjectSchema,IndependentFinalEvidenceSchema,TestCaseSchema,VisibleRepairAttemptSchema,type EvolveProject,type EvaluateAiResult,type RepairEvidenceArchiveInput} from "@evolution/contracts";
+import {evidenceFingerprint,finalHoldoutContractFingerprint,finalHoldoutPaperHash,materializeAcceptedChampionPackage,visibleRepairTarget,visibleRepairFeedbackContext} from "@evolution/core";
 import {experimentRecoveryFixture} from "@evolution/testkit";
 import {runServerExperiment} from "./server-experiment";
 import {hasServerPendingVisibleRepair,prepareServerVisibleRepair,runServerVisibleRepair} from "./server-visible-repair";
@@ -48,6 +48,58 @@ function execution(x:Awaited<ReturnType<typeof reserved>>){
 }
 
 describe("bounded Visible feedback repair",()=>{
+  function relativeFixture(){
+    const x=fixture(),baseline=x.p.baselineRun.result!;
+    x.p.experimentPolicy.visibleFailureRepair="experiment-visible-repair-v2";
+    x.current.designRationale=CandidateDesignRationaleSchema.parse({coveredCriteria:["CONTENT"]});
+    baseline.accuracy=90;baseline.evidence=90;baseline.completeness=90;baseline.rubricScore=90;
+    baseline.criterionScores![0]={...baseline.criterionScores![0]!,score:90,pass:true,gaps:[]};
+    x.ports.judge=async()=>judge(89);
+    return x;
+  }
+  it("reserves v2 repair for a verified regressed target whose absolute minimum still passes",async()=>{
+    const x=relativeFixture(),out=await runServerExperiment(x.p,x.ports);
+    expect(out.experiment.candidateResults[0]!.evaluation.criterionScores![0]).toMatchObject({score:89,pass:true,verificationStatus:"verified"});
+    expect(out.readyForVisibleRepair).toBe(true);expect(out.project.campaign.currentRound).toBe(0);
+    expect(out.project.visibleRepairAttempts?.[0]).toMatchObject({feedbackKind:"relative-target-regression",failedCriterionIds:["CONTENT"],attempt:1,status:"reserved"});
+    expect(out.project.acceptanceRubric).toEqual(x.p.acceptanceRubric);expect(out.project.finalHoldout).toEqual(x.p.finalHoldout);
+    expect(out.project.outputArtifacts).toHaveLength(0);
+  });
+  it("claims a relative repair without rewriting PASS scores and measures the exact child again",async()=>{
+    const x=relativeFixture(),out=await runServerExperiment(x.p,x.ports),reservation={...x,project:out.project,out},ports=execution(reservation);
+    ports.repairCandidate.mockImplementation(async()=>{
+      const claimed=ports.persistProject.mock.calls[0]![0];
+      expect(visibleRepairFeedbackContext(claimed,x.current,["CONTENT"],1)).toEqual({kind:"relative-target-regression",
+        comparisons:[{criterionId:"CONTENT",minScore:80,baselineScore:90,currentScore:89,absoluteMinimumPassed:true}]});
+      expect(claimed.experimentRun.candidateResults[0]!.evaluation.criterionScores![0]!.pass).toBe(true);
+      return {...x.prior,finalHoldoutPaperHash:out.project.finalHoldout!.paperHash};
+    });
+    const repaired=await runServerVisibleRepair(EvolveProjectSchema.parse(out.project),ports);
+    expect(repaired.repaired).toBe(true);expect(repaired.project.artifactAcceptance.attempts).toBe(1);
+    const measured=await runServerExperiment(repaired.project,{...x.ports,judge:async()=>judge(95)});
+    expect(measured.readyForHoldout).toBe(true);expect(measured.winnerId).toBe(x.prior.id);
+    expect(measured.project.finalHoldout).toEqual(out.project.finalHoldout);expect(measured.project.outputArtifacts).toHaveLength(0);
+  });
+  it("rejects an altered feedback classification before mutation",async()=>{
+    const x=relativeFixture(),out=await runServerExperiment(x.p,x.ports),ports=execution({...x,project:out.project,out});
+    const record=out.project.visibleRepairAttempts![0]!;
+    if(record.version!=="experiment-visible-repair-v2")throw Error("Expected v2 history");
+    record.feedbackKind="absolute-criterion-failure";
+    expect((await runServerVisibleRepair(out.project,ports)).repaired).toBe(false);expect(ports.repairCandidate).not.toHaveBeenCalled();
+  });
+  it.each(["v1","protected","unverified-baseline","wrong-case","duplicate-baseline","no-regression"])("does not route %s as a proven relative regression",async kind=>{
+    const x=relativeFixture();
+    if(kind==="v1")x.p.experimentPolicy.visibleFailureRepair="experiment-visible-repair-v1";
+    if(kind==="protected")x.p.acceptanceRubric[0]!.protectedConstraint=true;
+    if(kind==="unverified-baseline")x.p.baselineRun.result!.criterionScores![0]!.verificationStatus="partial";
+    if(kind==="wrong-case")x.p.baselineRun.result!.criterionScores![0]!.testCaseIds=["OTHER"];
+    if(kind==="duplicate-baseline")x.p.baselineRun.result!.criterionScores!.push({...x.p.baselineRun.result!.criterionScores![0]!});
+    if(kind==="no-regression")x.ports.judge=async()=>judge(90);
+    // Keep the existing paper's contract valid after explicitly changing a protected fixture criterion.
+    if(kind==="protected")x.p.finalHoldout!.contractFingerprint=finalHoldoutContractFingerprint(x.p);
+    const out=await runServerExperiment(x.p,x.ports);
+    expect(out.readyForVisibleRepair).not.toBe(true);expect(out.project.artifactAcceptance.attempts).toBe(0);
+  });
   it("keeps legacy missions unchanged and preserves a reservation through the storage schema",async()=>{
     const x=fixture();delete x.p.experimentPolicy.visibleFailureRepair;
     const legacy=await runServerExperiment(x.p,x.ports);

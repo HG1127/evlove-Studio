@@ -1,6 +1,10 @@
 # Real evolution acceptance
 
-Status: in progress, 2026-10-26. Green engineering checks do not establish measured evolution.
+Status: in progress, 2026-10-27. Green engineering checks do not establish measured evolution.
+
+The fourth explicitly authorized confirmation ran `4975935` within the registration-based 30-minute window. Its sole frozen Candidate passed all eight Visible criteria, Safety, exact 57/57 instruction/code retention and both tested viewport style comparisons. Understandability nevertheless fell 91 → 89 and paired improvement was only 0.4, below Core's unchanged one-point Winner rule. Campaign `minImprovement=0.5` is a separate stopping parameter. The Workflow completed without Winner, ordinary Hidden, independent-final execution, delivery or lessons; unused repair 0/1 does not authorize reopening it. The metadata-only outcome `sop-confirm4-outcome-6001d52a2d44bb2828bef833` has SHA-256 `6001d52a2d44bb2828bef833e9b08cddf84abaefc1b34b3d3a7d7d7175c4a7cf`, exact readback and 55 valid ledger entries. Ten physical requests reported 524,945 tokens; actual monetary billing remains unknown.
+
+The separately opted-in [relative target regression repair](architecture/2026-10-27-relative-target-regression-repair.md) addresses the measured routing gap without changing any score, minimum or Winner rule. Local reconstruction identifies the verified 91 → 89 regression while retaining its absolute PASS and the original final paper. It does not resume the failed confirmation, consume paid resources or establish any of the three required real effects.
 
 The [explicit bounded Visible-failure repair path](architecture/2026-10-26-bounded-visible-failure-repair.md) now shares its repair total with Hidden/Gate F, preserves the failed Experiment and frozen parent/child identities, and requires a persisted revision claim before mutation. Synthetic tests exercise revalidation through independent final/Gate F and exact-byte packaging, including the exhausted-budget failure route. This path is disabled for existing trials. It does not reopen the sealed SOP confirmation with Safety FAIL, and no additional paid trial or actual benefit/transfer result is claimed.
 

@@ -1,4 +1,4 @@
-import type {Candidate,EvolveProject,ExperimentRun,VisibleRepairAttempt} from "@evolution/contracts";
+import type {Candidate,EvolveProject,ExperimentRun,VisibleRepairAttempt,VisibleRepairFeedbackKind} from "@evolution/contracts";
 import {EvolveProjectSchema,RepairEvidenceArchiveInputSchema,RepairEvidenceReferenceSchema,VisibleRepairAttemptSchema} from "@evolution/contracts";
 import {campaignRepairLimitStopReason,estimateNextRoundCost,visibleRepairTarget} from "@evolution/core";
 import {hasCompleteServerExperimentFrozenSet,type ServerExperimentRecoveryPorts} from "./server-experiment-recovery";
@@ -9,7 +9,7 @@ function canonical(value:unknown):unknown{
   if(!value||typeof value!=="object")return value;
   return Object.fromEntries(Object.entries(value).sort(([a],[b])=>a.localeCompare(b)).map(([key,item])=>[key,canonical(item)]));
 }
-type RepairBasis=Pick<VisibleRepairAttempt,"round"|"attempt"|"parentCandidateId"|"failedCriterionIds"|"finalPaperHash">&{experiment:ExperimentRun};
+type RepairBasis=Pick<VisibleRepairAttempt,"round"|"attempt"|"parentCandidateId"|"failedCriterionIds"|"finalPaperHash">&{experiment:ExperimentRun;feedbackKind?:VisibleRepairFeedbackKind};
 async function binding(project:EvolveProject,record:RepairBasis,ports:ServerExperimentRecoveryPorts,version:VisibleRepairAttempt["version"]){
   const parent=project.candidates.filter(candidate=>candidate.id===record.parentCandidateId);
   const wire={version,missionId:project.id,record,parent,
@@ -36,7 +36,7 @@ export function hasServerPendingVisibleRepair(project:EvolveProject){
 }
 /** The returned project must be saved before executing the reservation on a later control step. */
 export async function prepareServerVisibleRepair(project:EvolveProject,ports:ServerExperimentRecoveryPorts,now:string):Promise<EvolveProject|undefined>{
-  if(project.experimentPolicy.visibleFailureRepair!=="experiment-visible-repair-v1")return undefined;
+  if(!["experiment-visible-repair-v1","experiment-visible-repair-v2"].includes(project.experimentPolicy.visibleFailureRepair??""))return undefined;
   // Hash the same validated representation that the Mission store will read back.
   const parsed=EvolveProjectSchema.safeParse(project);
   if(!parsed.success)return undefined;
@@ -47,13 +47,13 @@ export async function prepareServerVisibleRepair(project:EvolveProject,ports:Ser
     ||JSON.stringify(target.result.artifactSnapshots)!==JSON.stringify(target.candidate.artifactSnapshots))return undefined;
   const attempt=project.artifactAcceptance.attempts+1,round=project.campaign.currentRound+1;
   const basis={round,attempt,parentCandidateId:target.candidate.id,experiment:project.experimentRun,
-    failedCriterionIds:target.failedCriteria.map(c=>c.id),finalPaperHash:project.finalHoldout!.paperHash};
+    failedCriterionIds:target.failedCriteria.map(c=>c.id),finalPaperHash:project.finalHoldout!.paperHash,feedbackKind:target.feedbackKind};
   const inputFingerprint=await binding(project,basis,ports,"experiment-visible-repair-v2");
   const experimentFingerprint=await ports.fingerprint?.(JSON.stringify(canonical(project.experimentRun)));
   if(!inputFingerprint||!experimentFingerprint||!/^[0-9a-f]{64}$/.test(experimentFingerprint))return undefined;
   const record:VisibleRepairAttempt={round,attempt,parentCandidateId:basis.parentCandidateId,failedCriterionIds:basis.failedCriterionIds,finalPaperHash:basis.finalPaperHash,
     version:"experiment-visible-repair-v2",id:`visible-repair-r${round}-${attempt}-${inputFingerprint.slice(0,16)}`,
-    status:"reserved",inputFingerprint,experimentFingerprint,reservedAt:now};
+    status:"reserved",inputFingerprint,experimentFingerprint,feedbackKind:target.feedbackKind,reservedAt:now};
   return {...project,visibleRepairAttempts:[...(project.visibleRepairAttempts??[]),record],
     artifactAcceptance:{...project.artifactAcceptance,attempts:attempt,summary:`Visible Repair ${attempt}/${project.artifactAcceptance.maxRepairAttempts} 已登记；Gate F 尚未执行。`},updatedAt:now};
 }
@@ -78,11 +78,13 @@ export async function runServerVisibleRepair(input:EvolveProject,ports:ServerVis
     artifactAcceptance:{...input.artifactAcceptance,attempts:record.attempt-1}};
   const target=visibleRepairTarget(beforeDebit);
   if(input.artifactAcceptance.attempts!==record.attempt||!target||target.candidate.id!==record.parentCandidateId
+    ||((record.version==="experiment-visible-repair-v2"?record.feedbackKind:undefined)??"absolute-criterion-failure")!==target.feedbackKind
     ||JSON.stringify(target.failedCriteria.map(c=>c.id))!==JSON.stringify(record.failedCriterionIds)
     ||(record.version==="experiment-visible-repair-v1"?JSON.stringify(input.experimentRun)!==JSON.stringify(record.experiment)
       :await ports.fingerprint?.(JSON.stringify(canonical(input.experimentRun)))!==record.experimentFingerprint)
     ||await binding(input,{round:record.round,attempt:record.attempt,parentCandidateId:record.parentCandidateId,
-      experiment:input.experimentRun,failedCriterionIds:record.failedCriterionIds,finalPaperHash:record.finalPaperHash},ports,record.version)!==record.inputFingerprint
+      experiment:input.experimentRun,failedCriterionIds:record.failedCriterionIds,finalPaperHash:record.finalPaperHash,
+      ...(record.version==="experiment-visible-repair-v2"&&record.feedbackKind?{feedbackKind:record.feedbackKind}:{})},ports,record.version)!==record.inputFingerprint
     ||!hasCompleteServerExperimentFrozenSet(input,target.candidate)||!ports.verifyFrozenArtifact)return pause("修复输入、预算、父代或失败证据已变化。");
   try{
     for(const snapshot of target.candidate.artifactSnapshots){

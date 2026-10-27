@@ -683,12 +683,15 @@ const visibleRepairAttemptFields = {
   completedAt: z.string().optional(),
   error: z.string().optional(),
 };
+export const VisibleRepairFeedbackKindSchema=z.enum(["absolute-criterion-failure","relative-target-regression"]);
+export type VisibleRepairFeedbackKind=z.infer<typeof VisibleRepairFeedbackKindSchema>;
 /** Stored v1 rows retain their complete inline report; never reinterpret them as references. */
 const VisibleRepairAttemptV1Schema=z.object({...visibleRepairAttemptFields,
   version:z.literal("experiment-visible-repair-v1"),experiment:ExperimentRunSchema});
 /** A reserved v2 row still has its report in experimentRun. Archive it before the running claim. */
 const VisibleRepairAttemptV2Schema=z.object({...visibleRepairAttemptFields,
   version:z.literal("experiment-visible-repair-v2"),experimentFingerprint:z.string().regex(/^[0-9a-f]{64}$/),
+  feedbackKind:VisibleRepairFeedbackKindSchema.optional(),
   evidence:RepairEvidenceReferenceSchema.optional(),
 }).strict().refine(row=>row.status==="reserved"||Boolean(row.evidence),
   {message:"A started Visible repair requires the complete archived failure evidence",path:["evidence"]});
@@ -1181,7 +1184,7 @@ export type ProjectAiProfile = z.infer<typeof ProjectAiProfileSchema>;
 
 export const ExperimentPolicySchema = z.object({
   /** Explicit opt-in; legacy trials keep their original stop/repair behavior. */
-  visibleFailureRepair: z.enum(["disabled", "experiment-visible-repair-v1"]).optional(),
+  visibleFailureRepair: z.enum(["disabled", "experiment-visible-repair-v1", "experiment-visible-repair-v2"]).optional(),
   mode: z.enum(["adaptive", "full"]).default("adaptive"),
   finalistCount: z.number().int().min(2).max(6).default(2),
   screeningCaseCount: z.number().int().min(1).max(5).default(2),

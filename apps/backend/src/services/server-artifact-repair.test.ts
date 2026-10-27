@@ -1,7 +1,7 @@
 // @vitest-environment node
 import JSZip from "jszip";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AcceptanceCriterionSchema, CandidateSchema, SourceArtifactSchema, type CandidateArtifactSnapshot, type EvolveProject } from "@evolution/contracts";
+import { AcceptanceCriterionSchema, CandidateSchema,CandidateDesignRationaleSchema, SourceArtifactSchema,TestCaseSchema,VisibleRepairAttemptSchema, type CandidateArtifactSnapshot, type EvolveProject } from "@evolution/contracts";
 import { repairServerArtifactCandidate } from "./server-artifact-acceptance";
 import { serverArtifactSha256, verifyServerCandidateFrozenArtifact } from "./server-experiment-artifacts";
 import {evidenceFingerprint} from "@evolution/core";
@@ -36,6 +36,44 @@ beforeEach(() => { vi.stubEnv("EVOLUTION_AI_FULL_REPAIR_TEXT_MISSIONS","");blobs
 afterEach(()=>vi.unstubAllEnvs());
 
 describe("server targeted Artifact repair", () => {
+  async function relativeFixture(){
+    const args=await fixture(),base=acceptedPackageFixture(false).project;
+    const criterion={...failed,minScore:85,hardGate:false,protectedConstraint:false};
+    args.candidate.designRationale=CandidateDesignRationaleSchema.parse({coveredCriteria:[criterion.id]});
+    args.candidate.artifactSnapshots=[await snapshot("source",'<html><body>'+before+'<script>PRIVATE_SCRIPT</script></body></html>')];
+    const test=TestCaseSchema.parse({id:"V1",title:"comprehension",input:"same scenario",expected:["clear explanation"],criterionIds:[criterion.id]});
+    const score={criterionId:criterion.id,score:90,pass:true,verificationStatus:"verified" as const,evidence:["measured"],gaps:[],testCaseIds:[test.id]};
+    args.project={...base,...args.project,candidates:[args.candidate],acceptanceRubric:[criterion],evalSuite:[test],
+      campaign:{...base.campaign,status:"running",currentRound:0},artifactAcceptance:{...base.artifactAcceptance,attempts:1,maxRepairAttempts:1},
+      experimentPolicy:{...base.experimentPolicy,visibleFailureRepair:"experiment-visible-repair-v2"},
+      baselineRun:{...base.baselineRun,result:{...base.baselineRun.result!,criterionScores:[score]}},
+      visibleRepairAttempts:[VisibleRepairAttemptSchema.parse({version:"experiment-visible-repair-v2",id:"relative",round:1,attempt:1,status:"running",
+        parentCandidateId:args.candidate.id,failedCriterionIds:[criterion.id],inputFingerprint:"a".repeat(64),experimentFingerprint:"b".repeat(64),finalPaperHash:"paper",reservedAt:"2026-10-27T00:00:00Z",
+        feedbackKind:"relative-target-regression",evidence:{version:"repair-evidence-reference-v1",artifactId:"evidence",missionId:args.project.id,candidateId:args.candidate.id,
+          sha256:"c".repeat(64),size:1,mimeType:"application/json"}})]};
+    args.project.experimentRun={id:"visible",status:"completed",comparisonBaseline:args.project.baselineRun,comparisonSuite:args.project.evalSuite,
+      candidateResults:[{candidateId:args.candidate.id,artifactSnapshots:args.candidate.artifactSnapshots,experimentStage:"finalist",
+        evaluation:{...base.baselineRun.result!,safety:"PASS",criterionScores:[{...score,score:89}]},runs:[]}]};
+    args.failedCriteria=[criterion];vi.stubEnv("EVOLUTION_AI_FULL_REPAIR_TEXT_MISSIONS",args.project.id);
+    return args;
+  }
+  it("tells repair AI a verified relative regression still passes its absolute minimum",async()=>{
+    const args=await relativeFixture();
+    ai.mockImplementation(async(_op:string,payload:{feedbackContext:unknown;feedbackInstruction:string;failedCriteria:unknown[];candidate:{artifacts:Array<{htmlTextNodes:Array<{anchorId:string;text:string}>}>}})=>{
+      expect(payload.feedbackContext).toEqual({kind:"relative-target-regression",comparisons:[{criterionId:failed.id,minScore:85,baselineScore:90,currentScore:89,absoluteMinimumPassed:true}]});
+      expect(payload.feedbackInstruction).toContain("still PASS");
+      expect(payload.failedCriteria[0]).toMatchObject({feedbackKind:"relative-target-regression",absoluteMinimumPassed:true,currentScore:89,baselineScore:90});
+      expect(JSON.stringify(payload)).not.toContain("PRIVATE_SCRIPT");
+      const node=payload.candidate.artifacts[0]!.htmlTextNodes.find(n=>n.text==="主管确认退款后才进入执行。")!;
+      return output(JSON.stringify({kind:"html-body-node-edits-v1",edits:[{anchorId:node.anchorId,text:"主管确认退款后才进入执行，并记录审批编号。"}]}));
+    });
+    expect((await repairServerArtifactCandidate({...args,feedbackPhase:"visible"})).id).not.toBe(args.candidate.id);
+    expect(args.project.experimentRun.candidateResults[0]!.evaluation.criterionScores![0]!.pass).toBe(true);
+  });
+  it("does not call AI for an unapproved relative mode",async()=>{
+    const args=await relativeFixture();args.project.experimentPolicy.visibleFailureRepair="experiment-visible-repair-v1";
+    await expect(repairServerArtifactCandidate({...args,feedbackPhase:"visible"})).rejects.toThrow("Relative repair requires");expect(ai).not.toHaveBeenCalled();
+  });
   it("refuses a changed full parent even when the requested local edit anchor still matches",async()=>{
     const args=await fixture();
     ai.mockImplementation(async()=>{
