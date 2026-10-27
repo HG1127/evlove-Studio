@@ -2,6 +2,7 @@ import {parse,type DefaultTreeAdapterTypes} from "parse5";
 
 const POLICY="original-text-with-numbered-instruction-append-v1" as const;
 type Block={tag:string;text:string;anchor:string;declaredCode:boolean};
+export type HtmlOriginalCodeRetentionMissingBlock={originalBlockIndex:number;tag:string;section:string};
 const text=(node:DefaultTreeAdapterTypes.Node):string=>node.nodeName==="#text"&&"value" in node?node.value
   :"childNodes" in node?node.childNodes.map(text).join(""):"";
 const declaresCode=(node:DefaultTreeAdapterTypes.Node):boolean=>"tagName" in node&&["pre","code"].includes(node.tagName)
@@ -33,10 +34,12 @@ function numberedInstructions(value:string){
 }
 
 /** Exact original text must survive. Only an untyped numbered prose list can gain trailing prose. */
-export function htmlNativeCodeRetention(originalHtml:string,subjectHtml:string){
+function inspectRetention(originalHtml:string,subjectHtml:string){
   const original=blocks(originalHtml),subject=blocks(subjectHtml);
+  const missingBlocks:HtmlOriginalCodeRetentionMissingBlock[]=[];
   let cursor=0,exactCount=0,extendedInstructionCount=0;
-  for(const source of original){
+  for(const [sourceIndex,source] of original.entries()){
+    let matched=false;
     for(let index=cursor;index<subject.length;index++){
       const next=subject[index]!;
       if(next.tag!==source.tag)continue;
@@ -47,26 +50,33 @@ export function htmlNativeCodeRetention(originalHtml:string,subjectHtml:string){
         &&suffix.slice(1).split("\n").every(line=>line.trim().length>0&&prose(line));
       if(!exact&&!extended)continue;
       if(exact)exactCount++;else extendedInstructionCount++;
-      cursor=index+1;break;
+      cursor=index+1;matched=true;break;
     }
+    if(!matched)missingBlocks.push({originalBlockIndex:sourceIndex+1,tag:source.tag,section:source.anchor});
   }
   const retainedCount=exactCount+extendedInstructionCount;
-  return {policy:POLICY,originalCount:original.length,retainedCount,exactCount,extendedInstructionCount,
-    retained:retainedCount===original.length};
+  return {retention:{policy:POLICY,originalCount:original.length,retainedCount,exactCount,extendedInstructionCount,
+    retained:retainedCount===original.length},missingBlocks};
+}
+
+/** Keep native evidence byte-compatible; missing-block hints belong only to construction errors. */
+export function htmlNativeCodeRetention(originalHtml:string,subjectHtml:string){
+  return inspectRetention(originalHtml,subjectHtml).retention;
 }
 
 export class HtmlOriginalCodeRetentionError extends Error {
   readonly code="HTML_ORIGINAL_CODE_RETENTION_FAILED";
   readonly retention:ReturnType<typeof htmlNativeCodeRetention>;
-  constructor(retention:ReturnType<typeof htmlNativeCodeRetention>){
+  readonly missingBlocks:HtmlOriginalCodeRetentionMissingBlock[];
+  constructor(retention:ReturnType<typeof htmlNativeCodeRetention>,missingBlocks:HtmlOriginalCodeRetentionMissingBlock[]=[]){
     super(`原始代码／指令块未按既有策略保留：${retention.retainedCount}/${retention.originalCount}`);
-    this.name="HtmlOriginalCodeRetentionError";this.retention=retention;
+    this.name="HtmlOriginalCodeRetentionError";this.retention=retention;this.missingBlocks=missingBlocks;
   }
 }
 
 /** Construction preflight only; the same unchanged policy remains required in native validation. */
 export function assertHtmlOriginalCodeRetention(originalHtml:string,subjectHtml:string){
-  const retention=htmlNativeCodeRetention(originalHtml,subjectHtml);
-  if(!retention.retained)throw new HtmlOriginalCodeRetentionError(retention);
+  const {retention,missingBlocks}=inspectRetention(originalHtml,subjectHtml);
+  if(!retention.retained)throw new HtmlOriginalCodeRetentionError(retention,missingBlocks);
   return retention;
 }

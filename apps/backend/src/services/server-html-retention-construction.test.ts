@@ -61,6 +61,7 @@ describe("pre-freeze original code and instruction retention",()=>{
     const x=fixture();ai.mockResolvedValueOnce(output()).mockImplementationOnce(async(_operation,payload)=>{
       expect(blobs.size).toBe(1);expect(payload.project.currentTargets).toEqual(ai.mock.calls[0]![1].project.currentTargets);
       expect(payload.constructionCorrection).toMatchObject({code:"HTML_ORIGINAL_CODE_RETENTION_FAILED",retention:{originalCount:2,retainedCount:0,retained:false}});
+      expect(payload.constructionCorrection.missingBlocks).toEqual([{originalBlockIndex:1,tag:"pre",section:"slide-43"},{originalBlockIndex:2,tag:"code",section:"slide-43"}]);
       expect(JSON.stringify(payload.constructionCorrection)).not.toContain("independentFinal");
       return output(paragraph,explanation);
     });

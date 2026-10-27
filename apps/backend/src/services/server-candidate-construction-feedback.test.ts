@@ -1,6 +1,6 @@
 // @vitest-environment node
 import {describe,expect,it} from "vitest";
-import {ExactEditAnchorError,HtmlOriginalCodeRetentionError,HtmlSemanticLayoutError,HtmlParagraphConstructionError,htmlNativeCodeRetention} from "@evolution/core";
+import {ExactEditAnchorError,HtmlOriginalCodeRetentionError,HtmlSemanticLayoutError,HtmlParagraphConstructionError,htmlNativeCodeRetention,assertHtmlOriginalCodeRetention} from "@evolution/core";
 import {serverCandidateConstructionCorrection} from "./server-candidate-construction-feedback";
 describe("bounded pre-freeze construction feedback",()=>{
   it("exposes a declared static paragraph budget without accepting forged errors or granting an evaluation repair",()=>{
@@ -12,6 +12,16 @@ describe("bounded pre-freeze construction feedback",()=>{
     const report=htmlNativeCodeRetention('<pre>npm install</pre>','<pre>npm install\n完成检查。</pre>');
     expect(serverCandidateConstructionCorrection(new HtmlOriginalCodeRetentionError(report),[])).toMatchObject({code:"HTML_ORIGINAL_CODE_RETENTION_FAILED",retention:report,invalidProposal:[]});
     expect(serverCandidateConstructionCorrection({code:"HTML_ORIGINAL_CODE_RETENTION_FAILED",retention:report},[])).toBeUndefined();
+  });
+  it("bounds measured Original location hints without sending code or pretending they are current-parent anchors",()=>{
+    const original=Array.from({length:23},(_,i)=>`<pre id="slide-${i+1}">private-command-${i}</pre>`).join("");
+    let error:unknown;try{assertHtmlOriginalCodeRetention(original,"");}catch(measured){error=measured;}
+    const correction=serverCandidateConstructionCorrection(error,[]);
+    expect(correction).toMatchObject({code:"HTML_ORIGINAL_CODE_RETENTION_FAILED",omittedMissingBlockCount:3,
+      missingBlocks:Array.from({length:20},(_,i)=>({originalBlockIndex:i+1,tag:"pre",section:`slide-${i+1}`}))});
+    expect(correction?.instruction).toContain("NOT current-parent byte offsets or issued anchor IDs");
+    expect(JSON.stringify(correction)).not.toContain("private-command");
+    expect(serverCandidateConstructionCorrection({...error as object},[])).toBeUndefined();
   });
   it("returns only bound structural facts for a same-proposal correction",()=>{
     const error=new HtmlSemanticLayoutError([{section:"slide-11",label:"非常适合",expectedParagraphs:2,actualParagraphs:3,code:"paragraph-count-changed"}]);

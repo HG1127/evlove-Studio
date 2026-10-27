@@ -3,6 +3,25 @@ import {assertHtmlOriginalCodeRetention,HtmlOriginalCodeRetentionError,htmlNativ
 const instructions="9. 保存检查结果。\n10. 记录失败原因。";
 const html=(value:string,language="",anchor="slide-1")=>`<article id="${anchor}"><pre class="code-block"><code${language?` class="language-${language}"`:""}>${value}</code></pre></article>`;
 describe("native preformatted original text retention",()=>{
+  it("locates unmatched Original blocks without disclosing code or changing the native evidence shape",()=>{
+    const original=html("first command","","slide-1")+html("npm install\nnpm run build","","slide-102");
+    const subject=html("first command","","slide-1")+html("replacement command","","slide-102");
+    try{assertHtmlOriginalCodeRetention(original,subject);throw Error("Expected rejection");}
+    catch(error){
+      expect(error).toBeInstanceOf(HtmlOriginalCodeRetentionError);
+      expect(error).toMatchObject({missingBlocks:[{originalBlockIndex:3,tag:"pre",section:"slide-102"},{originalBlockIndex:4,tag:"code",section:"slide-102"}]});
+      expect((error as HtmlOriginalCodeRetentionError).retention).toEqual(htmlNativeCodeRetention(original,subject));
+      expect(Object.keys((error as HtmlOriginalCodeRetentionError).retention).sort()).toEqual(["exactCount","extendedInstructionCount","originalCount","policy","retained","retainedCount"].sort());
+      expect(JSON.stringify(error)).not.toMatch(/npm install|replacement command|first command/);
+    }
+  });
+  it("reports Original order for unmatched duplicates and preserves entity-equivalent text",()=>{
+    const original='<pre id="original-a">same</pre><pre id="original-b">same</pre>';
+    try{assertHtmlOriginalCodeRetention(original,'<pre id="subject-only">same</pre>');throw Error("Expected rejection");}
+    catch(error){expect(error).toMatchObject({missingBlocks:[{originalBlockIndex:2,tag:"pre",section:"original-b"}]});}
+    expect(assertHtmlOriginalCodeRetention('<pre>A &amp; B</pre>','<pre>A &#38; B</pre>')).toMatchObject({retained:true,exactCount:1});
+    expect(new HtmlOriginalCodeRetentionError(htmlNativeCodeRetention(original,"" )).missingBlocks).toEqual([]);
+  });
   it("uses the identical policy for construction assertions, retaining numbered prose compatibility",()=>{
     const original=html(instructions),subject=html(instructions+"\n补充说明：失败时保留现场。");
     expect(assertHtmlOriginalCodeRetention(original,subject)).toEqual(htmlNativeCodeRetention(original,subject));
