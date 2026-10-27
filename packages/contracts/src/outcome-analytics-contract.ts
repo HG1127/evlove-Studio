@@ -1,4 +1,5 @@
 import {z} from "zod";
+import {BusinessBenefitAssessmentSchema} from "./business-benefit-contract";
 
 export const OutcomeMetricKindSchema=z.enum(["business","latency","cost","safety"]);
 export type OutcomeMetricKind=z.infer<typeof OutcomeMetricKindSchema>;
@@ -104,6 +105,7 @@ export const OutcomeAnalyticsResponseSchema=z.object({
   observationConflictCount:z.number().int().nonnegative().optional(),
   minimumSamplesPerArm:z.number().int().positive(),
   metrics:z.array(OutcomeMetricAnalysisSchema),
+  businessBenefit:BusinessBenefitAssessmentSchema.optional(),
   drift:z.array(OutcomeDriftAnalysisSchema),
   regressions:z.array(z.object({
     metricKey:z.string(),

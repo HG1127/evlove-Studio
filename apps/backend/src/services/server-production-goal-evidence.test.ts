@@ -1,15 +1,20 @@
 // @vitest-environment node
 import {beforeEach,expect,it,vi} from "vitest";
-import {acceptedPackageFixture} from "@evolution/testkit";
+import {acceptedPackageFixture,businessBenefitFixture} from "@evolution/testkit";
 import {productionGoalReadiness} from "@evolution/core";
 import {OutcomeMetricSampleSchema} from "@evolution/contracts";
 import {refreshServerProductionGoalEvidence} from "./server-production-goal-evidence";
 import {assertClientMissionMutationSafe} from "./mission-mutation-policy";
 
-const state=vi.hoisted(()=>({rows:[] as unknown[],fail:false}));
+const state=vi.hoisted(()=>({rows:[] as unknown[],fail:false,business:false}));
 vi.mock("./outcome-sample-store",()=>({readOutcomeSamples:async()=>{if(state.fail)throw Error("offline");return state.rows;}}));
-vi.mock("./outcome-telemetry-source",()=>({getOutcomeTelemetryConfigState:()=>({sources:[{id:"trusted",metrics:[{metricKey:"conversion",segment:"all"}]}],configured:true,ready:true,errors:[]})}));
-beforeEach(()=>{state.rows=[];state.fail=false;});
+vi.mock("./outcome-telemetry-source",()=>({getOutcomeTelemetryConfigState:()=>({sources:[{id:"trusted",sampling:{kind:"independent-task"},
+  metrics:state.business?[
+    {metricKey:"accepted",segment:"all",metricKind:"business",direction:"higher",unit:"ratio"},
+    {metricKey:"elapsed",segment:"all",metricKind:"latency",direction:"lower",unit:"ms"},
+    {metricKey:"cost",segment:"all",metricKind:"cost",direction:"lower",unit:"USD"},
+  ]:[{metricKey:"conversion",segment:"all"}]}],configured:true,ready:true,errors:[]})}));
+beforeEach(()=>{state.rows=[];state.fail=false;state.business=false;});
 function fixture(){
   const p=acceptedPackageFixture(false).project;
   p.metrics=[{key:"conversion",label:"conversion",value:10,target:20,direction:"higher",unit:"%"}];
@@ -27,6 +32,13 @@ it("derives deployment-bound goal evidence from independently identified warehou
   expect(productionGoalReadiness(updated).improved).toBe(true);
   expect(updated.release.goalEvidence?.analysis?.sampleCount).toBe(60);
   expect(()=>assertClientMissionMutationSafe(p,updated)).toThrow(/goalEvidence/);
+});
+it.each([false,true])("keeps business thresholds in server-owned goal evidence (%s mean-only)",async meanOnly=>{
+  const x=businessBenefitFixture(meanOnly);state.business=true;state.rows=x.samples;
+  const updated=await refreshServerProductionGoalEvidence(x.project);
+  expect(updated.release.goalEvidence?.analysis?.businessBenefit?.status).toBe(meanOnly?"failed":"thresholds-met");
+  expect(productionGoalReadiness(updated).improved).toBe(!meanOnly);
+  expect(()=>assertClientMissionMutationSafe(x.project,updated)).toThrow(/goalEvidence/);
 });
 it.each(["health-only","wrong-deployment","legacy-aggregate"])("does not let %s samples satisfy improvement",async scenario=>{
   const p=fixture();

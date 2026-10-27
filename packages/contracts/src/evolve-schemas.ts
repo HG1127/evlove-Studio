@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {ProductionGoalEvidenceSchema} from "./production-goal-evidence";
+import {BusinessBenefitPolicySchema} from "./business-benefit-contract";
 import {OriginalArtifactReferenceProofSchema} from "./original-reference-contract";
 import { GitRepositoryBindingSchema, GitTargetSnapshotBindingSchema } from "./git-target-contract";
 import {HtmlNativeRunProofSchema,HtmlRenderedDocumentEvidenceSchema} from "./html-native-observation-contract";
@@ -1245,6 +1246,7 @@ export const EvolveProjectSchema = z.object({
   protectedItems: z.array(z.string()),
   editableItems: z.array(z.string()),
   metrics: z.array(MetricSchema),
+  businessBenefitPolicy: BusinessBenefitPolicySchema.optional(),
   acceptanceRubric: z.array(AcceptanceCriterionSchema).default([]),
   acceptanceRubricState: AcceptanceRubricStateSchema.prefault({}),
   evalSuite: z.array(TestCaseSchema).default([]),

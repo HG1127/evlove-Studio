@@ -21,7 +21,8 @@ export default defineEventHandler(async(event)=>{
   let resolvedCandidateId:string;
   try{resolvedCandidateId=resolveOutcomeAnalysisCandidate(mission,candidateId);}
   catch(error){throw createError({statusCode:409,statusMessage:error instanceof Error?error.message:String(error)});}
-  try{return await analyzeMissionOutcome({missionId,candidateId:resolvedCandidateId});}
+  try{return await analyzeMissionOutcome({missionId,candidateId:resolvedCandidateId,
+    ...(mission.businessBenefitPolicy?{businessBenefitPolicy:mission.businessBenefitPolicy}:{})});}
   catch(error){
     if(error instanceof OutcomeSampleLimitExceededError){
       throw createError({statusCode:422,statusMessage:error.message});

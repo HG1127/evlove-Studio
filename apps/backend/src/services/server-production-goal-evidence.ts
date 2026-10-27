@@ -10,7 +10,8 @@ export async function refreshServerProductionGoalEvidence(project:EvolveProject)
     goalFingerprint:productionGoalFingerprint(project)};
   let proof;
   try{
-    const analysis=await analyzeMissionOutcome({missionId:project.id,candidateId,deploymentId,stableDeploymentId,telemetryOnly:true});
+    const analysis=await analyzeMissionOutcome({missionId:project.id,candidateId,deploymentId,stableDeploymentId,telemetryOnly:true,
+      ...(project.businessBenefitPolicy?{businessBenefitPolicy:project.businessBenefitPolicy}:{})});
     proof=ProductionGoalEvidenceSchema.parse({...binding,checkedAt:analysis.checkedAt,analysis});
   }catch{
     proof=ProductionGoalEvidenceSchema.parse({...binding,checkedAt:new Date().toISOString(),error:"真实目标收益统计读取失败；保留未验证状态，请刷新 Outcome。"});

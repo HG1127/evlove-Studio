@@ -3,6 +3,7 @@ import {beforeEach,describe,expect,it,vi} from "vitest";
 import {mockEvent} from "nitro/h3";
 import route from "../../server/api/evolution/outcome-analysis.get";
 import {OutcomeSampleLimitExceededError} from "./outcome-sample-store";
+import {businessBenefitFixture} from "@evolution/testkit";
 
 const {permission,missionGet,resolveCandidate,analyze}=vi.hoisted(()=>({
   permission:vi.fn(),missionGet:vi.fn(),resolveCandidate:vi.fn(),analyze:vi.fn(),
@@ -37,6 +38,12 @@ describe("Outcome analysis route",()=>{
   it("returns complete analysis results",async()=>{
     analyze.mockResolvedValue({status:"insufficient",sampleCount:0});
     await expect(route(event())).resolves.toEqual({status:"insufficient",sampleCount:0});
+  });
+  it("uses the stored business contract instead of caller supplied cohort overrides",async()=>{
+    const {policy}=businessBenefitFixture();missionGet.mockResolvedValue({id:"mission-1",businessBenefitPolicy:policy});
+    analyze.mockResolvedValue({verdict:"insufficient"});
+    await route(event("missionId=mission-1&candidateId=candidate-1&businessBenefitPolicy=caller-override"));
+    expect(analyze).toHaveBeenCalledWith({missionId:"mission-1",candidateId:"candidate-1",businessBenefitPolicy:policy});
   });
 
   it("still resolves the current Candidate when candidateId is omitted",async()=>{

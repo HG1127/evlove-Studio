@@ -1,4 +1,4 @@
-import {OutcomeAnalyticsHealthSchema} from "@evolution/contracts";
+import {OutcomeAnalyticsHealthSchema,type BusinessBenefitPolicy} from "@evolution/contracts";
 import {analyzeOutcomeSamples} from "@evolution/core";
 import {
   getEvolutionWorkspaceId,
@@ -57,10 +57,21 @@ export async function getOutcomeAnalyticsHealth(){
   }
 }
 
-export async function analyzeMissionOutcome(input:{missionId:string;candidateId:string;deploymentId?:string;stableDeploymentId?:string;telemetryOnly?:boolean}){
+export async function analyzeMissionOutcome(input:{missionId:string;candidateId:string;deploymentId?:string;stableDeploymentId?:string;telemetryOnly?:boolean;businessBenefitPolicy?:BusinessBenefitPolicy}){
   const stored=await readOutcomeSamples({missionId:input.missionId,candidateId:input.candidateId,limit:20_000,requireComplete:true});
   const telemetry=getOutcomeTelemetryConfigState();
   const sources=new Set(telemetry.sources.map(source=>"outcome-telemetry:"+source.id));
+  const benefit=input.businessBenefitPolicy;
+  const benefitSource=benefit?telemetry.sources.find(source=>"outcome-telemetry:"+source.id===benefit.source):undefined;
+  const benefitMetrics=benefit?[
+    {key:benefit.acceptanceMetricKey,kind:"business",direction:"higher",unit:"ratio"},
+    {key:benefit.elapsedMetricKey,kind:"latency",direction:"lower",unit:"ms"},
+    {key:benefit.costMetricKey,kind:"cost",direction:"lower",unit:benefit.costUnit},
+  ]:[];
+  const benefitConfigurationError=benefit&&(!telemetry.ready||!benefitSource||benefitSource.sampling?.kind!=="independent-task"
+    ||benefitMetrics.some(expected=>!benefitSource.metrics.some(metric=>metric.metricKey===expected.key&&metric.segment===benefit.segment
+      &&metric.metricKind===expected.kind&&metric.direction===expected.direction&&metric.unit===expected.unit)))
+    ?"业务任务策略需要已配置的独立任务来源及同源验收率、毫秒耗时和指定币种成本指标。":undefined;
   const samples=stored.filter(sample=>
     (!input.telemetryOnly||sources.has(sample.source))
     &&(!input.deploymentId||sample.arm!=="candidate"||sample.deploymentId===input.deploymentId)
@@ -70,7 +81,7 @@ export async function analyzeMissionOutcome(input:{missionId:string;candidateId:
     samples,
     minimumSamplesPerArm:outcomeMinimumSamplesPerArm(),
     requiredMetricScopes:telemetry.sources.flatMap((source)=>source.metrics.map((metric)=>({metricKey:metric.metricKey,segment:metric.segment,source:"outcome-telemetry:"+source.id}))),
-    telemetryConfigurationError:input.telemetryOnly&&!telemetry.configured?"真实业务指标来源尚未配置"
-      :telemetry.configured&&!telemetry.ready?telemetry.errors.slice(0,3).join("; "):undefined,
+    telemetryConfigurationError:benefitConfigurationError??(input.telemetryOnly&&!telemetry.configured?"真实业务指标来源尚未配置"
+      :telemetry.configured&&!telemetry.ready?telemetry.errors.slice(0,3).join("; "):undefined),
   });
 }

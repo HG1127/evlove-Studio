@@ -76,4 +76,5 @@ export * from "./html-native-browser-assertions";
 export * from "./html-semantic-layout";
 export * from "./html-paragraph-construction";
 export * from "./user-goal-scope";
+export * from "./business-benefit";
 export * from "./ai-usage-ledger";

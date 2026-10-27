@@ -2,6 +2,7 @@
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
 import type {OutcomeMetricSample} from "@evolution/contracts";
 import {analyzeMissionOutcome,outcomeMinimumSamplesPerArm} from "./outcome-analytics";
+import {businessBenefitFixture} from "@evolution/testkit";
 
 const {readSamples}=vi.hoisted(()=>({readSamples:vi.fn()}));
 vi.mock("./outcome-sample-store",()=>({readOutcomeSamples:readSamples,probeOutcomeSampleStore:vi.fn()}));
@@ -44,6 +45,23 @@ describe("Outcome Analytics sample threshold configuration",()=>{
     expect(outcomeMinimumSamplesPerArm()).toBe(30);
     process.env.EVOLUTION_OUTCOME_MIN_SAMPLES_PER_ARM="20000";
     expect(outcomeMinimumSamplesPerArm()).toBe(10_000);
+  });
+});
+
+describe("planned business task cohorts",()=>{
+  it.each(["valid","unconfigured","aggregate","wrong-unit","manual"])("uses configured independent task evidence (%s)",async kind=>{
+    const x=businessBenefitFixture(true);
+    const metrics=[{metricKey:"accepted",metricKind:"business",direction:"higher",unit:"ratio",path:"accepted"},
+      {metricKey:"elapsed",metricKind:"latency",direction:"lower",unit:"ms",path:"elapsed"},
+      {metricKey:"cost",metricKind:"cost",direction:"lower",unit:kind==="wrong-unit"?"tokens":"USD",path:"cost"}];
+    process.env.EVOLUTION_OUTCOME_TELEMETRY_JSON=JSON.stringify([{id:"trusted",urlTemplate:"https://metrics.example.com/{deploymentId}",metrics,
+      sampling:kind==="aggregate"?{kind:"aggregate-snapshot"}:{kind:"independent-task",recordsPath:"tasks",taskIdPath:"id",observedAtPath:"completedAt",deploymentIdPath:"deploymentId"}}]);
+    if(kind==="unconfigured")delete process.env.EVOLUTION_OUTCOME_TELEMETRY_JSON;
+    readSamples.mockResolvedValue(kind==="manual"?x.samples.map(s=>({...s,source:"manual"})):x.samples);
+    const result=await analyzeMissionOutcome({missionId:x.project.id,candidateId:"C",businessBenefitPolicy:x.policy});
+    expect(result.businessBenefit?.status).toBe(kind==="valid"?"failed":"insufficient");
+    expect(result.verdict).toBe(kind==="valid"?"watch":"insufficient");
+    expect(result.businessBenefit?.establishesCausalBenefit).toBe(false);
   });
 });
 

@@ -5,9 +5,11 @@ import {
   type OutcomeMetricAnalysis,
   type OutcomeMetricSample,
   type OutcomeSummary,
+  type BusinessBenefitPolicy,
 } from "@evolution/contracts";
 import {PRODUCTION_OUTCOME_MAX_FUTURE_SKEW_MS} from "./release-outcome";
 import {qualifyOutcomeObservations} from "./outcome-observation-identity";
+import {assessBusinessBenefit} from "./business-benefit";
 
 function mean(values:number[]){
   return values.length?values.reduce((sum,value)=>sum+value,0)/values.length:undefined;
@@ -149,6 +151,7 @@ export function analyzeOutcomeSamples(input:{
   minimumSamplesPerArm:number;
   requiredMetricScopes?:ReadonlyArray<{metricKey:string;segment:string;source?:string}>;
   telemetryConfigurationError?:string;
+  businessBenefitPolicy?:BusinessBenefitPolicy;
   checkedAt?:string;
 }):OutcomeAnalyticsResponse{
   const checkedAt=input.checkedAt??new Date().toISOString();
@@ -166,6 +169,8 @@ export function analyzeOutcomeSamples(input:{
     return Number.isFinite(observedAt)&&observedAt<=checkedAtMs+PRODUCTION_OUTCOME_MAX_FUTURE_SKEW_MS;
   });
   const qualified=qualifyOutcomeObservations(scoped),samples=qualified.samples;
+  const businessBenefit=input.businessBenefitPolicy?assessBusinessBenefit({policy:input.businessBenefitPolicy,samples:scoped,checkedAt,
+    configurationError:input.telemetryConfigurationError}):undefined;
   const dropped=input.samples.length-scoped.length;
   const measurement={measurementPolicy:OUTCOME_MEASUREMENT_POLICY,independentSampleCount:samples.length,
     excludedSampleCount:qualified.excludedCount,droppedSampleCount:dropped,observationConflictCount:qualified.conflictCount};
@@ -174,7 +179,7 @@ export function analyzeOutcomeSamples(input:{
     return OutcomeAnalyticsResponseSchema.parse({
       missionId:input.missionId,candidateId,checkedAt,sampleCount:scoped.length,...measurement,
       minimumSamplesPerArm:input.minimumSamplesPerArm,
-      metrics:[],drift:[],regressions:[],verdict:"insufficient",
+      metrics:[],drift:[],regressions:[],verdict:"insufficient",...(businessBenefit?{businessBenefit}:{}),
       message:scopeIssue+" 请按单一 Release 部署周期补齐可比样本。",
     });
   }
@@ -205,9 +210,9 @@ export function analyzeOutcomeSamples(input:{
       .map((metric)=>`${metric.metricKey}/${metric.segment}: Stable ${metric.stable.count}, Candidate ${metric.candidate.count}`),
     ...missingConfigured,
   ];
-  const insufficient=metrics.length===0||incompleteScopes.length>0||Boolean(input.telemetryConfigurationError)||qualified.conflictCount>0;
+  const insufficient=metrics.length===0||incompleteScopes.length>0||Boolean(input.telemetryConfigurationError)||qualified.conflictCount>0||businessBenefit?.status==="insufficient";
   const drifting=driftRows.some((item)=>item.status==="drifting");
-  const verdict=regressions.length?"regression":insufficient?"insufficient":drifting?"watch":"healthy";
+  const verdict=regressions.length?"regression":insufficient?"insufficient":drifting||businessBenefit?.status==="failed"?"watch":"healthy";
   return OutcomeAnalyticsResponseSchema.parse({
     missionId:input.missionId,
     candidateId,
@@ -216,6 +221,7 @@ export function analyzeOutcomeSamples(input:{
     ...measurement,
     minimumSamplesPerArm:input.minimumSamplesPerArm,
     metrics,
+    ...(businessBenefit?{businessBenefit}:{}),
     drift:driftRows,
     regressions,
     verdict,
@@ -224,12 +230,13 @@ export function analyzeOutcomeSamples(input:{
       :verdict==="regression"
         ?`检测到 ${regressions.length} 个统计回归。`
         :verdict==="watch"
-          ?"未检测到显著回归，但 Candidate 时间漂移需要继续观察。"
+          ?businessBenefit?.status==="failed"?"业务任务门槛未通过，需要继续验证。":"未检测到显著回归，但 Candidate 时间漂移需要继续观察。"
           :"当前样本未检测到显著回归。")
       +(incompleteScopes.length?` 证据不足：${incompleteScopes.slice(0,5).join("；")}${incompleteScopes.length>5?"；等更多分段":""}。`:"")
       +(input.telemetryConfigurationError?` Telemetry 配置不可用：${input.telemetryConfigurationError}。`:"")
       +(qualified.excludedCount?` 已排除 ${qualified.excludedCount} 个缺少任务身份、汇总轮询、重复或冲突记录。`:"")
       +(qualified.conflictCount?` ${qualified.conflictCount} 个任务身份存在内容或部署冲突，不能证明改善。`:"")
-      +(dropped?` 已忽略 ${dropped} 个跨 Candidate、无效时间或超前时间样本。`:""),
+      +(dropped?` 已忽略 ${dropped} 个跨 Candidate、无效时间或超前时间样本。`:"")
+      +(businessBenefit?` 业务任务检查：${businessBenefit.reason}`:""),
   });
 }

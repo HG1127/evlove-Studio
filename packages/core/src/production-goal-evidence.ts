@@ -2,11 +2,13 @@ import {OUTCOME_MEASUREMENT_POLICY,ProductionGoalEvidenceSchema,type EvolveProje
 import {fastHash} from "./stable-hash";
 import {projectHasOnlineReleaseTarget} from "./release-target";
 import {PRODUCTION_OUTCOME_FRESHNESS_MS,PRODUCTION_OUTCOME_MAX_FUTURE_SKEW_MS} from "./release-outcome";
+import {businessBenefitEvidenceMatches} from "./business-benefit";
 
 export function productionGoalFingerprint(project:EvolveProject){
   return fastHash(JSON.stringify(["production-goal-v2",OUTCOME_MEASUREMENT_POLICY,project.id,project.goal,project.evolutionCommand,
     project.metrics?.map(({key,target,direction,unit})=>({key,target,direction,unit})),project.acceptanceRubric,
-    project.release.candidateId,project.release.deploymentId,project.release.stableDeploymentId,project.release.artifactHashes]));
+    project.release.candidateId,project.release.deploymentId,project.release.stableDeploymentId,project.release.artifactHashes,
+    ...(project.businessBenefitPolicy?[{businessBenefitPolicy:project.businessBenefitPolicy}]:[])]));
 }
 
 /** Completion may record a rollback, but only measured goal improvement can authorize a Skill. */
@@ -31,6 +33,11 @@ export function productionGoalReadiness(project:EvolveProject,now=Date.now()){
   if(proof.error||!analysis)return pending(proof.error||"目标收益统计尚未完成。");
   if(analysis.missionId!==project.id||analysis.candidateId!==proof.candidateId||analysis.checkedAt!==proof.checkedAt){
     return pending("目标收益分析身份或时间绑定不一致。");
+  }
+  if(project.businessBenefitPolicy){
+    const benefit=analysis.businessBenefit;
+    if(!benefit||benefit.checkedAt!==proof.checkedAt||!businessBenefitEvidenceMatches(project.businessBenefitPolicy,benefit))
+      return pending("缺少与当前业务任务契约绑定的完整验收率、中位耗时和成功任务成本证据。");
   }
   if(analysis.verdict!=="healthy"||analysis.regressions.length)return pending("目标收益样本不足、发生回归或存在漂移，不能宣告进化成功。");
   if(analysis.measurementPolicy!==OUTCOME_MEASUREMENT_POLICY||analysis.observationConflictCount!==0
@@ -58,5 +65,7 @@ export function productionGoalReadiness(project:EvolveProject,now=Date.now()){
     }
   }
   if(!improved)return pending("目标已达标但尚无显著改善证据，不能升级为 Verified Skill 或宣告真实进化成功。");
-  return {ready:true,improved:true,reason:"当前发布具备同部署对照、足量样本、目标达标与改善证据。"};
+  return {ready:true,improved:true,reason:project.businessBenefitPolicy
+    ?"当前发布的计划任务数值门槛与配置目标已达标；真实任务来源、账单和因果收益仍需独立核验。"
+    :"当前发布具备同部署对照、足量样本、目标达标与改善证据。"};
 }
