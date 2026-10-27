@@ -15,12 +15,13 @@ describe("request-bound server usage collection",()=>{
   it("retains both provider responses when malformed task JSON requires one structured retry",async()=>{
     const records:AiUsageLedgerRecord[]=[];
     const fetchMock=vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({...reply(),choices:[{message:{content:"{invalid JSON"}}]})))
-      .mockResolvedValueOnce(new Response(JSON.stringify({...reply(),choices:[{message:{content:JSON.stringify({output:"UNVERIFIED: diagnostic without source input"})}}]})));
+      .mockResolvedValueOnce(new Response(JSON.stringify({...reply(),choices:[{finish_reason:"stop",message:{content:"{invalid JSON"}}]})))
+      .mockResolvedValueOnce(new Response(JSON.stringify({...reply(),choices:[{finish_reason:"stop",message:{content:JSON.stringify({output:"UNVERIFIED: diagnostic without source input"})}}]})));
     vi.stubGlobal("fetch",fetchMock);
     await withServerAiUsageScope(scope,()=>withExplicitServerAiConnection({connectionId:"test",label:"Test",apiKey:"PRIVATE_API_KEY",
       baseUrl:"https://provider.test/v1",model:"model",protocol:"chat-completions",responseFormat:"json-object"},()=>runServerAi("execute-artifact",{diagnostic:"PRIVATE_PROMPT"})),async record=>{records.push(record);});
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    for(const record of records.filter(record=>record.kind==="request-result"))expect(record.observation).toMatchObject({schemaVersion:"ai-provider-usage-v2",completion:{finishReason:"stop"}});
     expect(summarizeAiUsageLedger(records)).toMatchObject({startedRequests:2,matchedObservations:2,ledgerComplete:true,tokenCoverageComplete:true,reportedTokens:{input:20,output:8,total:28},billingStatus:"unavailable"});
     expect(JSON.stringify(records)).not.toMatch(/PRIVATE|invalid JSON|diagnostic without source/);
   });
@@ -75,15 +76,17 @@ describe("request-bound server usage collection",()=>{
   });
   it("records SDK usage without pretending its internal retries were visible",async()=>{
     const records:AiUsageLedgerRecord[]=[];
-    const generated={totalUsage:{inputTokens:12,outputTokens:3,totalTokens:15},response:{id:"sdk_1",modelId:"model"},output:{private:"PRIVATE_SDK_OUTPUT"}};
+    const generated={totalUsage:{inputTokens:12,outputTokens:3,totalTokens:15},response:{id:"sdk_1",modelId:"model"},finishReason:"stop",output:{private:"PRIVATE_SDK_OUTPUT"}};
     expect(await withServerAiUsageScope(scope,()=>measureServerAiSdkUsage(config,"copilot",async()=>generated),async record=>{records.push(record);})).toBe(generated);
     expect(summarizeAiUsageLedger(records)).toMatchObject({sdkGenerations:1,physicalHttpAttempts:0,ledgerComplete:true,tokenCoverageComplete:false,reportedTokens:{total:15}});
+    expect(records[1]?.kind==="request-result"&&records[1].observation).toMatchObject({schemaVersion:"ai-provider-usage-v2",completion:{finishReason:"stop"}});
     expect(JSON.stringify(records)).not.toContain("PRIVATE");
   });
   it("records SDK failure usage while returning the original error",async()=>{
-    const records:AiUsageLedgerRecord[]=[],error=Object.assign(new Error("PRIVATE_ERROR"),{usage:{inputTokens:2,outputTokens:1,totalTokens:3}});
+    const records:AiUsageLedgerRecord[]=[],error=Object.assign(new Error("PRIVATE_ERROR"),{usage:{inputTokens:2,outputTokens:1,totalTokens:3},finishReason:"length"});
     await expect(withServerAiUsageScope(scope,()=>measureServerAiSdkUsage(config,"evaluate",async()=>{throw error;}),async record=>{records.push(record);})).rejects.toBe(error);
     expect(records[1]?.kind==="request-result"&&records[1].observation.outcome).toBe("sdk-error");
+    expect(records[1]?.kind==="request-result"&&records[1].observation).toMatchObject({schemaVersion:"ai-provider-usage-v2",completion:{finishReason:"length"}});
     expect(JSON.stringify(records)).not.toContain("PRIVATE");
   });
 });

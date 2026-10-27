@@ -43,4 +43,18 @@ describe("request-level actual usage accounting",()=>{
     records[1]!.observation.usage={status:"complete",counts:{}};
     expect(summarizeAiUsageLedger(records)).toMatchObject({invalidRecordCount:1,ledgerComplete:false,tokenCoverageComplete:false});
   });
+  it("summarizes distinct legacy and completion-aware calls without treating completion as quality or cost",()=>{
+    const old=pair(),next=pair();
+    for(const record of next)(record.kind==="request-start"?record.request:record.observation.request).callId="00000000-0000-4000-8000-000000000002";
+    if(next[1]!.kind!=="request-result")throw Error("fixture");
+    next[1].observation={...next[1].observation,schemaVersion:"ai-provider-usage-v2",completion:{finishReason:"length"}};
+    const summary=summarizeAiUsageLedger([...old,...next]);
+    expect(summary).toMatchObject({startedRequests:2,matchedObservations:2,ledgerComplete:true,reportedTokens:{input:20,output:6,total:26,reasoning:4},billingStatus:"unavailable"});
+    expect(summary).not.toHaveProperty("acceptedDelivery");
+  });
+  it("does not backfill a legacy receipt as a conflicting v2 result for the same physical call",()=>{
+    const records=pair(),old=records[1]!;if(old.kind!=="request-result")throw Error("fixture");
+    const upgraded:AiUsageLedgerRecord={kind:"request-result",observation:{...old.observation,schemaVersion:"ai-provider-usage-v2",completion:{finishReason:"stop"}}};
+    expect(summarizeAiUsageLedger([...records,upgraded])).toMatchObject({ledgerComplete:false,tokenCoverageComplete:false});
+  });
 });

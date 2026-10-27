@@ -1,6 +1,6 @@
 import {AsyncLocalStorage} from "node:async_hooks";
 import {createHash,randomUUID} from "node:crypto";
-import {fetchAiProvider,observeAiProviderUsage} from "@evolution/adapters";
+import {fetchAiProvider,observeAiProviderUsage,observeAiProviderCompletion} from "@evolution/adapters";
 import {AiProviderUsageObservationSchema,AiUsageLedgerRecordSchema,AiUsageRequestStartedSchema,AiUsageScopeSchema,createEvolutionEvent,
   type AiOperation,type AiProviderUsageObservation,type AiUsageLedgerRecord,type AiUsageLedgerWriter,type AiUsageProtocol,type AiUsageRequestStarted,type AiUsageRoute,type AiUsageScope} from "@evolution/contracts";
 import type {ServerAiConfig} from "../server-env";
@@ -43,9 +43,9 @@ type ActiveCall=Awaited<ReturnType<typeof start>>;
 
 async function finish(call:ActiveCall,raw:unknown,outcome:AiProviderUsageObservation["outcome"],extra?:{httpStatus?:number;transportReason?:AiProviderUsageObservation["transportReason"]}){
   if(!call)return;
-  const observation=AiProviderUsageObservationSchema.parse({schemaVersion:"ai-provider-usage-v1",request:call.request,
+  const observation=AiProviderUsageObservationSchema.parse({schemaVersion:"ai-provider-usage-v2",request:call.request,
     completedAt:new Date().toISOString(),elapsedMs:Math.max(0,performance.now()-call.clock),outcome,...extra,
-    ...observeAiProviderUsage(raw,call.request.route.protocol),billing:{status:"unavailable"}});
+    ...observeAiProviderUsage(raw,call.request.route.protocol),completion:observeAiProviderCompletion(raw,call.request.route.protocol),billing:{status:"unavailable"}});
   try{await call.write({kind:"request-result",observation});}
   catch{
     // The durable start remains unmatched. Do not cause a completed model request
@@ -83,11 +83,11 @@ export async function measureServerAiSdkUsage<T>(config:ServerAiConfig,operation
   try{
     await assertServerControlExecutionActive();
     const result=await invoke(),generated=object(result),response=object(generated.response);
-    await finish(call,{usage:generated.totalUsage??generated.usage,id:response.id,model:response.modelId},"response");
+    await finish(call,{usage:generated.totalUsage??generated.usage,id:response.id,model:response.modelId,finishReason:generated.finishReason},"response");
     recorded=true;
     await assertServerControlExecutionActive();
     return result;
   }catch(error){
-    if(!recorded)await finish(call,{usage:object(error).usage},"sdk-error");throw error;
+    if(!recorded)await finish(call,{usage:object(error).usage,finishReason:object(error).finishReason},"sdk-error");throw error;
   }
 }

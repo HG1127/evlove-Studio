@@ -37,7 +37,13 @@ export const AiUsageRequestStartedSchema=z.object({
   granularity:z.enum(["physical-http-attempt","sdk-generation"]),attempt:z.number().int().positive(),startedAt:z.iso.datetime(),
 }).strict();
 export type AiUsageRequestStarted=z.infer<typeof AiUsageRequestStartedSchema>;
-export const AiProviderUsageObservationSchema=z.object({
+export const AiProviderCompletionSchema=z.object({
+  finishReason:z.enum(["stop","length","content_filter","tool_calls","function_call","content-filter","tool-calls","error","other","unknown"]).optional(),
+  responseStatus:z.enum(["completed","incomplete","failed","cancelled","in_progress","queued","other"]).optional(),
+  incompleteReason:z.enum(["max_output_tokens","content_filter","other"]).optional(),
+}).strict().refine(value=>Object.values(value).some(item=>item!==undefined),{message:"Completion metadata must contain an observed field"});
+export type AiProviderCompletion=z.infer<typeof AiProviderCompletionSchema>;
+export const AiProviderUsageObservationV1Schema=z.object({
   schemaVersion:z.literal("ai-provider-usage-v1"),request:AiUsageRequestStartedSchema,
   completedAt:z.iso.datetime(),elapsedMs:z.number().finite().nonnegative(),
   outcome:z.enum(["response","transport-error","sdk-error"]),httpStatus:z.number().int().min(100).max(599).optional(),
@@ -46,6 +52,10 @@ export const AiProviderUsageObservationSchema=z.object({
   usage:AiProviderTokenUsageSchema,
   billing:z.object({status:z.literal("unavailable")}).strict(),
 }).strict();
+export const AiProviderUsageObservationV2Schema=AiProviderUsageObservationV1Schema.extend({
+  schemaVersion:z.literal("ai-provider-usage-v2"),completion:AiProviderCompletionSchema.nullable(),
+});
+export const AiProviderUsageObservationSchema=z.discriminatedUnion("schemaVersion",[AiProviderUsageObservationV1Schema,AiProviderUsageObservationV2Schema]);
 export type AiProviderUsageObservation=z.infer<typeof AiProviderUsageObservationSchema>;
 export const AiUsageLedgerRecordSchema=z.discriminatedUnion("kind",[
   z.object({kind:z.literal("request-start"),request:AiUsageRequestStartedSchema}).strict(),
