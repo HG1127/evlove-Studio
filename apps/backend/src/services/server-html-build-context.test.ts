@@ -16,6 +16,7 @@ describe("complete authorized initial HTML build context",()=>{
     expect(result.context.parentSha256).toBe(createHash("sha256").update(original).digest("hex"));
     expect(result.context.anchors).toHaveLength(htmlRepairTextNodeContext(original).length);
     expect(result.context.components).toEqual([{section:"slide-11",label:"非常适合",paragraphCount:2}]);
+    expect(result.context.paragraphGroups).toEqual([]);
     const wire=JSON.stringify(result);
     expect(wire).not.toContain("HEAD_SECRET_PROGRAM");expect(wire).not.toContain("BODY_SECRET_PROGRAM");expect(wire).not.toContain("magenta");
     for(const anchor of result.context.anchors)expect(original.slice(anchor.start,anchor.end)).toBe(anchor.before);
@@ -31,6 +32,16 @@ describe("complete authorized initial HTML build context",()=>{
     const result=serverHtmlBuildBodyContext("mission","html",original)!;
     expect(result.context.anchors).toHaveLength(htmlRepairTextNodeContext(original).length);
     expect(result.context.components).toEqual([]);expect(JSON.stringify(result)).not.toMatch(/SECRET_PROGRAM|magenta/);
+    expect(result.context.paragraphGroups).toBeUndefined();
+  });
+  it("supplies nested paragraph grouping without duplicating the full index or admitting protected executable text",()=>{
+    vi.stubEnv("EVOLUTION_AI_FULL_REPAIR_TEXT_MISSIONS","mission");
+    const nested=original.replace("内部工具 &amp; 参数 🚀","<strong>内部工具</strong> &amp; 参数 🚀<script>INLINE_SECRET_PROGRAM</script>");
+    const {context}=serverHtmlBuildBodyContext("mission","html",nested)!;
+    expect(context.paragraphGroups).toHaveLength(1);
+    expect(context.paragraphGroups?.[0]).toMatchObject({section:"slide-11",paragraphIndex:2,text:"内部工具 & 参数 🚀",chars:12});
+    expect(context.paragraphGroups?.[0]?.anchorIds).toEqual(context.anchors.filter(a=>a.before==="内部工具"||a.before===" &amp; 参数 🚀").map(a=>a.anchorId));
+    expect(JSON.stringify(context)).not.toMatch(/SECRET_PROGRAM|magenta/);
   });
   it("keeps all distant chapters available while allowing exact markup edits beyond the partial retrieval",async()=>{
     const {project,current:candidate}=acceptedPackageFixture(false);vi.stubEnv("EVOLUTION_AI_FULL_REPAIR_TEXT_MISSIONS",project.id);

@@ -1,5 +1,5 @@
 import type {AcceptanceCriterion,Candidate,EvolveProject,FrozenArtifact,RepairArtifactAiResult} from "@evolution/contracts";
-import {campaignRepairLimitStopReason,evidenceFingerprint,htmlKnownSemanticComponents,htmlRepairBodyContext,htmlRepairTextNodeContext,resolveBoundHtmlBodyNodeEdits,indexUniqueById,reconcileAcceptedOfflineChampion,visibleRepairFeedbackContext,userGoalScopeContext,userGoalProgress} from "@evolution/core";
+import {campaignRepairLimitStopReason,evidenceFingerprint,htmlBuildBodyEditAnchors,htmlParagraphConstructionContext,htmlKnownSemanticComponents,htmlRepairBodyContext,htmlRepairTextNodeContext,resolveBoundHtmlBodyNodeEdits,indexUniqueById,reconcileAcceptedOfflineChampion,visibleRepairFeedbackContext,userGoalScopeContext,userGoalProgress} from "@evolution/core";
 import {isKnownHtmlNativeSubject} from "@evolution/adapters/html-native-profile";
 import {measuredDocumentObservations,runServerArtifactAcceptance,runServerVisibleRepair,type ServerArtifactVerification} from "@evolution/harness";
 import {runServerAi} from "./ai-gateway";
@@ -57,7 +57,7 @@ export async function repairServerArtifactCandidate(args:{
   const relativeFeedback=feedbackContext?.kind==="relative-target-regression";
   const authorizedBody=serverRepairMeasuredTextAuthorized(args.project.id);
   const expectedParents=new Map<string,string>();
-  const htmlParents=new Map<string,{html:string;sha256:string;nodes:ReturnType<typeof htmlRepairTextNodeContext>;components:ReturnType<typeof htmlKnownSemanticComponents>}>();
+  const htmlParents=new Map<string,{html:string;sha256:string;nodes:ReturnType<typeof htmlRepairTextNodeContext>;components:ReturnType<typeof htmlKnownSemanticComponents>;paragraphs?:ReturnType<typeof htmlParagraphConstructionContext>}>();
   const focused = {...args.candidate, change: args.failedCriteria.map((criterion) => `${criterion.title}: ${criterion.requirement}`).join("\n")};
   const rawContexts = await buildServerCandidateTargetContext(args.project,focused,
     async(source)=>{
@@ -68,7 +68,9 @@ export async function repairServerArtifactCandidate(args:{
       if(safe===undefined)throw new Error("HTML repair requires complete physical body boundaries before sharing mutation context");
       const sha256=args.candidate.artifactSnapshots.find(snapshot=>snapshot.sourceArtifactId===source.id)?.frozenArtifact?.sha256;
       if(!sha256)throw new Error("HTML body repair requires the verified frozen parent SHA-256");
-      htmlParents.set(source.id,{html:actual,sha256,nodes:htmlRepairTextNodeContext(actual,sha256),components:isKnownHtmlNativeSubject(actual)?htmlKnownSemanticComponents(actual):[]});
+      const known=isKnownHtmlNativeSubject(actual);
+      htmlParents.set(source.id,{html:actual,sha256,nodes:htmlRepairTextNodeContext(actual,sha256),components:known?htmlKnownSemanticComponents(actual):[],
+        ...(known?{paragraphs:htmlParagraphConstructionContext(actual,sha256,htmlBuildBodyEditAnchors(actual,sha256))}:{})});
       return safe;
     },args.candidate,
     (source)=>readServerCandidateParentNativeStructure(args.project,source,args.candidate),{completeHtmlBuildContext:false});
@@ -76,6 +78,7 @@ export async function repairServerArtifactCandidate(args:{
     const parent=htmlParents.get(context.id);
     return parent?{...context,content:"",structuredContext:undefined,mutationMode:"html-body-node-edits-v1",truncated:false,
       originalChars:parent.html.length,parentSha256:parent.sha256,htmlTextNodes:parent.nodes,htmlRendererComponents:parent.components,
+      htmlParagraphGroups:parent.paragraphs,
       contextProjection:"complete body text nodes with physical edit IDs; no raw tags, attributes, scripts, styles or template code"}:context;
   });
   const visibleFeedback=args.feedbackPhase==="visible"?args.project.experimentRun.candidateResults.find(result=>result.candidateId===args.candidate.id):undefined;
@@ -117,6 +120,7 @@ export async function repairServerArtifactCandidate(args:{
         parentSha256:"parentSha256" in context?context.parentSha256:undefined,
         htmlTextNodes:"htmlTextNodes" in context?context.htmlTextNodes:undefined,
         htmlRendererComponents:"htmlRendererComponents" in context?context.htmlRendererComponents:undefined,
+        htmlParagraphGroups:"htmlParagraphGroups" in context?context.htmlParagraphGroups:undefined,
       })),
     },
     feedbackPhase:args.feedbackPhase??"hidden",

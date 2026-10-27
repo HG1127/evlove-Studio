@@ -1,12 +1,12 @@
 import {createHash} from "node:crypto";
 import {HTML_BUILD_BODY_CONTEXT_VERSION,HtmlBuildBodyContextSchema} from "@evolution/contracts";
-import {htmlBuildBodyEditAnchors,htmlKnownSemanticComponents,htmlRepairBodyContext,HTML_PARAGRAPH_CONSTRUCTION_POLICY} from "@evolution/core";
+import {htmlBuildBodyEditAnchors,htmlKnownSemanticComponents,htmlRepairBodyContext,htmlParagraphConstructionContext,HTML_PARAGRAPH_CONSTRUCTION_POLICY} from "@evolution/core";
 import {isKnownHtmlNativeSubject} from "@evolution/adapters/html-native-profile";
 import {serverRepairMeasuredTextAuthorized} from "./server-ai-repair-consent";
 
 export const SERVER_HTML_PARAGRAPH_CONSTRUCTION_INSTRUCTION="For the known SOP renderer only, "+HTML_PARAGRAPH_CONSTRUCTION_POLICY.version+
   " limits every new or edited paragraph to "+HTML_PARAGRAPH_CONSTRUCTION_POLICY.maxChangedParagraphChars+
-  " normalized text characters. Leave unchanged Original long paragraphs intact. Keep introductory paragraphs brief and distribute concrete inputs, operations, outputs, checks and exceptions across existing step/card-detail anchors throughout all required chapters. A newline inside one HTML paragraph collapses; it does not create separate rendered paragraphs. Do not hide overflow, delete facts, change scripts/styles or break a component's two-paragraph slots. A focused Candidate must still satisfy every original user goal, including understandability and configuration detail. This is a pre-freeze construction budget, not a readability or acceptance verdict.";
+  " normalized text characters across the ENTIRE paragraph, including all nested inline text anchors. A direct p anchor already contains its complete paragraph. Read the supplementary htmlBuildBodyContext.paragraphGroups or htmlParagraphGroups for nested paragraph text and its anchorIds; 240 is not a per-anchor allowance. Leave unchanged Original long paragraphs intact. Keep introductory paragraphs brief and distribute concrete inputs, operations, outputs, checks and exceptions across existing step/card-detail anchors throughout all required chapters. A newline inside one HTML paragraph collapses; it does not create separate rendered paragraphs. Do not hide overflow, delete facts, change scripts/styles or break a component's two-paragraph slots. A focused Candidate must still satisfy every original user goal, including understandability and configuration detail. This is a pre-freeze construction budget, not a readability or acceptance verdict.";
 
 /** The existing exact-Mission body consent also bounds initial SOP construction; no provider call occurs here. */
 export function serverHtmlBuildBodyContext(missionId:string,extension:string,source:string){
@@ -14,8 +14,10 @@ export function serverHtmlBuildBodyContext(missionId:string,extension:string,sou
   const markup=htmlRepairBodyContext(source);
   if(markup===undefined)throw new Error("HTML construction needs complete physical body boundaries before sharing body context");
   const parentSha256=createHash("sha256").update(source).digest("hex");
+  const anchors=htmlBuildBodyEditAnchors(source,parentSha256),known=isKnownHtmlNativeSubject(source);
   const context=HtmlBuildBodyContextSchema.parse({schemaVersion:HTML_BUILD_BODY_CONTEXT_VERSION,parentSha256,
-    anchors:htmlBuildBodyEditAnchors(source,parentSha256),components:isKnownHtmlNativeSubject(source)?htmlKnownSemanticComponents(source):[]});
+    anchors,components:known?htmlKnownSemanticComponents(source):[],
+    ...(known?{paragraphGroups:htmlParagraphConstructionContext(source,parentSha256,anchors)}:{})});
   return {markup,context};
 }
 

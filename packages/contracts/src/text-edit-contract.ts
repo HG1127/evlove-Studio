@@ -20,11 +20,23 @@ export const HtmlBodyEditAnchorSchema=z.object({
   before:z.string().min(1).max(64_000),start:z.number().int().nonnegative(),end:z.number().int().positive(),
 }).strict().refine(value=>value.end>value.start&&value.before.length===value.end-value.start,"Body anchor length or source offsets differ");
 export const HtmlSemanticComponentSchema=z.object({section:z.string().regex(/^slide-\d+$/),label:z.string().min(1).max(200),paragraphCount:z.literal(2)}).strict();
+export const HtmlBodyParagraphSchema=z.object({
+  section:z.string().regex(/^slide-\d+$/),paragraphIndex:z.number().int().positive(),
+  role:z.enum(["introductory","card-detail","paragraph"]),text:z.string().max(64_000),chars:z.number().int().nonnegative(),
+  anchorIds:z.array(z.string().min(1).max(100)).max(4096),
+}).strict().refine(p=>p.chars===p.text.length&&new Set(p.anchorIds).size===p.anchorIds.length,"Paragraph size or anchor identity differs");
 export const HTML_BUILD_BODY_CONTEXT_VERSION="html-build-body-context-v1";
 export const HtmlBuildBodyContextSchema=z.object({
   schemaVersion:z.literal(HTML_BUILD_BODY_CONTEXT_VERSION),parentSha256:z.string().regex(/^[a-f0-9]{64}$/),
   anchors:z.array(HtmlBodyEditAnchorSchema).min(1).max(4096),components:z.array(HtmlSemanticComponentSchema).max(1000),
-}).strict().refine(value=>value.anchors.every(anchor=>anchor.anchorId===`t${anchor.start.toString(36)}_${anchor.end.toString(36)}-${value.parentSha256.slice(0,16)}`),"Body anchors do not bind the declared physical parent");
+  paragraphGroups:z.array(HtmlBodyParagraphSchema).max(4096).optional(),
+}).strict().refine(value=>value.anchors.every(anchor=>anchor.anchorId===`t${anchor.start.toString(36)}_${anchor.end.toString(36)}-${value.parentSha256.slice(0,16)}`),"Body anchors do not bind the declared physical parent")
+  .refine(value=>{
+    const anchors=new Set(value.anchors.map(a=>a.anchorId));
+    const paragraphs=value.paragraphGroups??[],ids=paragraphs.flatMap(p=>p.anchorIds);
+    return new Set(paragraphs.map(p=>`${p.section}:${p.paragraphIndex}`)).size===paragraphs.length&&new Set(ids).size===ids.length
+      &&ids.every(id=>anchors.has(id));
+  },"Paragraph anchors do not bind the issued physical parent");
 export const HtmlSemanticLayoutIssueSchema=z.object({
   section:z.string().max(200),label:z.string().max(200),
   code:z.enum(["missing-or-ambiguous-component","paragraph-count-changed","new-content-outside-rendered-slots"]),

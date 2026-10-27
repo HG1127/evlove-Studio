@@ -13,7 +13,7 @@ vi.mock("./ai-gateway",()=>({runServerAi:m.ai}));
 // physical parent verification, Original retention and all-target preflight run.
 vi.mock("@evolution/adapters/html-native-profile",async(importOriginal)=>({...await importOriginal<typeof import("@evolution/adapters/html-native-profile")>(),isKnownHtmlNativeSubject:()=>true,
   compileKnownHtmlDerivedMetadata:(_original:string,html:string)=>({html,updatedIds:[]})}));
-const html='<html><body><article class="slide-card" id="slide-1"><div class="slide-body"><p>配置说明</p><pre id="commands"><code>npm install</code></pre></div></article><script>PRIVATE_PROGRAM</script></body></html>';
+const html='<html><body><article class="slide-card" id="slide-1"><div class="slide-body"><p><span>配置说明</span></p><pre id="commands"><code>npm install</code></pre></div></article><script>PRIVATE_PROGRAM</script></body></html>';
 const criterion=AcceptanceCriterionSchema.parse({id:"DETAIL",title:"具体配置",requirement:"给出保存后检查步骤"});
 async function fixture(enabled=true){
  const p=acceptedPackageFixture(false).project;
@@ -52,6 +52,7 @@ describe("one construction correction within a claimed Artifact repair",()=>{
   m.ai.mockImplementationOnce(async(op,payload)=>{
    expect(op).toBe("repair-artifact");expect(m.put).not.toHaveBeenCalled();
    expect(payload.candidate).toEqual(originalPayload.candidate);expect(payload.failedCriteria).toEqual(originalPayload.failedCriteria);
+   expect(payload.candidate.artifacts[0].htmlParagraphGroups).toEqual([expect.objectContaining({section:"slide-1",text:"配置说明",chars:4})]);
    expect(payload.constructionCorrection).toMatchObject({code:"HTML_ORIGINAL_CODE_RETENTION_FAILED",retention:{originalCount:2,retainedCount:0}});
    expect(JSON.stringify(payload)).not.toContain("PRIVATE_PROGRAM");return proposal(payload);
   });
