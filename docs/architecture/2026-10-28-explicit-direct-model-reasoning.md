@@ -27,3 +27,9 @@ During C28 the live backend remained the preregistered `3025eea` production buil
 A subsequent separately registered trial must hold one explicit effort fixed across paired judgments, use a fresh Baseline and preserve all original 8/6/9 and final acceptance requirements. Actual business benefit and causal unseen-task transfer require their independent observations; faster local tests cannot satisfy them.
 
 Final verification passes 207 related tests across 15 files, all 11 Runner tests, architecture/changed-file lint and the full TypeScript/production build. These checks establish configuration/identity compatibility, not a real configured-medium generation, faster trial or accepted SOP.
+
+## Subsequent real observation
+
+C29 stopped during startup without a model request. C30 then made seven real fixed-medium MiniMax-M3.1-Flash requests: all have matched HTTP 200/`stop` completion observations, with no transport failure. The initial Baseline review completed in 24.996 seconds without length fallback. Exact replay of actual planning request SHA-256 `6469469b5d589b86c2d946162b7eb5ccb34d52c0cf08e187a6e85134ad187536` includes `reasoning_effort:medium`; it makes no additional real provider call. The first planning response was invalid JSON and the original single correction passed schema validation. Thus a usable real requested-medium route is established, while internal provider effort and a causal efficiency/quality benefit remain unproved.
+
+C30's registration/historical reads consumed part of its unchanged window. Its independent deadline cancelled the sole Workflow with one queued, unbuilt Candidate, no final execution, output or Lesson. Neither the model's successful transport nor these normal-path runtime probes establish complete SOP acceptance, business benefit or causal transfer. Full outcome details remain in [the acceptance record](../real-evolution-acceptance.md).
