@@ -3,7 +3,7 @@ import {fastHash} from "./stable-hash";
 import {criterionCanUseLocalSnapshotEvidence} from "./criterion-evidence";
 import {htmlNativeBrowserPlanKey,isSourceGroundedHtmlSearchPlan} from "./html-native-browser-assertions";
 
-export const HTML_NATIVE_EVIDENCE_POLICY_VERSION="html-native-evidence-v3-declared-browser-assertions";
+export const HTML_NATIVE_EVIDENCE_POLICY_VERSION="html-native-evidence-v4-source-navigation-style";
 
 const protectedIds=new Set(["PROTECT-ALL","SYS-INTEGRITY","ART-1-STRUCTURE","SEM-CROSS-CONSISTENCY"]);
 const fixedChecks=["initial-card-inventory","search-positive","search-negative","search-reset","mobile-menu-opens","mobile-menu-closes-on-navigation",
@@ -68,10 +68,14 @@ export function inspectHtmlNativeEvidence(run:TargetRunResult,testCaseId:string,
   };
   if(!complete(observation.original,false)||!complete(observation.subject,true))return undefined;
   const styles=observation.styleComparison;
+  const navigationReady=(state:NonNullable<typeof styles[number]["state"]>["original"],target=state.requestedHref)=>state.requestedHref===target
+    &&state.locationHref===target&&state.activeHref===target&&state.focusedHref===target&&!state.menuOpen;
   if(styles.map(row=>row.width).sort((a,b)=>a-b).join(",")!=="390,1440"
     ||styles.some(row=>row.namedElementsCompared<observation.originalNamedElementCount||!row.styleGroupsCompared
-      ||row.pass!==(row.changedNamed.length===0&&row.missingGroups.length===0&&row.infiniteAnimations===0)))return undefined;
-  const originalHealthy=observation.original.checks.every(check=>check.pass)&&observation.original.inventory.unknownControls.length===0;
+      ||row.pass!==(row.changedNamed.length===0&&row.missingGroups.length===0&&row.infiniteAnimations===0
+        &&(!row.state||navigationReady(row.state.original)&&navigationReady(row.state.subject,row.state.original.requestedHref)))))return undefined;
+  const originalHealthy=observation.original.checks.every(check=>check.pass)&&observation.original.inventory.unknownControls.length===0
+    &&styles.every(row=>!row.state||navigationReady(row.state.original));
   const failures=[...observation.subject.failures,...styles.filter(row=>!row.pass).map(row=>"rendered-style-"+row.width),
     ...(!observation.originalCodeBlocksRetained?["original-code-block-loss"]:[]),
     ...(!observation.originalNamedElementsRetained?["original-named-identity-loss"]:[]),

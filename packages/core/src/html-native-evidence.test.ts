@@ -9,6 +9,21 @@ const test=TestCaseSchema.parse({id:"native-case",title:"保护测试",input:"�
 const judge=[{criterionId:criterion.id,score:99,pass:true,evidence:["Independent semantic review"],gaps:[],testCaseIds:[test.id]}];
 
 describe("bound native HTML evidence",()=>{
+  it.each(["candidate-state","original-state","missing-viewport","foreign-target"])("keeps %s style-state evidence truthful",kind=>{
+    const run=htmlNativeEvidenceFixture(),o=run.nativeHtmlProof!.observation;
+    const state={requestedHref:"#c01",locationHref:"#c01",activeHref:"#c01",focusedHref:"#c01",menuOpen:false};
+    for(const row of o.styleComparison)row.state={policy:"source-navigation-style-v1",original:{...state},subject:{...state}};
+    expect(inspectHtmlNativeEvidence(run,test.id)).toMatchObject({complete:true,pass:true});
+    const row=o.styleComparison[0]!;
+    if(kind==="candidate-state"){row.state!.subject.activeHref="#c02";row.pass=false;}
+    if(kind==="original-state"){row.state!.original.activeHref="#c02";row.pass=false;}
+    if(kind==="missing-viewport")delete row.state;
+    if(kind==="foreign-target")for(const s of [row.state!.original,row.state!.subject])Object.assign(s,{requestedHref:"#other",locationHref:"#other",activeHref:"#other",focusedHref:"#other"});
+    const measured=inspectHtmlNativeEvidence(run,test.id);
+    if(kind==="candidate-state")expect(measured).toMatchObject({complete:true,pass:false,originalHealthy:true,failures:["rendered-style-1440"]});
+    if(kind==="original-state")expect(measured).toMatchObject({complete:false,pass:false,originalHealthy:false});
+    if(kind==="missing-viewport"||kind==="foreign-target")expect(measured).toBeUndefined();
+  });
   it("does not reuse an old physical report for newly declared browser predicates",()=>{
     const run=htmlNativeEvidenceFixture(),stepped={...test,browserSteps:[{action:"visible" as const,selector:"#search"}]};
     expect(inspectHtmlNativeEvidence(run,test.id,undefined,undefined,stepped.browserSteps)).toBeUndefined();

@@ -32,7 +32,11 @@ function facts(native:NonNullable<ReturnType<typeof inspectHtmlNativeEvidence>>)
     originalInteractiveSequenceRetained:o.originalInteractiveSequenceRetained,originalSlideCardOrderRetained:o.originalSlideCardOrderRetained,
     original:subjectFacts(o.original),subject:subjectFacts(o.subject),
     styleComparison:o.styleComparison.map(row=>({width:row.width,propertyCount:row.propertyCount,namedElementsCompared:row.namedElementsCompared,
-      styleGroupsCompared:row.styleGroupsCompared,changedNamedCount:row.changedNamed.length,missingGroupCount:row.missingGroups.length,infiniteAnimations:row.infiniteAnimations,pass:row.pass}))};
+      styleGroupsCompared:row.styleGroupsCompared,changedNamedCount:row.changedNamed.length,missingGroupCount:row.missingGroups.length,infiniteAnimations:row.infiniteAnimations,pass:row.pass,
+      ...(row.state?{state:{policy:row.state.policy,
+        originalMatchesSource:row.state.original.locationHref===row.state.original.requestedHref&&row.state.original.activeHref===row.state.original.requestedHref&&row.state.original.focusedHref===row.state.original.requestedHref&&!row.state.original.menuOpen,
+        subjectMatchesSource:row.state.subject.requestedHref===row.state.original.requestedHref&&row.state.subject.locationHref===row.state.original.requestedHref&&row.state.subject.activeHref===row.state.original.requestedHref&&row.state.subject.focusedHref===row.state.original.requestedHref&&!row.state.subject.menuOpen,
+      }}:{})}))};
 }
 
 /** Project only validated measured facts; never read source bytes, echo source code or assign Criterion scores. */

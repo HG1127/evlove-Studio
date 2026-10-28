@@ -4,6 +4,18 @@ import {measuredNativeObservations} from "./server-measured-native-review";
 import {measuredDocumentObservations} from "./server-measured-review-evidence";
 
 describe("measured native facts for review, never automatic acceptance",()=>{
+  it("carries state qualification without raw navigation attributes, and never invents it for legacy observations",()=>{
+    const run=htmlNativeEvidenceFixture(),legacy=measuredNativeObservations([run]);
+    expect(legacy.observations[0]!.facts.styleComparison[0]).not.toHaveProperty("state");
+    const state={requestedHref:"#c01",locationHref:"#c01",activeHref:"#c01",focusedHref:"#c01",menuOpen:false};
+    for(const row of run.nativeHtmlProof!.observation.styleComparison)row.state={policy:"source-navigation-style-v1",original:{...state},subject:{...state}};
+    const projected=measuredNativeObservations([run]).observations[0]!.facts.styleComparison[0]!;
+    expect(projected.state).toEqual({policy:"source-navigation-style-v1",originalMatchesSource:true,subjectMatchesSource:true});
+    expect(projected.state).not.toHaveProperty("original");expect(JSON.stringify(projected.state)).not.toContain("#c01");
+    run.nativeHtmlProof!.observation.styleComparison[0]!.state!.subject.activeHref="#other";
+    run.nativeHtmlProof!.observation.styleComparison[0]!.pass=false;
+    expect(measuredNativeObservations([run]).observations[0]!.facts.styleComparison[0]!.state).toMatchObject({originalMatchesSource:true,subjectMatchesSource:false});
+  });
   it("carries source/hashes and exact measured control/style counts without granting a Criterion score",()=>{
     const run=htmlNativeEvidenceFixture(),result=measuredNativeObservations([run]);
     expect(result.observations).toHaveLength(1);

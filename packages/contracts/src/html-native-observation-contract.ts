@@ -48,11 +48,24 @@ export const HtmlNativeSubjectSchema=z.object({
   renderedParagraphs:z.array(HtmlRenderedParagraphFactsSchema).length(2),
 }).strict();
 
+export const HTML_NATIVE_STYLE_STATE_POLICY="source-navigation-style-v1";
+export const HtmlNativeStyleNavigationStateSchema=z.object({
+  requestedHref:z.string().regex(/^#[\w:-]+$/).max(160),locationHref:z.string().max(160),
+  activeHref:z.string().max(160).nullable(),focusedHref:z.string().max(160).nullable(),menuOpen:z.boolean(),
+}).strict();
 export const HtmlNativeStyleComparisonSchema=z.object({
   width:z.union([z.literal(1440),z.literal(390)]),propertyCount:z.literal(50),
   namedElementsCompared:count,styleGroupsCompared:count,changedNamed:z.array(z.string().max(160)).max(5000),
   missingGroups:z.array(z.string().max(500)).max(5000),infiniteAnimations:count,pass:z.boolean(),
-}).strict();
+  state:z.object({policy:z.literal(HTML_NATIVE_STYLE_STATE_POLICY),original:HtmlNativeStyleNavigationStateSchema,subject:HtmlNativeStyleNavigationStateSchema}).strict().optional(),
+}).strict().superRefine((value,ctx)=>{
+  const state=value.state;
+  if(state&&value.pass){
+    const target=state.original.requestedHref;
+    if([state.original,state.subject].some(s=>s.requestedHref!==target||s.locationHref!==target||s.activeHref!==target||s.focusedHref!==target||s.menuOpen))
+      ctx.addIssue({code:"custom",path:["state"],message:"Passing style comparison requires the same observed source navigation state"});
+  }
+});
 
 /** Observation of one known renderer profile; it never declares a semantic quality/acceptance pass. */
 export const HtmlNativeObservationSchema=z.object({
@@ -69,7 +82,13 @@ export const HtmlNativeObservationSchema=z.object({
   styleComparison:z.array(HtmlNativeStyleComparisonSchema).length(2),
   browserAssertions:HtmlNativeBrowserAssertionsSchema.optional(),
   billingStatus:z.literal("unavailable"),limitations:z.array(z.string().max(500)).max(12),
-}).strict();
+}).strict().superRefine((value,ctx)=>{
+  const target=value.original.inventory.internalLinks[0];
+  if(value.styleComparison.some(row=>row.state)&&value.styleComparison.some(row=>!row.state))
+    ctx.addIssue({code:"custom",path:["styleComparison"],message:"Recorded navigation state must cover both viewports"});
+  if(value.styleComparison.some(row=>row.state&&[row.state.original,row.state.subject].some(s=>s.requestedHref!==target)))
+    ctx.addIssue({code:"custom",path:["styleComparison"],message:"Navigation state must bind the Original's first recorded internal link"});
+});
 export type HtmlNativeObservation=z.infer<typeof HtmlNativeObservationSchema>;
 
 /** Server-only execution provenance; AI execute-result schemas intentionally do not accept this field. */
