@@ -92,6 +92,13 @@ describe("HTML Mission execution preflight - actual Browser capability",()=>{
     expect(ports.sandbox).toHaveBeenCalledOnce();
     expect(ports.browser).not.toHaveBeenCalled();
   });
+  it("reports a bounded health timeout without asking to replace valid credentials or starting Browser",async()=>{
+    const ports=probes({...sandbox(false),message:"SANDBOX_HEALTH_TIMEOUT · runtime output timed out"});
+    const error=await assertServerHtmlBrowserExecutionReady(mission([source("index","html")]),ports).catch((value:unknown)=>value);
+    expect(error).toMatchObject({status:503,message:expect.stringContaining("检测超时"),data:{code:"HTML_SANDBOX_NOT_READY",action:expect.stringContaining("原检查")}});
+    expect((error as {data:{action:string}}).data.action).not.toMatch(/授权|OIDC|凭据/);
+    expect(ports.browser).not.toHaveBeenCalled();
+  });
   it("rejects absent Sandbox code capability even if ready was asserted",async()=>{
     const ports=probes(sandbox(true,false));
     await expect(assertServerHtmlBrowserExecutionReady(mission([source("index","htm")]),ports))

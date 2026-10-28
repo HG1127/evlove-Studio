@@ -951,6 +951,10 @@ export async function checkVercelSandboxHealth():Promise<SandboxHealth>{
     ready:false,message:issue.code+" · "+issue.message,
     latencyMs:0,policy:getVercelSandboxPolicyCapabilities(),
   });
+  // VM lifetime and command timeout do not bound HTTP/stream waits. Keep the
+  // complete basic probe inside its existing 30-second VM budget.
+  const signal=AbortSignal.timeout(30_000);
+  let phase="分配临时运行环境";
   let sandbox:(Sandbox&AsyncDisposable)|undefined;
   try{
     sandbox=await Sandbox.create({
@@ -961,18 +965,25 @@ export async function checkVercelSandboxHealth():Promise<SandboxHealth>{
       networkPolicy:"deny-all",
       tags:{product:"evolution-os",purpose:"health-check"},
       persistent:false,
+      signal,
     });
+    signal.throwIfAborted();
+    phase="执行基础版本检查";
     const [node,npm]=await Promise.all([
-      sandbox.runCommand("node",["--version"],{timeoutMs:10_000}),
-      sandbox.runCommand("npm",["--version"],{timeoutMs:10_000}),
+      sandbox.runCommand("node",["--version"],{timeoutMs:10_000,signal}),
+      sandbox.runCommand("npm",["--version"],{timeoutMs:10_000,signal}),
     ]);
+    signal.throwIfAborted();
     if(node.exitCode!==0||npm.exitCode!==0)throw new Error("Sandbox runtime commands failed");
+    phase="读取基础检查输出";
+    const [nodeVersion,npmVersion]=await Promise.all([node.stdout({signal}),npm.stdout({signal})]);
+    signal.throwIfAborted();
     return SandboxHealthSchema.parse({
       ready:true,
       message:"Vercel Sandbox 已就绪",
       latencyMs:Date.now()-started,
-      nodeVersion:(await node.stdout()).trim(),
-      npmVersion:(await npm.stdout()).trim(),
+      nodeVersion:nodeVersion.trim(),
+      npmVersion:npmVersion.trim(),
       region:sandbox.region,
       policy:getVercelSandboxPolicyCapabilities(),
     });
@@ -980,7 +991,9 @@ export async function checkVercelSandboxHealth():Promise<SandboxHealth>{
     const message=error instanceof Error?error.message:String(error);
     return SandboxHealthSchema.parse({
       ready:false,
-      message:isUnavailableError(error)
+      message:signal.aborted
+        ?`SANDBOX_HEALTH_TIMEOUT · ${phase}超时，尚未确认运行就绪。`
+        :isUnavailableError(error)
         ?"Vercel Sandbox 尚未授权。本地请先执行 vercel link + vercel env pull；Vercel 部署环境使用 OIDC。"
         :"Vercel Sandbox 检测失败："+message,
       latencyMs:Date.now()-started,
@@ -988,7 +1001,8 @@ export async function checkVercelSandboxHealth():Promise<SandboxHealth>{
     });
   }finally{
     if(sandbox){
-      try{await sandbox.stop();}catch{/* cleanup is best effort */}
+      // A spent probe signal cannot clean up; stopping gets its own short bound.
+      try{await sandbox.stop({signal:AbortSignal.timeout(10_000)});}catch{/* cleanup is best effort; VM lifetime remains bounded */}
     }
   }
 }

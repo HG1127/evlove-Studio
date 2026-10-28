@@ -79,15 +79,16 @@ export async function assertServerHtmlBrowserExecutionReady(
   if(!sandbox.ready||!sandbox.policy.codeReady){
     const expired=sandbox.message.startsWith("VERCEL_OIDC_EXPIRED");
     const mismatched=/^VERCEL_(?:PROJECT|TEAM)_SCOPE_MISMATCH/.test(sandbox.message);
+    const timedOut=sandbox.message.startsWith("SANDBOX_HEALTH_TIMEOUT");
     throw createError({
       statusCode:503,
-      statusMessage:expired
+      statusMessage:timedOut?"HTML Sandbox 检测超时，进化任务尚未启动":expired
         ?"HTML Sandbox OIDC 凭证已过期，进化任务未启动"
         :mismatched
           ?"HTML Sandbox OIDC 的项目或团队范围不匹配，进化任务未启动"
           :"HTML Sandbox 尚未实际就绪，进化任务尚未启动",
       data:{code:"HTML_SANDBOX_NOT_READY",
-        action:expired
+        action:timedOut?"读取原检查会话状态，确认原启动请求已结束后再核验；不要盲目重复启动。":expired
           ?"请用有项目团队权限的 Vercel 账号重新拉取 OIDC 并重启 Nitro；不要覆盖 .env.local 中其他配置，也不要提交令牌。"
           :mismatched
             ?"请先确认当前 Vercel CLI 使用正确的 Project/Team 关联，并由团队管理员授予必要权限；不要将令牌替换为别的项目。"
