@@ -31,6 +31,7 @@ export * from "./campaign-scoring-input";
 export * from "./campaign-schedule";
 export * from "./evaluation-settlement";
 export * from "./experiment-winner";
+export * from "./experiment-evidence-admission";
 export * from "./visible-repair";
 export * from "./artifact-repair-policy";
 export * from "./validation-decision";

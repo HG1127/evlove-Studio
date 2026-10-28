@@ -62,6 +62,26 @@ function semanticPorts(baselineScore=82,candidateScore=92){
   return {ports,currentCases,candidateCases,reviewPayload:()=>reviewPayload};
 }
 
+it.each([90,95])("blocks a cached evidence-only candidate with a known Visible goal failure before any external work (%s)",async score=>{
+  const p=fixture(),io=semanticPorts();p.experimentPolicy.winnerGoalScope="all-user-goals-v1";
+  p.acceptanceRubric.push({...p.acceptanceRubric[0]!,id:"FORMAT",source:"system-integrity",protectedConstraint:true});
+  p.evalSuite.push({...p.evalSuite[0]!,id:"V2",criterionIds:["FORMAT"]});
+  const baseline=p.baselineRun.result!;baseline.criterionScores![0]={...baseline.criterionScores![0]!,score:95,pass:true};
+  const result=p.experimentRun.candidateResults[0]!;result.evaluation.criterionScores![0]!.score=score;
+  result.evaluation.criterionScores!.push({...result.evaluation.criterionScores![0]!,criterionId:"FORMAT",verificationStatus:"partial",testCaseIds:["V2"]});
+  p.experimentRun.winnerId=undefined;p.experimentRun.pendingEvidenceCandidateId="C1";
+  p.experimentRun.comparisonSuite=structuredClone(p.evalSuite);p.experimentRun.comparisonBaseline=structuredClone(p.baselineRun);
+  // A later mutable projection must not erase the stored comparison that caused rejection.
+  p.evalSuite[0]!.id="later-case";p.baselineRun.result!.criterionScores![0]!.score=50;
+  p.validationRun=ValidationRunSchema.parse({...p.validationRun,status:"completed",recommendation:"hold",summary:"Historical measured rejection remains intact",runs:[{testCaseId:"H1",output:"existing negative evidence",latencyMs:1,cost:0,trace:[],verificationStatus:"verified"}]});
+  const historical=structuredClone(p.validationRun);
+  const read=vi.fn(),review=vi.fn();io.ports.readArtifactFingerprint=read;io.ports.releaseReview=review;
+  const out=await runServerHoldout(p,io.ports);
+  expect(out.control).toBe("stop");expect(out.project.campaign.status).toBe("paused");expect(out.reason).toContain("visible-admission-blocked");
+  expect(io.currentCases).toEqual([]);expect(io.candidateCases).toEqual([]);expect(read).not.toHaveBeenCalled();expect(review).not.toHaveBeenCalled();
+  expect(out.project.validationRun).toEqual(historical);expect(p.validationRun).toEqual(historical);
+});
+
 function addLimitedProtection(project:EvolveProject,ports:ServerHoldoutPorts){
   project.acceptanceRubric.push({...project.acceptanceRubric[0]!,id:"PROTECT",title:"保留交互",protectedConstraint:true});
   project.hiddenEvalSuite.push({...project.hiddenEvalSuite[0]!,id:"H2",criterionIds:["PROTECT"],tags:["source-grounded-html-assertions"]});

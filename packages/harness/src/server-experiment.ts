@@ -7,7 +7,7 @@ import type {
 import {
   candidateWinnerDecision,
   experimentEvaluationScore,
-  experimentEvidencePendingOnly,
+  candidateEvidencePendingDecision,
   fallbackExperimentAdvice,
 } from "@evolution/core";
 import {
@@ -254,7 +254,7 @@ export async function runServerExperiment(
   const winner = eligible[0];
   const closest = [...candidateResults]
     .sort((a, b) => experimentEvaluationScore(inputProject, b.evaluation) - experimentEvaluationScore(inputProject, a.evaluation))[0];
-  const pendingEvidence = !winner && closest && candidateResults.every((result) => experimentEvidencePendingOnly(result.evaluation))
+  const pendingEvidence = !winner && closest && candidateResults.every((result) => candidateEvidencePendingDecision(inputProject,result.evaluation,inputProject.baselineRun.result!).eligible)
     ? closest
     : undefined;
   const completedAt = now();
@@ -288,7 +288,7 @@ export async function runServerExperiment(
       }
       return {
         ...actual,
-        status: actual.id === winnerId ? "winner" : "passed",
+        status: actual.id === winner?.candidateId ? "winner" : actual.id === pendingEvidence?.candidateId ? "draft" : "passed",
         accuracy: candidateResults.find((result) => result.candidateId === actual.id)?.evaluation.accuracy ?? actual.accuracy,
         evidence: candidateResults.find((result) => result.candidateId === actual.id)?.evaluation.evidence ?? actual.evidence,
         riskCoverage: candidateResults.find((result) => result.candidateId === actual.id)?.evaluation.riskCoverage ?? actual.riskCoverage,

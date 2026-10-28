@@ -133,6 +133,7 @@ describe("server experiment",()=>{
     expect(outcome.winnerId).toBe("C1");
     expect(outcome.experiment.status).toBe("completed");
     expect(outcome.project.experimentRun.winnerId).toBe("C1");
+    expect(outcome.project.candidates[0]?.status).toBe("winner");
     expect(outcome.project.candidates[0]?.artifactSnapshots[0]?.frozenArtifact?.blobId).toBe("blob-new");
     expect(outcome.project.campaign.checkpoint).toMatchObject({round:1,completedPhase:"experiment"});
   });
@@ -171,7 +172,27 @@ describe("server experiment",()=>{
     expect(outcome.readyForHoldout).toBe(true);
     expect(outcome.winnerId).toBeUndefined();
     expect(outcome.pendingEvidenceCandidateId).toBe("C1");
+    expect(outcome.project.candidates[0]?.status).toBe("draft");
     expect(outcome.project.candidates[0]?.artifactSnapshots[0]?.id).toBe("snap-C1");
+  });
+
+  it.each([90,96])("qualifies missing protection evidence against the actual paired user goal (%s)",async score=>{
+    const project=fixture();project.experimentPolicy.winnerGoalScope="all-user-goals-v1";
+    project.acceptanceRubric[0]!.weight=80;
+    project.acceptanceRubric.push({...project.acceptanceRubric[0]!,id:"FORMAT",source:"system-integrity",weight:20,protectedConstraint:true,validationMethod:"executable-test"});
+    project.evalSuite.push({...project.evalSuite[0]!,id:"V2",criterionIds:["FORMAT"],executionMode:"external-runner"});
+    const baseline=project.baselineRun.result!;baseline.criterionScores![0]={...baseline.criterionScores![0]!,score:95,pass:true};
+    baseline.criterionScores!.push({...baseline.criterionScores![0]!,criterionId:"FORMAT",score:100,testCaseIds:["V2"]});
+    const out=await runServerExperiment(project,{
+      buildCandidate:async({candidate})=>frozenCandidate(candidate),
+      executeSemanticBatch:async({testCases})=>({results:testCases.map(t=>({testCaseId:t.id,output:"complete current candidate text",trace:[]}))}),
+      executeExternalBatch:async({testCases})=>testCases.map(t=>({testCaseId:t.id,output:"Runner evidence unavailable",verificationStatus:"unverified",latencyMs:0,cost:0,trace:[]})),
+      judge:async()=>({...judge(score),criteria:[...judge(score).criteria,{criterionId:"FORMAT",score:100,pass:true,evidence:[],gaps:[],testCaseIds:["V2"]}]}),
+    });
+    expect(out.experiment.candidateResults[0]!.evaluation.criterionScores?.find(c=>c.criterionId==="CONTENT")).toMatchObject({score,verificationStatus:"verified"});
+    expect(out.readyForHoldout).toBe(score===96);expect(out.pendingEvidenceCandidateId).toBe(score===96?"C1":undefined);
+    expect(out.winnerId).toBeUndefined();expect(out.project.candidates[0]!.artifactSnapshots[0]!.id).toBe("snap-C1");
+    if(score===96)expect(out.project.candidates[0]!.status).toBe("draft");
   });
 
   it("routes visual-review to the external/browser port after the exact Candidate is frozen",async()=>{

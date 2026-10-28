@@ -13,6 +13,8 @@ import {
   indexScopedAcceptanceResults,
   missingValidationEvidenceAction,
   validationDecision,
+  candidateEvidencePendingDecision,
+  EXPERIMENT_EVIDENCE_ADMISSION_VERSION,
 } from "@evolution/core";
 import {
   executeServerCurrentArtifactSuite,
@@ -172,6 +174,18 @@ export async function runServerHoldout(
   if (!candidateId) throw new Error("Server Hidden Holdout requires an Experiment Winner or pending-evidence Candidate");
   const candidate = inputProject.candidates.find((item) => item.id === candidateId);
   if (!candidate) throw new Error(`Server Hidden Holdout cannot find Candidate ${candidateId}`);
+  if(!inputProject.experimentRun.winnerId&&inputProject.experimentRun.pendingEvidenceCandidateId){
+    const rows=inputProject.experimentRun.candidateResults.filter(row=>row.candidateId===candidateId);
+    const baseline=inputProject.experimentRun.comparisonBaseline?.result??inputProject.baselineRun.result;
+    const visible={...inputProject,evalSuite:inputProject.experimentRun.comparisonSuite??inputProject.evalSuite};
+    const admission=rows.length===1&&baseline?candidateEvidencePendingDecision(visible,rows[0]!.evaluation,baseline):undefined;
+    if(!admission?.eligible){
+      const reason=`[server-campaign-holdout-visible-admission-blocked] ${EXPERIMENT_EVIDENCE_ADMISSION_VERSION}: ${admission?.reason??"missing-unique-visible-comparison"}; existing measured failures cannot be recovered as missing evidence`;
+      const project:EvolveProject={...inputProject,campaign:{...inputProject.campaign,status:"paused",stopReason:reason,
+        schedule:{...inputProject.campaign.schedule,enabled:false,nextRunAt:undefined}},updatedAt:now()};
+      return {control:"stop",project,validation:inputProject.validationRun,reason,readyForArtifactAcceptance:false,evidenceIncomplete:false};
+    }
+  }
   const targetIds = inputProject.sourceArtifacts.filter((artifact) => artifact.role === "target").map((artifact) => artifact.id);
   if (candidate.artifactBuildStatus !== "ready"
     || targetIds.some((id) => !candidate.artifactSnapshots.find((snapshot) => snapshot.sourceArtifactId === id)?.frozenArtifact)) {
