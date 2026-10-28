@@ -105,7 +105,7 @@ describe("server experiment",()=>{
     const wire=JSON.stringify(independentJudge.mock.calls);
     expect(wire).toContain("ORIGINAL-END");expect(wire).toContain("EVOLVED-END");
     expect(wire).not.toContain("RAW-SOURCE-MUST-NOT-BE-ADDED");
-    expect(result.measuredReviewVersion).toBe("server-measured-document-review-v4-declared-browser-assertions");
+    expect(result.measuredReviewVersion).toBe("server-measured-document-review-v6-observed-focus-style");
     independentJudge.mockClear();
     await judgeServerExperimentCandidate(p,frozenCandidate(p.candidates[0]!),[run],{
       executeSemanticBatch:async()=>({results:[]}),judge:independentJudge,

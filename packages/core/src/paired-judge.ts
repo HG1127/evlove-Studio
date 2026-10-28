@@ -67,6 +67,9 @@ export function pairedComparisonBaseline(project:EvolveProject,evaluation:Evalua
   const data=evaluation.judgeComparison,parsed=PairedJudgeReceiptSchema.safeParse(data?.receipt);
   if(!data||!parsed.success)return fail("missing valid two-order receipt");
   const r=parsed.data,selected=candidate??project.candidates.find(c=>c.id===r.candidateId);
+  // The receipt's internally fixed model is also bound to the Mission's recorded scoring route.
+  if(!project.campaign.scoringRouteFingerprint||r.scoringRouteFingerprint!==project.campaign.scoringRouteFingerprint)
+    return fail("scoring route binding differs");
   if(r.fileMetadataPolicy!==project.experimentPolicy.judgeFileMetadata)return fail("file metadata policy differs");
   if(r.missionId!==project.id||!selected||selected.id!==r.candidateId||r.rubricFingerprint!==fastHash(project.acceptanceRubric)
     ||r.suiteFingerprint!==fastHash(suite)||!same(r.testCaseIds,suite.map(t=>t.id)))return fail("Mission, Candidate, rubric or paper binding differs");

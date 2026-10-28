@@ -44,6 +44,18 @@ describe("two-order paired comparison",()=>{
     for(const sentinel of ["FINAL_PRIVATE","PRIVATE_HIDDEN_SENTINEL","PRIVATE_PROGRAM_SENTINEL","PRIVATE_STYLE_SENTINEL"])expect(wire).not.toContain(sentinel);
     expect(wire).not.toContain('"pairedComparison"');expect(wire).not.toContain('"candidateId"');
   });
+  it.each(["receipt","campaign","missing"])("holds a %s scoring-route mismatch at promotion and user-goal boundaries",async(kind)=>{
+    const x=await assess();
+    if(kind==="receipt")x.evaluation.judgeComparison!.receipt.scoringRouteFingerprint="another-model-or-review-version";
+    if(kind==="campaign")x.project.campaign.scoringRouteFingerprint="another-model-or-review-version";
+    if(kind==="missing")delete x.project.campaign.scoringRouteFingerprint;
+    const decision=candidateWinnerDecision(x.project,x.evaluation,x.project.baselineRun.result!,x.candidate);
+    expect(decision.eligible).toBe(false);expect(decision.blockers.join()).toContain("scoring route binding differs");
+    expect(userGoalProgress(x.project,x.evaluation,x.project.baselineRun.result!).ready).toBe(false);
+    expect(validationDecision(x.project,x.evaluation,x.project.baselineRun.result!,x.project.evalSuite).evidenceIncomplete).toBe(true);
+    expect(x.evaluation.criterionScores![0]!.verificationStatus).toBe("verified");
+    expect(x.port.calls).toHaveLength(2);
+  });
   it("qualifies conflicting threshold decisions as unknown, not a passing or failed product",async()=>{
     const x=await assess([[80,90],[80,84]]);
     expect(x.evaluation.criterionScores![0]).toMatchObject({verificationStatus:"unverified",pass:false});

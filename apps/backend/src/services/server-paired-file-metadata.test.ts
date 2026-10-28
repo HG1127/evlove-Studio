@@ -12,6 +12,7 @@ function fixture(){
   return {...x,request};
 }
 async function assess(x=fixture()){
+  x.project.campaign.scoringRouteFingerprint="fixed-synthetic-route";
   const request=x.request(),calls:unknown[]=[];
   const invoke=vi.fn(async(raw:unknown):Promise<PairedEvaluationAiResult>=>{
     calls.push(raw);const input=raw as {requestFingerprint:string},original=pairedJudgeRawEvaluation(90),candidate=pairedJudgeRawEvaluation(97);
