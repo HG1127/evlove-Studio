@@ -27,6 +27,16 @@ describe("pure native renderer profile identification",()=>{
     const corrected=source.replace(component,component+"<p>完成检查：记录负责人。</p>");
     expect(compileKnownHtmlDerivedMetadata(source,corrected,profiles).html).toContain("完成检查：记录负责人。");
   });
+  it("preserves the code number but does not duplicate a bound fifth-step number in the derived display slot",()=>{
+    const steps=[1,2,3,4].map(n=>`<div class="mini-card"><p>0${n}</p><p>Existing step ${n}</p></div>`).join("");
+    const card='<article class="slide-card" data-kind="tool" id="slide-64"><div class="slide-body"><div class="mini-grid">'+steps+'<div class="mini-card"><pre class="code-block"><code>05\n写 .env.local</code></pre></div></div></div></article>';
+    const source=original.replace('</body>',card+'</body>'),next=source.replace('<p>old</p>','<p>Updated</p>');
+    const compiled=compileKnownHtmlDerivedMetadata(source,next,profiles);
+    expect(compiled.html).toContain('<code>05\n写 .env.local</code></pre><p>写 .env.local</p>');
+    expect(compiled.html).not.toContain('</code></pre><p>05');
+    expect(identifyHtmlNativeSubjects(source,compiled.html,profiles)?.originalCodeBlocksRetained).toBe(true);
+    expect(compileKnownHtmlDerivedMetadata(source,compiled.html,profiles).html).toBe(compiled.html);
+  });
   it("leaves an unknown renderer unchanged rather than assuming its data-search attribute is executable coverage",()=>{
     expect(isKnownHtmlNativeSubject(subject)).toBe(false);
     expect(compileKnownHtmlDerivedMetadata(original,subject)).toEqual({html:subject,updatedIds:[],reflowedIds:[]});

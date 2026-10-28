@@ -8,11 +8,42 @@ describe("known tool renderer's paragraph text slots",()=>{
   it("projects a code-only instruction into one paragraph while retaining exact original blocks",()=>{
     const result=projectHtmlToolCodeText(source,changed);
     expect(result.projectedToolCardIds).toEqual(["slide-64"]);
-    expect(result.html).toBe(changed.replace('</code></pre>','</code></pre><p>02\n写 .env.local &amp; 核对</p>'));
+    expect(result.html).toBe(changed.replace('</code></pre>','</code></pre><p>写 .env.local &amp; 核对</p>'));
     expect(htmlNativeCodeRetention(source,result.html)).toMatchObject({retained:true,exactCount:2});
     // One paragraph keeps the generic-step branch; two would switch all cards to the rich-tool layout.
     expect(result.html).not.toContain('<p>02</p><p>写');
     expect(projectHtmlToolCodeText(source,result.html)).toEqual({html:result.html,projectedToolCardIds:[]});
+  });
+  it("keeps unmatched numbers, unnumbered instructions and multiline content without guessing",()=>{
+    for(const value of ['05\n写 .env.local &amp; 核对','2\n写 .env.local &amp; 核对','02.\n写 .env.local &amp; 核对','写 .env.local &amp; 核对','02\n写 .env.local\n核对参数']){
+      const original=source.replace('02\n写 .env.local &amp; 核对',value),subject=original.replace('Introduction','Updated');
+      expect(projectHtmlToolCodeText(original,subject).html).toContain('</code></pre><p>'+value+'</p>');
+    }
+  });
+  it("binds the generated number to both Original and Candidate positions across direct grids",()=>{
+    const split=source.replace('</p></div><div class="mini-card"><pre','</p></div></div><div class="mini-grid"><div class="mini-card"><pre');
+    expect(projectHtmlToolCodeText(split,split.replace('Introduction','Updated')).html).toContain('</code></pre><p>写 .env.local &amp; 核对</p>');
+    const inserted=changed.replace('<div class="mini-card"><pre','<div class="mini-card"><p>Inserted step</p></div><div class="mini-card"><pre');
+    expect(projectHtmlToolCodeText(source,inserted).html).toContain('</code></pre><p>02\n写 .env.local &amp; 核对</p>');
+    const relocatedOriginal=source.replace('<div class="mini-card"><pre','<div class="mini-card"><p>Existing step</p></div><div class="mini-card"><pre');
+    expect(projectHtmlToolCodeText(relocatedOriginal,changed).html).toContain('</code></pre><p>02\n写 .env.local &amp; 核对</p>');
+  });
+  it("does not infer generated numbering for nested grids/cards or indirect grid layouts",()=>{
+    for(const transform of [
+      (s:string)=>s.replace('<div class="mini-grid">','<div class="wrapper"><div class="mini-grid">').replace('</article>','</div></article>'),
+      (s:string)=>s.replace('<div class="mini-grid">','<div class="mini-grid"><div class="mini-card"><div class="mini-grid">').replace('</article>','</div></div></article>'),
+    ]){
+      const original=transform(source),subject=original.replace('Introduction','Updated');
+      expect(projectHtmlToolCodeText(original,subject).html).toContain('</code></pre><p>02\n写 .env.local &amp; 核对</p>');
+    }
+  });
+  it("leaves an existing old projection and every original code byte unchanged",()=>{
+    const old=changed.replace('</code></pre>','</code></pre><p>02\n写 .env.local &amp; 核对</p>');
+    expect(projectHtmlToolCodeText(source,old)).toEqual({html:old,projectedToolCardIds:[]});
+    const crlf=source.replace('02\n写','02\r\n写'),projected=projectHtmlToolCodeText(crlf,crlf.replace('Introduction','Updated'));
+    expect(projected.html).toContain('<code>02\r\n写 .env.local &amp; 核对</code>');
+    expect(projected.html).toContain('</code></pre><p>写 .env.local &amp; 核对</p>');
+    expect(htmlNativeCodeRetention(crlf,projected.html).retained).toBe(true);
   });
   it("does not mutate an unchanged Original or infer a text slot for unrelated renderers and structures",()=>{
     expect(projectHtmlToolCodeText(source,source).html).toBe(source);

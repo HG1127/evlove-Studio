@@ -24,7 +24,7 @@ export async function compileServerHtmlDerivedMetadata(args:{extension:string;co
   return {content:compiled.html,checks:[
     ...(compiled.updatedIds.length?[`HTML 原生编译：${compiled.updatedIds.length} 个正文搜索索引已同步，原始关键词保留；脚本、样式和正文文本未改写。`]:[]),
     ...(compiled.reflowedIds?.length?[`HTML 正文布局编译：${compiled.reflowedIds.length} 个页面的预格式说明保持原块字节，新增文字移至普通正文段落；全文文字保留。`]:[]),
-    ...(compiled.projectedToolCardIds?.length?[`HTML 工具卡片正文编译：${compiled.projectedToolCardIds.length} 个页面的原始代码块文字补入单个可见段落槽；原块保留，不代表语义或验收通过。`]:[]),
+    ...(compiled.projectedToolCardIds?.length?[`HTML 工具卡片正文编译：${compiled.projectedToolCardIds.length} 个页面的原始代码块说明补入单个可见段落槽；保持原块字节，显示槽不重复已匹配的自动序号，不代表语义或验收通过。`]:[]),
     ...(retention?.originalCount?[`HTML 构建前置检查：${retention.retainedCount}/${retention.originalCount} 个原始代码／指令块按既有静态策略保留；不替代原生与语义验收。`]:[]),
     ...(paragraphs?.checkedParagraphs?[`HTML 新段落构建预算：${paragraphs.checkedParagraphs} 个新增或修改段落通过静态长度检查；不代表渲染可读性或验收通过。`]:[]),
     ...(numbered?.checkedLists?[`HTML 编号列表构建检查（${numbered.policy}）：${numbered.checkedLists} 个修改列表的显式编号连续；不证明操作含义保留或验收通过。`]:[]),
