@@ -11,6 +11,7 @@ export function pairedJudgeFixture(){
   snapshot.frozenArtifact={...snapshot.frozenArtifact!,mimeType:snapshot.mimeType,name:snapshot.name,sha256:snapshot.contentHash,snapshotHash:snapshot.contentHash,size:Buffer.byteLength(snapshot.content)};
   project.baselineRun.originalReferences=[{schemaVersion:"original-artifact-reference-v1",missionId:project.id,sourceArtifactId:source.id,blobId:source.id,sha256:hash(source.textContent),sizeBytes:source.size}];
   project.experimentPolicy.judgeComparison="paired-two-order-v1";
+  project.experimentPolicy.judgeFileMetadata="bound-file-reference-v1";
   project.acceptanceRubric[0]!.minScore=85;
   project.evalSuite=[TestCaseSchema.parse({...project.evalSuite[0],executionMode:"external-runner"})];
   project.hiddenEvalSuite=[TestCaseSchema.parse({...project.hiddenEvalSuite[0],executionMode:"external-runner"})];

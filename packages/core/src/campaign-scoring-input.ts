@@ -26,6 +26,7 @@ export function campaignScoringInputFingerprint(project: EvolveProject): string 
     },
     executionPolicy: {
       ...(project.experimentPolicy?.judgeComparison?{judgeComparison:project.experimentPolicy.judgeComparison}:{}),
+      ...(project.experimentPolicy?.judgeFileMetadata?{judgeFileMetadata:project.experimentPolicy.judgeFileMetadata}:{}),
       ...(project.experimentPolicy?.winnerGoalScope ? { winnerGoalScope: project.experimentPolicy.winnerGoalScope } : {}),
       batchArtifactRuntime: project.experimentPolicy?.batchArtifactRuntime,
       batchSize: project.experimentPolicy?.batchSize,

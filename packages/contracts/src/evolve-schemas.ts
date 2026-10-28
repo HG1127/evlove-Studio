@@ -1207,6 +1207,8 @@ export type ProjectAiProfile = z.infer<typeof ProjectAiProfileSchema>;
 export const ExperimentPolicySchema = z.object({
   /** New comparisons only; legacy evidence retains its original scoring protocol. */
   judgeComparison:z.literal("paired-two-order-v1").optional(),
+  /** Explicit new-Mission reference metadata projection; never infer it for sealed older receipts. */
+  judgeFileMetadata:z.literal("bound-file-reference-v1").optional(),
   /** Explicit HTML location protocol; validate range or node-ID selections against the request-owned body index. */
   htmlBuildAnchorValidation: z.enum(["issued-body-ranges-v1","issued-body-nodes-v1"]).optional(),
   /** One pre-write construction correction inside an already claimed repair; legacy attempts stay terminal. */
@@ -1223,6 +1225,8 @@ export const ExperimentPolicySchema = z.object({
   batchSize: z.number().int().min(2).max(8).default(5),
   buildConcurrency: z.number().int().min(1).max(4).default(3),
   batchArtifactRuntime: z.boolean().default(true),
+}).refine(policy=>!policy.judgeFileMetadata||policy.judgeComparison==="paired-two-order-v1",{
+  message:"Bound file metadata requires the paired judgment protocol",path:["judgeFileMetadata"],
 }).prefault({});
 export type ExperimentPolicy = z.infer<typeof ExperimentPolicySchema>;
 

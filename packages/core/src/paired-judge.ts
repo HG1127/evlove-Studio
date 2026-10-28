@@ -1,4 +1,4 @@
-import {PAIRED_JUDGE_POLICY,PairedJudgeReceiptSchema,type AcceptanceCriterion,type Candidate,type EvaluateAiResult,type EvaluationResult,type EvolveProject,type PairedJudgeReceipt,type TestCase} from "@evolution/contracts";
+import {PAIRED_JUDGE_POLICY,PAIRED_JUDGE_FILE_METADATA_POLICY,PairedJudgeFileMetadataSchema,PairedJudgeReceiptSchema,type AcceptanceCriterion,type Candidate,type EvaluateAiResult,type EvaluationResult,type EvolveProject,type FrozenArtifact,type OriginalArtifactReferenceProof,type PairedJudgeReceipt,type SourceArtifact,type TestCase} from "@evolution/contracts";
 import {fastHash} from "./stable-hash";
 
 const dimensions=["accuracy","evidence","riskCoverage","completeness"] as const;
@@ -6,6 +6,15 @@ const same=(a:string[],b:string[])=>a.length===b.length&&new Set(a).size===a.len
 const worstSafety=(a:EvaluateAiResult["safety"],b:EvaluateAiResult["safety"]):EvaluateAiResult["safety"]=>a==="FAIL"||b==="FAIL"?"FAIL":a==="REVIEW"||b==="REVIEW"?"REVIEW":"PASS";
 // Legacy settlement treats 1 as a ratio. Keep the new integer-percent protocol's 1% literal truthful.
 const legacyScore=(n:number)=>n===1?0.01:n;
+
+/** Bind declared file attributes to already recorded bytes; never infer missing names or MIME from body text. */
+export function pairedJudgeFileMetadata(source:SourceArtifact,original:OriginalArtifactReferenceProof,frozen:FrozenArtifact){
+  const known=(value:string)=>value.trim()?value:null;
+  return PairedJudgeFileMetadataSchema.parse({schemaVersion:"paired-file-metadata-v1",
+    original:{name:known(source.name),mimeType:known(source.mimeType),sizeBytes:original.sizeBytes,provenance:"mission-source-declaration-with-original-byte-reference"},
+    candidate:{name:known(frozen.name),mimeType:known(frozen.mimeType),sizeBytes:frozen.size,provenance:"frozen-artifact-reference"},
+  });
+}
 
 /** Retain an actually observed least-favorable pair per criterion, never a best run or an invented average. */
 export function conservativePairedJudgments(samples:readonly[{original:EvaluateAiResult;candidate:EvaluateAiResult},{original:EvaluateAiResult;candidate:EvaluateAiResult}]){
@@ -58,6 +67,7 @@ export function pairedComparisonBaseline(project:EvolveProject,evaluation:Evalua
   const data=evaluation.judgeComparison,parsed=PairedJudgeReceiptSchema.safeParse(data?.receipt);
   if(!data||!parsed.success)return fail("missing valid two-order receipt");
   const r=parsed.data,selected=candidate??project.candidates.find(c=>c.id===r.candidateId);
+  if(r.fileMetadataPolicy!==project.experimentPolicy.judgeFileMetadata)return fail("file metadata policy differs");
   if(r.missionId!==project.id||!selected||selected.id!==r.candidateId||r.rubricFingerprint!==fastHash(project.acceptanceRubric)
     ||r.suiteFingerprint!==fastHash(suite)||!same(r.testCaseIds,suite.map(t=>t.id)))return fail("Mission, Candidate, rubric or paper binding differs");
   const targets=project.sourceArtifacts.filter(s=>s.role==="target"),refs=project.baselineRun.originalReferences??[];
@@ -68,6 +78,11 @@ export function pairedComparisonBaseline(project:EvolveProject,evaluation:Evalua
     const originals=refs.filter(p=>p.sourceArtifactId===b.sourceArtifactId&&p.missionId===project.id),snapshots=selected.artifactSnapshots.filter(s=>s.sourceArtifactId===b.sourceArtifactId);
     return !targets.some(t=>t.id===b.sourceArtifactId)||originals.length!==1||snapshots.length!==1||originals[0]!.sha256!==b.originalSha256||snapshots[0]!.frozenArtifact?.sha256!==b.candidateSha256||snapshots[0]!.frozenArtifact?.sourceArtifactId!==b.sourceArtifactId;
   }))return fail("physical Artifact binding differs");
+  if(r.bindings.some(b=>{
+    if(!b.fileMetadata)return project.experimentPolicy.judgeFileMetadata===PAIRED_JUDGE_FILE_METADATA_POLICY;
+    const source=targets.find(t=>t.id===b.sourceArtifactId)!,original=refs.find(ref=>ref.sourceArtifactId===b.sourceArtifactId)!,frozen=selected.artifactSnapshots.find(s=>s.sourceArtifactId===b.sourceArtifactId)!.frozenArtifact!;
+    try{return fastHash(pairedJudgeFileMetadata(source,original,frozen))!==fastHash(b.fileMetadata);}catch{return true;}
+  }))return fail("file metadata binding differs");
   const uncertain=new Set(inconclusivePairedCriteria(r,project.acceptanceRubric));
   const safety=(arm:"original"|"candidate")=>{
     const worst=worstSafety(r.samples[0][arm].safety,r.samples[1][arm].safety);

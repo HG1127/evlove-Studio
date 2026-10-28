@@ -40,6 +40,15 @@ describe("durable paired judge claim",()=>{
     const changed=structuredClone(x.request);changed.context.candidateId="renamed-identical-file";
     await expect(claimPairedJudgeAttempt(changed,x.ports)).rejects.toThrow("already started");expect(x.events.size).toBe(1);
   });
+  it.each([false,true])("does not grant another budget when optional file metadata is enriched or removed (enriched first: %s)",async enrichedFirst=>{
+    const x=fixture(),legacy=structuredClone(x.request);delete legacy.context.fileMetadataPolicy;
+    for(const b of legacy.context.bindings)delete b.fileMetadata;
+    for(const arm of ["original","candidate"] as const)delete legacy.versions[arm].files;
+    await claimPairedJudgeAttempt(enrichedFirst?x.request:legacy,x.ports);
+    await expect(claimPairedJudgeAttempt(enrichedFirst?legacy:x.request,x.ports)).rejects.toThrow("already started");
+    const renamed=structuredClone(x.request);renamed.context.bindings[0]!.fileMetadata!.candidate.name="renamed.md";
+    await expect(claimPairedJudgeAttempt(renamed,x.ports)).rejects.toThrow("already started");expect(x.events.size).toBe(1);
+  });
   it("has one owner under concurrent calls even when the store merely ignores duplicate IDs",async()=>{
     const x=fixture(),results=await Promise.allSettled([
       claimPairedJudgeAttempt(x.request,{...x.ports,nonce:()=>"first"}),

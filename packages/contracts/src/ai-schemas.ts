@@ -1,5 +1,5 @@
 import { z } from "zod";
-import {PairedJudgeContextSchema,type PairedJudgeReceipt} from "./paired-judge-contract";
+import {PairedJudgeContextSchema,PairedJudgeFileObservationSchema,type PairedJudgeReceipt} from "./paired-judge-contract";
 import {
   AcceptanceCriterionSchema,
   ArtifactRoleSchema,
@@ -369,12 +369,26 @@ export const PairedEvaluationAiResultSchema=z.object({
 export type PairedEvaluationAiResult=z.infer<typeof PairedEvaluationAiResultSchema>;
 /** Additional comparison data is added by the runtime after validating both model replies. */
 export type ServerEvidenceJudgeResult=EvaluateAiResult&{pairedComparison?:{original:EvaluateAiResult;receipt:PairedJudgeReceipt}};
-const pairedPacket=z.object({documents:z.json(),runs:z.array(z.json()).min(1).max(100)}).strict();
+const pairedPacket=z.object({documents:z.json(),runs:z.array(z.json()).min(1).max(100),
+  files:z.array(PairedJudgeFileObservationSchema).min(1).max(32).optional(),
+}).strict();
 export const PairedJudgeRequestSchema=z.object({
   context:PairedJudgeContextSchema,
   criteria:z.array(AcceptanceCriterionSchema).min(1).max(32),testCases:z.array(TestCaseSchema).min(1).max(100),
   goal:z.string(),metrics:z.array(z.json()).max(100),versions:z.object({original:pairedPacket,candidate:pairedPacket}).strict(),
-}).strict().refine(value=>JSON.stringify(value).length<=1_000_000,"Paired review exceeds the complete-observation budget");
+}).strict().superRefine((value,ctx)=>{
+  const enriched=Boolean(value.context.fileMetadataPolicy);
+  for(const arm of ["original","candidate"] as const){
+    const files=value.versions[arm].files,bindings=value.context.bindings;
+    const valid=enriched?bindings.every(b=>b.fileMetadata)&&files?.length===bindings.length
+      &&new Set(files.map(f=>f.sourceArtifactId)).size===files.length&&bindings.every(b=>{
+        const f=files.find(row=>row.sourceArtifactId===b.sourceArtifactId),m=b.fileMetadata![arm];
+        return f&&f.sha256===(arm==="original"?b.originalSha256:b.candidateSha256)
+          &&f.name===m.name&&f.mimeType===m.mimeType&&f.sizeBytes===m.sizeBytes&&f.provenance===m.provenance;
+      }):files===undefined&&bindings.every(b=>b.fileMetadata===undefined);
+    if(!valid)ctx.addIssue({code:"custom",path:["versions",arm,"files"],message:"File metadata must match every issued physical binding; legacy packets have no inferred metadata"});
+  }
+}).refine(value=>JSON.stringify(value).length<=1_000_000,"Paired review exceeds the complete-observation budget");
 export type PairedJudgeRequest=z.infer<typeof PairedJudgeRequestSchema>;
 
 // 薄弱环节聚类：把逐题失分原因按共同病因归堆，直接回答"该对症补哪里"。

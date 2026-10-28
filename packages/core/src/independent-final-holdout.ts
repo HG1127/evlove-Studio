@@ -58,6 +58,10 @@ export const finalHoldoutContractFingerprint=(project:EvolveProject)=>fastHash(J
   project.sourceArtifacts.map(source=>[source.id,source.role,source.textContent,source.structuredContent]),
   ...(project.experimentPolicy?.winnerGoalScope?[{winnerGoalScope:project.experimentPolicy.winnerGoalScope}]:[]),
   ...(project.experimentPolicy?.judgeComparison?[{judgeComparison:project.experimentPolicy.judgeComparison}]:[]),
+  ...(project.experimentPolicy?.judgeFileMetadata?[{judgeFileMetadata:project.experimentPolicy.judgeFileMetadata,
+    sourceMetadata:project.sourceArtifacts.filter(s=>s.role==="target").map(s=>[s.id,s.name,s.mimeType]),
+    originalReferences:project.baselineRun.originalReferences,
+  }]:[]),
   ...(project.experimentPolicy?.hiddenFailureRepair==="artifact-targeted-repair-v2"?[{hiddenFailureRepair:project.experimentPolicy.hiddenFailureRepair}]:[]),
 ]));
 function caseKey(test:TestCase){

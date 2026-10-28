@@ -13,5 +13,10 @@ export function evidenceFingerprint(project: EvolveProject, candidate: Candidate
     project.goal, project.evolutionCommand, project.protectedItems, project.acceptanceRubric,
     project.hiddenEvalSuite, project.metrics.map(({ key, target, direction }) => ({ key, target, direction })),
     ...(project.experimentPolicy?.winnerGoalScope?[{winnerGoalScope:project.experimentPolicy.winnerGoalScope}]:[]),
+    ...(project.experimentPolicy?.judgeFileMetadata?[{judgeFileMetadata:project.experimentPolicy.judgeFileMetadata,
+      sourceMetadata:project.sourceArtifacts.filter(s=>s.role==="target").map(s=>[s.id,s.name,s.mimeType]),
+      originalReferences:project.baselineRun.originalReferences,
+      frozenMetadata:candidate.artifactSnapshots.map(s=>s.frozenArtifact&&[s.sourceArtifactId,s.frozenArtifact.sha256,s.frozenArtifact.name,s.frozenArtifact.mimeType,s.frozenArtifact.size]),
+    }]:[]),
   ]));
 }
