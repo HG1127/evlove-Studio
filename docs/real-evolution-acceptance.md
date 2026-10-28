@@ -1,6 +1,10 @@
 # Real evolution acceptance
 
-Status: in progress, 2026-10-28. Green engineering checks do not establish measured evolution.
+Status: in progress, 2026-10-29. Green engineering checks do not establish measured evolution.
+
+[The measured-Baseline repair input](architecture/2026-10-29-measured-baseline-text-for-repair.md) addresses the exact C31 wire omission recorded below. Consent-gated Harness projection now supplies existing complete same-comparison rendered HTML text with strict Mission/source/hash/ordinary-suite bindings. It adds no read, generation, repair opportunity or verdict; only current Candidate IDs remain editable. Invalid, missing, conflicting or oversized observations remain explicitly omitted, and independent-final records are not inspected.
+
+The follow-up passes 254 related tests across 13 files, all 11 Runner tests, architecture/changed-file lint and the full TypeScript/production build. Actual-data offline replay includes the complete 28,105-character Baseline, with a 32,506-character versioned context, without a real model/execution/write call. This proves a repaired input handoff, not a causal explanation for C31's failure or any of the three real effects; C31 remains sealed and failed.
 
 Confirmation thirty-one used pushed `b1fe637`, Mission `real-evolution-sop-confirm31-0dc143f7-5aba-4312-803d-1868dbb5b198`, Workflow `wrun_01M61M6XDADT969EXJQ5YAD5ZX`. Preregistration SHA-256 `d74c06c71dd8cfbf8b7591056c09bd69ad3848389c8f76b405ab07b9a18f6e77` is 14,491 bytes, preserving the original 8/6/9 standards, one initial Candidate and one shared repair within `2026-10-28T16:03:30.602Z`–`16:33:30.602Z`. Historical prechecks finished before registration intent; every registration mutation was restricted to the new Mission and its two Artifacts. Registration/readback verified in 74.439 seconds without moving the deadline. Fixed medium MiniMax-M3.1-Flash, subscription reserve checks and active Hobby execution remained; no purchase, upgrade or pay-as-you-go fallback occurred.
 

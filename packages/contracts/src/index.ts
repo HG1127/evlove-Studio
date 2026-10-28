@@ -40,3 +40,4 @@ export * from "./ai-usage-contract";
 export * from "./business-benefit-contract";
 export * from "./learning-context-contract";
 export * from "./failure-observation-contract";
+export * from "./repair-baseline-document-contract";

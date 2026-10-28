@@ -1,7 +1,8 @@
 // @vitest-environment node
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
-import {AcceptanceCriterionSchema,CandidateSchema,EvolutionJobSchema,ExperimentPolicySchema,SourceArtifactSchema} from "@evolution/contracts";
-import {acceptedPackageFixture} from "@evolution/testkit";
+import {AcceptanceCriterionSchema,CandidateSchema,EvaluationResultSchema,EvolutionJobSchema,ExperimentPolicySchema,SourceArtifactSchema,TestCaseSchema} from "@evolution/contracts";
+import {acceptedPackageFixture,htmlNativeEvidenceFixture} from "@evolution/testkit";
+import {evidenceFingerprint,fastHash} from "@evolution/core";
 import {repairServerArtifactCandidate} from "./server-artifact-acceptance";
 import {serverArtifactSha256,verifyServerCandidateFrozenArtifact} from "./server-experiment-artifacts";
 import {withServerControlExecution} from "./server-control-execution";
@@ -36,10 +37,50 @@ function proposal(payload:RepairRequest,bad=false){
  const n=nodes.find(n=>n.text===(bad?"npm install":"配置说明"))!;
  return {summary:bad?"invalid protected replacement":"configuration clarification",repairedCriteria:[criterion.id],artifacts:[{sourceArtifactId:"source",name:"source.html",mimeType:"text/html",notes:[],content:JSON.stringify({kind:"html-body-node-edits-v1",edits:[{anchorId:n.anchorId,text:bad?"npm update":"填写项目名称，保存后回读检查。"}]})}]};
 }
+async function measuredBaselineFixture(){
+ const args=await fixture(),p=args.project,source=p.sourceArtifacts[0]!,sha=await serverArtifactSha256(new TextEncoder().encode(html));
+ const body="Original measured wording keeps the setup steps clear.",run=htmlNativeEvidenceFixture();
+ run.artifactHash=sha;run.nativeHtmlProof!.sourceArtifactId=source.id;run.nativeHtmlProof!.subjectSha256=sha;
+ run.nativeHtmlProof!.observation.subject.sha256=sha;run.nativeHtmlProof!.observation.subject.bodyTextFingerprint=fastHash(body);
+ Object.assign(run.renderedDocumentEvidence!,{sourceArtifactId:source.id,artifactSha256:sha,text:body,textFingerprint:fastHash(body)});
+ const evaluation=EvaluationResultSchema.parse({accuracy:90,evidence:90,riskCoverage:90,completeness:90,safety:"PASS",averageCost:0,averageLatencyMs:1,
+  criterionScores:[{criterionId:criterion.id,score:94,pass:true,verificationStatus:"verified",testCaseIds:[run.testCaseId],evidence:[],gaps:[]}]});
+ p.evalSuite=[TestCaseSchema.parse({id:run.testCaseId,title:"Visible",input:"Check complete wording",expected:["clear"],criterionIds:[criterion.id]})];
+ p.baselineRun={...p.baselineRun,status:"completed",runs:[run],result:evaluation,originalReferences:[{schemaVersion:"original-artifact-reference-v1",missionId:p.id,sourceArtifactId:source.id,blobId:source.id,sha256:sha,sizeBytes:source.size}]};
+ p.experimentRun={...p.experimentRun,status:"completed",comparisonSuite:p.evalSuite,comparisonBaseline:structuredClone(p.baselineRun),candidateResults:[{candidateId:args.candidate.id,evaluation,runs:[],artifactSnapshots:args.candidate.artifactSnapshots,experimentStage:"finalist"}]};
+ return {args,p,source,sha,body,run,evaluation};
+}
 beforeEach(()=>{m.blobs.clear();m.ai.mockReset();m.put.mockReset();m.put.mockImplementation(async(id:string,blob:Blob)=>{m.blobs.set(id,blob);});});
 afterEach(()=>vi.unstubAllEnvs());
 
 describe("one construction correction within a claimed Artifact repair",()=>{
+ it("supplies the verified same-Visible baseline body without making it an editable parent",async()=>{
+  const {args,source,sha,body}=await measuredBaselineFixture();
+  m.ai.mockImplementation(async(_op,payload)=>{
+   expect(payload.measuredBaselineDocuments).toMatchObject({schemaVersion:"repair-baseline-documents-v1",feedbackPhase:"visible",documents:[{sourceArtifactId:source.id,artifactSha256:sha,text:body,complete:true}]});
+   expect(JSON.stringify(payload.measuredBaselineDocuments)).not.toMatch(/anchorId|PRIVATE_PROGRAM/);
+   expect(payload.candidate.artifacts[0].htmlTextNodes).toBeDefined();return proposal(payload);
+  });
+  await repairServerArtifactCandidate({...args,feedbackPhase:"visible"});expect(m.ai).toHaveBeenCalledOnce();expect(m.put).toHaveBeenCalledOnce();
+ });
+ it("supplies only a bound ordinary Hidden baseline and preserves the current edit IDs",async()=>{
+  const {args,p,source,sha,body,run,evaluation}=await measuredBaselineFixture();
+  const hidden=structuredClone(run);hidden.testCaseId="hidden-case";hidden.nativeHtmlProof!.testCaseId=hidden.testCaseId;
+  p.hiddenEvalSuite=[TestCaseSchema.parse({...p.evalSuite[0]!,id:hidden.testCaseId,hidden:true,input:"PRIVATE_ORDINARY_QUESTION"})];
+  p.validationRun={...p.validationRun,status:"completed",candidateId:args.candidate.id,baselineRuns:[hidden],baselineSuiteIds:[hidden.testCaseId],evaluation,baselineEvaluation:evaluation};
+  p.validationRun.evidenceFingerprint=evidenceFingerprint(p,args.candidate);
+  m.ai.mockImplementation(async(_op,payload)=>{
+   expect(payload.measuredBaselineDocuments).toMatchObject({feedbackPhase:"ordinary-hidden",documents:[{sourceArtifactId:source.id,artifactSha256:sha,text:body,testCaseIds:[hidden.testCaseId]}]});
+   expect(JSON.stringify(payload.measuredBaselineDocuments)).not.toContain("PRIVATE_ORDINARY_QUESTION");return proposal(payload);
+  });
+  await repairServerArtifactCandidate(args);expect(m.ai).toHaveBeenCalledOnce();
+ });
+ it.each(["no-consent","unbound-hidden"])("does not add Baseline body for %s",async kind=>{
+  const {args,body}=await measuredBaselineFixture();if(kind==="no-consent")vi.stubEnv("EVOLUTION_AI_FULL_REPAIR_TEXT_MISSIONS","");
+  m.ai.mockImplementation(async(_op,payload)=>{expect(payload).not.toHaveProperty("measuredBaselineDocuments");expect(JSON.stringify(payload)).not.toContain(body);throw Error("LOCAL_CAPTURE_ONLY");});
+  await expect(repairServerArtifactCandidate({...args,...(kind==="no-consent"?{feedbackPhase:"visible" as const}:{})})).rejects.toThrow("LOCAL_CAPTURE_ONLY");
+  expect(m.ai).toHaveBeenCalledOnce();expect(m.put).not.toHaveBeenCalled();
+ });
  it("corrects a numbered-list rejection through the existing single correction before writing",async()=>{
   const args=await fixture();
   m.ai.mockImplementationOnce(async(_op,payload:RepairRequest)=>{const n=payload.candidate.artifacts[0].htmlTextNodes.find(n=>n.text==='2. Console works')!;
