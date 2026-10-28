@@ -2,6 +2,7 @@ import { SupabaseBackendConfigSchema, type SupabaseBackendConfig } from "@evolut
 import {createError} from "nitro/h3";
 import fs from "node:fs";
 import path from "node:path";
+import {z} from "zod";
 
 function value(...items:Array<string|undefined>) {
   return items.map((item)=>item?.trim()).find(Boolean);
@@ -261,9 +262,13 @@ export function getCapabilityEmbeddingConfig():CapabilityEmbeddingConfig|undefin
 }
 
 export function capabilityEmbeddingConfigured(){return Boolean(getCapabilityEmbeddingConfig());}
+const DirectAiReasoningEffortSchema=z.enum(["none","minimal","low","medium","high","xhigh","max"]);
+export function serverAiReasoningEffort(){
+  return DirectAiReasoningEffortSchema.optional().parse(value(process.env.EVOLUTION_AI_REASONING_EFFORT));
+}
 export type ServerAiConfig=
   | {mode:"vercel-gateway";model:string;timeoutMs:number}
-  | {mode:"openai-compatible";apiKey:string;model:string;baseUrl:string;timeoutMs:number;protocol?:"chat-completions"|"responses";responseFormat?:"json-schema"|"json-object"|"prompt-json"};
+  | {mode:"openai-compatible";apiKey:string;model:string;baseUrl:string;timeoutMs:number;protocol?:"chat-completions"|"responses";responseFormat?:"json-schema"|"json-object"|"prompt-json";reasoningEffort?:z.infer<typeof DirectAiReasoningEffortSchema>};
 
 export function serverAiTimeoutMs(){
   const timeoutRaw=value(process.env.EVOLUTION_AI_TIMEOUT_MS,process.env.OPENAI_TIMEOUT_MS);
@@ -289,10 +294,12 @@ export function getServerAiConfig():ServerAiConfig|undefined{
   if(apiKey&&model){
     const rawBase=value(process.env.EVOLUTION_AI_BASE_URL,process.env.OPENAI_BASE_URL)??"https://api.openai.com/v1";
     const baseUrl=rawBase.replace(/\/+$/,"").replace(/\/(?:responses|chat\/completions)$/i,"");
-    return {mode:"openai-compatible",apiKey,model,baseUrl,timeoutMs};
+    const reasoningEffort=serverAiReasoningEffort();
+    return {mode:"openai-compatible",apiKey,model,baseUrl,timeoutMs,...(reasoningEffort?{reasoningEffort}:{})};
   }
   const oidcAvailable=serverAiOidcAvailable();
   if(oidcAvailable&&serverAiGatewayEnabled()){
+    if(value(process.env.EVOLUTION_AI_REASONING_EFFORT))throw Object.assign(new Error("EVOLUTION_AI_REASONING_EFFORT 仅适用于直接模型连接；请清除该设置或使用直接连接。"),{code:"SERVER_AI_REASONING_UNSUPPORTED_ROUTE"});
     return {
       mode:"vercel-gateway",
       model:value(process.env.EVOLUTION_AI_GATEWAY_MODEL,process.env.EVOLUTION_AI_MODEL)??"openai/gpt-5.5",

@@ -20,7 +20,7 @@ const input={
   model:"arbitrary-model-id",apiKey:"private-key-never-return",
   protocol:"chat-completions" as const,responseFormat:"json-object" as const,
 };
-const keys=["NODE_ENV","EVOLUTION_AI_API_KEY","OPENAI_API_KEY","EVOLUTION_AI_MODEL","OPENAI_MODEL","EVOLUTION_AI_BASE_URL","VERCEL","VERCEL_ENV","VERCEL_OIDC_TOKEN","EVOLUTION_AI_GATEWAY_ENABLED","EVOLUTION_AI_TIMEOUT_MS","OPENAI_TIMEOUT_MS"];
+const keys=["NODE_ENV","EVOLUTION_AI_API_KEY","OPENAI_API_KEY","EVOLUTION_AI_MODEL","OPENAI_MODEL","EVOLUTION_AI_BASE_URL","VERCEL","VERCEL_ENV","VERCEL_OIDC_TOKEN","EVOLUTION_AI_GATEWAY_ENABLED","EVOLUTION_AI_TIMEOUT_MS","OPENAI_TIMEOUT_MS","EVOLUTION_AI_REASONING_EFFORT"];
 const previous=new Map<string,string|undefined>();
 beforeEach(()=>{
   for(const key of keys){previous.set(key,process.env[key]);delete process.env[key];}
@@ -34,6 +34,16 @@ afterEach(()=>{
 });
 
 describe("user-selected backend AI connection",()=>{
+  it("pins the explicit server reasoning effort for a saved Vault connection",async()=>{
+    process.env.EVOLUTION_AI_REASONING_EFFORT="medium";
+    vault.resolve.mockResolvedValue(JSON.stringify({...input,version:"server-ai-connection-v1"}));
+    expect(await resolveServerAiConfig()).toMatchObject({reasoningEffort:"medium",model:input.model});
+    await withServerAiConnection(async()=>{
+      process.env.EVOLUTION_AI_REASONING_EFFORT="low";
+      expect(await resolveServerAiConfig()).toMatchObject({reasoningEffort:"medium"});
+    });
+    expect(await resolveServerAiConfig()).toMatchObject({reasoningEffort:"low"});
+  });
   it("honors the configured provider timeout for a Vault connection without an environment API key",async()=>{
     process.env.EVOLUTION_AI_TIMEOUT_MS="180000";
     vault.resolve.mockResolvedValue(JSON.stringify({...input,version:"server-ai-connection-v1"}));

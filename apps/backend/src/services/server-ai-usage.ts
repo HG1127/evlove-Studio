@@ -28,6 +28,7 @@ export function withServerAiUsageScope<T>(scope:AiUsageScope,work:()=>Promise<T>
 function route(config:ServerAiConfig,protocol:AiUsageProtocol,operation:AiOperation):AiUsageRoute{
   return {operation,protocol,model:config.model,routeFingerprint:createHash("sha256").update(JSON.stringify([
     config.mode,config.mode==="openai-compatible"?config.baseUrl:undefined,config.model,protocol,
+    ...(config.mode==="openai-compatible"&&config.reasoningEffort?[{reasoningEffort:config.reasoningEffort}]:[]),
   ])).digest("hex")};
 }
 

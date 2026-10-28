@@ -68,4 +68,8 @@ The current Vercel Hobby project uses **Preview Gate → Production Promote**. R
 
 路由优先级为：保存的后端连接 → 完整的直连环境配置 → 显式开启的历史 Gateway。若不使用 Gateway，将 `EVOLUTION_AI_GATEWAY_ENABLED=false`。直连环境配置为 `EVOLUTION_AI_API_KEY`、`EVOLUTION_AI_MODEL`、`EVOLUTION_AI_BASE_URL`，也保留已有服务商环境变量的兼容读取。模型切换会改变后续评分的路由身份；一次成对评测会固定同一配置，避免当前版本和 Candidate 使用不同模型。
 
+直连服务可选设置服务端 `EVOLUTION_AI_REASONING_EFFORT`，适用于已保存的后端连接及直连环境配置。未设置时完全沿用服务商默认值；设置后会发送到 Chat Completions 的 `reasoning_effort` 或 Responses 的 `reasoning.effort`。可选值为 `none`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`，实际支持范围必须以所选服务商和模型为准，不会自动降级或尝试其他值。无效值在请求前拒绝；历史 Gateway 不接受这个直连选项。配置变更会改变评分及用量路由身份，已有评分不能跨配置复用，一次成对评测内仍固定同一配置。修改服务端环境后重启或重新部署生效；不要在已登记试验中切换。
+
+MiniMax-M3.1-Flash 支持 `low` 至 `max`，默认 `max`，并且不能关闭思考；其思考 token 也计入生成长度上限。可在后续单独登记的试验中选择例如 `medium`，验证完整性、耗时和质量；设置成功本身不证明改善。见 [MiniMax 官方兼容接口参数](https://platform.minimax.cn/docs/api-reference/text-openai-api)。此选项不增加输出上限、重试次数或验收预算。
+
 公开的 `public-readiness` 被动检查只检查环境变量，不访问 Vault，也不证明已保存模型的运行状态。`serverAi` 表示环境中的模型配置，`serverAiConnectionStorageConfigured` 只表示加密保存机制可用；不能把后一项当作模型已保存或真实调用成功。保存后通过已登录的 `ai-connection` 查询及“测试后端调用”确认实际配置和运行结果。若提示连接工作区，请先完成现有后台工作区登录。

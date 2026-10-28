@@ -12,6 +12,19 @@ const scope={missionId:"mission",jobId:"job",phase:"experiment"};
 const reply=()=>({id:"req_1",model:"model",usage:{prompt_tokens:10,completion_tokens:4,total_tokens:14},choices:[{message:{content:"PRIVATE_REPLY"}}]});
 afterEach(()=>{vi.unstubAllGlobals();vi.restoreAllMocks();});
 describe("request-bound server usage collection",()=>{
+  it("keeps usage route identities distinct for different explicit reasoning efforts",async()=>{
+    const records:AiUsageLedgerRecord[]=[];vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(reply()))));
+    await withServerAiUsageScope(scope,async()=>{
+      for(const reasoningEffort of ["medium","low"] as const){
+        const measured=await fetchServerAiProviderUsage({...config,reasoningEffort},"chat-completions","evaluate",config.baseUrl,{});
+        await measured.readJson();
+      }
+    },async record=>{records.push(record);});
+    const starts=records.filter(record=>record.kind==="request-start");
+    expect(starts).toHaveLength(2);
+    expect(starts[0]?.request.route.routeFingerprint).not.toBe(starts[1]?.request.route.routeFingerprint);
+    expect(summarizeAiUsageLedger(records)).toMatchObject({startedRequests:2,matchedObservations:2,ledgerComplete:true});
+  });
   it.each(["responses","chat-completions"] as const)("does not regenerate after a %s response body is interrupted",async protocol=>{
     const records:AiUsageLedgerRecord[]=[];
     const interrupted=new ReadableStream({start(controller){controller.error(new DOMException("PRIVATE_BODY_TIMEOUT","TimeoutError"));}});

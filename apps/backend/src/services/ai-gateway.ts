@@ -67,7 +67,7 @@ export async function serverAiScoringRouteFingerprint(): Promise<string | undefi
   const config = await resolveServerAiConfig();
   if (!config) return undefined;
   const route = config.mode === "openai-compatible"
-    ? [config.mode, config.baseUrl, config.model, ...(config.protocol || config.responseFormat ? [config.protocol,config.responseFormat] : [])]
+    ? [config.mode, config.baseUrl, config.model, ...(config.protocol || config.responseFormat ? [config.protocol,config.responseFormat] : []),...(config.reasoningEffort?[{reasoningEffort:config.reasoningEffort}]:[])]
     : [config.mode, config.model];
   return createHash("sha256").update(JSON.stringify({ route, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION,measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION })).digest("hex");
 }
@@ -243,6 +243,7 @@ async function callResponses<T>(args:{operation:AiOperation;config:Extract<Serve
         ]},
       ],
       max_output_tokens:10000,
+      ...(args.config.reasoningEffort?{reasoning:{effort:args.config.reasoningEffort}}:{}),
       ...(directFormat(args.config,args.contract)?{text:{format:directFormat(args.config,args.contract)}}:{}),
     }),
   });
@@ -269,6 +270,7 @@ async function callChat<T>(args:{operation:AiOperation;config:Extract<ServerAiCo
     body:JSON.stringify({
       model:args.config.model,
       ...(isEvaluation?{max_tokens:8192}:{}),
+      ...(args.config.reasoningEffort?{reasoning_effort:args.config.reasoningEffort}:{}),
       messages:[
         {role:"system",content:directSystem(args.config,args.contract,args.repairFields)},
         {role:"user",content:args.images.length?[
