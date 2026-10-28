@@ -2,7 +2,19 @@
 import {describe,expect,it} from "vitest";
 import {ExactEditAnchorError,HtmlOriginalCodeRetentionError,HtmlSemanticLayoutError,HtmlParagraphConstructionError,HtmlNumberedListConstructionError,htmlNativeCodeRetention,assertHtmlOriginalCodeRetention} from "@evolution/core";
 import {serverCandidateConstructionCorrection} from "./server-candidate-construction-feedback";
+import {ServerHtmlConstructionPreflightError} from "./server-html-construction-preflight";
 describe("bounded pre-freeze construction feedback",()=>{
+  it("sends both measured failures in one bounded correction and includes the invalid proposal only once",()=>{
+    const layout=new HtmlSemanticLayoutError([{section:"slide-11",label:"非常适合",expectedParagraphs:2,code:"missing-or-ambiguous-component"}]);
+    const retention=new HtmlOriginalCodeRetentionError(htmlNativeCodeRetention('<pre>private-command</pre>','<pre>changed</pre>'),[{originalBlockIndex:1,tag:"pre",section:"slide-64"}]);
+    const error=new ServerHtmlConstructionPreflightError([{stage:"before-layout",error:layout},{stage:"before-layout",error:retention}]);
+    const proposal=[{sourceArtifactId:"source",name:"guide.html",mimeType:"text/html",content:"ONLY-ONE-PROPOSAL",notes:[]}];
+    const result=serverCandidateConstructionCorrection(error,proposal),wire=JSON.stringify(result);
+    expect(result).toMatchObject({code:"HTML_CONSTRUCTION_PREFLIGHT_FAILED",invalidProposal:proposal,violations:[{stage:"before-layout",code:layout.code},{stage:"before-layout",code:retention.code,missingBlocks:retention.missingBlocks}]});
+    expect(wire.split('ONLY-ONE-PROPOSAL')).toHaveLength(2);expect(wire).not.toContain('private-command');
+    expect(result?.instruction).toContain('SAME single shared');expect(serverCandidateConstructionCorrection({...error},proposal)).toBeUndefined();
+    expect(()=>new ServerHtmlConstructionPreflightError([{stage:"after-layout",error:layout}])).toThrow();
+  });
   it("reports only bounded numbering locations, retaining the same single correction",()=>{
     const error=new HtmlNumberedListConstructionError(Array.from({length:23},(_,i)=>({section:"slide-87",listIndex:1,itemIndex:i+1,expectedNumber:i+1,observedNumber:8})));
     const result=serverCandidateConstructionCorrection(error,[]);expect(result).toMatchObject({code:error.code,omittedIssueCount:3,policy:error.policy});

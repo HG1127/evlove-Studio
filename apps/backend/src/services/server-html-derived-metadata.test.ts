@@ -1,10 +1,29 @@
 // @vitest-environment node
 import {beforeEach,describe,expect,it,vi} from "vitest";
 import {compileServerHtmlDerivedMetadata} from "./server-html-derived-metadata";
+import {assertHtmlKnownSemanticLayout} from "@evolution/core";
+import {ServerHtmlConstructionPreflightError} from "./server-html-construction-preflight";
 const {known,compile}=vi.hoisted(()=>({known:vi.fn(),compile:vi.fn()}));
 vi.mock("@evolution/adapters/html-native-profile",()=>({isKnownHtmlNativeSubject:known,compileKnownHtmlDerivedMetadata:compile}));
 beforeEach(()=>{known.mockReset();compile.mockReset();});
 describe("pre-freeze derived HTML compilation",()=>{
+  it("reports all currently observable static failures when layout compilation cannot complete",async()=>{
+    const original='<html><body><article class="slide-card" id="slide-11"><div class="slide-body"><div class="content-block"><div class="text-lines"><p>非常适合</p><p>说明</p></div></div><pre><code>npm run build</code></pre><p>介绍</p><ul><li>1. Open</li><li>2. Phone</li><li>3. Console</li></ul></div></article></body></html>';
+    const bad=original.replace('非常适合','changed label').replace('npm run build','npm run unsafe').replace('介绍','字'.repeat(300)).replace('2. Phone','3. Phone');
+    known.mockReturnValue(true);compile.mockImplementation((source,subject)=>{assertHtmlKnownSemanticLayout(source,subject);throw Error('Unreachable');});
+    try{await compileServerHtmlDerivedMetadata({extension:"html",content:bad,parentText:original,readOriginal:async()=>original});throw Error('Expected failure');}
+    catch(error){expect(error).toBeInstanceOf(ServerHtmlConstructionPreflightError);expect((error as ServerHtmlConstructionPreflightError).failures.map(f=>[f.stage,f.error.code])).toEqual([
+      ["before-layout","HTML_SEMANTIC_LAYOUT_INVALID"],["before-layout","HTML_ORIGINAL_CODE_RETENTION_FAILED"],
+      ["before-layout","HTML_PARAGRAPH_CONSTRUCTION_BUDGET_EXCEEDED"],["before-layout","HTML_NUMBERED_LIST_INCOHERENT"],
+    ]);}
+  });
+  it("aggregates final static checks after layout and propagates unexpected compiler failures unchanged",async()=>{
+    const original='<html><body><article class="slide-card" id="slide-64"><div class="slide-body"><pre>npm run build</pre><p>介绍</p></div></article></body></html>',bad=original.replace('npm run build','unsafe').replace('介绍','字'.repeat(300));
+    known.mockReturnValue(true);compile.mockReturnValue({html:bad,updatedIds:[]});
+    await expect(compileServerHtmlDerivedMetadata({extension:"html",content:bad,parentText:original,readOriginal:async()=>original})).rejects.toMatchObject({code:"HTML_CONSTRUCTION_PREFLIGHT_FAILED",failures:[{stage:"after-layout",error:{code:"HTML_ORIGINAL_CODE_RETENTION_FAILED"}},{stage:"after-layout",error:{code:"HTML_PARAGRAPH_CONSTRUCTION_BUDGET_EXCEEDED"}}]});
+    const unexpected=Error('compiler unavailable');compile.mockImplementation(()=>{throw unexpected;});
+    await expect(compileServerHtmlDerivedMetadata({extension:"html",content:bad,parentText:original,readOriginal:async()=>original})).rejects.toBe(unexpected);
+  });
   it("blocks changed instruction numbering at the common build/repair compiler without renumbering it",async()=>{
     const original='<html><body><article id="slide-87"><ul><li>1. Open</li><li>2. Phone</li><li>3. Console</li></ul></article></body></html>';
     const bad=original.replace('2. Phone','3. Console with recovery');known.mockReturnValue(true);compile.mockReturnValue({html:bad,updatedIds:[]});

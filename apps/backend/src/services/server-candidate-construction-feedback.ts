@@ -1,8 +1,9 @@
 import {ExactEditAnchorError,HtmlOriginalCodeRetentionError,HtmlSemanticLayoutError,HtmlParagraphConstructionError,HtmlNumberedListConstructionError} from "@evolution/core";
 import type {RepairArtifactAiResult} from "@evolution/contracts";
+import {ServerHtmlConstructionPreflightError} from "./server-html-construction-preflight";
 
 /** One pre-write construction correction; actual evaluation failures must retain their own repair budget. */
-export function serverCandidateConstructionCorrection(error:unknown,invalidProposal:RepairArtifactAiResult["artifacts"]){
+function singleConstructionCorrection(error:unknown,invalidProposal:RepairArtifactAiResult["artifacts"]){
   if(error instanceof HtmlNumberedListConstructionError)return {code:error.code,policy:error.policy,issues:error.issues.slice(0,20),omittedIssueCount:Math.max(0,error.issues.length-20),invalidProposal,
     instruction:"No file was written. A changed manually numbered instruction/check list has duplicated, missing or out-of-order numbers. Location hints identify the section, one-based list and item; they are NOT issued anchor IDs or byte offsets. Inspect the SAME supplied parent/body index and preserve every original operational check. Rewrite explanations or add/reorder steps only with a coherent consecutive sequence. Do not delete checks or conceal numbers to bypass this error. Return one complete corrected proposal with the SAME anchors. This shares the existing single pre-write construction correction; it is not semantic/final feedback, a new Candidate, repair budget or window."};
   if(error instanceof HtmlParagraphConstructionError)return {code:error.code,policy:error.policy,issues:error.issues.slice(0,20),omittedIssueCount:Math.max(0,error.issues.length-20),invalidProposal,
@@ -15,4 +16,16 @@ export function serverCandidateConstructionCorrection(error:unknown,invalidPropo
   if(error instanceof HtmlSemanticLayoutError)return {code:error.code,issues:error.issues.slice(0,20),omittedIssueCount:Math.max(0,error.issues.length-20),invalidProposal,
     instruction:"The proposal breaks an Original component's known two-paragraph rendering contract. No file was written. Preserve its label and exactly two descendant paragraphs; its runtime removes the entire content-block and uses only those slots. Put extra explanatory prose outside that content-block in the same slide-body, retaining all model-authored information and protected source content. Use the SAME currentTargets and exact anchors; do not change scripts/styles, questions, thresholds or scope. This is a construction correction before any browser evaluation, not a repair of a failed test."};
   return undefined;
+}
+
+export function serverCandidateConstructionCorrection(error:unknown,invalidProposal:RepairArtifactAiResult["artifacts"]){
+  if(!(error instanceof ServerHtmlConstructionPreflightError))return singleConstructionCorrection(error,invalidProposal);
+  const violations=error.failures.map(failure=>{
+    const fact=singleConstructionCorrection(failure.error,[]);
+    if(!fact)throw new Error("Construction failure is not a known static check");
+    const {invalidProposal:omitted,...details}=fact;void omitted;
+    return {stage:failure.stage,...details};
+  });
+  return {code:error.code,policy:error.policy,violations,invalidProposal,
+    instruction:"No file was written. Correct EVERY listed known static violation in this SAME proposal, preserving all Original goals, facts, code, instructions and renderer contracts. before-layout entries inspect the raw proposal because compilation failed; they are preliminary, not final compiled evidence. The complete corrected result must still pass layout compilation and ALL unchanged post-compilation checks. Keep new explanations outside Original pre/code. Use the SAME supplied anchors and parent. This is the SAME single shared pre-write construction correction, not an additional retry, Candidate, evaluation repair or window. Do not fix one listed issue while retaining another, and do not claim semantic quality or acceptance."};
 }
