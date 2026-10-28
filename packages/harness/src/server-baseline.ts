@@ -36,6 +36,7 @@ import { indexUniqueBatchResults } from "./server-batch-results";
 import {groundedOriginalCitationDefect,groundedOriginalDocumentProtection} from "./server-grounded-baseline-defect";
 import {collectServerHtmlNativeRuns,bindServerHtmlNativeOriginalReferences,serverHtmlNativeRunsMatchOriginal,type ServerHtmlNativePort} from "./server-html-native-runs";
 import { serverExperimentRecoveryCheckpoint } from "./server-experiment-wait";
+import { plannedBaselineRefresh, samePlannedOriginalReferences } from "./server-planned-baseline";
 import {currentHtmlDocumentTextObservation} from "./server-current-document-evidence";
 import {measuredDocumentObservations,SERVER_MEASURED_REVIEW_VERSION,SERVER_NATIVE_REVIEW_INSTRUCTION} from "./server-measured-review-evidence";
 
@@ -113,7 +114,10 @@ export async function runServerBaseline(
 ): Promise<ServerBaselineOutcome> {
   const now = options?.now ?? (() => new Date().toISOString());
   const startedAt = now();
-  const scoringBlocker = campaignScoringInputBlocker(inputProject) ?? serverCampaignScoringRouteBlocker(inputProject, ports.scoringRouteFingerprint);
+  const experimentCheckpoint = serverExperimentRecoveryCheckpoint(inputProject) ? inputProject.campaign.checkpoint : undefined;
+  const plannedRefresh = experimentCheckpoint ? undefined : plannedBaselineRefresh(inputProject, ports.scoringRouteFingerprint);
+  const scoringBlocker = campaignScoringInputBlocker(inputProject) ?? serverCampaignScoringRouteBlocker(inputProject, ports.scoringRouteFingerprint)
+    ?? plannedRefresh?.blocker;
   if (scoringBlocker) {
     const paused: EvolveProject = {
       ...inputProject,
@@ -462,16 +466,23 @@ export async function runServerBaseline(
   }
 
   const checkpointAt = now();
-  // A fresh comparison reruns observations without discarding checkpoint-bound frozen construction.
-  const experimentCheckpoint = serverExperimentRecoveryCheckpoint(inputProject) ? inputProject.campaign.checkpoint : undefined;
+  if (plannedRefresh?.checkpoint && !samePlannedOriginalReferences(inputProject.baselineRun.originalReferences, baseline.originalReferences)) {
+    const reason = "[server-campaign-planned-original-changed] 重测发现 Original 文件绑定变化；保留 Candidate 与原终验并停止，不自动重新规划。";
+    const paused: EvolveProject = { ...measured, stage: inputProject.stage, campaign: {
+      ...measured.campaign, status: "paused", stopReason: reason,
+      schedule: { ...measured.campaign.schedule, enabled: false, nextRunAt: undefined },
+    }, updatedAt: checkpointAt };
+    return { project: paused, baseline, ready: false, reason, capabilityGaps: ["server-planned-original"] };
+  }
+  // Both a committed Plan and frozen recovery continue with the freshly measured comparison.
   const readyProject: EvolveProject = {
     ...measured,
-    stage: experimentCheckpoint ? "experiment" : "problem",
+    stage: experimentCheckpoint ? "experiment" : plannedRefresh?.checkpoint ? "plan" : "problem",
     campaign: {
       ...measured.campaign,
       status: "running",
       stopReason: undefined,
-      checkpoint: experimentCheckpoint ?? {
+      checkpoint: experimentCheckpoint ?? plannedRefresh?.checkpoint ?? {
         round: measured.campaign.currentRound + 1,
         completedPhase: "baseline",
         at: checkpointAt,
@@ -483,7 +494,7 @@ export async function runServerBaseline(
     project: readyProject,
     baseline,
     ready: true,
-    reason: `Server Baseline 已完成：${readiness.verified} verified / ${readiness.partial} partial，证据覆盖 ${readiness.evidenceCoverage}%${deferrableSoft.length ? `；${deferrableSoft.length} 道原版非强制题仍为 UNVERIFIED，需在 Candidate/Hidden 重新验证` : ""}`,
+    reason: `Server Baseline 已完成：${readiness.verified} verified / ${readiness.partial} partial，证据覆盖 ${readiness.evidenceCoverage}%${deferrableSoft.length ? `；${deferrableSoft.length} 道原版非强制题仍为 UNVERIFIED，需在 Candidate/Hidden 重新验证` : ""}${plannedRefresh?.checkpoint ? "；保留本轮已规划 Candidate 与独立终验，继续构建，不重新规划" : ""}`,
     capabilityGaps: [],
   };
 }
