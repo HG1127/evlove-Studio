@@ -5,6 +5,14 @@ const {known,compile}=vi.hoisted(()=>({known:vi.fn(),compile:vi.fn()}));
 vi.mock("@evolution/adapters/html-native-profile",()=>({isKnownHtmlNativeSubject:known,compileKnownHtmlDerivedMetadata:compile}));
 beforeEach(()=>{known.mockReset();compile.mockReset();});
 describe("pre-freeze derived HTML compilation",()=>{
+  it("blocks changed instruction numbering at the common build/repair compiler without renumbering it",async()=>{
+    const original='<html><body><article id="slide-87"><ul><li>1. Open</li><li>2. Phone</li><li>3. Console</li></ul></article></body></html>';
+    const bad=original.replace('2. Phone','3. Console with recovery');known.mockReturnValue(true);compile.mockReturnValue({html:bad,updatedIds:[]});
+    await expect(compileServerHtmlDerivedMetadata({extension:"html",content:bad,parentText:original,readOriginal:async()=>original})).rejects.toMatchObject({code:"HTML_NUMBERED_LIST_INCOHERENT"});
+    const fixed=original.replace('2. Phone','2. Phone with recovery');compile.mockReturnValue({html:fixed,updatedIds:[]});
+    const result=await compileServerHtmlDerivedMetadata({extension:"html",content:fixed,parentText:original,readOriginal:async()=>original});
+    expect(result.content).toBe(fixed);expect(result.checks).toContainEqual(expect.stringContaining('不证明操作含义保留'));
+  });
   it("rejects an oversized paragraph after compilation, while accepting redistributed short detail",async()=>{
     const original='<html><body><article class="slide-card" id="slide-64"><div class="slide-body"><p>介绍</p></div></article></body></html>';
     const proposed=original.replace('介绍','字'.repeat(1112));

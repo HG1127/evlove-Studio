@@ -1,8 +1,14 @@
 // @vitest-environment node
 import {describe,expect,it} from "vitest";
-import {ExactEditAnchorError,HtmlOriginalCodeRetentionError,HtmlSemanticLayoutError,HtmlParagraphConstructionError,htmlNativeCodeRetention,assertHtmlOriginalCodeRetention} from "@evolution/core";
+import {ExactEditAnchorError,HtmlOriginalCodeRetentionError,HtmlSemanticLayoutError,HtmlParagraphConstructionError,HtmlNumberedListConstructionError,htmlNativeCodeRetention,assertHtmlOriginalCodeRetention} from "@evolution/core";
 import {serverCandidateConstructionCorrection} from "./server-candidate-construction-feedback";
 describe("bounded pre-freeze construction feedback",()=>{
+  it("reports only bounded numbering locations, retaining the same single correction",()=>{
+    const error=new HtmlNumberedListConstructionError(Array.from({length:23},(_,i)=>({section:"slide-87",listIndex:1,itemIndex:i+1,expectedNumber:i+1,observedNumber:8})));
+    const result=serverCandidateConstructionCorrection(error,[]);expect(result).toMatchObject({code:error.code,omittedIssueCount:3,policy:error.policy});
+    expect(result).toHaveProperty('issues',error.issues.slice(0,20));expect(result?.instruction).toContain('Do not delete checks');
+    expect(serverCandidateConstructionCorrection({...error},[])).toBeUndefined();
+  });
   it("exposes a declared static paragraph budget without accepting forged errors or granting an evaluation repair",()=>{
     const error=new HtmlParagraphConstructionError([{section:"slide-64",role:"introductory",chars:1112,maxChars:240}]);
     expect(serverCandidateConstructionCorrection(error,[])).toMatchObject({code:error.code,issues:error.issues,policy:error.policy,invalidProposal:[]});

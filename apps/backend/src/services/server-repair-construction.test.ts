@@ -13,7 +13,7 @@ vi.mock("./ai-gateway",()=>({runServerAi:m.ai}));
 // physical parent verification, Original retention and all-target preflight run.
 vi.mock("@evolution/adapters/html-native-profile",async(importOriginal)=>({...await importOriginal<typeof import("@evolution/adapters/html-native-profile")>(),isKnownHtmlNativeSubject:()=>true,
   compileKnownHtmlDerivedMetadata:(_original:string,html:string)=>({html,updatedIds:[]})}));
-const html='<html><body><article class="slide-card" id="slide-1"><div class="slide-body"><p><span>配置说明</span></p><pre id="commands"><code>npm install</code></pre></div></article><script>PRIVATE_PROGRAM</script></body></html>';
+const html='<html><body><article class="slide-card" id="slide-1"><div class="slide-body"><p><span>配置说明</span></p><ul><li>1. Phone works</li><li>2. Console works</li></ul><pre id="commands"><code>npm install</code></pre></div></article><script>PRIVATE_PROGRAM</script></body></html>';
 const criterion=AcceptanceCriterionSchema.parse({id:"DETAIL",title:"具体配置",requirement:"给出保存后检查步骤"});
 async function fixture(enabled=true){
  const p=acceptedPackageFixture(false).project;
@@ -40,6 +40,15 @@ beforeEach(()=>{m.blobs.clear();m.ai.mockReset();m.put.mockReset();m.put.mockImp
 afterEach(()=>vi.unstubAllEnvs());
 
 describe("one construction correction within a claimed Artifact repair",()=>{
+ it("corrects a numbered-list rejection through the existing single correction before writing",async()=>{
+  const args=await fixture();
+  m.ai.mockImplementationOnce(async(_op,payload:RepairRequest)=>{const n=payload.candidate.artifacts[0].htmlTextNodes.find(n=>n.text==='2. Console works')!;
+    return {summary:"bad numbering",repairedCriteria:[criterion.id],artifacts:[{sourceArtifactId:"source",name:"source.html",mimeType:"text/html",notes:[],content:JSON.stringify({kind:"html-body-node-edits-v1",edits:[{anchorId:n.anchorId,text:"3. Console works"}]})}]};});
+  m.ai.mockImplementationOnce(async(_op,payload)=>{expect(m.put).not.toHaveBeenCalled();expect(payload.constructionCorrection).toMatchObject({code:"HTML_NUMBERED_LIST_INCOHERENT",issues:[{section:"slide-1",listIndex:1,itemIndex:2,expectedNumber:2,observedNumber:3}]});return proposal(payload);});
+  const out=await repairServerArtifactCandidate(args);
+  expect(m.ai).toHaveBeenCalledTimes(2);expect(m.put).toHaveBeenCalledOnce();expect(out.artifactSnapshots[0]!.content).toContain('2. Console works');
+  expect(args.project.artifactAcceptance.attempts).toBe(1);
+ });
  it("keeps legacy policy terminal after a real pre-write retention rejection",async()=>{
   const args=await fixture(false);m.ai.mockImplementation(async(_op,payload)=>proposal(payload,true));
   await expect(repairServerArtifactCandidate(args)).rejects.toMatchObject({code:"HTML_ORIGINAL_CODE_RETENTION_FAILED"});
