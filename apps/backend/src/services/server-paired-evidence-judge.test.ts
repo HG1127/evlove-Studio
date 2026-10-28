@@ -6,7 +6,7 @@ import {serverPairedJudgeRequest,settleServerPairedJudgment,runServerExperiment,
 import {pairedJudgeFixture,pairedJudgeRawEvaluation,acceptedPackageFixture} from "@evolution/testkit";
 import {runServerPairedEvidenceJudge} from "./server-paired-evidence-judge";
 
-type ModelInput={requestFingerprint:string;versions:Array<{slot:string;observations:{runs:Array<{outputChunks:string[]}>}}>};
+type ModelInput={requestFingerprint:string;issuedCriterionCaseBindings:Array<{criterionId:string;testCaseIds:string[]}>;versions:Array<{slot:string;observations:{runs:Array<{outputChunks:string[]}>}}>};
 function fixture(){const x=pairedJudgeFixture();return {...x,request:serverPairedJudgeRequest(x.project,x.candidate,x.project.evalSuite,x.project.acceptanceRubric,x.candidateRuns,x.originalRuns,"visible")};}
 function model(pairs:Array<[number,number]>= [[90,97],[93,95]],change?:(reply:PairedEvaluationAiResult,index:number)=>void){
   const calls:ModelInput[]=[];
@@ -29,6 +29,7 @@ describe("two-order paired comparison",()=>{
   it("swaps version slots, keeps one rubric and selects the less favorable observed pair",async()=>{
     const x=await assess();
     expect(x.port.calls).toHaveLength(2);
+    for(const call of x.port.calls)expect(call.issuedCriterionCaseBindings).toEqual([{criterionId:"GOAL",testCaseIds:["V1"]}]);
     expect(x.port.calls[0]!.versions[0]!.observations.runs[0]!.outputChunks.join()).toContain("Original measured body");
     expect(x.port.calls[1]!.versions[0]!.observations.runs[0]!.outputChunks.join()).toContain("Updated measured body");
     expect(x.evaluation.criterionScores![0]!.score).toBe(95);
@@ -130,6 +131,11 @@ describe("two-order paired comparison",()=>{
     await expect(runServerPairedEvidenceJudge(x.request,port)).rejects.toThrow("coverage differs");expect(port.calls).toHaveLength(1);
     const failing=model();failing.invoke.mockImplementationOnce(async raw=>model().invoke(raw)).mockRejectedValueOnce(Error("second reply failed"));
     await expect(runServerPairedEvidenceJudge(x.request,failing)).rejects.toThrow("second reply failed");expect(failing.invoke).toHaveBeenCalledTimes(2);
+  });
+  it("rejects a criterion ID inserted into testCaseIds rather than silently removing it",async()=>{
+    const x=fixture(),port=model(undefined,reply=>{for(const version of reply.versions)version.result.criteria[0]!.testCaseIds.push("GOAL");});
+    await expect(runServerPairedEvidenceJudge(x.request,port)).rejects.toThrow("coverage differs");
+    expect(port.calls).toHaveLength(1);
   });
   it("rejects a route change and an altered input before making more model calls",async()=>{
     const x=fixture(),port=model();let route="first";
