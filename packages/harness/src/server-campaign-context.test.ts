@@ -1,7 +1,7 @@
 import {createHash} from "node:crypto";
 import {describe,expect,it,vi} from "vitest";
 import {CandidateSchema,PlanningDocumentContextSchema,TestCaseSchema,type EvolveProject,type PlanningDocumentContext} from "@evolution/contracts";
-import {htmlPlanningDocument} from "@evolution/core";
+import {htmlPlanningDocument,htmlPlanningDocumentWithLocators} from "@evolution/core";
 import {experimentRecoveryFixture} from "@evolution/testkit";
 import {serverCampaignArtifacts} from "./server-campaign-context";
 import {advanceServerCampaignPreparation} from "./server-campaign-preparation";
@@ -13,6 +13,10 @@ function doc(p:EvolveProject,text=html,version=p.version):PlanningDocumentContex
   return PlanningDocumentContextSchema.parse({schemaVersion:"planning-document-context-v1",sourceArtifactId:p.sourceArtifacts[0]!.id,currentVersion:version,
     parentSha256:sha(text),inputChars:text.length,text:body.text,textChars:body.text.length,complete:true,outline:body.outline,
     excludes:["scripts","styles","templates","noscript","svg","executable-attributes","runtime-verdicts"]});
+}
+function locatorDoc(p:EvolveProject,text=html,version=p.version):PlanningDocumentContext{
+  const body=htmlPlanningDocumentWithLocators(text)!;
+  return PlanningDocumentContextSchema.parse({...doc(p,text,version),schemaVersion:"planning-document-context-v2",outline:body.outline,locatorFacts:body.locatorFacts});
 }
 function fixture(){
   const p=experimentRecoveryFixture().project;
@@ -40,6 +44,20 @@ describe("complete current planning source context",()=>{
     const p=fixture(),context=await serverCampaignArtifacts(p);
     expect(context[0]!.content.length).toBeLessThanOrEqual(10_000);expect(context[0]!.structure).toHaveLength(111);
     expect(context[0]!.truncated).toBe(true);expect(JSON.stringify(context)).not.toMatch(/PRIVATE_STYLE|PRIVATE_PROGRAM|PRIVATE_RAW_STRUCTURE/);
+  });
+  it("forwards SHA-bound v2 source tags and ID facts without substituting section elements",async()=>{
+    const p=fixture(),context=await serverCampaignArtifacts(p,async()=>[locatorDoc(p)]),item=context[0]!;
+    expect(item.structure[0]).toBe("article#slide-1: 章节1");expect(item.structure[110]).toBe("article#slide-111: 章节111");
+    expect(item).toMatchObject({truncated:false,planningDocument:{schemaVersion:"planning-document-context-v2",parentSha256:sha(html),
+      locatorFacts:{scope:"source-body-markup",complete:true,tagCounts:expect.arrayContaining([{element:"article",count:111}]),
+        idElements:expect.arrayContaining([{id:"slide-111",element:"article",classes:[]}])}}});
+    expect(JSON.stringify(context)).not.toMatch(/PRIVATE_STYLE|PRIVATE_PROGRAM|PRIVATE_RAW_STRUCTURE|runtimeVerified/);
+  });
+  it("rejects excessive locator metadata without truncation or calling the planner",async()=>{
+    const p=fixture(),row=locatorDoc(p),plan=vi.fn();if(row.schemaVersion!=="planning-document-context-v2")throw Error("v2 fixture");
+    row.locatorFacts.classCounts=Array.from({length:4096},(_,i)=>({element:"article",className:`class-${i}-`+"x".repeat(100),count:1}));
+    const out=await advanceServerCampaignPreparation(p,{problemAnalysis:never,diagnose:never,plan,loadPlanningDocuments:async()=>[row]});
+    expect(out.reason).toContain("exceeds capacity");expect(plan).not.toHaveBeenCalled();
   });
   it.each(["source","version","duplicate","text-size"])("rejects %s-mismatched document boundaries before AI",async kind=>{
     const p=fixture(),row=doc(p),plan=vi.fn();
@@ -69,13 +87,15 @@ describe("complete current planning source context",()=>{
     const p=fixture(),original='<html><body><article id="root"><h3>ROOT BODY</h3></article></body></html>',current='<html><body><article id="s1"><h3>CHAMPION BODY</h3></article></body></html>';
     p.sourceArtifacts[0]!.textContent=original;
     p.searchChampion={id:"champion",versionLabel:"S1"} as EvolveProject["searchChampion"];
-    const loadPlanningDocuments=async(project:EvolveProject)=>[doc(project,project.searchChampion?current:original,project.searchChampion?.versionLabel??project.version)];
+    const loadPlanningDocuments=async(project:EvolveProject)=>[locatorDoc(project,project.searchChampion?current:original,project.searchChampion?.versionLabel??project.version)];
     const reserveFinalHoldout=vi.fn(async(payload:unknown)=>{
       expect(JSON.stringify(payload)).toContain("ROOT BODY");expect(JSON.stringify(payload)).not.toContain("CHAMPION BODY");
+      expect(JSON.stringify(payload)).toContain('"id":"root","element":"article"');expect(JSON.stringify(payload)).not.toContain('"id":"s1"');
       return [TestCaseSchema.parse({id:"F1",title:"final",input:"FINAL-UNSEEN-QUESTION",expected:["unseen outcome"],hidden:true,criterionIds:["CONTENT"]})];
     });
     const plan=vi.fn(async(payload:unknown)=>{
       expect(JSON.stringify(payload)).toContain("CHAMPION BODY");expect(JSON.stringify(payload)).not.toContain("FINAL-UNSEEN-QUESTION");
+      expect(JSON.stringify(payload)).toContain('"id":"s1","element":"article"');expect(JSON.stringify(payload)).not.toContain('"id":"root"');
       return {candidates:[CandidateSchema.parse({id:"new",name:"new",change:"improve",designRationale:{sourceEvidence:["configuration"],mechanism:"improve actual configuration"}})],recommendedCandidateIds:["new"],summary:"planned",experimentDesign:[]};
     });
     const ports={loadPlanningDocuments,reserveFinalHoldout,problemAnalysis:never,diagnose:never,plan};

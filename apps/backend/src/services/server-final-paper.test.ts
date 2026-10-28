@@ -9,6 +9,8 @@ describe("bound server final-paper capabilities",()=>{
  it("advertises browser assertions without fabricating human or visual ports",()=>{
   expect(serverFinalPaperExecutionContract(project)?.supportedModes).toEqual(["artifact-runtime","static-evidence","roundtrip","external-runner"]);
   expect(serverFinalPaperExecutionContract(project)?.browserAssertionModes).toEqual(["external-runner"]);
+  expect(serverFinalPaperExecutionContract(project)?.limitations.join(" ")).toContain("Original body markup");
+  expect(serverFinalPaperExecutionContract(project)?.limitations.join(" ")).toContain("Never infer runtime visibility");
  });
  it("uses the existing source payload verbatim without new source reads",async()=>{
   const payload={project:{artifacts:[{id:"s",content:"EXISTING-SOURCE"}]},executionContract:serverFinalPaperExecutionContract(project)};

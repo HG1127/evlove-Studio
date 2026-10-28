@@ -20,6 +20,8 @@ describe("physical complete planning documents",()=>{
   it("reads the SHA-bound full parent rather than the stale upload index",async()=>{
     const x=fixture(),before=structuredClone(x.p),docs=await buildServerPlanningDocuments(x.p,{readCurrentText:x.readCurrentText});
     expect(docs).toHaveLength(1);expect(docs[0]).toMatchObject({sourceArtifactId:"source",parentSha256:sha(html),complete:true});
+    expect(docs[0]).toMatchObject({schemaVersion:"planning-document-context-v2",outline:[{id:"slide-1",element:"article"},{id:"slide-111",element:"article"}],
+      locatorFacts:{scope:"source-body-markup",complete:true,idElements:[{id:"slide-1",element:"article"},{id:"slide-111",element:"article"}]}});
     expect(docs[0]!.outline).toHaveLength(2);expect(docs[0]!.text).toContain("默认值、依赖关系和验证结果");
     expect(JSON.stringify(docs)).not.toMatch(/PRIVATE_SCRIPT|PRIVATE_STYLE|STALE INDEX/);expect(x.p).toEqual(before);
   });

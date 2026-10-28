@@ -1,8 +1,9 @@
 import {parse,type DefaultTreeAdapterTypes} from "parse5";
 import {htmlReadableBody} from "./html-readable-body";
+import {htmlStaticLocatorFacts} from "./html-static-locator-facts";
 
 /** Static source-order outline and body text. No script, style or runtime execution. */
-export function htmlPlanningDocument(html:string){
+function inspectPlanningSource(html:string){
   const readable=htmlReadableBody(html);
   if(!readable)return undefined;
   const root=parse(html),articles:DefaultTreeAdapterTypes.Element[]=[],headings:DefaultTreeAdapterTypes.Element[]=[];
@@ -28,7 +29,19 @@ export function htmlPlanningDocument(html:string){
   };
   const outline=(articles.length?articles:headings).map((node,index)=>{
     const heading=firstHeading(node);
-    return {index,id:node.attrs.find(attr=>attr.name==="id")?.value??"",title:heading?textOf(heading).replace(/\s+/g," ").trim():""};
+    return {index,id:node.attrs.find(attr=>attr.name==="id")?.value??"",title:heading?textOf(heading).replace(/\s+/g," ").trim():"",element:node.tagName};
   });
-  return {text:readable.text,outline};
+  return {text:readable.text,outline,root};
+}
+
+/** Keep the legacy public projection and fallback excerpts byte-compatible. */
+export function htmlPlanningDocument(html:string){
+  const source=inspectPlanningSource(html);if(!source)return undefined;
+  return {text:source.text,outline:source.outline.map(({index,id,title})=>({index,id,title}))};
+}
+
+/** Versioned opt-in complete planning context. Facts describe source markup, never executed browser behavior. */
+export function htmlPlanningDocumentWithLocators(html:string){
+  const source=inspectPlanningSource(html);if(!source)return undefined;
+  return {text:source.text,outline:source.outline,locatorFacts:htmlStaticLocatorFacts(source.root)};
 }

@@ -48,7 +48,9 @@ export async function serverCampaignArtifacts(project:EvolveProject,load?:Server
     const document=documents.find(row=>row.sourceArtifactId===artifact.id);
     if(!document)return artifact;
     const {text,...metadata}=document;
-    return {...artifact,content:text,structure:document.outline.map(row=>`${row.id||`section[${row.index}]`}: ${row.title}`),originalChars:document.inputChars,
+    return {...artifact,content:text,structure:document.outline.map(row=>document.schemaVersion==="planning-document-context-v2"
+      ?`${"element" in row?row.element:""}${row.id?`#${row.id}`:`[outline=${row.index}]`}: ${row.title}`
+      :`${row.id||`section[${row.index}]`}: ${row.title}`),originalChars:document.inputChars,
       truncated:false,contextRepresentation:"complete-html-body-text",planningDocument:metadata};
   });
   if(JSON.stringify(context).length>PLANNING_ARTIFACT_CONTEXT_CHARS)throw new Error("Complete planning context exceeds capacity; no chapters were truncated");

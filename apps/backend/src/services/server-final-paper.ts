@@ -11,6 +11,7 @@ export function serverFinalPaperExecutionContract(project:EvolveProject){
     limitations:["Document text, native byte/structure checks and actual Sandbox DOM assertions are bound.",
       "No human trial or fully verified visual-review port is bound. Do not invent real external configuration, deployment or fault injection for a written-document criterion.",
       "Browser cases need selectors grounded in the supplied source and visible/text/count assertions in browserSteps. All original criteria and thresholds remain required.",
+      "When planningDocument.locatorFacts is supplied, its element tags, IDs and per-tag class counts are observations of Original body markup. Use those actual tags and names for Original protection selectors; an outline item is not necessarily a section element. Never infer runtime visibility, copy behavior or test success from static facts. Keep arbitrary valid browser assertions and execute them through the declared browser route.",
       "Declared browserSteps execute only in external-runner mode. artifact-runtime is a document semantic route and does not execute those steps. Preserve required interactions, assertions and thresholds by choosing external-runner; never silently drop them or replace them with semantic claims.",
       "evidenceScope must be exactly product-behavior, implementation, format, parser or cross-artifact. Document semantic/user-scenario review uses product-behavior; it is not a new document/content/semantic scope and does not imply real external operation."]});
 }
