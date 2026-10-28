@@ -32,8 +32,10 @@ export const HtmlBodyParagraphSchema=z.object({
   anchorIds:z.array(z.string().min(1).max(100)).max(4096),
 }).strict().refine(p=>p.chars===p.text.length&&new Set(p.anchorIds).size===p.anchorIds.length,"Paragraph size or anchor identity differs");
 export const HTML_BUILD_BODY_CONTEXT_VERSION="html-build-body-context-v1";
+export const HTML_BUILD_ANCHOR_SEMANTICS="text-span-inside-enclosing-element" as const;
 export const HtmlBuildBodyContextSchema=z.object({
   schemaVersion:z.literal(HTML_BUILD_BODY_CONTEXT_VERSION),parentSha256:z.string().regex(/^[a-f0-9]{64}$/),
+  anchorSemantics:z.literal(HTML_BUILD_ANCHOR_SEMANTICS).optional(),
   anchors:z.array(HtmlBodyEditAnchorSchema).min(1).max(4096),components:z.array(HtmlSemanticComponentSchema).max(1000),
   paragraphGroups:z.array(HtmlBodyParagraphSchema).max(4096).optional(),
 }).strict().refine(value=>value.anchors.every(anchor=>anchor.anchorId===`t${anchor.start.toString(36)}_${anchor.end.toString(36)}-${value.parentSha256.slice(0,16)}`),"Body anchors do not bind the declared physical parent")

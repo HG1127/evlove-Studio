@@ -1,9 +1,18 @@
 // @vitest-environment node
 import {describe,expect,it} from "vitest";
-import {ExactEditAnchorError,HtmlOriginalCodeRetentionError,HtmlSemanticLayoutError,HtmlParagraphConstructionError,HtmlNumberedListConstructionError,htmlNativeCodeRetention,assertHtmlOriginalCodeRetention} from "@evolution/core";
+import {ExactEditAnchorError,HtmlOriginalCodeRetentionError,HtmlSemanticLayoutError,HtmlParagraphConstructionError,HtmlNumberedListConstructionError,assertHtmlNumberedListConstruction,htmlNativeCodeRetention,assertHtmlOriginalCodeRetention} from "@evolution/core";
 import {serverCandidateConstructionCorrection} from "./server-candidate-construction-feedback";
 import {ServerHtmlConstructionPreflightError} from "./server-html-construction-preflight";
 describe("bounded pre-freeze construction feedback",()=>{
+  it("explains a nested list-item text replacement using numeric shapes without copying source bodies",()=>{
+    const original='<article id="slide-84"><ul><li>1. PRIVATE_REQUIREMENT</li><li>2. PRIVATE_CHECK</li></ul></article>';
+    let error:unknown;try{assertHtmlNumberedListConstruction(original,original.replace('1. PRIVATE_REQUIREMENT','<li>5. PRIVATE_RECOVERY</li>'));}catch(e){error=e;}
+    const correction=serverCandidateConstructionCorrection(error,[]);
+    expect(correction).toMatchObject({listContext:{numberHintsAreNotRenumberingTargets:true,groups:[{prefixNumbers:[null,5,2],originalSourceLists:[{prefixNumbers:[1,2]}]}]}});
+    expect(JSON.stringify(correction)).not.toContain('PRIVATE_');
+    expect(correction?.instruction).toContain('NOT a required new starting number');
+    expect(correction?.instruction).toContain('existing enclosing tags remain');
+  });
   it("sends both measured failures in one bounded correction and includes the invalid proposal only once",()=>{
     const layout=new HtmlSemanticLayoutError([{section:"slide-11",label:"非常适合",expectedParagraphs:2,code:"missing-or-ambiguous-component"}]);
     const retention=new HtmlOriginalCodeRetentionError(htmlNativeCodeRetention('<pre>private-command</pre>','<pre>changed</pre>'),[{originalBlockIndex:1,tag:"pre",section:"slide-64"}]);

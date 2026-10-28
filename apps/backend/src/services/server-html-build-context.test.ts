@@ -13,6 +13,7 @@ describe("complete authorized initial HTML build context",()=>{
   it("provides every body node and exact full-source offsets without script/style or raw-attribute indexes",()=>{
     vi.stubEnv("EVOLUTION_AI_FULL_REPAIR_TEXT_MISSIONS","mission");
     const result=serverHtmlBuildBodyContext("mission","html",original)!;
+    expect(result.context.anchorSemantics).toBe("text-span-inside-enclosing-element");
     expect(result.context.parentSha256).toBe(createHash("sha256").update(original).digest("hex"));
     expect(result.context.anchors).toHaveLength(htmlRepairTextNodeContext(original).length);
     expect(result.context.components).toEqual([{section:"slide-11",label:"非常适合",paragraphCount:2}]);
