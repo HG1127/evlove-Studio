@@ -53,6 +53,7 @@ export function independentFinalReplacementBlocker(project:EvolveProject,round:n
   return undefined;
 }
 export const finalHoldoutContractFingerprint=(project:EvolveProject)=>fastHash(JSON.stringify([
+  ...(project.failureObservationSources?.length?[{failureObservationSources:project.failureObservationSources}]:[]),
   project.goal,project.evolutionCommand,project.metrics,project.protectedItems,project.editableItems,project.acceptanceRubric,
   project.sourceArtifacts.map(source=>[source.id,source.role,source.textContent,source.structuredContent]),
   ...(project.experimentPolicy?.winnerGoalScope?[{winnerGoalScope:project.experimentPolicy.winnerGoalScope}]:[]),

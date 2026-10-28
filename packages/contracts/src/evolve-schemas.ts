@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {ProductionGoalEvidenceSchema} from "./production-goal-evidence";
 import {BusinessBenefitPolicySchema} from "./business-benefit-contract";
+import {FailureObservationSourcesSchema,FailureObservationUseSchema} from "./failure-observation-contract";
 import {OriginalArtifactReferenceProofSchema} from "./original-reference-contract";
 import { GitRepositoryBindingSchema, GitTargetSnapshotBindingSchema } from "./git-target-contract";
 import {HtmlNativeRunProofSchema,HtmlRenderedDocumentEvidenceSchema} from "./html-native-observation-contract";
@@ -453,6 +454,8 @@ export const CandidateArtifactSnapshotSchema = z.object({
 export type CandidateArtifactSnapshot = z.infer<typeof CandidateArtifactSnapshotSchema>;
 
 export const CandidateSchema = z.object({
+  /** Server receipt of the historical observations actually supplied to planning. */
+  planningFailureObservationUse:FailureObservationUseSchema.optional(),
   finalHoldoutPaperHash:z.string().optional(),
   id: z.string(),
   name: z.string(),
@@ -1293,6 +1296,7 @@ export const EvolveProjectSchema = z.object({
   currentVersionId: z.string().optional(),
   release: ReleaseStateSchema,
   lessons: z.array(LessonSchema),
+  failureObservationSources:FailureObservationSourcesSchema.optional(),
   nextQueue: z.array(NextQueueItemSchema).default([]),
   campaign: EvolutionCampaignSchema.prefault({}),
   roundHistory: z.array(EvolutionRoundSchema).default([]),

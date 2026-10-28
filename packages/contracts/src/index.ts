@@ -38,3 +38,4 @@ export * from "./original-reference-contract";
 export * from "./ai-usage-contract";
 export * from "./business-benefit-contract";
 export * from "./learning-context-contract";
+export * from "./failure-observation-contract";

@@ -5,7 +5,7 @@ import { runServerExperiment } from "./server-experiment";
 import { executeServerExperimentCandidate, judgeServerExperimentCandidate } from "./server-experiment-runner";
 import { normalizeLocallyVerifiableCandidateRuns } from "./candidate-snapshot-evidence";
 import { candidateLocalEvidence } from "./server-experiment-evidence";
-import {htmlNativeEvidenceFixture} from "@evolution/testkit";
+import {htmlNativeEvidenceFixture,failureObservationFixture} from "@evolution/testkit";
 
 function fixture(executionMode:"artifact-runtime"|"external-runner"|"visual-review"="artifact-runtime"):EvolveProject{
   const now="2026-09-20T13:00:00.000Z";
@@ -61,6 +61,12 @@ function judge(score:number):EvaluateAiResult{
 }
 
 describe("server experiment",()=>{
+  it("rejects a changed historical-memory treatment before build, recovery or execution",async()=>{
+    const p=fixture(),x=failureObservationFixture(),build=vi.fn(),execute=vi.fn(),judge=vi.fn(),verify=vi.fn();
+    p.failureObservationSources=[x.sourceRef()];
+    await expect(runServerExperiment(p,{buildCandidate:build,executeSemanticBatch:execute,judge,verifyFrozenArtifact:verify})).rejects.toThrow("failure-context-binding-mismatch");
+    for(const port of [build,execute,judge,verify])expect(port).not.toHaveBeenCalled();
+  });
   function nativeReviewFixture(){
     const p=fixture(),run=htmlNativeEvidenceFixture(),candidate=frozenCandidate(p.candidates[0]!,"RAW-SNAPSHOT-SCRIPT-MUST-NOT-ENTER-JUDGE");
     p.sourceArtifacts[0]={...p.sourceArtifacts[0]!,extension:"html",mimeType:"text/html",name:"source.html"};

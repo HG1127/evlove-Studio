@@ -5,6 +5,8 @@ import { fastHash } from "./stable-hash";
 export function evidenceFingerprint(project: EvolveProject, candidate: Candidate) {
   return fastHash(JSON.stringify([
     candidate.finalHoldoutPaperHash?"artifact-proof-v2":"artifact-proof-v1", candidate.id,
+    ...(project.failureObservationSources?.length?[{failureObservationSources:project.failureObservationSources}]:[]),
+    ...(candidate.planningFailureObservationUse?[{planningFailureObservationUse:candidate.planningFailureObservationUse}]:[]),
     ...(candidate.finalHoldoutPaperHash?[candidate.finalHoldoutPaperHash]:[]),
     candidate.artifactSnapshots.map((item) => [item.sourceArtifactId, item.name, item.mimeType, item.content]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
     project.sourceArtifacts.map((item) => [item.id, item.role, item.textContent, item.structuredContent]),

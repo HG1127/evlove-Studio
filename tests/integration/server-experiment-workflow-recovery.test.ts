@@ -180,7 +180,7 @@ describe("explicit durable run restores the stored Experiment Judge checkpoint",
   });
   it.each([undefined, { ...job, status: "cancelled" }, { ...job, generation: 2 }, { ...job, missionId: "foreign" }])("cannot reopen an inactive or replaced control Job", async current => {
     await paused(); m.job.mockResolvedValue(current);
-    await expect(planMissionStep(input, 0)).rejects.toThrow("控制 Job 不再活动");
+    await expect(planMissionStep(input, 0)).rejects.toMatchObject({code:"SERVER_CONTROL_EXECUTION_STOPPED"});
     expect(m.probe).not.toHaveBeenCalled(); expect(m.save).not.toHaveBeenCalled(); expect(m.append).not.toHaveBeenCalled();
   });
   it("leaves an unknown model probe error on the ordinary retry path", async () => {

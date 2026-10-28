@@ -1,5 +1,5 @@
 import { describe, expect, it,vi } from "vitest";
-import {CandidateSchema,TestCaseSchema,type EvolveProject} from "@evolution/contracts";
+import {CandidateSchema,TestCaseSchema,VisibleFailureObservationsSchema,type EvolveProject} from "@evolution/contracts";
 import { campaignScoringInputFingerprint } from "@evolution/core";
 import {integrateDistilledLesson} from "@evolution/core";
 import {attachLessonGovernance} from "@evolution/core";
@@ -36,6 +36,28 @@ function fixture(): EvolveProject {
 }
 
 describe("server campaign preparation",()=>{
+  it.each(["valid","mismatch","missing-loader","none","missing-final"])("loads %s historical observations only after blind reservation and before planning",async kind=>{
+    const p=fixture();p.id="new-campaign";
+    p.diagnosis={problemId:"P",rootCause:"gap",summary:"gap",affectedComponent:"source",confidence:0.9,evidence:["流程缺口"],evidenceRefs:[],counterEvidence:[],falsifier:"no gap",suggestedScopes:["code"],trace:[]};
+    p.campaign.checkpoint={round:1,completedPhase:"diagnose",at:p.updatedAt};
+    const ref={schemaVersion:"visible-failure-source-v1" as const,missionId:"old-source",missionSha256:"a".repeat(64),experimentRunId:"old-experiment",candidateId:"old-candidate",round:1};p.failureObservationSources=[ref];
+    if(kind==="none")p.failureObservationSources=undefined;
+    const context=VisibleFailureObservationsSchema.parse({schemaVersion:"visible-failure-observations-v1",missionId:p.id,observations:[{source:ref,grade:"measured-visible-failure",sourceGoal:"PRIOR_FAILURE_CONTEXT",sourceCommand:"old command",observedAt:1,executionEvidenceFingerprint:"b".repeat(64),
+      artifacts:[{sourceArtifactId:"old-artifact",snapshotId:"old-snapshot",sha256:"c".repeat(64),originalSha256:"d".repeat(64)}],comparisons:[{criterionId:"OLD",title:"Old goal",minScore:85,weight:100,caseIds:["OLD-V"],baselineScore:95,candidateScore:90,delta:-5,baselineMinimumPassed:true,candidateMinimumPassed:true}],failureCriterionIds:["OLD"],unpairedCriterionIds:[],originalText:[],candidateText:[]}],limitations:["Synthetic phase isolation only"]});
+    const never=async()=>{throw Error("completed phase");};let reserved=0,planned=0,loaded=0;
+    const ports={problemAnalysis:never,diagnose:never,reserveFinalHoldout:kind==="missing-final"?undefined:async(payload:unknown)=>{reserved++;expect(loaded).toBe(0);expect(JSON.stringify(payload)).not.toMatch(/PRIOR_FAILURE_CONTEXT|old-source/);return [TestCaseSchema.parse({id:"F1",title:"final",input:"BLIND_TRANSFER_PAPER",expected:["different unseen edge"],hidden:true,criterionIds:["CONTENT"]})];},
+      loadFailureObservations:kind==="missing-loader"?undefined:async()=>{loaded++;return kind==="mismatch"?{...context,missionId:"foreign"}:context;},
+      plan:async(payload:unknown)=>{planned++;if(kind==="none")expect(payload).not.toHaveProperty("failureObservations");else expect(payload).toMatchObject({failureObservations:context});expect(JSON.stringify(payload)).not.toContain("BLIND_TRANSFER_PAPER");return {candidates:[CandidateSchema.parse({id:"new-candidate",name:"new",change:"new change",planningFailureObservationUse:{schemaVersion:"failure-observation-use-v1",grade:"provided-to-plan",missionId:"forged-model-receipt",round:99,at:p.updatedAt,sources:[],contextFingerprint:"forged"},designRationale:{sourceEvidence:["current source"],mechanism:"test change"}})],recommendedCandidateIds:["new-candidate"],summary:"plan",experimentDesign:[]};}};
+    const first=await advanceServerCampaignPreparation(p,ports);expect(reserved).toBe(kind==="missing-final"?0:1);expect(loaded).toBe(0);expect(planned).toBe(0);
+    const second=await advanceServerCampaignPreparation(first.project,ports);expect(reserved).toBe(kind==="missing-final"?0:1);
+    expect(planned).toBe(kind==="valid"||kind==="none"?1:0);expect(second.project.finalHoldout).toEqual(first.project.finalHoldout);
+    if(kind==="mismatch"||kind==="missing-loader"||kind==="missing-final")expect(second.reason).toContain("failure-context-pending");
+    else if(kind==="valid"){
+      expect(second.failureObservationUse).toMatchObject({grade:"provided-to-plan",sources:[ref],missionId:p.id});
+      expect(second.project.candidates[0]?.planningFailureObservationUse).toEqual(second.failureObservationUse);
+    }
+    else {expect(loaded).toBe(0);expect(second.failureObservationUse).toBeUndefined();expect(second.project.candidates[0]).not.toHaveProperty("planningFailureObservationUse");}
+  });
   it.each(["valid","foreign-mission","wrong-hash","stale"])("qualifies %s production knowledge at the actual planning port",async kind=>{
     const template=fixture(),source=syntheticLearningProject(),at=source.release.observedAt!;
     const p=withMeasuredProductionGoal({...template,releaseTarget:source.releaseTarget,release:source.release,

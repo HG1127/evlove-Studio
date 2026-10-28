@@ -16,6 +16,7 @@ export function buildServerHarnessPlan(project:EvolveProject):ServerHarnessPlan 
     : deriveAutonomousDecision(project);
   const sourceRevision=fastHash([
     project.id,
+    ...(project.failureObservationSources?.length?[JSON.stringify(project.failureObservationSources)]:[]),
     project.updatedAt,
     project.stage,
     project.currentVersionId,

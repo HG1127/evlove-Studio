@@ -6,6 +6,7 @@ import type {
 } from "@evolution/contracts";
 import {
   candidateWinnerDecision,
+  candidateFailureContextBlocker,
   experimentEvaluationScore,
   candidateEvidencePendingDecision,
   fallbackExperimentAdvice,
@@ -124,6 +125,7 @@ export async function runServerExperiment(
   const selected = inputProject.selectedCandidateIds
     .flatMap((id) => inputProject.candidates.find((candidate) => candidate.id === id) ? [inputProject.candidates.find((candidate) => candidate.id === id)!] : []);
   if (!selected.length) throw new Error("Server Experiment has no selected Candidates");
+  for(const candidate of selected){const blocker=candidateFailureContextBlocker(inputProject,candidate);if(blocker)throw new Error(blocker);}
 
   const checkpoints = new Map<string, ExperimentCandidateCheckpoint>();
   const recoveryFailures = new Set<string>();
@@ -133,6 +135,7 @@ export async function runServerExperiment(
     try {
       const restored = await restoreServerExperimentCandidate(inputProject, candidate, round, ports);
       const result = restored ?? await ports.buildCandidate({ project: inputProject, candidate });
+      const resultContextBlocker=candidateFailureContextBlocker(inputProject,result);if(resultContextBlocker)throw new Error(resultContextBlocker);
       const targets = inputProject.sourceArtifacts.filter((artifact) => artifact.role === "target");
       const snapshots = new Map(result.artifactSnapshots.map((snapshot) => [snapshot.sourceArtifactId, snapshot]));
       if (!targets.length || result.id !== candidate.id || result.artifactBuildStatus !== "ready"

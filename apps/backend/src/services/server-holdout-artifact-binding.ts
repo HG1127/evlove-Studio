@@ -12,7 +12,7 @@ async function frozenBinding(snapshot: CandidateArtifactSnapshot) {
 }
 
 /** Read physical identity locally through the Artifact port; never execute or export user files. */
-export async function readServerHoldoutArtifactFingerprint({ project, candidate }: { project: EvolveProject; candidate: Candidate }): Promise<string | undefined> {
+export async function readServerHoldoutArtifactFingerprint({ project, candidate,observationDeploymentSha }: { project: EvolveProject; candidate: Candidate;observationDeploymentSha?:string|null }): Promise<string | undefined> {
   if (project.targetConnection.adapter !== "artifact") return undefined;
   const sources = project.sourceArtifacts;
   const targets = sources.filter(source => source.role === "target");
@@ -47,7 +47,7 @@ export async function readServerHoldoutArtifactFingerprint({ project, candidate 
   const frozen = [];
   for (const snapshot of candidate.artifactSnapshots) frozen.push(await frozenBinding(snapshot));
   return createHash("sha256").update(JSON.stringify({
-    version: "server-holdout-artifact-binding-v1", deploymentSha: process.env.VERCEL_GIT_COMMIT_SHA,
+    version: "server-holdout-artifact-binding-v1", deploymentSha: observationDeploymentSha===null?undefined:observationDeploymentSha??process.env.VERCEL_GIT_COMMIT_SHA,
     current, candidate: { id: candidate.id, frozen },
   })).digest("hex");
 }

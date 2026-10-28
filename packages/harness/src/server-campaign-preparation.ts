@@ -5,7 +5,10 @@ import type {
   ProblemAnalysisAiResult,
   TestCase,
   IndependentFinalExecutionContract,
+  VisibleFailureObservations,
+  FailureObservationUse,
 } from "@evolution/contracts";
+import {VisibleFailureObservationsSchema,FailureObservationUseSchema} from "@evolution/contracts";
 import {
   baselineReadiness,
   campaignScoringInputBlocker,
@@ -20,6 +23,8 @@ import {
   planningDeferredCriterionIds,planningBaselineFailures,
   planningBaselineEvidence,PLANNING_EVIDENCE_INSTRUCTION,
   userGoalScopeContext,
+  fastHash,
+  finalHoldoutContractFingerprint,finalHoldoutPaperHash,
 } from "@evolution/core";
 
 import {serverCampaignArtifacts,planningNarrative,type ServerPlanningDocumentLoader} from "./server-campaign-context";
@@ -28,6 +33,7 @@ import {prepareServerIndependentFinalPaper} from "./server-final-paper";
 
 export type ServerCampaignAiPort = {
   loadPlanningDocuments?:ServerPlanningDocumentLoader;
+  loadFailureObservations?(project:EvolveProject):Promise<VisibleFailureObservations|undefined>;
   finalHoldoutExecution?:IndependentFinalExecutionContract;
   reserveFinalHoldout?(payload:unknown):Promise<TestCase[]>;
   problemAnalysis(payload: unknown): Promise<ProblemAnalysisAiResult>;
@@ -43,6 +49,7 @@ export type ServerCampaignPreparationOutcome = {
   candidateCount?: number;
   ungroundedCount?: number;
   completed?: boolean;
+  failureObservationUse?:FailureObservationUse;
 };
 
 const PHASE_ORDER = ["baseline", "problem", "diagnose", "plan", "experiment", "validation"] as const;
@@ -328,7 +335,20 @@ export async function advanceServerCampaignPreparation(
     }
     const context=await planningArtifacts(project,ai,"plan",now);
     if(!context.ready)return context.outcome;
+    let failureObservations:VisibleFailureObservations|undefined;
+    if(project.failureObservationSources?.length){
+      try{
+        if(project.finalHoldout?.round!==round||project.finalHoldout.contractFingerprint!==finalHoldoutContractFingerprint(project)
+          ||project.finalHoldout.paperHash!==finalHoldoutPaperHash(project.finalHoldout.suite))throw Error("Historical observations require a persisted current independent-final reservation before planning");
+        if(!ai.loadFailureObservations)throw Error("Registered failure sources require a qualified loader");
+        failureObservations=VisibleFailureObservationsSchema.parse(await ai.loadFailureObservations(project));
+        if(failureObservations.missionId!==project.id||JSON.stringify(failureObservations.observations.map(o=>o.source))!==JSON.stringify(project.failureObservationSources))throw Error("Failure observations do not match the declared Mission/source commitments");
+        const limit=campaignPreflightStopReason(project);if(limit)throw Error(limit);
+      }catch(error){const reason="[server-campaign-failure-context-pending] "+(error instanceof Error?error.message:String(error));
+        return {control:"stop",phase:"plan",project:capabilityPause(project,reason,"plan",now),reason};}
+    }
     const generated = await ai.plan({
+      ...(failureObservations?{failureObservations}:{}),
       ...(userGoalScopeContext(project)?{winnerGoalScope:userGoalScopeContext(project)}:{}),
       project: {
         goal: project.goal,
@@ -375,8 +395,15 @@ export async function advanceServerCampaignPreparation(
       gapAdvice: project.validationRun.aiAdvice ?? project.experimentRun.aiAdvice ?? project.campaign.lastGapAdvice,
     });
     const grounded = flagUngroundedCandidates(generated);
+    const failureObservationUse=failureObservations?FailureObservationUseSchema.parse({schemaVersion:"failure-observation-use-v1",grade:"provided-to-plan",missionId:project.id,round,at:now,
+      sources:project.failureObservationSources,contextFingerprint:fastHash(JSON.stringify(failureObservations))}):undefined;
     const candidates = scopeCandidateIdsForRound(project,selectPlanCandidates(project, grounded.result),round)
-      .map(candidate=>({...candidate,...(project.finalHoldout?.round===round?{finalHoldoutPaperHash:project.finalHoldout.paperHash}:{})}));
+      .map(candidate=>{
+        // AI output cannot supply or preserve a forged server receipt.
+        const planned={...candidate};delete planned.planningFailureObservationUse;
+        return {...planned,...(failureObservationUse?{planningFailureObservationUse:failureObservationUse}:{}),
+          ...(project.finalHoldout?.round===round?{finalHoldoutPaperHash:project.finalHoldout.paperHash}:{})};
+      });
     if (!candidates.length || !candidates.some(groundedCandidate)) {
       const reason = "[server-campaign-plan-grounding-pending] Candidate 方案缺少源成果证据或因果机制，禁止进入实验。";
       return {
@@ -386,6 +413,7 @@ export async function advanceServerCampaignPreparation(
         reason,
         candidateCount: candidates.length,
         ungroundedCount: grounded.ungroundedCount,
+        ...(failureObservationUse?{failureObservationUse}:{}),
       };
     }
     const selectedCandidateIds = candidates.map((candidate) => candidate.id);
@@ -405,7 +433,7 @@ export async function advanceServerCampaignPreparation(
     }, round, "plan", now), now);
     if (!project.campaign.autoApproveOfflineExperiment) {
       const reason = "[server-campaign-experiment-approval] Experiment Ready 等待人工确认；Server 已保留 Candidate 与 Plan 断点。";
-      return { control: "stop", phase: "plan", project: capabilityPause(project, reason, "plan", now), reason, candidateCount: candidates.length, ungroundedCount: grounded.ungroundedCount };
+      return { control: "stop", phase: "plan", project: capabilityPause(project, reason, "plan", now), reason, candidateCount: candidates.length, ungroundedCount: grounded.ungroundedCount,...(failureObservationUse?{failureObservationUse}:{}) };
     }
     return {
       control: "continue",
@@ -414,6 +442,7 @@ export async function advanceServerCampaignPreparation(
       reason: `Round ${round} Server Plan 已完成且 Experiment Ready 已批准；进入 Server Candidate Build / Experiment。`,
       candidateCount: candidates.length,
       ungroundedCount: grounded.ungroundedCount,
+      ...(failureObservationUse?{failureObservationUse}:{}),
     };
   }
 

@@ -132,7 +132,7 @@ export const DiagnosisAiResultSchema = DiagnosisSchema;
 export type DiagnosisAiResult = z.infer<typeof DiagnosisAiResultSchema>;
 
 export const PlanAiResultSchema = z.object({
-  candidates: z.array(CandidateSchema).min(1).max(8),
+  candidates: z.array(CandidateSchema.omit({planningFailureObservationUse:true})).min(1).max(8),
   recommendedCandidateIds: z.array(z.string()).min(1),
   summary: z.string(),
   experimentDesign: z.array(z.string()).min(2),

@@ -9,3 +9,4 @@ export { experimentRecoveryAt, experimentRecoveryFixture, experimentRecoveryWait
 export * from "./business-benefit-fixture";
 export * from "./hidden-repair-fixture";
 export * from "./learning-context-fixture";
+export * from "./failure-observation-fixture";

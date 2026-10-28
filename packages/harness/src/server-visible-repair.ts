@@ -1,6 +1,6 @@
 import type {Candidate,EvolveProject,ExperimentRun,VisibleRepairAttempt,VisibleRepairFeedbackKind} from "@evolution/contracts";
 import {EvolveProjectSchema,RepairEvidenceArchiveInputSchema,RepairEvidenceReferenceSchema,VisibleRepairAttemptSchema} from "@evolution/contracts";
-import {campaignRepairLimitStopReason,estimateNextRoundCost,visibleRepairTarget} from "@evolution/core";
+import {campaignRepairLimitStopReason,estimateNextRoundCost,visibleRepairTarget,candidateFailureContextBlocker} from "@evolution/core";
 import {hasCompleteServerExperimentFrozenSet,type ServerExperimentRecoveryPorts} from "./server-experiment-recovery";
 import type {ServerArtifactAcceptancePorts} from "./server-artifact-acceptance";
 
@@ -78,6 +78,7 @@ export async function runServerVisibleRepair(input:EvolveProject,ports:ServerVis
   const beforeDebit={...input,visibleRepairAttempts:input.visibleRepairAttempts?.filter(item=>item.id!==record!.id),
     artifactAcceptance:{...input.artifactAcceptance,attempts:record.attempt-1}};
   const target=visibleRepairTarget(beforeDebit);
+  const failureContextBlocker=target&&candidateFailureContextBlocker(input,target.candidate);if(failureContextBlocker)return pause(failureContextBlocker);
   if(input.artifactAcceptance.attempts!==record.attempt||!target||target.candidate.id!==record.parentCandidateId
     ||((record.version!=="experiment-visible-repair-v1"?record.feedbackKind:undefined)??"absolute-criterion-failure")!==target.feedbackKind
     ||JSON.stringify(target.failedCriteria.map(c=>c.id))!==JSON.stringify(record.failedCriterionIds)
@@ -116,6 +117,7 @@ export async function runServerVisibleRepair(input:EvolveProject,ports:ServerVis
   if(afterClaimLimit)return pause(afterClaimLimit);
   try{
     const repaired=await ports.repairCandidate({project,candidate:target.candidate,failedCriteria:target.failedCriteria,attempt:record.attempt,feedbackPhase:"visible"});
+    const repairedContextBlocker=candidateFailureContextBlocker(project,repaired);if(repairedContextBlocker)throw new Error(repairedContextBlocker);
     if(project.candidates.some(candidate=>candidate.id===repaired.id)||!hasCompleteServerExperimentFrozenSet(project,repaired)
       ||repaired.finalHoldoutPaperHash!==record.finalPaperHash)throw new Error("Repair 必须生成新 identity、完整冻结成果并保留原独立终验绑定。");
     if(repaired.artifactSnapshots.every(snapshot=>snapshot.frozenArtifact?.sha256===target.candidate.artifactSnapshots

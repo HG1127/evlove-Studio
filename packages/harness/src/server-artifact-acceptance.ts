@@ -11,6 +11,7 @@ import {
   campaignObservesLiveTarget,
   estimateRoundCost,
   evidenceFingerprint,
+  candidateFailureContextBlocker,
   settleArtifactAcceptanceFromValidation,
   updateSearchChampion,
   hiddenRepairTarget,
@@ -168,6 +169,8 @@ export async function runServerArtifactAcceptance(
   const candidateId=inputProject.validationRun.candidateId??inputProject.experimentRun.winnerId??inputProject.experimentRun.pendingEvidenceCandidateId;
   const candidate=inputProject.candidates.find((item)=>item.id===candidateId);
   if(!candidate)return pause(inputProject,"[server-campaign-artifact-acceptance-candidate-pending] 找不到 Hidden Validation 对应 Candidate。",now);
+  const failureContextBlocker=candidateFailureContextBlocker(inputProject,candidate);
+  if(failureContextBlocker)return pause(inputProject,failureContextBlocker,now);
   const binding=evidenceFingerprint(inputProject,candidate);
   if(inputProject.validationRun.status!=="completed"||inputProject.validationRun.evidenceFingerprint!==binding){
     return pause(inputProject,"[server-campaign-artifact-acceptance-evidence-pending] Hidden Validation 与当前 Candidate Artifact 指纹不一致；必须先对 exact Artifact 重新验证。",now);

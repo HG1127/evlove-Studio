@@ -3,6 +3,7 @@ import {ValidationRunSchema,type EvaluateAiResult,type EvolveProject,type Target
 import { runServerHoldout, type ServerHoldoutPorts } from "./server-holdout";
 import { executeServerCurrentArtifactSuite, judgeServerCurrentArtifactSuite } from "./server-current-artifact-runner";
 import { hasServerFrozenValidationCheckpoint } from "./server-frozen-validation-checkpoint";
+import {failureObservationFixture} from "@evolution/testkit";
 
 function judged(score:number,testCaseId="H1"):EvaluateAiResult{
   return {
@@ -95,6 +96,12 @@ function addLimitedProtection(project:EvolveProject,ports:ServerHoldoutPorts){
 }
 
 describe("server hidden holdout",()=>{
+  it("rejects missing historical planning provenance before reading cached Hidden evidence or invoking models",async()=>{
+    const p=fixture(),io=semanticPorts(90,70);p.failureObservationSources=[failureObservationFixture().sourceRef()];
+    const before=structuredClone(p.validationRun),read=vi.fn(),review=vi.fn();io.ports.readArtifactFingerprint=read;io.ports.releaseReview=review;
+    await expect(runServerHoldout(p,io.ports)).rejects.toThrow("failure-context-binding-mismatch");
+    expect(read).not.toHaveBeenCalled();expect(review).not.toHaveBeenCalled();expect(io.currentCases).toEqual([]);expect(io.candidateCases).toEqual([]);expect(p.validationRun).toEqual(before);
+  });
   it("routes a proven content failure to repair while keeping preservation evidence unknown",async()=>{
     const project=fixture();
     const setup=semanticPorts(82,50);

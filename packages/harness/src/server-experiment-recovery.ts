@@ -24,10 +24,13 @@ async function digest(ports: ServerExperimentRecoveryPorts, value: unknown) {
     return result && /^[0-9a-f]{64}$/.test(result) ? result : undefined;
   } catch { return undefined; }
 }
+export const fingerprintServerExperimentRecord=(value:unknown,fingerprint:NonNullable<ServerExperimentRecoveryPorts["fingerprint"]>)=>digest({fingerprint},value);
 export class ServerExperimentFrozenRecoveryError extends Error {}
 function buildInputs(project: EvolveProject, candidate: Candidate) {
   const { id, name, title, change, hypothesis, patches, risks, designRationale } = candidate;
   return { version: "server-experiment-build-input-v1", missionId: project.id,
+    ...(project.failureObservationSources?.length?{failureObservationSources:project.failureObservationSources}:{}),
+    ...(candidate.planningFailureObservationUse?{planningFailureObservationUse:candidate.planningFailureObservationUse}:{}),
     round: project.campaign.checkpoint?.round, candidate: { id, name, title, change, hypothesis, patches, risks, designRationale },
     name: project.name, objectType: project.objectType, versionLabel: project.version,
     goal: project.goal, command: project.evolutionCommand, protectedItems: project.protectedItems,

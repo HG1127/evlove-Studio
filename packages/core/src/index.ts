@@ -32,6 +32,8 @@ export * from "./campaign-schedule";
 export * from "./evaluation-settlement";
 export * from "./experiment-winner";
 export * from "./experiment-evidence-admission";
+export * from "./visible-failure-observation";
+export * from "./candidate-failure-context";
 export * from "./visible-repair";
 export * from "./artifact-repair-policy";
 export * from "./validation-decision";

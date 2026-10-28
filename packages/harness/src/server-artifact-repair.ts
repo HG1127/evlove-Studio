@@ -1,5 +1,5 @@
 import {EvolveProjectSchema,RepairEvidenceReferenceSchema,type ArtifactRepairAttempt,type EvolveProject} from "@evolution/contracts";
-import {artifactRepairStopReason,campaignRepairLimitStopReason,estimateNextRoundCost,hasExactFrozenArtifactSet,hiddenRepairFeedbackContext,hiddenRepairTarget,HIDDEN_REPAIR_V2} from "@evolution/core";
+import {artifactRepairStopReason,campaignRepairLimitStopReason,estimateNextRoundCost,hasExactFrozenArtifactSet,hiddenRepairFeedbackContext,hiddenRepairTarget,HIDDEN_REPAIR_V2,candidateFailureContextBlocker} from "@evolution/core";
 import type {ServerArtifactAcceptanceOutcome,ServerArtifactAcceptancePorts} from "./server-artifact-acceptance";
 import {hasCompleteServerExperimentFrozenSet} from "./server-experiment-recovery";
 
@@ -22,6 +22,7 @@ export async function runServerTargetedArtifactRepair(input:EvolveProject,ports:
   project=parsed.data;
   const candidate=project.candidates.find(item=>item.id===project.validationRun.candidateId);
   if(!candidate)return pause("当前 Hidden 记录没有对应的唯一冻结父代。");
+  const failureContextBlocker=candidateFailureContextBlocker(project,candidate);if(failureContextBlocker)return pause(failureContextBlocker);
   const stop=artifactRepairStopReason(project,candidate);
   if(stop)return pause(stop);
   if(!ports.persistProject||!ports.fingerprint||!ports.archiveRepairEvidence)return pause("缺少修复前的版本冲突检查、完整证据归档或持久化能力，未调用 AI、未扣次数。");
@@ -64,6 +65,7 @@ export async function runServerTargetedArtifactRepair(input:EvolveProject,ports:
   try{
     if(target.version===HIDDEN_REPAIR_V2)hiddenRepairFeedbackContext(project,candidate,failedCriteria.map(c=>c.id),attempt);
     const repaired=await ports.repairCandidate({project,candidate,failedCriteria,attempt});
+    const repairedContextBlocker=candidateFailureContextBlocker(project,repaired);if(repairedContextBlocker)throw new Error(repairedContextBlocker);
     if(project.candidates.some(item=>item.id===repaired.id)||!hasCompleteServerExperimentFrozenSet(project,repaired)
       ||repaired.finalHoldoutPaperHash!==record.finalPaperHash)throw new Error("Repair 必须使用新的 Candidate identity、完整冻结目标和原独立终验绑定。");
     if(repaired.artifactSnapshots.every(snapshot=>snapshot.frozenArtifact?.sha256===candidate.artifactSnapshots.find(parent=>parent.sourceArtifactId===snapshot.sourceArtifactId)?.frozenArtifact?.sha256))throw new Error("Repair 冻结文件没有实际变化，禁止仅凭新 identity 晋级。");

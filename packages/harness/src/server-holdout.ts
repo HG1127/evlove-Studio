@@ -14,6 +14,7 @@ import {
   missingValidationEvidenceAction,
   validationDecision,
   candidateEvidencePendingDecision,
+  candidateFailureContextBlocker,
   EXPERIMENT_EVIDENCE_ADMISSION_VERSION,
 } from "@evolution/core";
 import {
@@ -174,6 +175,8 @@ export async function runServerHoldout(
   if (!candidateId) throw new Error("Server Hidden Holdout requires an Experiment Winner or pending-evidence Candidate");
   const candidate = inputProject.candidates.find((item) => item.id === candidateId);
   if (!candidate) throw new Error(`Server Hidden Holdout cannot find Candidate ${candidateId}`);
+  const failureContextBlocker=candidateFailureContextBlocker(inputProject,candidate);
+  if(failureContextBlocker)throw new Error(failureContextBlocker);
   if(!inputProject.experimentRun.winnerId&&inputProject.experimentRun.pendingEvidenceCandidateId){
     const rows=inputProject.experimentRun.candidateResults.filter(row=>row.candidateId===candidateId);
     const baseline=inputProject.experimentRun.comparisonBaseline?.result??inputProject.baselineRun.result;

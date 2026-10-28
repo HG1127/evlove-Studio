@@ -10,7 +10,7 @@ import {
   type SourceArtifact,
 } from "@evolution/contracts";
 import { trustedServerBaselineChampion } from "@evolution/harness";
-import { applyExactEdits, bindHtmlBuildTextEditAnchors,bindHtmlBuildBodyNodeEdits, isTextArtifactExtension, isZipArtifact,userGoalScopeContext } from "@evolution/core";
+import { applyExactEdits, bindHtmlBuildTextEditAnchors,bindHtmlBuildBodyNodeEdits, isTextArtifactExtension, isZipArtifact,userGoalScopeContext,candidateFailureContextBlocker } from "@evolution/core";
 import { buildServerCandidateTargetContext, buildServerExactCandidateArtifacts, isServerTextEditBlueprint, requireServerCandidateOutputModes } from "./server-candidate-context";
 import { runServerAi } from "./ai-gateway";
 import { checkServerHtmlCandidateProtection } from "./server-html-candidate-protection";
@@ -447,6 +447,7 @@ export async function materializeServerCandidateArtifacts(
 }
 
 export async function buildServerExperimentCandidate(project: EvolveProject, candidate: Candidate): Promise<Candidate> {
+  const blocker=candidateFailureContextBlocker(project,candidate);if(blocker)throw new Error(blocker);
   const targets = project.sourceArtifacts.filter((artifact) => artifact.role === "target");
   if (!targets.length) throw new Error("Mission 没有 Target Source Artifact。");
   const expectedParents=new Map<string,string>();

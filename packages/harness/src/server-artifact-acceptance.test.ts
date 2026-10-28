@@ -5,6 +5,7 @@ import {campaignGoalSatisfied,campaignStopReason,completeAutonomousMission,evide
 import {runServerArtifactAcceptance} from "./server-artifact-acceptance";
 import {buildServerHarnessPlan} from "./server-plan";
 import {deriveAttentionRequest,reconcileAttentionRequest} from "./autonomous-planner";
+import {failureObservationFixture} from "@evolution/testkit";
 
 function fixture(pass=true){
   const now="2026-09-20T14:00:00.000Z";
@@ -44,6 +45,13 @@ function repairContract(x:ReturnType<typeof fixture>){
 }
 
 describe("server artifact acceptance",()=>{
+  it("stops a relabelled historical treatment before physical readback, final execution or repair",async()=>{
+    const x=fixture();x.project.failureObservationSources=[failureObservationFixture().sourceRef()];
+    const verify=vi.fn(),repair=vi.fn(),final=vi.fn(),before=structuredClone(x.project.validationRun);
+    const out=await runServerArtifactAcceptance(x.project,{verifyFrozenArtifacts:verify,repairCandidate:repair,verifyIndependentFinal:final});
+    expect(out.control).toBe("stop");expect(out.reason).toContain("failure-context-binding-mismatch");expect(out.project.validationRun).toEqual(before);
+    for(const call of [verify,repair,final])expect(call).not.toHaveBeenCalled();
+  });
   it("retains failed construction attempts so retries cannot bypass the repair limit",async()=>{
     const x=fixture(false);
     const claim=repairContract(x);
