@@ -10,18 +10,9 @@ import { hasAuthoritativeHiddenRelease, hasFullHiddenMeasurement, hasVerifiedHid
 import { indexScopedAcceptanceResults } from "./acceptance-result-identity";
 import { indexUniqueById } from "./identity-index";
 import {independentFinalReadiness} from "./independent-final-holdout";
-
-function validationScoreIndex(project:EvolveProject,validation:ValidationRun){
-  return indexScopedAcceptanceResults([{requestedCriterionIds:project.acceptanceRubric.map((item)=>item.id),results:validation.evaluation?.criterionScores??[]}]);
-}
-
-export function verifiedValidationFailures(project:EvolveProject,validation:ValidationRun){
-  const scores=validationScoreIndex(project,validation).byId;
-  return project.acceptanceRubric.filter((criterion)=>{
-    const score=scores.get(criterion.id);
-    return score?.verificationStatus==="verified" && score.pass!==true;
-  });
-}
+import {verifiedValidationFailures} from "./validation-failure-selection";
+import {ordinaryHiddenGoalProgress} from "./hidden-repair";
+export {verifiedValidationFailures} from "./validation-failure-selection";
 
 function weightedScore(project:EvolveProject,results:ArtifactAcceptance["results"],filter:(criterion:EvolveProject["acceptanceRubric"][number])=>boolean){
   const criteria=project.acceptanceRubric.filter(filter);
@@ -96,7 +87,8 @@ export function settleArtifactAcceptanceFromValidation(args:{
     return score?.verificationStatus!=="verified";
   });
   const thresholdsPass=overallScore>=85&&coverageScore>=90&&integrityScore>=90&&(pairwiseScore>=80||!args.project.acceptanceRubric.some((item)=>item.id==="SYS-PAIRWISE"));
-  const measurementEvidenceIncomplete=!hasVerifiedHiddenBaseline(args.validation,args.project.hiddenEvalSuite,args.project.acceptanceRubric)
+  const goalProgress=ordinaryHiddenGoalProgress(args.project,args.candidate,args.validation);
+  const measurementEvidenceIncomplete=goalProgress?.ready===false||!hasVerifiedHiddenBaseline(args.validation,args.project.hiddenEvalSuite,args.project.acceptanceRubric)
     ||args.validation.runs.some((run)=>run.verificationStatus!=="verified")
     ||Boolean(args.validation.evaluation?.unverifiedCriterionIds?.length);
   const basePassed=validationReusable
@@ -104,6 +96,7 @@ export function settleArtifactAcceptanceFromValidation(args:{
     && allTargetsFrozen
     && hardGatePass
     && !missingEvidence
+    && goalProgress?.ready!==false&&!goalProgress?.regressedCriterionIds.length
     && thresholdsPass;
   const finalReady=independentFinalReadiness(args.project,args.candidate,args.validation).ready;
   const passed=basePassed&&finalReady;

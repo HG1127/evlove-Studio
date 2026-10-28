@@ -7,3 +7,4 @@ export { acceptedAt, acceptedPackageFixture } from "./accepted-package-fixture";
 
 export { experimentRecoveryAt, experimentRecoveryFixture, experimentRecoveryWaitFixture } from "./experiment-recovery-fixture";
 export * from "./business-benefit-fixture";
+export * from "./hidden-repair-fixture";

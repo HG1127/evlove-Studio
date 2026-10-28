@@ -13,7 +13,8 @@ import {
   evidenceFingerprint,
   settleArtifactAcceptanceFromValidation,
   updateSearchChampion,
-  verifiedValidationFailures,
+  hiddenRepairTarget,
+  ordinaryHiddenGoalProgress,
   independentFinalReadiness,
   hasAuthoritativeHiddenRelease,
   hasFullHiddenMeasurement,
@@ -161,6 +162,9 @@ export async function runServerArtifactAcceptance(
   if(!checkpoint||checkpoint.completedPhase!=="validation"){
     throw new Error("Server Artifact Acceptance requires a validation checkpoint");
   }
+  if(inputProject.artifactRepairAttempts?.some(item=>item.round===round&&item.status==="running")){
+    return pause(inputProject,"[server-campaign-artifact-repair-pending] 此前修复调用已开始但结果未确认；保留已消耗次数，禁止自动重发或提前结算未知结果。",now);
+  }
   const candidateId=inputProject.validationRun.candidateId??inputProject.experimentRun.winnerId??inputProject.experimentRun.pendingEvidenceCandidateId;
   const candidate=inputProject.candidates.find((item)=>item.id===candidateId);
   if(!candidate)return pause(inputProject,"[server-campaign-artifact-acceptance-candidate-pending] 找不到 Hidden Validation 对应 Candidate。",now);
@@ -191,7 +195,9 @@ export async function runServerArtifactAcceptance(
     const project={...inputProject,artifactAcceptance:acceptance,updatedAt:now};
     return pause(project,"[server-campaign-artifact-acceptance-integrity-failed] frozen Artifact bytes/hash 与凭证不一致，禁止交付。",now);
   }
-  if(hasAuthoritativeHiddenRelease(inputProject.validationRun,candidate.id,inputProject.hiddenEvalSuite,inputProject.acceptanceRubric)){
+  const goalProgress=ordinaryHiddenGoalProgress(inputProject,candidate);
+  if(goalProgress?.ready!==false&&!goalProgress?.regressedCriterionIds.length
+    &&hasAuthoritativeHiddenRelease(inputProject.validationRun,candidate.id,inputProject.hiddenEvalSuite,inputProject.acceptanceRubric)){
     let final=independentFinalReadiness(inputProject,candidate);
     // A completed blind assessment is final, including mixed failure/partial evidence.
     // Resuming must not reroll its scores or replace its original receipts.
@@ -218,7 +224,7 @@ export async function runServerArtifactAcceptance(
     now,
   });
   let project:EvolveProject={...inputProject,artifactAcceptance:acceptance,updatedAt:now};
-  const failedCriteria=verifiedValidationFailures(inputProject,inputProject.validationRun);
+  const failedCriteria=hiddenRepairTarget(inputProject,candidate).failedCriteria;
   const hasBoundFailure=failedCriteria.length>0
     &&hasFullHiddenMeasurement(inputProject.validationRun,candidate.id,inputProject.hiddenEvalSuite)
     &&Boolean(acceptance.frozenArtifacts?.length);

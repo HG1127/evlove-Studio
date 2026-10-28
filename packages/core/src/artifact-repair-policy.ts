@@ -3,7 +3,7 @@ import {campaignRepairLimitStopReason} from "./campaign-control";
 import {evidenceFingerprint} from "./evidence-binding";
 import {hasFullHiddenMeasurement} from "./hidden-validation-evidence";
 import {finalHoldoutContractFingerprint,finalHoldoutPaperHash} from "./independent-final-holdout";
-import {verifiedValidationFailures} from "./artifact-acceptance-settlement";
+import {hiddenRepairTarget} from "./hidden-repair";
 
 /** Ordinary Hidden feedback can drive a mutation only before the independent final is consumed. */
 export function artifactRepairStopReason(project:EvolveProject,candidate:Candidate):string|undefined{
@@ -16,7 +16,7 @@ export function artifactRepairStopReason(project:EvolveProject,candidate:Candida
     ||project.candidates.filter(item=>item.id===candidate.id).length!==1
     ||project.validationRun.evidenceFingerprint!==evidenceFingerprint(project,candidate)
     ||!hasFullHiddenMeasurement(project.validationRun,candidate.id,project.hiddenEvalSuite)
-    ||!verifiedValidationFailures(project,project.validationRun).length)return "缺少当前冻结候选已证实的同卷 Hidden 失败。";
+    ||!hiddenRepairTarget(project,candidate).failedCriteria.length)return "缺少当前冻结候选已证实的同卷 Hidden 失败。";
   if(project.validationRun.independentFinal)return "独立终验已进入执行记录，禁止再使用反馈生成修复候选。";
   if(!paper||paper.round!==round||candidate.finalHoldoutPaperHash!==paper.paperHash
     ||paper.paperHash!==finalHoldoutPaperHash(paper.suite)||paper.contractFingerprint!==finalHoldoutContractFingerprint(project))return "反馈修复缺少规划前预留的原独立终验绑定；不得现在补题或换题。";

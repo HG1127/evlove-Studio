@@ -1,11 +1,11 @@
 // @vitest-environment node
 import JSZip from "jszip";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AcceptanceCriterionSchema, CandidateSchema,CandidateDesignRationaleSchema, SourceArtifactSchema,TestCaseSchema,VisibleRepairAttemptSchema, type CandidateArtifactSnapshot, type EvolveProject } from "@evolution/contracts";
+import { AcceptanceCriterionSchema,ArtifactRepairAttemptSchema, CandidateSchema,CandidateDesignRationaleSchema, SourceArtifactSchema,TestCaseSchema,VisibleRepairAttemptSchema, type CandidateArtifactSnapshot, type EvolveProject } from "@evolution/contracts";
 import { repairServerArtifactCandidate } from "./server-artifact-acceptance";
 import { serverArtifactSha256, verifyServerCandidateFrozenArtifact } from "./server-experiment-artifacts";
-import {candidateWinnerDecision,evidenceFingerprint,finalHoldoutContractFingerprint,finalHoldoutPaperHash} from "@evolution/core";
-import {acceptedPackageFixture} from "@evolution/testkit";
+import {candidateWinnerDecision,evidenceFingerprint,finalHoldoutContractFingerprint,finalHoldoutPaperHash,hiddenRepairTarget} from "@evolution/core";
+import {acceptedPackageFixture,bindHiddenRepairFixture,hiddenRepairFixture} from "@evolution/testkit";
 import {serverAiRepairContract} from "./server-ai-repair-contract";
 
 const { blobs, ai, put } = vi.hoisted(() => ({ blobs: new Map<string, Blob>(), ai: vi.fn(), put: vi.fn() }));
@@ -36,6 +36,35 @@ beforeEach(() => { vi.stubEnv("EVOLUTION_AI_FULL_REPAIR_TEXT_MISSIONS","");blobs
 afterEach(()=>vi.unstubAllEnvs());
 
 describe("server targeted Artifact repair", () => {
+  async function hiddenV2Fixture(){
+    const x=hiddenRepairFixture("mixed"),p=x.p;
+    x.current.artifactSnapshots=[await snapshot("source",'<html><body>'+before+'<script>PRIVATE_PROGRAM</script></body></html>')];
+    bindHiddenRepairFixture(p,x.current);const target=hiddenRepairTarget(p,x.current);
+    p.artifactAcceptance.attempts=1;p.campaign.estimatedCost=.2;
+    p.artifactRepairAttempts=[ArtifactRepairAttemptSchema.parse({version:"artifact-targeted-repair-v2",id:"hidden-v2",round:1,attempt:1,status:"running",parentCandidateId:x.current.id,inputFingerprint:"a".repeat(64),finalPaperHash:p.finalHoldout!.paperHash,failedCriterionIds:target.failedCriteria.map(c=>c.id),feedbackKind:target.feedbackKind,estimatedCost:.2,startedAt:new Date().toISOString(),evidence:{version:"repair-evidence-reference-v1",artifactId:"evidence",missionId:p.id,candidateId:x.current.id,sha256:"b".repeat(64),size:1,mimeType:"application/json"}})];
+    vi.stubEnv("EVOLUTION_AI_FULL_REPAIR_TEXT_MISSIONS",p.id);
+    return {project:p,candidate:x.current,failedCriteria:target.failedCriteria,attempt:1};
+  }
+  it("sends v2 ordinary Hidden mixed feedback without relabeling an absolute PASS or leaking the blind paper",async()=>{
+    const args=await hiddenV2Fixture();
+    ai.mockImplementation(async(_op,payload)=>{
+      expect(payload.feedbackPhase).toBe("hidden");expect(payload.feedbackInstruction).toContain("ordinary Hidden Baseline");
+      expect(payload.feedbackContext).toMatchObject({kind:"combined-criterion-failure",comparisons:[{criterionId:"READABILITY",baselineScore:90,currentScore:89,absoluteMinimumPassed:true}]});
+      expect(payload.failedCriteria).toEqual([expect.objectContaining({criterionId:"CONTENT",feedbackKind:"absolute-criterion-failure",currentScore:70,absoluteMinimumPassed:false}),expect.objectContaining({criterionId:"READABILITY",feedbackKind:"relative-target-regression",currentScore:89,baselineScore:90,absoluteMinimumPassed:true})]);
+      expect(JSON.stringify(payload)).not.toMatch(/PRIVATE_PROGRAM|FINAL-PRIVATE-UNSEEN/);
+      const node=payload.candidate.artifacts[0].htmlTextNodes.find((n:{text:string})=>n.text==="主管确认退款后才进入执行。")!;
+      return {...output(JSON.stringify({kind:"html-body-node-edits-v1",edits:[{anchorId:node.anchorId,text:"主管确认退款后才进入执行，并记录审批编号。"}]})),repairedCriteria:["CONTENT","READABILITY"]};
+    });
+    const out=await repairServerArtifactCandidate(args);expect(ai).toHaveBeenCalledOnce();expect(out.artifactSnapshots[0]!.content).toContain("并记录审批编号");
+    expect(args.project.validationRun.evaluation!.criterionScores![1]!.pass).toBe(true);expect(args.project.artifactAcceptance.attempts).toBe(1);
+  });
+  it.each(["scope","policy","missing-claim"])("rejects a v2 Hidden %s change before reading mutation context or calling AI",async kind=>{
+    const args=await hiddenV2Fixture();
+    if(kind==="scope")args.failedCriteria=args.failedCriteria.slice(0,1);
+    if(kind==="policy")delete args.project.experimentPolicy.hiddenFailureRepair;
+    if(kind==="missing-claim")args.project.artifactRepairAttempts=[];
+    await expect(repairServerArtifactCandidate(args)).rejects.toThrow(/Hidden/);expect(ai).not.toHaveBeenCalled();expect(put).not.toHaveBeenCalled();
+  });
   async function relativeFixture(){
     const args=await fixture(),base=acceptedPackageFixture(false).project;
     const criterion={...failed,minScore:85,hardGate:false,protectedConstraint:false};

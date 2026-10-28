@@ -1,5 +1,5 @@
 import {EvolveProjectSchema,RepairEvidenceReferenceSchema,type ArtifactRepairAttempt,type EvolveProject} from "@evolution/contracts";
-import {artifactRepairStopReason,campaignRepairLimitStopReason,estimateNextRoundCost,hasExactFrozenArtifactSet,verifiedValidationFailures} from "@evolution/core";
+import {artifactRepairStopReason,campaignRepairLimitStopReason,estimateNextRoundCost,hasExactFrozenArtifactSet,hiddenRepairFeedbackContext,hiddenRepairTarget,HIDDEN_REPAIR_V2} from "@evolution/core";
 import type {ServerArtifactAcceptanceOutcome,ServerArtifactAcceptancePorts} from "./server-artifact-acceptance";
 import {hasCompleteServerExperimentFrozenSet} from "./server-experiment-recovery";
 
@@ -25,9 +25,10 @@ export async function runServerTargetedArtifactRepair(input:EvolveProject,ports:
   const stop=artifactRepairStopReason(project,candidate);
   if(stop)return pause(stop);
   if(!ports.persistProject||!ports.fingerprint||!ports.archiveRepairEvidence)return pause("缺少修复前的版本冲突检查、完整证据归档或持久化能力，未调用 AI、未扣次数。");
-  const failedCriteria=verifiedValidationFailures(project,project.validationRun);
+  const target=hiddenRepairTarget(project,candidate),failedCriteria=target.failedCriteria;
   const attempt=project.artifactAcceptance.attempts+1,round=project.campaign.currentRound+1,estimatedCost=estimateNextRoundCost(project),at=now();
-  const inputFingerprint=await ports.fingerprint(JSON.stringify(canonical({version:"artifact-targeted-repair-v1",missionId:project.id,round,attempt,candidate,
+  const inputFingerprint=await ports.fingerprint(JSON.stringify(canonical({version:target.version,missionId:project.id,round,attempt,candidate,
+    ...(target.version===HIDDEN_REPAIR_V2?{feedbackKind:target.feedbackKind,failedCriterionIds:failedCriteria.map(c=>c.id)}:{}),
     name:project.name,goal:project.goal,command:project.evolutionCommand,protectedItems:project.protectedItems,editableItems:project.editableItems,
     sources:project.sourceArtifacts,rubric:project.acceptanceRubric,visible:project.evalSuite,hidden:project.hiddenEvalSuite,final:project.finalHoldout,
     experiment:project.experimentRun,validation:project.validationRun,acceptance:project.artifactAcceptance,
@@ -45,9 +46,10 @@ export async function runServerTargetedArtifactRepair(input:EvolveProject,ports:
   }catch{return pause("完整失败证据归档或回读失败，未调用 AI、未扣次数。");}
   const beforeClaimLimit=campaignRepairLimitStopReason(project);
   if(beforeClaimLimit)return pause(beforeClaimLimit);
-  const record:ArtifactRepairAttempt={version:"artifact-targeted-repair-v1",id:`artifact-repair-r${round}-${attempt}-${inputFingerprint.slice(0,16)}`,
-    round,attempt,status:"running",parentCandidateId:candidate.id,inputFingerprint,finalPaperHash:candidate.finalHoldoutPaperHash!,
+  const claim={id:`artifact-repair-r${round}-${attempt}-${inputFingerprint.slice(0,16)}`,
+    round,attempt,status:"running" as const,parentCandidateId:candidate.id,inputFingerprint,finalPaperHash:candidate.finalHoldoutPaperHash!,
     failedCriterionIds:failedCriteria.map(c=>c.id),evidence,estimatedCost,startedAt:at};
+  const record:ArtifactRepairAttempt=target.version===HIDDEN_REPAIR_V2?{version:HIDDEN_REPAIR_V2,...claim,feedbackKind:target.feedbackKind}:{version:"artifact-targeted-repair-v1",...claim};
   const beforeDebit=project;
   project={...project,artifactRepairAttempts:[...(project.artifactRepairAttempts??[]),record],
     artifactAcceptance:{...project.artifactAcceptance,attempts:attempt},
@@ -60,6 +62,7 @@ export async function runServerTargetedArtifactRepair(input:EvolveProject,ports:
     return pause(afterClaimLimit);
   }
   try{
+    if(target.version===HIDDEN_REPAIR_V2)hiddenRepairFeedbackContext(project,candidate,failedCriteria.map(c=>c.id),attempt);
     const repaired=await ports.repairCandidate({project,candidate,failedCriteria,attempt});
     if(project.candidates.some(item=>item.id===repaired.id)||!hasCompleteServerExperimentFrozenSet(project,repaired)
       ||repaired.finalHoldoutPaperHash!==record.finalPaperHash)throw new Error("Repair 必须使用新的 Candidate identity、完整冻结目标和原独立终验绑定。");
@@ -76,7 +79,7 @@ export async function runServerTargetedArtifactRepair(input:EvolveProject,ports:
         previousEvaluation:beforeDebit.validationRun.evaluation,summary:"已保留父代完整失败记录；新冻结候选必须重新通过 Visible、Hidden、独立终验与 Gate F。"},
       artifactAcceptance:{...project.artifactAcceptance,status:"repairing",candidateId:repaired.id,summary:`Targeted Repair ${attempt}/${project.artifactAcceptance.maxRepairAttempts} 已冻结，等待重新验证。`},
       campaign:{...project.campaign,status:"running",stopReason:undefined,checkpoint:{round,completedPhase:"plan",at:completedAt}},stage:"experiment",updatedAt:completedAt};
-    return {control:"continue",project,reason:`Gate F 已证实 ${failedCriteria.length} 项失败；修复 ${attempt}/${project.artifactAcceptance.maxRepairAttempts} 已冻结新候选 ${repaired.id}，重新运行 Visible、Hidden、独立终验与 Gate F。`,accepted:false,repaired:true};
+    return {control:"continue",project,reason:`Gate F 已证实 ${failedCriteria.length} 项失败或同卷退步；修复 ${attempt}/${project.artifactAcceptance.maxRepairAttempts} 已冻结新候选 ${repaired.id}，重新运行 Visible、Hidden、独立终验与 Gate F。`,accepted:false,repaired:true};
   }catch(error){
     const detail=error instanceof Error?error.message:String(error);
     project={...project,artifactRepairAttempts:project.artifactRepairAttempts!.map(item=>item.id===record.id?{...item,status:"failed",error:detail,completedAt:now()}:item)};

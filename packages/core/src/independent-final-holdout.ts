@@ -56,6 +56,7 @@ export const finalHoldoutContractFingerprint=(project:EvolveProject)=>fastHash(J
   project.goal,project.evolutionCommand,project.metrics,project.protectedItems,project.editableItems,project.acceptanceRubric,
   project.sourceArtifacts.map(source=>[source.id,source.role,source.textContent,source.structuredContent]),
   ...(project.experimentPolicy?.winnerGoalScope?[{winnerGoalScope:project.experimentPolicy.winnerGoalScope}]:[]),
+  ...(project.experimentPolicy?.hiddenFailureRepair==="artifact-targeted-repair-v2"?[{hiddenFailureRepair:project.experimentPolicy.hiddenFailureRepair}]:[]),
 ]));
 function caseKey(test:TestCase){
   const text=(value:string)=>value.trim().replace(/\s+/g," ").toLowerCase();

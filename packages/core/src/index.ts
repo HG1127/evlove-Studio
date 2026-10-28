@@ -67,6 +67,7 @@ export * from "./html-repair-context";
 export * from "./html-text-node-edits";
 export * from "./html-readable-body";
 export * from "./html-planning-document";
+export * from "./hidden-repair";
 export * from "./html-native-program-identity";
 export * from "./html-native-code-retention";
 export * from "./html-appended-prose-layout";

@@ -61,6 +61,13 @@ describe("Hidden repair durable claim",()=>{
     expect(out.reason).toContain("禁止自动重发");expect(out.project.artifactAcceptance.attempts).toBe(1);
     expect(x.ports.repairCandidate).not.toHaveBeenCalled();expect(x.ports.persistProject).not.toHaveBeenCalled();
   });
+  it("keeps an unknown legacy invocation pending even when its only slot was already debited",async()=>{
+    const x=fixture();x.p.artifactAcceptance.maxRepairAttempts=1;await runServerArtifactAcceptance(x.p,x.ports);
+    const claimed=EvolveProjectSchema.parse(x.ports.persistProject.mock.calls[0]![0]);x.ports.repairCandidate.mockClear();
+    const out=await runServerArtifactAcceptance(claimed,x.ports);
+    expect(out.reason).toContain("禁止自动重发");expect(out.project.artifactRepairAttempts![0]!.status).toBe("running");
+    expect(out.project.campaign.currentRound).toBe(0);expect(x.ports.repairCandidate).not.toHaveBeenCalled();
+  });
   it("does not invoke AI after a revision conflict, including concurrent claims",async()=>{
     const x=fixture();let claimed=false;
     x.ports.persistProject.mockImplementation(async()=>{if(claimed)throw Error("revision conflict");claimed=true;});

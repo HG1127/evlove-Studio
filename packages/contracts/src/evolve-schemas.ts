@@ -819,14 +819,18 @@ export const RepairFeedbackEvidenceSchema=z.object({
   {message:"Hidden repair archive requires the bound validation and acceptance reports"});
 
 /** Persisted before a feedback mutation; an interrupted running invocation must not be replayed. */
-export const ArtifactRepairAttemptSchema=z.object({
-  version:z.literal("artifact-targeted-repair-v1"),id:z.string().min(1),round:z.number().int().positive(),attempt:z.number().int().positive(),
+const artifactRepairAttemptFields={id:z.string().min(1),round:z.number().int().positive(),attempt:z.number().int().positive(),
   status:z.enum(["running","frozen","failed"]),parentCandidateId:z.string().min(1),candidateId:z.string().optional(),
   inputFingerprint:z.string().regex(/^[0-9a-f]{64}$/),finalPaperHash:z.string().min(1),failedCriterionIds:z.array(z.string()).min(1),
   evidence:RepairEvidenceReferenceSchema,
   estimatedCost:z.number().min(0),startedAt:z.string(),completedAt:z.string().optional(),error:z.string().optional(),
   repairedArtifactSnapshots:z.array(CandidateArtifactSnapshotSchema).optional(),
-});
+};
+export const ArtifactRepairAttemptV1Schema=z.object({version:z.literal("artifact-targeted-repair-v1"),...artifactRepairAttemptFields});
+export const ArtifactRepairAttemptV2Schema=z.object({version:z.literal("artifact-targeted-repair-v2"),...artifactRepairAttemptFields,
+  feedbackKind:z.enum(["absolute-criterion-failure","relative-target-regression","combined-criterion-failure"]),
+}).strict();
+export const ArtifactRepairAttemptSchema=z.discriminatedUnion("version",[ArtifactRepairAttemptV1Schema,ArtifactRepairAttemptV2Schema]);
 export type ArtifactRepairAttempt=z.infer<typeof ArtifactRepairAttemptSchema>;
 
 export const ReleaseAdapterResultSchema = z.object({
@@ -1200,6 +1204,8 @@ export const ExperimentPolicySchema = z.object({
   winnerGoalScope: z.literal("all-user-goals-v1").optional(),
   /** Explicit opt-in; legacy trials keep their original stop/repair behavior. */
   visibleFailureRepair: z.enum(["disabled", "experiment-visible-repair-v1", "experiment-visible-repair-v2", "experiment-visible-repair-v3"]).optional(),
+  /** V2 combines measured ordinary Hidden failures and complete paired user-goal regressions; legacy remains v1. */
+  hiddenFailureRepair: z.enum(["artifact-targeted-repair-v1","artifact-targeted-repair-v2"]).optional(),
   mode: z.enum(["adaptive", "full"]).default("adaptive"),
   finalistCount: z.number().int().min(2).max(6).default(2),
   screeningCaseCount: z.number().int().min(1).max(5).default(2),
