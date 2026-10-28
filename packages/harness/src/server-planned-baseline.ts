@@ -34,7 +34,7 @@ export function plannedBaselineRefresh(project: EvolveProject, routeFingerprint?
   for (const id of selected) {
     const matches = project.candidates.filter(candidate => candidate.id === id);
     const candidate = matches[0];
-    if (matches.length !== 1 || !candidate || candidate.status !== "queued"
+    if (matches.length !== 1 || !candidate || !["draft", "queued"].includes(candidate.status)
       || candidate.artifactSnapshots.some(snapshot => snapshot.frozenArtifact)
       || candidate.finalHoldoutPaperHash !== paper.paperHash || candidateFailureContextBlocker(project, candidate)
       || project.experimentRun.candidateResults.some(result => result.candidateId === id)

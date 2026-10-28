@@ -41,8 +41,10 @@ function ports() {
 }
 
 describe("Baseline refresh after committed planning", () => {
-  it("remeasures an expired Original then continues the exact same Plan without another generation", async () => {
-    const p = planned(), io = ports(), before = JSON.stringify(p);
+  it.each(["draft", "queued"] as const)("remeasures an expired Original then continues the same %s Plan without another generation", async status => {
+    const p = planned(), io = ports();
+    p.candidates[0]!.status = status;
+    const original = JSON.stringify(p);
     expect(canReuseServerBaseline(p, route, Date.parse(later))).toBe(false);
     const refreshed = await runServerBaseline(p, io, { now: () => later });
     expect(refreshed.ready).toBe(true);
@@ -59,7 +61,7 @@ describe("Baseline refresh after committed planning", () => {
     const next = await advanceServerCampaignPreparation(refreshed.project, { problemAnalysis: generation, diagnose: generation, plan: generation });
     expect(next.phase).toBe("experiment");
     expect(generation).not.toHaveBeenCalled();
-    expect(JSON.stringify(p)).toBe(before);
+    expect(JSON.stringify(p)).toBe(original);
   });
 
   it.each([
@@ -70,6 +72,9 @@ describe("Baseline refresh after committed planning", () => {
     ["unapproved plan", (p: EvolveProject) => { p.gates.find(g => g.id === "experiment-ready")!.status = "pending"; }],
     ["repeated selection", (p: EvolveProject) => { p.selectedCandidateIds.push(p.selectedCandidateIds[0]!); }],
     ["already evaluated Candidate", (p: EvolveProject) => { p.candidates[0]!.status = "passed"; }],
+    ["running Candidate", (p: EvolveProject) => { p.candidates[0]!.status = "running"; }],
+    ["failed Candidate", (p: EvolveProject) => { p.candidates[0]!.status = "failed"; }],
+    ["winning Candidate", (p: EvolveProject) => { p.candidates[0]!.status = "winner"; }],
     ["missing selected Candidate", (p: EvolveProject) => { p.selectedCandidateIds = ["missing"]; }],
     ["unbound failure memory", (p: EvolveProject) => {
       p.failureObservationSources = [{ schemaVersion: "visible-failure-source-v1", missionId: "prior", missionSha256: "a".repeat(64), experimentRunId: "prior-experiment", candidateId: "prior-candidate", round: 1 }];

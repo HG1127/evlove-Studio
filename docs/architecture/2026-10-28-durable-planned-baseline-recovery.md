@@ -12,7 +12,7 @@ Response-body fault injection also found that the direct AI gateway swallowed an
 
 ## Decision
 
-Contracts adds an optional, strict `planned-baseline-refresh-v1` continuation. It binds the Mission, original Plan checkpoint, round, selected complete queued Candidates, final-paper hash, Original physical references, scoring identity, approval, failure-memory sources, policy and original budgets. Legacy records do not gain a default continuation or change their canonical bytes.
+Contracts adds an optional, strict `planned-baseline-refresh-v1` continuation. It binds the Mission, original Plan checkpoint, round, selected complete unexecuted Candidates, final-paper hash, Original physical references, scoring identity, approval, failure-memory sources, policy and original budgets. Legacy records do not gain a default continuation or change their canonical bytes.
 
 Harness admits a persisted retry only after a known finished rejection or completely received invalid model reply, under the same fingerprint and original active limits. It retains the physical Original binding even when a failed measurement has no current references. A successful fresh measurement clears the continuation and hands the original Plan to Experiment. Running, orphaned, modified, expired or uncertain attempts stop before external work. Pending continuations cannot reuse otherwise positive scores as a passing Baseline.
 
@@ -29,3 +29,13 @@ The final related regression set passes 445 tests across 39 files, including all
 Source-bound local replay on actual C26 revision 5/6 states injects a hypothetical terminal HTTP 429 rejection, persists/reparses it and selects Experiment with the same Candidate, paper, Original and zero new generations. The original expired window is rejected. All C23–C26 terminal canonical hashes remain unchanged. This replay makes zero model requests, isolated executions or remote writes and does not revise any historical trial verdict.
 
 This follows the mandatory Contracts/Core/Harness/application dependency direction and preserves all 23-node identity/evidence requirements. It is not a stack or architecture exception. A future real confirmation is still needed, followed separately by independent business observations and causal unseen-task transfer.
+
+## C27: preserve legitimate drafts as well as queued proposals
+
+The real confirmation using pushed `d4dc924` produced `CAND-CONFIG-SPEC-ALL-01` in the contract's valid default `draft` status, with Experiment Ready approved and the original independent paper bound. It had no frozen files or execution records. At `2026-10-28T12:49:44.755Z`, the queued-only refresh admission rejected it before fresh measurement. The terminal Workflow is completed with a waiting Job; no continuation, Candidate construction, final assessment or delivery occurred.
+
+Refresh admission now accepts both unexecuted `draft` and `queued` proposals. This is compatibility with the existing Candidate contract and committed Plan, not permission to resume running, failed, passed or winning Candidates. Selection, approval, paper, Original, failure-memory, fingerprint and budget checks remain unchanged. Tests exercise fresh measurement and direct Experiment handoff for each legitimate status and reject the other lifecycle states.
+
+Local replay of the actual C27 Plan isolates this defect: `d4dc924` rejects it, while the changed admission recognizes the same Candidate/checkpoint/Original/paper under the original window. It neither retries the real measurement nor modifies formal terminal SHA-256 `aa99d1dc434aa86ffbc547f1dda415b4638268d09612359f00331b8fa12418b2`. Five actual MiniMax requests all settled before the owned backend stopped; the three real-effect claims remain unmet.
+
+The draft follow-up passes 253 related tests across 13 files, all 11 Runner tests, architecture/changed-file lint and the complete TypeScript/production build. The original failing draft regression is retained. No new real confirmation has exercised the changed admission through a fresh measurement and accepted delivery.
