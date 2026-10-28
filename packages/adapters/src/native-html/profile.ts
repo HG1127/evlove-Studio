@@ -1,6 +1,6 @@
 import {createHash} from "node:crypto";
 import {HTML_NATIVE_PROFILE_ID} from "@evolution/contracts";
-import {assertHtmlKnownSemanticLayout,htmlCandidateProtection,htmlNativeCodeRetention,htmlNativeProgramIdentity,separateHtmlAppendedProse,synchronizeHtmlCardSearchIndex} from "@evolution/core";
+import {assertHtmlKnownSemanticLayout,htmlCandidateProtection,htmlNativeCodeRetention,htmlNativeProgramIdentity,projectHtmlToolCodeText,separateHtmlAppendedProse,synchronizeHtmlCardSearchIndex} from "@evolution/core";
 
 export const nativeHtmlSha256=(bytes:Uint8Array|string)=>createHash("sha256").update(bytes).digest("hex");
 export const KNOWN_HTML_NATIVE_PROFILES=[{
@@ -35,5 +35,7 @@ export function compileKnownHtmlDerivedMetadata(originalHtml:string,subjectHtml:
   assertHtmlKnownSemanticLayout(originalHtml,subjectHtml);
   const layout=separateHtmlAppendedProse(originalHtml,subjectHtml);
   assertHtmlKnownSemanticLayout(originalHtml,layout.html);
-  return {...synchronizeHtmlCardSearchIndex(originalHtml,layout.html),reflowedIds:layout.reflowedIds};
+  const toolText=projectHtmlToolCodeText(originalHtml,layout.html);
+  return {...synchronizeHtmlCardSearchIndex(originalHtml,toolText.html),reflowedIds:layout.reflowedIds,
+    ...(toolText.projectedToolCardIds.length?{projectedToolCardIds:toolText.projectedToolCardIds}:{})};
 }

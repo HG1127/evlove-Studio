@@ -7,6 +7,13 @@ const {known,compile}=vi.hoisted(()=>({known:vi.fn(),compile:vi.fn()}));
 vi.mock("@evolution/adapters/html-native-profile",()=>({isKnownHtmlNativeSubject:known,compileKnownHtmlDerivedMetadata:compile}));
 beforeEach(()=>{known.mockReset();compile.mockReset();});
 describe("pre-freeze derived HTML compilation",()=>{
+  it("records the renderer text-slot projection before freezing and retains the original blocks",async()=>{
+    const source='<html><body><p>Original</p><pre><code>05\n写 .env.local</code></pre></body></html>';
+    const projected=source.replace('Original','Updated').replace('</pre>','</pre><p>05\n写 .env.local</p>');
+    known.mockReturnValue(true);compile.mockReturnValue({html:projected,updatedIds:[],reflowedIds:[],projectedToolCardIds:["slide-64"]});
+    const result=await compileServerHtmlDerivedMetadata({extension:"html",content:source.replace('Original','Updated'),parentText:source,readOriginal:async()=>source});
+    expect(result.content).toBe(projected);expect(result.checks).toContainEqual(expect.stringContaining("单个可见段落槽"));
+  });
   it("reports all currently observable static failures when layout compilation cannot complete",async()=>{
     const original='<html><body><article class="slide-card" id="slide-11"><div class="slide-body"><div class="content-block"><div class="text-lines"><p>非常适合</p><p>说明</p></div></div><pre><code>npm run build</code></pre><p>介绍</p><ul><li>1. Open</li><li>2. Phone</li><li>3. Console</li></ul></div></article></body></html>';
     const bad=original.replace('非常适合','changed label').replace('npm run build','npm run unsafe').replace('介绍','字'.repeat(300)).replace('2. Phone','3. Phone');

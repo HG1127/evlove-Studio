@@ -9,6 +9,16 @@ const subject=original.replace('<p>old</p>','<p>new_configuration</p>');
 const identity=htmlNativeProgramIdentity(original,nativeHtmlSha256);
 const profiles:HtmlNativeProfile[]=[{id:HTML_NATIVE_PROFILE_ID,programSignature:identity.signature,styleSignature:identity.styleSignature}];
 describe("pure native renderer profile identification",()=>{
+  it("projects an existing code-only tool instruction only under the bound renderer without changing its code",()=>{
+    const card='<article class="slide-card" data-kind="tool" id="slide-64"><div class="slide-body"><div class="mini-grid"><div class="mini-card"><pre class="code-block"><code>05\n写 .env.local</code></pre></div></div></div></article>';
+    const source=original.replace('</body>',card+'</body>'),next=source.replace('<p>old</p>','<p>Updated</p>');
+    expect(compileKnownHtmlDerivedMetadata(source,next).html).toBe(next);
+    const compiled=compileKnownHtmlDerivedMetadata(source,next,profiles);
+    expect(compiled).toMatchObject({projectedToolCardIds:["slide-64"]});
+    expect(compiled.html).toContain('<code>05\n写 .env.local</code></pre><p>05\n写 .env.local</p>');
+    expect(identifyHtmlNativeSubjects(source,compiled.html,profiles)?.originalCodeBlocksRetained).toBe(true);
+    expect(compileKnownHtmlDerivedMetadata(source,compiled.html,profiles).html).toBe(compiled.html);
+  });
   it("rejects a known component's third paragraph before deriving or freezing bytes, while preserving unknown-renderer behavior",()=>{
     const component='<div class="content-block"><div class="text-lines"><p>非常适合</p><p>内部工具</p></div></div>';
     const source=original.replace("<p>old</p>",component),broken=source.replace("<p>内部工具</p>","<p>内部工具</p><p>完成检查</p>");
