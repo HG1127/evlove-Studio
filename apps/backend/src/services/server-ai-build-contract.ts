@@ -1,5 +1,6 @@
 import {z} from "zod";
 import {BuildCandidateAiResultSchema,HtmlBuildBodyContextSchema,HtmlBuildBodyNodeEditsSchema,TextArtifactEditsSchema,jsonSchemas} from "@evolution/contracts";
+import {serverHtmlBuildAnchorFeedback} from "./server-html-build-anchor-feedback";
 
 const Target=z.object({id:z.string().min(1),bodyAnchorPolicy:z.enum(["issued-body-ranges-v1","issued-body-nodes-v1"]).optional(),htmlBuildBodyContext:HtmlBuildBodyContextSchema.optional()});
 const Scope=z.object({project:z.object({currentTargets:z.array(Target).optional()}).optional()});
@@ -35,7 +36,8 @@ export function serverAiBuildContract(payload:unknown){
         if(!parsed.success){reject("Use html-build-body-node-edits-v1 with only edits:[{anchorId,after}]. Copy an exact issued ID; never return before, offsets or parent/hash fields.");continue;}
         const allowed=new Set(target.htmlBuildBodyContext!.anchors.map(a=>a.anchorId)),seen=new Set<string>();
         for(const [index,edit] of parsed.data.edits.entries()){
-          if(!allowed.has(edit.anchorId)||seen.has(edit.anchorId))reject(`Edit ${index+1}: unknown or duplicate issued anchorId ${edit.anchorId}. Copy each COMPLETE ID once from this Target's body index; do not reconstruct it or select another parent.`);
+          if(!allowed.has(edit.anchorId))reject(serverHtmlBuildAnchorFeedback(edit.anchorId,target.htmlBuildBodyContext!.anchors,index));
+          else if(seen.has(edit.anchorId))reject(`Edit ${index+1}: duplicate issued anchorId ${edit.anchorId}. Return one complete replacement for this node; do not select another node to bypass the duplicate.`);
           seen.add(edit.anchorId);
         }
         continue;
