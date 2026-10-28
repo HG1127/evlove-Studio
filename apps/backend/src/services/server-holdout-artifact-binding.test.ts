@@ -23,6 +23,11 @@ function project():EvolveProject {
 }
 beforeEach(()=>{blobs.clear();blobs.set("original",new Blob([original],{type:"text/html"}));blobs.set("frozen",new Blob([changed],{type:"text/html"}));});
 describe("server Hidden physical recovery binding",()=>{
+  it("verifies supplied physical observations instead of falling back to another store",async()=>{
+    const get=vi.fn(async(id:string)=>id==="original"?blobs.get(id):new Blob([changed.replace("Changed","CHANGED")],{type:"text/html"}));
+    await expect(readServerHoldoutArtifactFingerprint({project:project(),candidate:candidate()},{get})).rejects.toThrow("冻结身份");
+    expect(get).toHaveBeenCalledTimes(2);expect(await blobs.get("frozen")!.text()).toBe(changed);
+  });
   it("binds actual source and frozen Candidate without changing either file",async()=>{
     const args={project:project(),candidate:candidate()};
     const first=await readServerHoldoutArtifactFingerprint(args);

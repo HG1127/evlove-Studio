@@ -1,18 +1,18 @@
 import { createHash } from "node:crypto";
-import type { Candidate, CandidateArtifactSnapshot, EvolveProject } from "@evolution/contracts";
+import type { ArtifactStorePort,Candidate, CandidateArtifactSnapshot, EvolveProject } from "@evolution/contracts";
 import { trustedServerBaselineChampion } from "@evolution/harness";
 import { getServerArtifactStore } from "./artifact-runtime";
 import { serverArtifactSha256, verifyServerCandidateFrozenArtifact } from "./server-experiment-artifacts";
 
-async function frozenBinding(snapshot: CandidateArtifactSnapshot) {
-  if (!await verifyServerCandidateFrozenArtifact(snapshot)) throw new Error("Hidden 文件冻结身份不可用。");
+async function frozenBinding(snapshot: CandidateArtifactSnapshot,reader:Pick<ArtifactStorePort,"get">) {
+  if (!await verifyServerCandidateFrozenArtifact(snapshot,reader)) throw new Error("Hidden 文件冻结身份不可用。");
   const receipt = snapshot.frozenArtifact!;
   return { sourceArtifactId: snapshot.sourceArtifactId, snapshotHash: receipt.snapshotHash,
     blobId: receipt.blobId, sha256: receipt.sha256, size: receipt.size, name: receipt.name, mimeType: receipt.mimeType };
 }
 
 /** Read physical identity locally through the Artifact port; never execute or export user files. */
-export async function readServerHoldoutArtifactFingerprint({ project, candidate,observationDeploymentSha }: { project: EvolveProject; candidate: Candidate;observationDeploymentSha?:string|null }): Promise<string | undefined> {
+export async function readServerHoldoutArtifactFingerprint({ project, candidate,observationDeploymentSha }: { project: EvolveProject; candidate: Candidate;observationDeploymentSha?:string|null },reader?:Pick<ArtifactStorePort,"get">): Promise<string | undefined> {
   if (project.targetConnection.adapter !== "artifact") return undefined;
   const sources = project.sourceArtifacts;
   const targets = sources.filter(source => source.role === "target");
@@ -22,13 +22,13 @@ export async function readServerHoldoutArtifactFingerprint({ project, candidate,
     || candidate.artifactSnapshots.some(snapshot => !targets.some(source => source.id === snapshot.sourceArtifactId))) return undefined;
   const champion = project.searchChampion ? trustedServerBaselineChampion(project) : undefined;
   if (project.searchChampion && !champion) return undefined;
-  const store = getServerArtifactStore();
+  const store = reader??getServerArtifactStore();
   const current = [];
   for (const source of sources) {
     const snapshots = source.role === "target" ? champion?.artifactSnapshots.filter(snapshot => snapshot.sourceArtifactId === source.id) ?? [] : [];
     if (champion && source.role === "target" && snapshots.length !== 1) return undefined;
     if (snapshots[0]) {
-      current.push({ id: source.id, role: source.role, frozen: await frozenBinding(snapshots[0]) });
+      current.push({ id: source.id, role: source.role, frozen: await frozenBinding(snapshots[0],store) });
       continue;
     }
     const blobId = source.storageRef?.trim() || (source.inputMode === "upload" ? source.id : undefined);
@@ -45,7 +45,7 @@ export async function readServerHoldoutArtifactFingerprint({ project, candidate,
     }
   }
   const frozen = [];
-  for (const snapshot of candidate.artifactSnapshots) frozen.push(await frozenBinding(snapshot));
+  for (const snapshot of candidate.artifactSnapshots) frozen.push(await frozenBinding(snapshot,store));
   return createHash("sha256").update(JSON.stringify({
     version: "server-holdout-artifact-binding-v1", deploymentSha: observationDeploymentSha===null?undefined:observationDeploymentSha??process.env.VERCEL_GIT_COMMIT_SHA,
     current, candidate: { id: candidate.id, frozen },

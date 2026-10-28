@@ -2,6 +2,7 @@ import JSZip from "jszip";
 import {z} from "zod";
 import {
   CandidateSchema,
+  type ArtifactStorePort,
   type BuildCandidateAiResult,
   type Candidate,
   type CandidateArtifactSnapshot,
@@ -197,13 +198,13 @@ async function persistFrozenArtifact(
 }
 
 /** Recheck the persisted bytes at execution time, not just at materialization time. */
-export async function verifyServerCandidateFrozenArtifact(snapshot: CandidateArtifactSnapshot): Promise<boolean> {
+export async function verifyServerCandidateFrozenArtifact(snapshot: CandidateArtifactSnapshot,reader?:Pick<ArtifactStorePort,"get">): Promise<boolean> {
   const receipt = snapshot.frozenArtifact;
   if (!receipt || receipt.sourceArtifactId !== snapshot.sourceArtifactId || receipt.size <= 0
     || receipt.name !== snapshot.name || receipt.mimeType !== snapshot.mimeType) return false;
   const contentHash = await sha256Text(snapshot.content);
   if (receipt.snapshotHash !== contentHash || (snapshot.contentHash && snapshot.contentHash !== contentHash)) return false;
-  const blob = await getServerArtifactStore().get(receipt.blobId);
+  const blob = await (reader??getServerArtifactStore()).get(receipt.blobId);
   if (!blob || blob.size !== receipt.size) return false;
   const bytes = await blob.arrayBuffer();
   if (await serverArtifactSha256(bytes) !== receipt.sha256) return false;
