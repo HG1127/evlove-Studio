@@ -41,3 +41,4 @@ export * from "./business-benefit-contract";
 export * from "./learning-context-contract";
 export * from "./failure-observation-contract";
 export * from "./repair-baseline-document-contract";
+export * from "./paired-judge-contract";

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import {PairedJudgeContextSchema,type PairedJudgeReceipt} from "./paired-judge-contract";
 import {
   AcceptanceCriterionSchema,
   ArtifactRoleSchema,
@@ -34,6 +35,7 @@ export const AiOperationSchema = z.enum([
   "next-queue",
   "copilot",
   "evaluate",
+  "evaluate-paired",
   "gap-cluster",
   "gap-advice",
   "visual-judge",
@@ -354,6 +356,27 @@ export const EvaluateAiResultSchema = z.object({
 });
 export type EvaluateAiResult = z.infer<typeof EvaluateAiResultSchema>;
 
+export const PairedEvaluationAiResultSchema=z.object({
+  schemaVersion:z.literal("paired-evaluation-v1"),requestFingerprint:z.string().min(1).max(200),
+  versions:z.array(z.object({slot:z.enum(["A","B","C"]),result:EvaluateAiResultSchema}).strict()).length(3),
+}).strict().superRefine((value,ctx)=>{
+  if(new Set(value.versions.map(v=>v.slot)).size!==3)ctx.addIssue({code:"custom",path:["versions"],message:"All three unique slots are required"});
+  for(const [i,version] of value.versions.entries()){
+    const numbers=[version.result.accuracy,version.result.evidence,version.result.riskCoverage,version.result.completeness,...version.result.criteria.map(c=>c.score)];
+    if(numbers.some(n=>!Number.isInteger(n)||n<0||n>100))ctx.addIssue({code:"custom",path:["versions",i],message:"Paired scores must be integer 0-100 percentages; no fraction normalization"});
+  }
+});
+export type PairedEvaluationAiResult=z.infer<typeof PairedEvaluationAiResultSchema>;
+/** Additional comparison data is added by the runtime after validating both model replies. */
+export type ServerEvidenceJudgeResult=EvaluateAiResult&{pairedComparison?:{original:EvaluateAiResult;receipt:PairedJudgeReceipt}};
+const pairedPacket=z.object({documents:z.json(),runs:z.array(z.json()).min(1).max(100)}).strict();
+export const PairedJudgeRequestSchema=z.object({
+  context:PairedJudgeContextSchema,
+  criteria:z.array(AcceptanceCriterionSchema).min(1).max(32),testCases:z.array(TestCaseSchema).min(1).max(100),
+  goal:z.string(),metrics:z.array(z.json()).max(100),versions:z.object({original:pairedPacket,candidate:pairedPacket}).strict(),
+}).strict().refine(value=>JSON.stringify(value).length<=1_000_000,"Paired review exceeds the complete-observation budget");
+export type PairedJudgeRequest=z.infer<typeof PairedJudgeRequestSchema>;
+
 // 薄弱环节聚类：把逐题失分原因按共同病因归堆，直接回答"该对症补哪里"。
 export const GapClusterAiResultSchema = z.object({
   clusters: z.array(z.object({
@@ -411,6 +434,7 @@ export const AiResultSchemas = {
   "next-queue": NextQueueAiResultSchema,
   copilot: CopilotAiResultSchema,
   evaluate: EvaluateAiResultSchema,
+  "evaluate-paired":PairedEvaluationAiResultSchema,
   "gap-cluster": GapClusterAiResultSchema,
   "gap-advice": GapAdviceAiResultSchema,
   "visual-judge": VisualJudgeAiResultSchema,

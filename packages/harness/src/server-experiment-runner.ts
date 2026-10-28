@@ -1,7 +1,7 @@
 import type {
   Candidate,
   CandidateArtifactSnapshot,
-  EvaluateAiResult,
+  ServerEvidenceJudgeResult,
   ExecuteArtifactBatchAiResult,
   EvaluationResult,
   EvolveProject,
@@ -27,6 +27,7 @@ import { normalizeLocallyVerifiableCandidateRuns } from "./candidate-snapshot-ev
 import { indexUniqueBatchResults } from "./server-batch-results";
 import { measuredDocumentObservations, SERVER_MEASURED_REVIEW_VERSION,SERVER_NATIVE_REVIEW_INSTRUCTION } from "./server-measured-review-evidence";
 import {collectServerHtmlNativeRuns,type ServerHtmlNativePort} from "./server-html-native-runs";
+import {serverPairedJudgeRequest,settleServerPairedJudgment} from "./server-paired-judge";
 
 export type ServerExperimentExecutionPorts = ServerHtmlNativePort & {
   executeSemanticBatch(args: {
@@ -43,7 +44,7 @@ export type ServerExperimentExecutionPorts = ServerHtmlNativePort & {
     candidate: Candidate;
     testCases: TestCase[];
   }): Promise<TargetRunResult[]>;
-  judge(payload: unknown): Promise<EvaluateAiResult>;
+  judge(payload: unknown): Promise<ServerEvidenceJudgeResult>;
 };
 
 function unavailableFrozenStatic(testCase: TestCase, detail: string): TargetRunResult {
@@ -258,6 +259,10 @@ export async function judgeServerExperimentCandidate(
   const effectiveCriteria = judgeCriteria.filter((criterion) =>
     judgeCases.some((testCase) => testCase.criterionIds.includes(criterion.id)));
   if (!judgeCases.length || !effectiveCriteria.length) return deterministicOnlyEvaluation(project, testCases, runs);
+  if(project.experimentPolicy?.judgeComparison==="paired-two-order-v1"){
+    const request=serverPairedJudgeRequest(project,candidate,testCases,effectiveCriteria,runs,comparisonRuns,mode==="server-candidate"?"visible":"holdout");
+    return settleServerPairedJudgment(project,testCases,runs,comparisonRuns,request,await ports.judge({pairedJudge:request}));
+  }
   const nativeBindings=candidate.artifactSnapshots.flatMap(snapshot=>{
     const frozen=snapshot.frozenArtifact;if(!frozen||frozen.sourceArtifactId!==snapshot.sourceArtifactId||!/^[a-f0-9]{64}$/.test(frozen.sha256))return [];
     const originals=project.baselineRun.originalReferences?.filter(reference=>reference.sourceArtifactId===snapshot.sourceArtifactId)??[];

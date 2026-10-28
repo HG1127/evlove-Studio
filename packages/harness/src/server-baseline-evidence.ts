@@ -289,6 +289,7 @@ export function serverBaselineFingerprint(project: EvolveProject, scoringRouteFi
     version: "server-baseline-v3",
     semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION,
     measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION,
+    ...(project.experimentPolicy?.judgeComparison?{judgeComparison:project.experimentPolicy.judgeComparison}:{}),
     scoringInputFingerprint: campaignScoringInputFingerprint(project),
     scoringRouteFingerprint,
     goal: project.goal,

@@ -58,6 +58,7 @@ export const OPERATION_PROFILES: Record<AiOperation, OperationProfile> = {
   "next-queue": { timeoutMs: FAST, schemaRetries: 1, maxRoutes: 2, cacheTtlMs: 30 * 60_000, reasoningHint: "balanced" },
   copilot: { timeoutMs: FAST, schemaRetries: 0, maxRoutes: 2, cacheTtlMs: 0, reasoningHint: "fast" },
   evaluate: { timeoutMs: 90_000, schemaRetries: 1, maxRoutes: 2, cacheTtlMs: 30 * 60_000, reasoningHint: "balanced" },
+  "evaluate-paired":{timeoutMs:90_000,schemaRetries:1,maxRoutes:1,cacheTtlMs:0,reasoningHint:"balanced"},
   "gap-cluster": { timeoutMs: FAST, schemaRetries: 1, maxRoutes: 2, cacheTtlMs: 30 * 60_000, reasoningHint: "fast" },
   "gap-advice": { timeoutMs: FAST, schemaRetries: 1, maxRoutes: 2, cacheTtlMs: 30 * 60_000, reasoningHint: "balanced" },
   "visual-judge": { timeoutMs: STANDARD, schemaRetries: 1, maxRoutes: 2, cacheTtlMs: 0, reasoningHint: "balanced" },

@@ -187,6 +187,15 @@ describe("custom provider protocols and JSON output",()=>{
     await expect(withExplicitServerAiConnection(input,()=>runServerAi("visual-judge",{})))
       .rejects.toMatchObject({code:"AI_OUTPUT_INCOMPLETE"});
   });
+  it("reserves paired output capacity and strictly parses both version slots",async()=>{
+    const judgement={accuracy:90,evidence:90,riskCoverage:90,completeness:90,safety:"PASS",notes:[],failures:[],cases:[],criteria:[{criterionId:"CONTENT",score:90,pass:true,evidence:[],gaps:[],testCaseIds:["V1"]}]};
+    const reply={schemaVersion:"paired-evaluation-v1",requestFingerprint:"issued-pair",versions:[{slot:"A",result:judgement},{slot:"B",result:judgement},{slot:"C",result:judgement}]};
+    const requests:Array<Record<string,unknown>>=[];
+    vi.stubGlobal("fetch",vi.fn(async(_url:unknown,init?:RequestInit)=>{requests.push(JSON.parse(String(init?.body)));return new Response(JSON.stringify({choices:[{finish_reason:"stop",message:{content:JSON.stringify(reply)}}]}));}));
+    expect(await withExplicitServerAiConnection({...input,responseFormat:"prompt-json"},()=>runServerAi("evaluate-paired",{evidence:"UNCHANGED_PAIR"}))).toEqual(reply);
+    expect(requests).toHaveLength(1);expect(requests[0]!.max_tokens).toBe(16384);expect(requests[0]).not.toHaveProperty("response_format");
+    expect(JSON.stringify(requests[0])).toContain("UNCHANGED_PAIR");
+  });
 
   it("reports reasoning-only replies without attempting to accept them",async()=>{
     vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({choices:[{message:{

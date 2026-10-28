@@ -7,6 +7,7 @@ import type {ServerAiConfig} from "../server-env";
 import {assertServerControlExecutionActive,serverControlExecutionSignal} from "./server-control-execution";
 
 const active=new AsyncLocalStorage<{scope:AiUsageScope;write:AiUsageLedgerWriter}>();
+export const currentServerAiUsageScope=()=>{const scope=active.getStore()?.scope;return scope?{...scope}:undefined;};
 
 export async function persistServerAiUsageRecord(record:AiUsageLedgerRecord){
   const parsed=AiUsageLedgerRecordSchema.parse(record),request=parsed.kind==="request-start"?parsed.request:parsed.observation.request;

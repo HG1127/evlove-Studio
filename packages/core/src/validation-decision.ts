@@ -1,6 +1,7 @@
-import type { EvaluationResult, EvolveProject } from "@evolution/contracts";
+import type { EvaluationResult, EvolveProject,TestCase } from "@evolution/contracts";
 import { REGRESSION_TOLERANCE } from "./evaluation/gap";
 import { indexScopedAcceptanceResults } from "./acceptance-result-identity";
+import {pairedComparisonBaseline} from "./paired-judge";
 
 function criterionScoresById(project: EvolveProject, evaluation: EvaluationResult) {
   return indexScopedAcceptanceResults([{
@@ -45,7 +46,8 @@ export function validationRegression(project: EvolveProject, candidate: Evaluati
   });
 }
 
-export function validationDecision(project: EvolveProject, candidate: EvaluationResult, baseline: EvaluationResult) {
+export function validationDecision(project: EvolveProject, candidate: EvaluationResult, baseline: EvaluationResult,suite:TestCase[]=project.hiddenEvalSuite) {
+  const comparison=pairedComparisonBaseline(project,candidate,baseline,suite);baseline=comparison.baseline;
   const hardCriterionFailures = validationHardRubricFailures(project, candidate);
   const candidateById = criterionScoresById(project, candidate);
   const unverifiedCriteria = project.acceptanceRubric.filter((criterion) => candidateById.get(criterion.id)?.verificationStatus !== "verified");
@@ -79,8 +81,9 @@ export function validationDecision(project: EvolveProject, candidate: Evaluation
     rubricCoverage,
     rubricFailed,
     safetyFailed,
+    measurementBlocker:comparison.blocker,
     hardFail: safetyFailed || rubricFailed || regression || hardCriterionFailures.length > 0,
-    evidenceIncomplete: unverifiedCriteria.length > 0 || comparisonEvidenceGaps.length > 0 || rubricCoverage < 100,
+    evidenceIncomplete: Boolean(comparison.blocker)||unverifiedCriteria.length > 0 || comparisonEvidenceGaps.length > 0 || rubricCoverage < 100,
   };
 }
 

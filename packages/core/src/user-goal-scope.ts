@@ -1,5 +1,6 @@
 import type { EvaluationResult, EvolveProject, TestCase } from "@evolution/contracts";
 import { indexScopedAcceptanceResults } from "./acceptance-result-identity";
+import {pairedComparisonBaseline} from "./paired-judge";
 
 export const USER_GOAL_SCOPE_POLICY = "all-user-goals-v1" as const;
 export const originalUserGoalCriteria = (project: EvolveProject) =>
@@ -20,13 +21,14 @@ export function userGoalScopeContext(project: EvolveProject) {
 export function userGoalProgress(
   project: EvolveProject, evaluation: EvaluationResult, baseline: EvaluationResult, suite: TestCase[] = project.evalSuite,
 ) {
+  const comparison=pairedComparisonBaseline(project,evaluation,baseline,suite);baseline=comparison.baseline;
   const goals = originalUserGoalCriteria(project), ids = goals.map(c => c.id);
   const scores = (e: EvaluationResult) => indexScopedAcceptanceResults([{ requestedCriterionIds: ids, results: e.criterionScores ?? [] }]);
   const current = scores(evaluation), prior = scores(baseline);
   const unique = (values: string[]) => values.length > 0 && new Set(values).size === values.length;
   const same = (a: string[], b: string[]) => unique(a) && unique(b) && a.length === b.length && a.every(id => b.includes(id));
   const weight = goals.reduce((sum, c) => sum + c.weight, 0);
-  const validContract = unique(ids) && weight > 0 && unique(suite.map(t => t.id)) && !evaluation.demoJudged && !baseline.demoJudged;
+  const validContract = !comparison.blocker&&unique(ids) && weight > 0 && unique(suite.map(t => t.id)) && !evaluation.demoJudged && !baseline.demoJudged;
   const criteria = goals.map(criterion => {
     const score = current.byId.get(criterion.id), before = prior.byId.get(criterion.id);
     const expected = suite.filter(t => t.criterionIds.includes(criterion.id)).map(t => t.id);

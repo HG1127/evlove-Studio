@@ -11,6 +11,7 @@ const metric = {
   },
   required: ["key", "label", "target", "unit", "direction", "why"],
 } as const;
+
 const testCase = {
   type: "object",
   additionalProperties: false,
@@ -323,3 +324,9 @@ export const jsonSchemas = {
     },
   },
 } as const;
+
+export const pairedEvaluationJsonSchema={name:"evolve_paired_evaluation",schema:{
+  type:"object",additionalProperties:false,properties:{schemaVersion:{type:"string",enum:["paired-evaluation-v1"]},requestFingerprint:{type:"string"},
+    versions:{type:"array",minItems:3,maxItems:3,items:{type:"object",additionalProperties:false,properties:{slot:{type:"string",enum:["A","B","C"]},result:jsonSchemas.evaluate.schema},required:["slot","result"]}},
+  },required:["schemaVersion","requestFingerprint","versions"],
+}} as const;

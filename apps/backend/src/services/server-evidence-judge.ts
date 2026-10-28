@@ -1,6 +1,7 @@
 import {z} from "zod";
-import {EvaluateAiResultSchema,type EvaluateAiResult} from "@evolution/contracts";
+import {EvaluateAiResultSchema,type EvaluateAiResult,type ServerEvidenceJudgeResult} from "@evolution/contracts";
 import {runServerAi} from "./ai-gateway";
+import {runServerPairedEvidenceJudge} from "./server-paired-evidence-judge";
 
 /**
  * A large multi-criterion Judge can exhaust the provider's final JSON budget.
@@ -129,7 +130,8 @@ function mergeJudgeParts(parts:EvaluateAiResult[],criteria:Criterion[],testCases
 
 export async function runServerEvidenceJudge(
   raw:unknown,invoke:JudgeCall=(payload)=>runServerAi("evaluate",payload),
-):Promise<EvaluateAiResult>{
+):Promise<ServerEvidenceJudgeResult>{
+  if(raw&&typeof raw==="object"&&"pairedJudge" in raw)return runServerPairedEvidenceJudge(raw.pairedJudge);
   try {
     return await invoke(raw);
   } catch(error) {

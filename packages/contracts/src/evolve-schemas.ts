@@ -1,4 +1,5 @@
 import { z } from "zod";
+import {PairedJudgeReceiptSchema} from "./paired-judge-contract";
 import {ProductionGoalEvidenceSchema} from "./production-goal-evidence";
 import {BusinessBenefitPolicySchema} from "./business-benefit-contract";
 import {FailureObservationSourcesSchema,FailureObservationUseSchema} from "./failure-observation-contract";
@@ -557,7 +558,7 @@ export const CriterionScoreSchema = z.object({
 });
 export type CriterionScore = z.infer<typeof CriterionScoreSchema>;
 
-export const EvaluationResultSchema = z.object({
+const EvaluationResultBaseSchema = z.object({
   accuracy: z.number().min(0).max(100),
   evidence: z.number().min(0).max(100),
   riskCoverage: z.number().min(0).max(100),
@@ -578,6 +579,9 @@ export const EvaluationResultSchema = z.object({
   demoJudged: z.boolean().optional(),
   /** Runtime-owned assessment payload policy; older assessments cannot satisfy new review reuse. */
   measuredReviewVersion: z.string().min(1).optional(),
+});
+export const EvaluationResultSchema=EvaluationResultBaseSchema.extend({
+  judgeComparison:z.object({baseline:EvaluationResultBaseSchema,receipt:PairedJudgeReceiptSchema}).strict().optional(),
 });
 export type EvaluationResult = z.infer<typeof EvaluationResultSchema>;
 
@@ -1201,6 +1205,8 @@ export type ProjectAiProfile = z.infer<typeof ProjectAiProfileSchema>;
 
 
 export const ExperimentPolicySchema = z.object({
+  /** New comparisons only; legacy evidence retains its original scoring protocol. */
+  judgeComparison:z.literal("paired-two-order-v1").optional(),
   /** Explicit HTML location protocol; validate range or node-ID selections against the request-owned body index. */
   htmlBuildAnchorValidation: z.enum(["issued-body-ranges-v1","issued-body-nodes-v1"]).optional(),
   /** One pre-write construction correction inside an already claimed repair; legacy attempts stay terminal. */

@@ -127,6 +127,12 @@ export async function runServerExperiment(
   if (!selected.length) throw new Error("Server Experiment has no selected Candidates");
   for(const candidate of selected){const blocker=candidateFailureContextBlocker(inputProject,candidate);if(blocker)throw new Error(blocker);}
 
+  if(inputProject.experimentPolicy?.judgeComparison==="paired-two-order-v1"&&inputProject.experimentRun.candidateResults.some(result=>selected.some(c=>c.id===result.candidateId&&c.artifactBuildStatus==="ready"&&JSON.stringify(c.artifactSnapshots)===JSON.stringify(result.artifactSnapshots))&&result.evaluation.judgeComparison)){
+    return {control:"stop",project:inputProject,experiment:inputProject.experimentRun,
+      reason:"[paired-judge-assessment-preserved] 已有成对评审结果；保留原始分数与证据，从原有检查点继续，不能重跑同一候选刷分。",
+      readyForHoldout:false,builtCount:0,buildFailureCount:0};
+  }
+
   const checkpoints = new Map<string, ExperimentCandidateCheckpoint>();
   const recoveryFailures = new Set<string>();
   const built: Candidate[] = [];

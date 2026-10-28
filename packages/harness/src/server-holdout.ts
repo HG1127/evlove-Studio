@@ -217,6 +217,12 @@ export async function runServerHoldout(
   const beforeArtifactFingerprint = await readServerHoldoutArtifactFingerprint(inputProject, candidate, ports.readArtifactFingerprint);
   const prior = recoverableServerHoldout(inputProject, candidate, suite, round, baseFingerprint, beforeArtifactFingerprint, Date.now());
   const recorded=inputProject.validationRun;
+  if(!prior&&inputProject.experimentPolicy.judgeComparison==="paired-two-order-v1"&&recorded.evaluation?.judgeComparison
+    &&beforeArtifactFingerprint&&recorded.executionArtifactFingerprint===beforeArtifactFingerprint&&recorded.baselineContextFingerprint===baseFingerprint
+    &&recorded.evidenceFingerprint===evidenceFingerprint(inputProject,candidate)&&recorded.candidateId===candidate.id){
+    const reason="[paired-judge-assessment-preserved] 已有同一文件与题卷的成对评审，但当前恢复/时效校验不成立；保留原结论，不重新执行或重新评分。";
+    return {control:"stop",project:inputProject,validation:recorded,reason,readyForArtifactAcceptance:false,evidenceIncomplete:true};
+  }
   if(!prior&&beforeArtifactFingerprint&&recorded.executionArtifactFingerprint===beforeArtifactFingerprint
     &&recorded.baselineContextFingerprint===baseFingerprint&&recorded.evidenceFingerprint===evidenceFingerprint(inputProject,candidate)
     &&recorded.candidateId===candidate.id&&knownServerHoldoutRejection(inputProject,suite,recorded)){
@@ -252,14 +258,17 @@ export async function runServerHoldout(
         executionArtifactFingerprint = after;
       }
     }
-    const [currentJudge,candidateJudge] = await Promise.allSettled([
+    const retainedPairedAssessment=Boolean(prior&&inputProject.experimentPolicy.judgeComparison==="paired-two-order-v1"&&prior.evaluation);
+    const candidateJudgment=prior && (retainedPairedAssessment||retainedRejection||reusableServerHoldoutAssessment(inputProject, suite, runs, prior.evaluation))
+      ? Promise.resolve(prior.evaluation!)
+      : judgeServerExperimentCandidate(inputProject, candidate, runs, ports.candidate, suite, "server-hidden-holdout-candidate", baselineRuns);
+    const currentJudgment=inputProject.experimentPolicy.judgeComparison==="paired-two-order-v1"
+      ?candidateJudgment.then(value=>{if(!value.judgeComparison)throw Error("Paired baseline assessment is missing");return value.judgeComparison.baseline;})
+      :
       prior && (retainedRejection||reusableServerHoldoutAssessment(inputProject, suite, baselineRuns, prior.baselineEvaluation))
         ? Promise.resolve(prior.baselineEvaluation!)
-        : judgeServerCurrentArtifactSuite(inputProject, suite, baselineRuns, ports.current),
-      prior && (retainedRejection||reusableServerHoldoutAssessment(inputProject, suite, runs, prior.evaluation))
-        ? Promise.resolve(prior.evaluation!)
-        : judgeServerExperimentCandidate(inputProject, candidate, runs, ports.candidate, suite, "server-hidden-holdout-candidate", baselineRuns),
-    ]);
+        : judgeServerCurrentArtifactSuite(inputProject, suite, baselineRuns, ports.current);
+    const [currentJudge,candidateJudge] = await Promise.allSettled([currentJudgment,candidateJudgment]);
     // Keep the fulfilled arm before propagating the other arm's failure.
     if(currentJudge.status==="fulfilled")baselineEvaluation=currentJudge.value;
     if(candidateJudge.status==="fulfilled")evaluation=candidateJudge.value;
@@ -309,13 +318,17 @@ export async function runServerHoldout(
 
   const completedAt = now();
   const { checks, decision } = holdoutChecks(inputProject, evaluation, baselineEvaluation, runs, baselineRuns, suite);
+  if(decision.measurementBlocker)checks.push({label:"成对评审测量",status:"warning",detail:decision.measurementBlocker});
   let recommendation: "release" | "hold" | "reject" = "hold";
   let reviewSummary = decision.hardFail
     ? "Hidden Holdout 存在已验证失败，不能进入发布。"
     : decision.evidenceIncomplete
       ? "Hidden Holdout 仍有真实证据缺口，不能进入发布。"
       : "等待独立 Release Review。";
-  if (!decision.hardFail && !decision.evidenceIncomplete) {
+  const retainedReview=prior&&inputProject.experimentPolicy.judgeComparison==="paired-two-order-v1"&&prior.status==="completed"&&prior.recommendation
+    &&!prior.summary?.startsWith("[server-campaign-holdout-review-pending]");
+  if(retainedReview){recommendation=prior.recommendation!;reviewSummary=prior.summary??"保留已完成的同一成对评审及 Release Review。";}
+  else if (!decision.hardFail && !decision.evidenceIncomplete) {
     try {
       const review = await ports.releaseReview({
         baseline: inputProject.baselineRun.result ? aggregateEvaluation(inputProject.baselineRun.result) : undefined,

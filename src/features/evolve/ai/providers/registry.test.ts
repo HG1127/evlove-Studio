@@ -81,6 +81,12 @@ describe("connection read sanitization", () => {
 });
 
 describe("project node model overrides", () => {
+  it("keeps paired scoring on the explicitly selected judge instead of the generator",()=>{
+    saveProviderConnections([makeConnection({id:"primary",defaultModel:"glm-4.7",testedModels:["glm-4.7"]}),makeConnection({id:"judge",defaultModel:"glm-4-flash",testedModels:["glm-4-flash"]})]);
+    const profile={mode:"project" as const,primary:{connectionId:"primary",model:"glm-4.7",label:"生成"},judge:{connectionId:"judge",model:"glm-4-flash",label:"评审"}};
+    expect(resolveProjectOperationConnections("evaluate-paired",profile)[0]?.model).toBe("glm-4-flash");
+    expect(resolveProjectOperationConnections("plan",profile)[0]?.model).toBe("glm-4.7");
+  });
   it("only overrides the selected operation and leaves other nodes on their route", () => {
     saveProviderConnections([
       makeConnection({ id: "primary", defaultModel: "glm-4.7", testedModels: ["glm-4.7"] }),

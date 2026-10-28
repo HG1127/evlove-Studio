@@ -28,6 +28,7 @@ export {htmlSnapshotReview} from "./html-snapshot-review";
 export * from "./server-experiment-wait";
 export * from "./server-measured-review-evidence";
 export * from "./server-repair-baseline-documents";
+export * from "./server-paired-judge";
 
 export * from "./build-candidates";
 export * from "./server-learning-context";

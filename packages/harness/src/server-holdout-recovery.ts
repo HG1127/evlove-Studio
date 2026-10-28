@@ -2,6 +2,7 @@ import type { Candidate, EvaluationResult, EvolveProject, TargetRunResult, TestC
 import { criteriaRequiringJudge, evidenceFingerprint, fastHash, LIVE_TARGET_OBSERVATION_MAX_AGE_MS, verifiedValidationFailures } from "@evolution/core";
 import { SERVER_MEASURED_REVIEW_VERSION } from "./server-measured-review-evidence";
 import {serverHtmlNativeRunsMatchOriginal} from "./server-html-native-runs";
+import {PairedJudgeReceiptSchema} from "@evolution/contracts";
 
 export type ServerHoldoutArtifactReader = (args: { project: EvolveProject; candidate: Candidate }) => Promise<string | undefined>;
 
@@ -44,9 +45,11 @@ export function recoverableServerHoldout(
   const prior = project.validationRun;
   const observed = prior.baselineObservedAt;
   const knownFailure = knownServerHoldoutRejection(project,suite,prior);
+  const pairedAssessment=project.experimentPolicy.judgeComparison==="paired-two-order-v1"&&prior.status==="completed"
+    &&PairedJudgeReceiptSchema.safeParse(prior.evaluation?.judgeComparison?.receipt).success;
   const pending = prior.status === "failed" && prior.error?.startsWith("[server-campaign-holdout-judge-pending]")
     || prior.status === "completed" && prior.summary?.startsWith("[server-campaign-holdout-review-pending]")
-    || knownFailure;
+    || knownFailure||pairedAssessment;
   if (project.targetConnection.adapter !== "artifact" || !pending || !artifactFingerprint || prior.executionArtifactFingerprint !== artifactFingerprint
     || !serverHtmlNativeRunsMatchOriginal(project,prior.runs,candidate,suite)||!serverHtmlNativeRunsMatchOriginal(project,prior.baselineRuns,undefined,suite)
     || prior.id !== "validation-server-r"+round || prior.validationMode !== "full"

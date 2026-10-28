@@ -57,6 +57,7 @@ export const finalHoldoutContractFingerprint=(project:EvolveProject)=>fastHash(J
   project.goal,project.evolutionCommand,project.metrics,project.protectedItems,project.editableItems,project.acceptanceRubric,
   project.sourceArtifacts.map(source=>[source.id,source.role,source.textContent,source.structuredContent]),
   ...(project.experimentPolicy?.winnerGoalScope?[{winnerGoalScope:project.experimentPolicy.winnerGoalScope}]:[]),
+  ...(project.experimentPolicy?.judgeComparison?[{judgeComparison:project.experimentPolicy.judgeComparison}]:[]),
   ...(project.experimentPolicy?.hiddenFailureRepair==="artifact-targeted-repair-v2"?[{hiddenFailureRepair:project.experimentPolicy.hiddenFailureRepair}]:[]),
 ]));
 function caseKey(test:TestCase){
@@ -104,7 +105,7 @@ export function independentFinalReadiness(project:EvolveProject,candidate:Candid
   if(hasBoundFinalHardFailure(project,candidate,measured,proof.suite))return {ready:false,failed:true,reason:"独立终验存在已绑定同卷执行证据的硬指标失败；禁止使用终验反馈继续定向修复。"};
   if(proof.suite.some(test=>test.browserSteps?.length&&!["external-runner","visual-review"].includes(test.executionMode)))return pending("独立终验声明了浏览器断言，但未使用已绑定的浏览器执行通道；语义评审不能替代这些断言。");
   if(!proof.evaluation||!proof.baselineEvaluation)return pending("独立终验尚未完成双侧评审。");
-  const decision=validationDecision(project,proof.evaluation,proof.baselineEvaluation);
+  const decision=validationDecision(project,proof.evaluation,proof.baselineEvaluation,proof.suite);
   const belowHardMinimum=project.acceptanceRubric.some(criterion=>criterion.hardGate&&proof.evaluation!.criterionScores?.some(score=>score.criterionId===criterion.id&&score.verificationStatus==="verified"&&score.score<criterion.minScore));
   if(!decision.evidenceIncomplete&&(decision.hardFail||belowHardMinimum||proof.recommendation==="reject"))return {ready:false,failed:true,reason:"独立终验未通过；禁止使用终验反馈继续定向修复。"};
   if(!hasAuthoritativeHiddenRelease(measured,candidate.id,proof.suite,project.acceptanceRubric)||decision.evidenceIncomplete)return pending("独立终验缺少完整同卷证据或 Release Review。");

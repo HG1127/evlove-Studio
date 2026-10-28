@@ -98,6 +98,7 @@ export const OPERATION_META: Record<AiOperation, { label: string; role: string; 
   "next-queue": { label: "下一轮生成", role: "Curriculum Planner", purpose: "生成 Next Evolve Queue" },
   copilot: { label: "Evolve Copilot", role: "Copilot", purpose: "解释证据、回答问题、建议下一步" },
   evaluate: { label: "独立评测", role: "Independent Judge", purpose: "独立评分 Candidate 输出，避免生成者自评" },
+  "evaluate-paired":{label:"成对评测",role:"Independent Paired Judge",purpose:"同卷同时评审两个版本并交换顺序核对"},
   "gap-cluster": { label: "差距归因", role: "Evaluator Analyst", purpose: "按共同失败机制归类回归/失败题目" },
   "gap-advice": { label: "优化建议", role: "Evolution Advisor", purpose: "把验证差距翻译成具体优化动作" },
   "visual-judge": { label: "视觉评审", role: "Visual Judge", purpose: "基于浏览器截图评审 UI/UX 并产出视觉证据" },
@@ -423,7 +424,7 @@ function projectRouteForOperation(operation: AiOperation, profile?: ProjectAiPro
   const operationRoute = profile.operationRoutes?.[operation];
   if (operationRoute) return operationRoute;
   if (operation === "copilot") return profile.copilot ?? profile.primary;
-  if (["evaluate","evaluate-population","eval-suite","rubric","artifact-acceptance","release-review","gap-cluster"].includes(operation)) return profile.judge ?? profile.primary;
+  if (["evaluate","evaluate-paired","evaluate-population","eval-suite","rubric","artifact-acceptance","release-review","gap-cluster"].includes(operation)) return profile.judge ?? profile.primary;
   if (["build-candidate","repair-artifact","materialize","execute-artifact","execute-artifact-batch"].includes(operation)) return profile.builder ?? profile.primary;
   return profile.primary;
 }
@@ -482,7 +483,7 @@ export function applyRoutingPreset(kind: "balanced" | "quality" | "cost" | "inde
   put(["intake", "command", "target", "copilot"], first, model);
   put(["problem-analysis", "diagnose", "distill", "next-queue"], kind === "quality" && second ? second : first, kind === "quality" && second ? secondModel : model);
   put(["plan", "build-candidate", "execute-artifact", "execute-artifact-batch", "materialize", "repair-artifact"], first, model);
-  put(["eval-suite", "rubric", "artifact-acceptance", "release-review", "evaluate", "evaluate-population"], second ?? first, secondModel ?? model);
+  put(["eval-suite", "rubric", "artifact-acceptance", "release-review", "evaluate", "evaluate-paired", "evaluate-population"], second ?? first, secondModel ?? model);
   const next: AiRoutingPolicy = {
     mode: kind === "independent" || second ? "independent-eval" : "specialized",
     operationRoutes,

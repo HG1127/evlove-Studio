@@ -3,9 +3,12 @@ import {campaignRepairLimitStopReason} from "./campaign-control";
 import {candidateWinnerDecision,experimentEvaluationScore} from "./experiment-winner";
 import {finalHoldoutContractFingerprint, finalHoldoutPaperHash} from "./independent-final-holdout";
 import {USER_GOAL_SCOPE_POLICY,userGoalProgress} from "./user-goal-scope";
+import {pairedComparisonBaseline} from "./paired-judge";
 
 function relativeRegressions(project:EvolveProject,candidate:Candidate,result:ExperimentRun["candidateResults"][number]){
-  const baseline=project.baselineRun.result,scores=result.evaluation.criterionScores??[],priorScores=baseline?.criterionScores??[];
+  const original=project.baselineRun.result,comparison=original?pairedComparisonBaseline(project,result.evaluation,original,project.evalSuite,candidate):undefined;
+  const baseline=comparison?.baseline,scores=result.evaluation.criterionScores??[],priorScores=baseline?.criterionScores??[];
+  if(comparison?.blocker)return [];
   if(!baseline||baseline.demoJudged||result.evaluation.demoJudged||result.evaluation.safety!=="PASS"
     ||JSON.stringify(project.experimentRun.comparisonBaseline)!==JSON.stringify(project.baselineRun)
     ||JSON.stringify(project.experimentRun.comparisonSuite)!==JSON.stringify(project.evalSuite)
@@ -33,6 +36,10 @@ function pairedGoalRegressions(project:EvolveProject,result:ExperimentRun["candi
 
 /** Preserve absolute PASS verdicts while explaining a separately proven target regression to mutation AI. */
 export function visibleRepairFeedbackContext(project:EvolveProject,candidate:Candidate,criterionIds:string[],attempt:number){
+  const measured=project.experimentRun.candidateResults.find(r=>r.candidateId===candidate.id);
+  const before=measured&&project.baselineRun?.result?pairedComparisonBaseline(project,measured.evaluation,project.baselineRun.result,project.evalSuite,candidate):undefined;
+  const baseline=before?.baseline;
+  if(before?.blocker)throw Error("Paired Visible measurement is not qualified for a repair");
   const records=project.visibleRepairAttempts?.filter(r=>r.parentCandidateId===candidate.id&&r.attempt===attempt&&r.status==="running")??[];
   if(records.length!==1&&records.some(r=>r.version==="experiment-visible-repair-v3"||r.version==="experiment-visible-repair-v2"&&r.feedbackKind==="relative-target-regression"))throw Error("Ambiguous relative repair claim");
   const record=records.length===1?records[0]:undefined;
@@ -50,7 +57,7 @@ export function visibleRepairFeedbackContext(project:EvolveProject,candidate:Can
     const regressed=pairedGoalRegressions(project,target.result).filter(c=>criterionIds.includes(c.id)
       &&scores.some(s=>s.criterionId===c.id&&s.pass&&s.score>=c.minScore));
     return {kind:record.feedbackKind,comparisons:regressed.map(c=>({criterionId:c.id,minScore:c.minScore,
-      baselineScore:project.baselineRun.result!.criterionScores!.find(s=>s.criterionId===c.id)!.score,
+      baselineScore:baseline!.criterionScores!.find(s=>s.criterionId===c.id)!.score,
       currentScore:scores.find(s=>s.criterionId===c.id)!.score,absoluteMinimumPassed:true}))};
   }
   if(record?.version!=="experiment-visible-repair-v2"||record.feedbackKind!=="relative-target-regression")return {kind:"absolute-criterion-failure" as const,comparisons:[]};
@@ -61,7 +68,7 @@ export function visibleRepairFeedbackContext(project:EvolveProject,candidate:Can
     ||JSON.stringify(qualified.map(c=>c.id))!==JSON.stringify(criterionIds)
     ||JSON.stringify(record.failedCriterionIds)!==JSON.stringify(criterionIds))throw Error("Relative repair requires the unchanged verified paired target regression");
   return {kind:"relative-target-regression" as const,comparisons:qualified.map(criterion=>({criterionId:criterion.id,minScore:criterion.minScore,
-    baselineScore:project.baselineRun.result!.criterionScores!.find(s=>s.criterionId===criterion.id)!.score,
+    baselineScore:baseline!.criterionScores!.find(s=>s.criterionId===criterion.id)!.score,
     currentScore:result.evaluation.criterionScores!.find(s=>s.criterionId===criterion.id)!.score,absoluteMinimumPassed:true}))};
 }
 

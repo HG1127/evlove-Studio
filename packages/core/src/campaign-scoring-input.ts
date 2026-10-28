@@ -25,6 +25,7 @@ export function campaignScoringInputFingerprint(project: EvolveProject): string 
       connectorSnapshot: project.targetConnection.connectorSnapshot && { connectorId: project.targetConnection.connectorSnapshot.connectorId, targetId: project.targetConnection.connectorSnapshot.targetId, versionRef: project.targetConnection.connectorSnapshot.versionRef, snapshotRef: project.targetConnection.connectorSnapshot.snapshotRef, artifactId: project.targetConnection.connectorSnapshot.artifactId },
     },
     executionPolicy: {
+      ...(project.experimentPolicy?.judgeComparison?{judgeComparison:project.experimentPolicy.judgeComparison}:{}),
       ...(project.experimentPolicy?.winnerGoalScope ? { winnerGoalScope: project.experimentPolicy.winnerGoalScope } : {}),
       batchArtifactRuntime: project.experimentPolicy?.batchArtifactRuntime,
       batchSize: project.experimentPolicy?.batchSize,

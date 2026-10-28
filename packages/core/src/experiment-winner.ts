@@ -1,6 +1,7 @@
 import type { Candidate, EvaluationResult, EvolveProject } from "@evolution/contracts";
 import { indexScopedAcceptanceResults } from "./acceptance-result-identity";
 import { originalUserGoalCriteria, USER_GOAL_SCOPE_POLICY, userGoalProgress } from "./user-goal-scope";
+import {pairedComparisonBaseline} from "./paired-judge";
 
 function scoreIndex(project: EvolveProject, evaluation: EvaluationResult) {
   return indexScopedAcceptanceResults([{
@@ -25,7 +26,10 @@ export function experimentEvaluationScore(project: EvolveProject, evaluation: Ev
     + evaluation.riskCoverage * 0.15
     + evaluation.completeness * 0.20
     + (evaluation.safety === "PASS" ? 15 : 4);
-  const objective = evaluation.rubricScore !== undefined ? evaluation.rubricScore * 0.84 + generic * 0.16 : generic;
+  const measuredPair=project.experimentPolicy?.judgeComparison==="paired-two-order-v1"&&evaluation.judgeComparison
+    ?pairedRubricQuality(project,evaluation,evaluation.judgeComparison.baseline):undefined;
+  if(project.experimentPolicy?.judgeComparison==="paired-two-order-v1"&&!measuredPair)return -Infinity;
+  const objective = measuredPair?measuredPair.candidate-measuredPair.baseline:evaluation.rubricScore !== undefined ? evaluation.rubricScore * 0.84 + generic * 0.16 : generic;
   const costPenalty = evaluation.averageCost * 3;
   const latencyPenalty = evaluation.averageLatencyMs / 10_000;
   const uncertaintyPenalty = Math.max(0, 100 - (evaluation.verifiedRubricCoverage ?? 100)) * 0.12;
@@ -88,6 +92,8 @@ export function candidateWinnerDecision(
 ) {
   const blockers: string[] = [];
   const signals: string[] = [];
+  const comparison=pairedComparisonBaseline(project,evaluation,baseline,project.evalSuite,candidate);
+  baseline=comparison.baseline;if(comparison.blocker)blockers.push(comparison.blocker);
   const candidateScores = scoreIndex(project, evaluation);
   const baselineScores = scoreIndex(project, baseline);
   if (candidateScores.duplicateIds.size) blockers.push(`候选评分存在重复 Criterion：${[...candidateScores.duplicateIds].join("、")}；需重新验证`);
