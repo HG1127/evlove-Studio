@@ -6,6 +6,7 @@ import {serverAiBuildContract} from "./server-ai-build-contract";
 import {ServerControlExecutionStoppedError,serverControlExecutionSignal} from "./server-control-execution";
 import {
   AiOperationSchema,
+  LessonDistillationContextSchema,
   ArtifactAcceptanceAiResultSchema,
   CommandAiResultSchema,
   CopilotAiResultSchema,
@@ -363,6 +364,7 @@ export function runServerAi(operation:"visual-judge",payload:unknown,media?:Serv
 export function runServerAi(operation:AiOperation,payload:unknown,media?:ServerAiMedia):Promise<unknown>;
 export function runServerAi(operation:ServerAiOperation,payload:unknown,media?:ServerAiMedia){
   AiOperationSchema.parse(operation);
+  if(operation==="distill")payload=LessonDistillationContextSchema.parse(payload);
   return structured(operation,payload,contract(operation,payload),media);
 }
 

@@ -7,7 +7,7 @@ import {
   type EvolutionWorkflowResult,
   type EvolutionWorkflowRunInput,
 } from "@evolution/contracts";
-import { advanceCampaignScheduleAfterServerRun, applyDeterministicRoundtripEvidence, applyProductionLearningGovernance, campaignGoalSatisfied, campaignStopReason, completeAutonomousMission, integrateDistilledLesson, mapTestsToRubric, materializeAcceptedChampionPackage, mergeGovernedNextQueue, normalizeAcceptanceRubric, normalizeEvalSuiteForProject, ensurePreCandidateHiddenSoftCoverage, productionOutcomeFreshness, productionOutcomeTrend, projectHasStableHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, resetDownstream, rubricSuiteCoverage, rubricValidation } from "@evolution/core";
+import { advanceCampaignScheduleAfterServerRun, applyDeterministicRoundtripEvidence, applyProductionLearningGovernance, campaignGoalSatisfied, campaignStopReason, completeAutonomousMission, integrateDistilledLesson, mapTestsToRubric, materializeAcceptedChampionPackage, mergeGovernedNextQueue, normalizeAcceptanceRubric, normalizeEvalSuiteForProject, ensurePreCandidateHiddenSoftCoverage, productionOutcomeTrend, projectHasStableHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, resetDownstream, rubricSuiteCoverage, rubricValidation } from "@evolution/core";
 import {
   advanceServerCampaignPreparation,
   compactServerSourceArtifacts,
@@ -35,6 +35,7 @@ import {reserveServerMissionFinalPaper,serverFinalPaperExecutionContract} from "
 import { canReuseServerMissionBaseline, runServerMissionBaseline } from "../../apps/backend/src/services/server-baseline";
 import { runServerMissionExperiment } from "../../apps/backend/src/services/server-experiment";
 import {buildServerPlanningDocuments} from "../../apps/backend/src/services/server-planning-documents";
+import {buildServerLessonDistillationPayload} from "../../apps/backend/src/services/server-learning-context";
 import { runServerMissionHoldout } from "../../apps/backend/src/services/server-holdout";
 import { recoverServerAcceptedOfflineChampion, runServerMissionArtifactAcceptance,runServerMissionVisibleRepair } from "../../apps/backend/src/services/server-artifact-acceptance";
 import {hasServerPendingVisibleRepair} from "@evolution/harness";
@@ -1174,22 +1175,14 @@ async function executeServerControlAction(
     if(!distillationSource)throw new FatalError("经验来源缺少 exact Candidate / Validation 绑定，不能提炼");
     const winner=distillationSource.candidate;
     const hasLiveDecision=projectHasLiveReleaseDecision(mission);
-    const releaseFreshness=productionOutcomeFreshness(mission);
     const releaseTrend=productionOutcomeTrend(mission);
     const hasStableLiveOutcome=hasLiveDecision&&mission.release.status==="promoted"&&projectHasStableHealthyProductionOutcome(mission)&&productionGoalReadiness(mission).improved;
     const hasOfflineAcceptance=!projectHasOnlineReleaseTarget(mission)
       &&mission.artifactAcceptance.status==="passed"
       &&mission.artifactAcceptance.candidateId===winner.id;
     if(!hasLiveDecision&&!hasOfflineAcceptance)throw new FatalError("尚未完成可用于经验提炼的成果验收");
-    const parsed=await runServerAi("distill",{
-      project:{goal:mission.goal,command:mission.evolutionCommand,artifacts:compactArtifacts(mission)},
-      baseline:mission.baselineRun.result,
-      winner,
-      validation:distillationSource.validation,
-      release:mission.release,
-      releaseFreshness,
-      releaseTrend,
-    });
+    const learningPayload=await buildServerLessonDistillationPayload(mission,Date.parse(now));
+    const parsed=await runServerAi("distill",learningPayload);
     const lesson=!hasStableLiveOutcome&&parsed.status==="verified-skill"
       ? {...parsed,status:"lesson" as const,validatedOn:[...parsed.validatedOn,hasLiveDecision
         ?`Production Outcome 尚未达到稳定线上证据门槛：${releaseTrend.reason}`

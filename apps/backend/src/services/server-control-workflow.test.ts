@@ -5,11 +5,12 @@ import { buildServerHarnessPlan, serverControlCapabilityWaitPlan, type ServerHar
 import {demoProject} from "../../../../src/features/evolve/data/mock-project";
 import { executeServerControlStep, planMissionStep,prepareScheduledTriggerStep,settleScheduledManualRoundStep } from "../../../../workflows/evolution-mission/steps";
 import {fetchServerAiProviderUsage,withServerAiUsageScope} from "./server-ai-usage";
-import {attachLessonGovernance} from "@evolution/core";
-import {syntheticLearningProject,withMeasuredProductionGoal} from "@evolution/testkit";
+import {attachLessonGovernance,evidenceFingerprint} from "@evolution/core";
+import {learningContextFixture,syntheticLearningProject,withMeasuredProductionGoal} from "@evolution/testkit";
 import {FatalError} from "workflow";
 
-const mocks = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn(), jobGet: vi.fn(), put: vi.fn(), append: vi.fn(), probe: vi.fn(), passive: vi.fn(), ai: vi.fn() }));
+const mocks = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn(), jobGet: vi.fn(), put: vi.fn(), append: vi.fn(), probe: vi.fn(), passive: vi.fn(), ai: vi.fn(), blobs:new Map<string,Blob>() }));
+vi.mock("./artifact-runtime",()=>({getServerArtifactStore:()=>({get:async(id:string)=>mocks.blobs.get(id)})}));
 vi.mock("./production-runtime", () => ({ getServerProductionRuntime: () => ({
   missions: { get: mocks.get, save: mocks.save }, jobs: { get: mocks.jobGet, put: mocks.put }, events: { append: mocks.append },
 }) }));
@@ -31,6 +32,7 @@ const mission = {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  mocks.blobs.clear();
   mocks.get.mockResolvedValue(structuredClone(mission));
   mocks.jobGet.mockResolvedValue(job);
   mocks.probe.mockResolvedValue({ ready: false, status: "unavailable", reasonCode: "customer-verification-required" });
@@ -224,18 +226,21 @@ describe("durable input context for a long HTML document",()=>{
 });
 
 describe("durable learning source at Next Queue",()=>{
-  it.each(["known-source","missing-source","new-winner"])("distillation retains the exact source and existing Release guard (%s)",async mode=>{
+  it.each(["known-source","missing-source","new-winner","stale-validation"])("distillation retains the exact source and existing Release guard (%s)",async mode=>{
     const missingSource=mode==="missing-source";
     const source=syntheticLearningProject(),at=new Date().toISOString();source.release.observedAt=at;
     source.release.observations!.forEach((observation,index)=>observation.at=new Date(Date.parse(at)-(1-index)*60_000).toISOString());
-    const oldCandidate=structuredClone(source.candidates[0]!),oldValidation={...structuredClone(demoProject.validationRun),...source.validationRun};
+    const physical=learningContextFixture();for(const [id,blob]of physical.blobs)mocks.blobs.set(id,blob);
+    const oldCandidate={...physical.current,id:"C1"},oldValidation={...physical.p.validationRun,id:"validation-c1",candidateId:"C1"};
     const p=withMeasuredProductionGoal({...structuredClone(demoProject),...source,id:input.missionId,
-      candidates:[{...oldCandidate,id:"C2"}],experimentRun:{...demoProject.experimentRun,winnerId:mode==="new-winner"?"C2":"C1"},
+      sourceArtifacts:physical.p.sourceArtifacts,candidates:[{...oldCandidate,id:"C2"}],experimentRun:{...demoProject.experimentRun,winnerId:mode==="new-winner"?"C2":"C1"},
       validationRun:{...oldValidation,id:"validation-c2",candidateId:"C2"},
       searchChampion:{...demoProject.searchChampion!,candidate:oldCandidate,validation:missingSource?undefined:oldValidation},lessons:[]});
+    oldValidation.evidenceFingerprint=mode==="stale-validation"?"stale":evidenceFingerprint(p,oldCandidate);
     mocks.get.mockResolvedValue(p);mocks.passive.mockResolvedValue({configured:true,ready:true,status:"ready"});
     mocks.ai.mockImplementation(async(operation:string,payload:unknown)=>{
-      expect(operation).toBe("distill");expect(payload).toMatchObject({winner:{id:"C1"},validation:{id:"validation-c1",candidateId:"C1"}});
+      expect(operation).toBe("distill");expect(payload).toMatchObject({schemaVersion:"lesson-distillation-context-v1",winner:{id:"C1"},validation:{id:"validation-c1",candidateId:"C1"}});
+      expect(JSON.stringify(payload)).not.toMatch(/PRIVATE_.*SENTINEL|artifactSnapshots|independentFinal/);
       return {title:"Synthetic",summary:"source scope",reusable:true,effect:"synthetic",limit:"not transfer",trigger:[],method:[],validatedOn:[],status:"verified-skill"};
     });
     const run=executeServerControlStep(input,{...plan,decision:{action:"distill",stage:"learning",reason:"source qualification"}},0);
@@ -243,6 +248,8 @@ describe("durable learning source at Next Queue",()=>{
       await expect(run).rejects.toThrow("经验来源");expect(mocks.ai).not.toHaveBeenCalled();expect(mocks.save).not.toHaveBeenCalled();
     }else if(mode==="new-winner"){
       await expect(run).rejects.toThrow("尚未完成");expect(mocks.ai).not.toHaveBeenCalled();expect(mocks.save).not.toHaveBeenCalled();
+    }else if(mode==="stale-validation"){
+      await expect(run).rejects.toThrow("Validation");expect(mocks.ai).not.toHaveBeenCalled();expect(mocks.save).not.toHaveBeenCalled();
     }else{
       expect((await run).control).toBe("continue");expect(mocks.ai).toHaveBeenCalledOnce();
       expect(mocks.save.mock.calls[0]?.[0].lessons[0]).toMatchObject({status:"verified-skill",provenance:{candidateId:"C1",validationRunId:"validation-c1"}});
