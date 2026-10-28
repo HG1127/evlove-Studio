@@ -1,6 +1,6 @@
 import type {Sandbox} from "@vercel/sandbox";
 import {z} from "zod";
-import {HTML_NATIVE_OBSERVATION_VERSION,HtmlNativeBrowserAssertionsSchema,HtmlNativeObservationSchema,HtmlNativeStyleComparisonSchema,HtmlNativeSubjectSchema,
+import {HTML_NATIVE_OBSERVATION_VERSION,HTML_NATIVE_STYLE_STATE_POLICY,HtmlNativeBrowserAssertionsSchema,HtmlNativeObservationSchema,HtmlNativeStyleComparisonSchema,HtmlNativeSubjectSchema,
   SandboxHtmlNativeRequestSchema,SandboxHtmlNativeResponseSchema,type SandboxHtmlNativeRequest,type SandboxHtmlNativeResponse} from "@evolution/contracts";
 import {fastHash,isSourceGroundedHtmlSearchPlan,novelHtmlSearchQueries} from "@evolution/core";
 import {HTML_NATIVE_KERNEL_SOURCE} from "./kernel";
@@ -50,7 +50,7 @@ export async function runKnownHtmlNativeProfile(raw:SandboxHtmlNativeRequest,cre
     const measured=parsed.data,original=measured.results.find(row=>row.label==="original"),subject=measured.results.find(row=>row.label==="candidate");
     if(JSON.stringify(measured.browserAssertions)!==JSON.stringify(args.browserAssertions))return unavailable("Native profile declared predicate receipt differs from the requested plan.");
     if(!original||!subject||original.fatal||subject.fatal||original.sha256!==args.expectedOriginalSha256||subject.sha256!==args.expectedSubjectSha256)return unavailable("Native profile result has a missing/mismatched physical subject.");
-    if(measured.styleComparison.some(row=>!row.state||row.state.original.requestedHref!==original.inventory.internalLinks[0]
+    if(measured.styleComparison.some(row=>!row.state||row.state.policy!==HTML_NATIVE_STYLE_STATE_POLICY||row.state.original.requestedHref!==original.inventory.internalLinks[0]
       ||row.state.subject.requestedHref!==original.inventory.internalLinks[0]))return unavailable("Native style comparison lacks its recorded Original navigation binding.");
     const observation=HtmlNativeObservationSchema.parse({
       schemaVersion:HTML_NATIVE_OBSERVATION_VERSION,profileId:identity.profile.id,isolation:"network-denied-ephemeral",observedAt:measured.observedAt,kernelSha256:HTML_NATIVE_KERNEL_SHA256,

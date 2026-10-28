@@ -1,5 +1,5 @@
 import type {HtmlNativeObservation,TargetRunResult} from "@evolution/contracts";
-import {inspectHtmlNativeEvidence} from "@evolution/core";
+import {inspectHtmlNativeEvidence,htmlNativeStyleStateQualification} from "@evolution/core";
 
 export type MeasuredNativeBinding={sourceArtifactId:string;subjectSha256:string;originalSha256?:string};
 export function inspectMeasuredNativeRun(run:TargetRunResult,bindings?:readonly MeasuredNativeBinding[]){
@@ -27,16 +27,14 @@ function facts(native:NonNullable<ReturnType<typeof inspectHtmlNativeEvidence>>)
   return {scope:"known-renderer-physical-observations-only" as const,sourceArtifactId:proof.sourceArtifactId,profileId:o.profileId,
     isolation:o.isolation,observedAt:o.observedAt,kernelSha256:o.kernelSha256,programSignature:o.programSignature,styleSignature:o.styleSignature,
     originalHealthy:native.originalHealthy,profilePass:native.pass,failures:native.failures.map(safeId),
+    ...(o.styleComparison.some(row=>row.state?.policy==="source-navigation-style-v2")?{styleMeasurementPending:native.styleMeasurementPending}:{}),
     declaredBrowserPlanStepCounts:o.browserAssertions?.plans.map(plan=>plan.length)??[],
     retention:o.codeBlockRetention,originalCodeBlocksRetained:o.originalCodeBlocksRetained,originalNamedElementsRetained:o.originalNamedElementsRetained,
     originalInteractiveSequenceRetained:o.originalInteractiveSequenceRetained,originalSlideCardOrderRetained:o.originalSlideCardOrderRetained,
     original:subjectFacts(o.original),subject:subjectFacts(o.subject),
     styleComparison:o.styleComparison.map(row=>({width:row.width,propertyCount:row.propertyCount,namedElementsCompared:row.namedElementsCompared,
       styleGroupsCompared:row.styleGroupsCompared,changedNamedCount:row.changedNamed.length,missingGroupCount:row.missingGroups.length,infiniteAnimations:row.infiniteAnimations,pass:row.pass,
-      ...(row.state?{state:{policy:row.state.policy,
-        originalMatchesSource:row.state.original.locationHref===row.state.original.requestedHref&&row.state.original.activeHref===row.state.original.requestedHref&&row.state.original.focusedHref===row.state.original.requestedHref&&!row.state.original.menuOpen,
-        subjectMatchesSource:row.state.subject.requestedHref===row.state.original.requestedHref&&row.state.subject.locationHref===row.state.original.requestedHref&&row.state.subject.activeHref===row.state.original.requestedHref&&row.state.subject.focusedHref===row.state.original.requestedHref&&!row.state.subject.menuOpen,
-      }}:{})}))};
+      ...(row.state?{state:{policy:row.state.policy,...htmlNativeStyleStateQualification(row.state)}}:{})}))};
 }
 
 /** Project only validated measured facts; never read source bytes, echo source code or assign Criterion scores. */

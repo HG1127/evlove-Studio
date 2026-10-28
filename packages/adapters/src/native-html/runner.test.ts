@@ -17,7 +17,7 @@ function rawResult(){
   const measured=(label:string,sha256:string)=>({label,sha256,inventory,checks:[{id:"initial-card-inventory",pass:true,count:1}],failures:[] as string[],elapsedMs:10,renderedParagraphs:paragraphViews,bodyText:label==="original"?"old":"new_configuration"});
   return {observedAt:"2026-10-23T13:00:00.000Z",results:[measured("original",nativeHtmlSha256(original)),measured("candidate",nativeHtmlSha256(subject))],
     styleComparison:[1440,390].map(width=>({width,propertyCount:50,namedElementsCompared:1,styleGroupsCompared:2,changedNamed:[],missingGroups:[],infiniteAnimations:0,pass:true,
-      state:{policy:"source-navigation-style-v1",original:{requestedHref:"#c01",locationHref:"#c01",activeHref:"#c01",focusedHref:"#c01",menuOpen:false},subject:{requestedHref:"#c01",locationHref:"#c01",activeHref:"#c01",focusedHref:"#c01",menuOpen:false}}}))};
+      state:{policy:"source-navigation-style-v2",original:{requestedHref:"#c01",locationHref:"#c01",activeHref:"#c01",focusedHref:null as string|null,menuOpen:false,focus:{path:"HTML:0/BODY:1",documentFocused:true}},subject:{requestedHref:"#c01",locationHref:"#c01",activeHref:"#c01",focusedHref:null as string|null,menuOpen:false,focus:{path:"HTML:0/BODY:1",documentFocused:true}}}}))};
 }
 function envelope(payload:Uint8Array){return {schemaVersion:"native-html-output-v1",sizeBytes:payload.length,sha256:nativeHtmlSha256(payload),payloadBase64:Buffer.from(payload).toString("base64")};}
 function runtime(result=rawResult(),exitCode=0,wire=envelope(Buffer.from(JSON.stringify(result)))){
@@ -26,15 +26,19 @@ function runtime(result=rawResult(),exitCode=0,wire=envelope(Buffer.from(JSON.st
   return {sandbox,writeFiles,stop,runCommand,create:vi.fn(async()=>sandbox)};
 }
 describe("known isolated native HTML transport",()=>{
-  it.each(["missing","foreign-source","foreign-subject","foreign-equal-target","wrong-active","wrong-location","wrong-focus","open-menu"])("rejects a claimed passing style comparison with %s navigation state",async kind=>{
+  it.each(["missing","missing-focus","legacy-policy","foreign-source","foreign-subject","foreign-equal-target","wrong-active","wrong-location","wrong-focus","wrong-focus-path","wrong-document-focus","open-menu"])("rejects a claimed passing style comparison with %s navigation state",async kind=>{
     const raw=rawResult(),row=raw.styleComparison[0]!;
     if(kind==="missing")delete (row as {state?:unknown}).state;
+    if(kind==="missing-focus")delete (row.state.subject as {focus?:unknown}).focus;
+    if(kind==="legacy-policy"){Object.assign(row.state,{policy:"source-navigation-style-v1"});for(const s of [row.state.original,row.state.subject]){delete (s as {focus?:unknown}).focus;s.focusedHref=s.requestedHref;}}
     if(kind==="foreign-source")row.state.original.requestedHref="#foreign";
     if(kind==="foreign-subject")row.state.subject.requestedHref="#foreign";
     if(kind==="foreign-equal-target")for(const state of [row.state.original,row.state.subject])Object.assign(state,{requestedHref:"#foreign",locationHref:"#foreign",activeHref:"#foreign",focusedHref:"#foreign"});
     if(kind==="wrong-active")row.state.subject.activeHref="#other";
     if(kind==="wrong-location")row.state.subject.locationHref="#other";
     if(kind==="wrong-focus")row.state.subject.focusedHref="#other";
+    if(kind==="wrong-focus-path")row.state.subject.focus.path="HTML:0/BODY:1/BUTTON:0";
+    if(kind==="wrong-document-focus")row.state.subject.focus.documentFocused=false;
     if(kind==="open-menu")row.state.subject.menuOpen=true;
     const vm=runtime(raw),result=await runKnownHtmlNativeProfile(args(),vm.create,profiles);
     expect(result.status).toBe("unavailable");expect(vm.stop).toHaveBeenCalledTimes(1);

@@ -4,6 +4,13 @@ import {measuredNativeObservations} from "./server-measured-native-review";
 import {measuredDocumentObservations} from "./server-measured-review-evidence";
 
 describe("measured native facts for review, never automatic acceptance",()=>{
+  it("projects a matched V2 body focus as qualification booleans without disclosing its DOM path",()=>{
+    const run=htmlNativeEvidenceFixture(),state={requestedHref:"#c01",locationHref:"#c01",activeHref:"#c01",focusedHref:null,menuOpen:false,focus:{path:"HTML:0/BODY:1",documentFocused:true}};
+    for(const row of run.nativeHtmlProof!.observation.styleComparison)row.state={policy:"source-navigation-style-v2",original:structuredClone(state),subject:structuredClone(state)};
+    const facts=measuredNativeObservations([run]).observations[0]!.facts;
+    expect(facts.styleComparison[0]!.state).toEqual({policy:"source-navigation-style-v2",originalMatchesSource:true,subjectMatchesSource:true});
+    expect(JSON.stringify(facts)).not.toContain("HTML:0/BODY:1");
+  });
   it("carries state qualification without raw navigation attributes, and never invents it for legacy observations",()=>{
     const run=htmlNativeEvidenceFixture(),legacy=measuredNativeObservations([run]);
     expect(legacy.observations[0]!.facts.styleComparison[0]).not.toHaveProperty("state");

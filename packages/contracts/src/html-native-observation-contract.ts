@@ -48,21 +48,33 @@ export const HtmlNativeSubjectSchema=z.object({
   renderedParagraphs:z.array(HtmlRenderedParagraphFactsSchema).length(2),
 }).strict();
 
-export const HTML_NATIVE_STYLE_STATE_POLICY="source-navigation-style-v1";
+export const HTML_NATIVE_STYLE_STATE_POLICY="source-navigation-style-v2";
 export const HtmlNativeStyleNavigationStateSchema=z.object({
   requestedHref:z.string().regex(/^#[\w:-]+$/).max(160),locationHref:z.string().max(160),
   activeHref:z.string().max(160).nullable(),focusedHref:z.string().max(160).nullable(),menuOpen:z.boolean(),
 }).strict();
+const focusState=HtmlNativeStyleNavigationStateSchema.extend({focus:z.object({
+  path:z.string().min(1).max(1000).regex(/^[A-Z][A-Z0-9-]*:\d+(?:\/[A-Z][A-Z0-9-]*:\d+)*$/).nullable(),
+  documentFocused:z.boolean(),
+}).strict()});
+export const HtmlNativeStyleStateSchema=z.discriminatedUnion("policy",[
+  z.object({policy:z.literal("source-navigation-style-v1"),original:HtmlNativeStyleNavigationStateSchema,subject:HtmlNativeStyleNavigationStateSchema}).strict(),
+  z.object({policy:z.literal(HTML_NATIVE_STYLE_STATE_POLICY),original:focusState,subject:focusState}).strict(),
+]);
+export type HtmlNativeStyleState=z.infer<typeof HtmlNativeStyleStateSchema>;
 export const HtmlNativeStyleComparisonSchema=z.object({
   width:z.union([z.literal(1440),z.literal(390)]),propertyCount:z.literal(50),
   namedElementsCompared:count,styleGroupsCompared:count,changedNamed:z.array(z.string().max(160)).max(5000),
   missingGroups:z.array(z.string().max(500)).max(5000),infiniteAnimations:count,pass:z.boolean(),
-  state:z.object({policy:z.literal(HTML_NATIVE_STYLE_STATE_POLICY),original:HtmlNativeStyleNavigationStateSchema,subject:HtmlNativeStyleNavigationStateSchema}).strict().optional(),
+  state:HtmlNativeStyleStateSchema.optional(),
 }).strict().superRefine((value,ctx)=>{
   const state=value.state;
   if(state&&value.pass){
     const target=state.original.requestedHref;
-    if([state.original,state.subject].some(s=>s.requestedHref!==target||s.locationHref!==target||s.activeHref!==target||s.focusedHref!==target||s.menuOpen))
+    const navigationMatches=[state.original,state.subject].every(s=>s.requestedHref===target&&s.locationHref===target&&s.activeHref===target&&!s.menuOpen);
+    const focusMatches=state.policy==="source-navigation-style-v1"?[state.original,state.subject].every(s=>s.focusedHref===target):
+      state.subject.focusedHref===state.original.focusedHref&&state.subject.focus.path===state.original.focus.path&&state.subject.focus.documentFocused===state.original.focus.documentFocused;
+    if(!navigationMatches||!focusMatches)
       ctx.addIssue({code:"custom",path:["state"],message:"Passing style comparison requires the same observed source navigation state"});
   }
 });
@@ -86,6 +98,8 @@ export const HtmlNativeObservationSchema=z.object({
   const target=value.original.inventory.internalLinks[0];
   if(value.styleComparison.some(row=>row.state)&&value.styleComparison.some(row=>!row.state))
     ctx.addIssue({code:"custom",path:["styleComparison"],message:"Recorded navigation state must cover both viewports"});
+  if(new Set(value.styleComparison.flatMap(row=>row.state?[row.state.policy]:[])).size>1)
+    ctx.addIssue({code:"custom",path:["styleComparison"],message:"Both viewports must use the same explicit style-state policy"});
   if(value.styleComparison.some(row=>row.state&&[row.state.original,row.state.subject].some(s=>s.requestedHref!==target)))
     ctx.addIssue({code:"custom",path:["styleComparison"],message:"Navigation state must bind the Original's first recorded internal link"});
 });

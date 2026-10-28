@@ -16,6 +16,20 @@ describe("native observation trust boundary",()=>{
     value.state.subject.activeHref="#c02";expect(HtmlNativeStyleComparisonSchema.safeParse(value).success).toBe(false);
     value.pass=false;expect(HtmlNativeStyleComparisonSchema.parse(value).state!.subject.activeHref).toBe("#c02");
   });
+  it("keeps V1 prescribed focus unchanged while V2 compares complete observed focus",()=>{
+    const base=htmlNativeEvidenceFixture().nativeHtmlProof!.observation.styleComparison[0]!,nav={requestedHref:"#c01",locationHref:"#c01",activeHref:"#c01",focusedHref:null,menuOpen:false};
+    const legacy={...base,state:{policy:"source-navigation-style-v1",original:{...nav},subject:{...nav}}};
+    expect(HtmlNativeStyleComparisonSchema.safeParse(legacy).success).toBe(false);
+    expect(HtmlNativeStyleComparisonSchema.parse({...legacy,pass:false}).pass).toBe(false);
+    const current={...base,state:{policy:"source-navigation-style-v2",original:{...nav,focus:{path:"HTML:0/BODY:1",documentFocused:true}},subject:{...nav,focus:{path:"HTML:0/BODY:1",documentFocused:true}}}};
+    expect(HtmlNativeStyleComparisonSchema.parse(current)).toEqual(current);
+    current.state.subject.focus.path="HTML:0/BODY:1/BUTTON:0";expect(HtmlNativeStyleComparisonSchema.safeParse(current).success).toBe(false);
+    expect(HtmlNativeStyleComparisonSchema.parse({...current,pass:false}).pass).toBe(false);
+    current.state.subject.focus.path="HTML:0/BODY:1";current.state.subject.focus.documentFocused=false;
+    expect(HtmlNativeStyleComparisonSchema.safeParse(current).success).toBe(false);
+    const missing=structuredClone(current);delete (missing.state.original as {focus?:unknown}).focus;
+    expect(HtmlNativeStyleComparisonSchema.safeParse(missing).success).toBe(false);
+  });
   it("accepts only a bounded, versioned predicate plan, without arbitrary actions, question prose or duplicate plans",()=>{
     const plan={schemaVersion:"source-grounded-browser-assertions-v1",plans:[[{action:"visible",selector:"#search"}]]};
     expect(HtmlNativeBrowserAssertionsSchema.parse(plan)).toEqual(plan);

@@ -9,6 +9,27 @@ const test=TestCaseSchema.parse({id:"native-case",title:"保护测试",input:"�
 const judge=[{criterionId:criterion.id,score:99,pass:true,evidence:["Independent semantic review"],gaps:[],testCaseIds:[test.id]}];
 
 describe("bound native HTML evidence",()=>{
+  it.each(["matched-body-focus","different-focus","independent-code-loss","computed-style-loss"])("qualifies V2 %s without inventing a new artifact failure or losing an independent one",kind=>{
+    const run=htmlNativeEvidenceFixture(),o=run.nativeHtmlProof!.observation;
+    const state={requestedHref:"#c01",locationHref:"#c01",activeHref:"#c01",focusedHref:null,menuOpen:false,focus:{path:"HTML:0/BODY:1",documentFocused:true}};
+    for(const row of o.styleComparison)row.state={policy:"source-navigation-style-v2",original:structuredClone(state),subject:structuredClone(state)};
+    if(kind==="different-focus"||kind==="independent-code-loss"){
+      const row=o.styleComparison[0]!;if(row.state?.policy!=="source-navigation-style-v2")throw Error('Missing V2 fixture');
+      row.state.subject.focus.path="HTML:0/BODY:1/BUTTON:0";row.pass=false;
+    }
+    if(kind==="independent-code-loss"){
+      o.originalCodeBlocksRetained=false;o.codeBlockRetention={policy:"original-text-with-numbered-instruction-append-v1",originalCount:57,retainedCount:55,exactCount:55,extendedInstructionCount:0,retained:false};
+    }
+    if(kind==="computed-style-loss"){o.styleComparison[0]!.changedNamed=["source-element"];o.styleComparison[0]!.pass=false;}
+    const result=inspectHtmlNativeEvidence(run,test.id);
+    if(kind==="matched-body-focus")expect(result).toMatchObject({originalHealthy:true,complete:true,pass:true,styleMeasurementPending:false});
+    if(kind==="different-focus")expect(result).toMatchObject({originalHealthy:true,complete:false,pass:false,styleMeasurementPending:true,failures:[]});
+    if(kind==="independent-code-loss"){
+      expect(result).toMatchObject({complete:true,pass:false,styleMeasurementPending:true,failures:["original-code-block-loss"]});
+      expect(deriveCriterionScores([criterion],[test],[],[run],judge).criterionScores[0]).toMatchObject({score:0,pass:false,verificationStatus:"verified"});
+    }
+    if(kind==="computed-style-loss")expect(result).toMatchObject({complete:true,pass:false,styleMeasurementPending:false,failures:["rendered-style-1440"]});
+  });
   it.each(["candidate-state","original-state","missing-viewport","foreign-target"])("keeps %s style-state evidence truthful",kind=>{
     const run=htmlNativeEvidenceFixture(),o=run.nativeHtmlProof!.observation;
     const state={requestedHref:"#c01",locationHref:"#c01",activeHref:"#c01",focusedHref:"#c01",menuOpen:false};

@@ -1,8 +1,8 @@
 import {DOCUMENT_TEXT_OBSERVATION_MAX_CHARS,type TargetRunResult} from "@evolution/contracts";
 import {inspectMeasuredNativeRun,measuredNativeObservations,type MeasuredNativeBinding} from "./server-measured-native-review";
 
-export const SERVER_MEASURED_REVIEW_VERSION = "server-measured-document-review-v5-source-navigation-style";
-export const SERVER_NATIVE_REVIEW_INSTRUCTION="Read nativeObservations as measured physical facts bound to their own source, hashes and testCaseIds. Excluding raw scripts/styles does not erase observed interactions, script/style signatures or computed-style comparisons. Computed styles cover their recorded navigation state, not every possible active, hover or focus state; legacy observations without that receipt do not establish a matched navigation state. A profile pass is not a semantic, pixel-visual or overall Criterion pass; it does not replace another test's explicit assertions. Missing, omitted or out-of-scope evidence remains unknown.";
+export const SERVER_MEASURED_REVIEW_VERSION = "server-measured-document-review-v6-observed-focus-style";
+export const SERVER_NATIVE_REVIEW_INSTRUCTION="Read nativeObservations as measured physical facts bound to their own source, hashes and testCaseIds. Excluding raw scripts/styles does not erase observed interactions, script/style signatures or computed-style comparisons. Computed styles cover their recorded navigation state, not every possible active, hover or focus state; legacy observations without that receipt do not establish a matched navigation state. Unmatched V2 focus is pending comparable-style evidence, not proof of changed CSS; independently measured functional or code loss remains a failure. A profile pass is not a semantic, pixel-visual or overall Criterion pass; it does not replace another test's explicit assertions. Missing, omitted or out-of-scope evidence remains unknown.";
 
 /** Reuse only existing document observations. No Artifact/Source reads or raw HTML reconstruction. */
 export function measuredDocumentObservations(runs: TargetRunResult[], budget = DOCUMENT_TEXT_OBSERVATION_MAX_CHARS,bindings?:readonly MeasuredNativeBinding[]) {

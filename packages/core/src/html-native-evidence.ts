@@ -1,9 +1,22 @@
-import {HtmlNativeRunProofSchema,HtmlRenderedDocumentEvidenceSchema,type EvolveProject,type TargetRunResult,type TestCase} from "@evolution/contracts";
+import {HtmlNativeRunProofSchema,HtmlRenderedDocumentEvidenceSchema,type EvolveProject,type HtmlNativeStyleState,type TargetRunResult,type TestCase} from "@evolution/contracts";
 import {fastHash} from "./stable-hash";
 import {criterionCanUseLocalSnapshotEvidence} from "./criterion-evidence";
 import {htmlNativeBrowserPlanKey,isSourceGroundedHtmlSearchPlan} from "./html-native-browser-assertions";
 
-export const HTML_NATIVE_EVIDENCE_POLICY_VERSION="html-native-evidence-v4-source-navigation-style";
+export const HTML_NATIVE_EVIDENCE_POLICY_VERSION="html-native-evidence-v5-observed-focus-style";
+
+/** Compare measured focus with its Source reference; V1 retains its old prescribed-focus meaning. */
+export function htmlNativeStyleStateQualification(state:HtmlNativeStyleState){
+  const target=state.original.requestedHref;
+  const navigated=(s:HtmlNativeStyleState["original"])=>s.requestedHref===target&&s.locationHref===target&&s.activeHref===target&&!s.menuOpen;
+  if(state.policy==="source-navigation-style-v1")return {
+    originalMatchesSource:navigated(state.original)&&state.original.focusedHref===target,
+    subjectMatchesSource:navigated(state.subject)&&state.subject.focusedHref===target,
+  };
+  return {originalMatchesSource:navigated(state.original),subjectMatchesSource:navigated(state.subject)
+    &&state.subject.focusedHref===state.original.focusedHref&&state.subject.focus.path===state.original.focus.path
+    &&state.subject.focus.documentFocused===state.original.focus.documentFocused};
+}
 
 const protectedIds=new Set(["PROTECT-ALL","SYS-INTEGRITY","ART-1-STRUCTURE","SEM-CROSS-CONSISTENCY"]);
 const fixedChecks=["initial-card-inventory","search-positive","search-negative","search-reset","mobile-menu-opens","mobile-menu-closes-on-navigation",
@@ -68,21 +81,26 @@ export function inspectHtmlNativeEvidence(run:TargetRunResult,testCaseId:string,
   };
   if(!complete(observation.original,false)||!complete(observation.subject,true))return undefined;
   const styles=observation.styleComparison;
-  const navigationReady=(state:NonNullable<typeof styles[number]["state"]>["original"],target=state.requestedHref)=>state.requestedHref===target
-    &&state.locationHref===target&&state.activeHref===target&&state.focusedHref===target&&!state.menuOpen;
+  const stateReady=(state:HtmlNativeStyleState)=>{const q=htmlNativeStyleStateQualification(state);return q.originalMatchesSource&&q.subjectMatchesSource;};
   if(styles.map(row=>row.width).sort((a,b)=>a-b).join(",")!=="390,1440"
     ||styles.some(row=>row.namedElementsCompared<observation.originalNamedElementCount||!row.styleGroupsCompared
       ||row.pass!==(row.changedNamed.length===0&&row.missingGroups.length===0&&row.infiniteAnimations===0
-        &&(!row.state||navigationReady(row.state.original)&&navigationReady(row.state.subject,row.state.original.requestedHref)))))return undefined;
+        &&(!row.state||stateReady(row.state)))))return undefined;
   const originalHealthy=observation.original.checks.every(check=>check.pass)&&observation.original.inventory.unknownControls.length===0
-    &&styles.every(row=>!row.state||navigationReady(row.state.original));
-  const failures=[...observation.subject.failures,...styles.filter(row=>!row.pass).map(row=>"rendered-style-"+row.width),
+    &&styles.every(row=>!row.state||htmlNativeStyleStateQualification(row.state).originalMatchesSource);
+  const pendingStyles=styles.filter(row=>row.state?.policy==="source-navigation-style-v2"&&!stateReady(row.state));
+  const subjectFailures=observation.subject.failures.filter(id=>!pendingStyles.length||!id.startsWith("style-comparison-"));
+  const failures=[...subjectFailures,...styles.filter(row=>!row.pass&&!pendingStyles.includes(row)).map(row=>"rendered-style-"+row.width),
     ...(!observation.originalCodeBlocksRetained?["original-code-block-loss"]:[]),
     ...(!observation.originalNamedElementsRetained?["original-named-identity-loss"]:[]),
     ...(!observation.originalInteractiveSequenceRetained?["original-interactive-sequence-loss"]:[]),
     ...(!observation.originalSlideCardOrderRetained?["original-slide-order-loss"]:[])];
-  return {proof,document:body,originalHealthy,failures,
+  const independentFailure=subjectFailures.length>0||styles.some(row=>!row.pass&&!pendingStyles.includes(row))
+    ||!observation.originalCodeBlocksRetained&&retention?.retained===false||!observation.originalNamedElementsRetained
+    ||!observation.originalInteractiveSequenceRetained||!observation.originalSlideCardOrderRetained;
+  return {proof,document:body,originalHealthy,failures,styleMeasurementPending:pendingStyles.length>0,
     // Valid counts can prove loss. Missing retention detail remains partial; a measured defect is not a missing capability.
-    complete:originalHealthy&&observation.subject.inventory.unknownControls.length===0&&(observation.originalCodeBlocksRetained||retention!==undefined),
-    pass:originalHealthy&&failures.length===0&&observation.originalCodeBlocksRetained};
+    complete:originalHealthy&&observation.subject.inventory.unknownControls.length===0&&(observation.originalCodeBlocksRetained||retention!==undefined)
+      &&(!pendingStyles.length||independentFailure),
+    pass:originalHealthy&&failures.length===0&&observation.originalCodeBlocksRetained&&!pendingStyles.length};
 }
