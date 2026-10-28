@@ -7,7 +7,7 @@ import type {
   TestCase,
   OriginalArtifactReferenceProof,
 } from "@evolution/contracts";
-import {OriginalArtifactReferenceProofSchema} from "@evolution/contracts";
+import {CompletedBaselineFailureSchema,OriginalArtifactReferenceProofSchema} from "@evolution/contracts";
 import {
   baselineReadiness,
   campaignLiveObservationFresh,
@@ -36,7 +36,7 @@ import { indexUniqueBatchResults } from "./server-batch-results";
 import {groundedOriginalCitationDefect,groundedOriginalDocumentProtection} from "./server-grounded-baseline-defect";
 import {collectServerHtmlNativeRuns,bindServerHtmlNativeOriginalReferences,serverHtmlNativeRunsMatchOriginal,type ServerHtmlNativePort} from "./server-html-native-runs";
 import { serverExperimentRecoveryCheckpoint } from "./server-experiment-wait";
-import { plannedBaselineRefresh, samePlannedOriginalReferences } from "./server-planned-baseline";
+import { failedPlannedBaselineRefresh, plannedBaselineRefresh, samePlannedOriginalReferences } from "./server-planned-baseline";
 import {currentHtmlDocumentTextObservation} from "./server-current-document-evidence";
 import {measuredDocumentObservations,SERVER_MEASURED_REVIEW_VERSION,SERVER_NATIVE_REVIEW_INSTRUCTION} from "./server-measured-review-evidence";
 
@@ -50,6 +50,7 @@ export function serverCampaignScoringRouteBlocker(project: EvolveProject, routeF
 }
 /** A ready score is reusable only for the exact current Target, tests, Champion and Server AI route. */
 export function canReuseServerBaseline(project: EvolveProject, routeFingerprint?: string, nowMs = Date.now()): boolean {
+  if (project.baselineRun.plannedRefresh) return false;
   if (campaignObservesLiveTarget(project) && (project.campaign.checkpoint?.round !== project.campaign.currentRound + 1
     || !campaignLiveObservationFresh(project, project.baselineRun.completedAt, nowMs))) return false;
 
@@ -115,7 +116,8 @@ export async function runServerBaseline(
   const now = options?.now ?? (() => new Date().toISOString());
   const startedAt = now();
   const experimentCheckpoint = serverExperimentRecoveryCheckpoint(inputProject) ? inputProject.campaign.checkpoint : undefined;
-  const plannedRefresh = experimentCheckpoint ? undefined : plannedBaselineRefresh(inputProject, ports.scoringRouteFingerprint);
+  const plannedRefresh = experimentCheckpoint && !inputProject.baselineRun.plannedRefresh ? undefined
+    : plannedBaselineRefresh(inputProject, ports.scoringRouteFingerprint, startedAt);
   const scoringBlocker = campaignScoringInputBlocker(inputProject) ?? serverCampaignScoringRouteBlocker(inputProject, ports.scoringRouteFingerprint)
     ?? plannedRefresh?.blocker;
   if (scoringBlocker) {
@@ -157,18 +159,25 @@ export async function runServerBaseline(
       result: undefined,
       originalReferences:undefined,referenceOnlyCriterionIds:undefined,
       measurementFingerprint: serverBaselineFingerprint(inputProject, ports.scoringRouteFingerprint),
+      plannedRefresh: plannedRefresh?.continuation,
     },
     stage: "baseline",
     updatedAt: startedAt,
   };
 
-  const ordered = await collectServerHtmlNativeRuns(project,project.evalSuite,ports);
+  let unsettledExecution = false;
+  const ordered = await collectServerHtmlNativeRuns(project,project.evalSuite,ports,undefined,
+    plannedRefresh?.checkpoint ? error => { unsettledExecution ||= !CompletedBaselineFailureSchema.safeParse(error).success; } : undefined);
   let currentArtifactContext:Array<Record<string,unknown>>=[];
   let referenceOnlyCriterionIds=new Set<string>();
   let originalReferences:OriginalArtifactReferenceProof[]=[];
   const semanticCases: TestCase[] = [];
   const externalCases: TestCase[] = [];
   for (const testCase of project.evalSuite) {
+    if (unsettledExecution && plannedRefresh?.checkpoint) {
+      ordered.set(testCase.id, unavailableBaselineRun(testCase, "原生 HTML 执行的服务端状态尚未确认，停止后续调用。"));
+      continue;
+    }
     // Native observations still need the complete physical Original references
     // gathered below before a baseline may be locked.
     if(ordered.has(testCase.id)){semanticCases.push(testCase);continue;}
@@ -209,13 +218,14 @@ export async function runServerBaseline(
             : byId.get(testCase.id) ?? unavailableBaselineRun(testCase, "Server External Runner 没有返回本题结果。"));
         }
       } catch (error) {
+        unsettledExecution ||= !CompletedBaselineFailureSchema.safeParse(error).success;
         const message = error instanceof Error ? error.message : String(error);
         for (const testCase of externalCases) ordered.set(testCase.id, unavailableBaselineRun(testCase, `Server External Runner 未完成：${message}`));
       }
     }
   }
 
-  if (semanticCases.length) {
+  if (semanticCases.length && !(plannedRefresh?.checkpoint && unsettledExecution)) {
     const semanticStarted=Date.now();
     try {
       const artifactContext=await currentSemanticArtifactContext(project,ports.buildCurrentArtifactContext,semanticCases);
@@ -257,6 +267,7 @@ export async function runServerBaseline(
         }
       }
     } catch(error) {
+      unsettledExecution ||= !CompletedBaselineFailureSchema.safeParse(error).success;
       bindServerHtmlNativeOriginalReferences(ordered,originalReferences,project.id);
       const message=error instanceof Error?error.message:String(error);
       // A later provider failure must never erase already grounded source evidence.
@@ -268,14 +279,16 @@ export async function runServerBaseline(
   }
   const runs = project.evalSuite.map((testCase) => ordered.get(testCase.id) ?? unavailableBaselineRun(testCase, "Baseline 执行未返回结果。"));
   const evaluableRuns = runs.filter((run) => run.verificationStatus === "verified" || run.verificationStatus === "partial");
-  if (!evaluableRuns.length) {
-    const baseline: BaselineRun = {
+  if (!evaluableRuns.length || plannedRefresh?.checkpoint && unsettledExecution) {
+    const baseline: BaselineRun = failedPlannedBaselineRefresh({
       ...project.baselineRun,
       status: "failed",
       completedAt: now(),
       runs,
-    };
-    const reason = "[server-campaign-baseline-evidence-pending] Server Baseline 没有获得任何 VERIFIED/PARTIAL 证据；禁止进入诊断。";
+    }, "evidence", now(), unsettledExecution ? "unsettled" : "retryable");
+    const reason = plannedRefresh?.checkpoint && unsettledExecution
+      ? "[server-campaign-baseline-execution-unsettled] 上次执行的服务端状态尚未确认；保留原规划与证据，不重复调用。"
+      : "[server-campaign-baseline-evidence-pending] Server Baseline 没有获得任何 VERIFIED/PARTIAL 证据；禁止进入诊断。";
     const nextProject = {
       ...project,
       baselineRun: baseline,
@@ -373,13 +386,15 @@ export async function runServerBaseline(
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const baseline: BaselineRun = {
+    const baseline: BaselineRun = failedPlannedBaselineRefresh({
       ...project.baselineRun,
       status: "failed",
       completedAt: now(),
       runs,
-    };
-    const reason = `[server-campaign-baseline-judge-pending] Baseline 执行已有证据，但独立 Server Judge 未完成：${message}`;
+    }, "judge", now(), CompletedBaselineFailureSchema.safeParse(error).success ? "retryable" : "unsettled");
+    const reason = baseline.plannedRefresh?.status === "unsettled"
+      ? "[server-campaign-baseline-judge-unsettled] 上次评审的服务端状态尚未确认；保留原规划与证据，不重复调用。"
+      : `[server-campaign-baseline-judge-pending] Baseline 执行已有证据，但独立 Server Judge 未完成：${message}`;
     const nextProject = {
       ...project,
       baselineRun: baseline,
@@ -398,7 +413,7 @@ export async function runServerBaseline(
     ?{...score,gaps:["当前 Baseline 只观察原版或当前版本，尚无本次 Candidate 的双侧对照证据；保持未验证，不宣告改进或保护项通过"],
       testCaseIds:project.evalSuite.filter(test=>test.criterionIds.includes(score.criterionId)).map(test=>test.id)}
     :score)};
-  const baseline: BaselineRun = {
+  let baseline: BaselineRun = {
     ...project.baselineRun,
     status: "completed",
     completedAt: now(),
@@ -423,7 +438,7 @@ export async function runServerBaseline(
   const hardGateGaps = project.acceptanceRubric.filter((criterion) =>
     criterion.hardGate && criterion.id !== "SYS-PAIRWISE"&&!referenceOnlyCriterionIds.has(criterion.id)
     && criterionById.get(criterion.id)?.verificationStatus !== "verified");
-  const measured: EvolveProject = {
+  let measured: EvolveProject = {
     ...project,
     baselineRun: baseline,
     campaign: {
@@ -436,6 +451,8 @@ export async function runServerBaseline(
   };
   const readiness = baselineReadiness(measured);
   if (requiredCapabilityGaps.length || hardGateGaps.length || !readiness.ready) {
+    baseline = failedPlannedBaselineRefresh(baseline, "evidence", now(), "retryable");
+    measured = { ...measured, baselineRun: baseline };
     const details = [
       ...readiness.blockers,
       ...(requiredCapabilityGaps.length ? [`未完成真实执行：${requiredCapabilityGaps.map((item) => item.id).join("、")}`] : []),
@@ -466,7 +483,9 @@ export async function runServerBaseline(
   }
 
   const checkpointAt = now();
-  if (plannedRefresh?.checkpoint && !samePlannedOriginalReferences(inputProject.baselineRun.originalReferences, baseline.originalReferences)) {
+  if (plannedRefresh?.checkpoint && !samePlannedOriginalReferences(plannedRefresh.continuation.originalReferences, baseline.originalReferences)) {
+    baseline = failedPlannedBaselineRefresh(baseline, "original-binding", checkpointAt, "retryable");
+    measured = { ...measured, baselineRun: baseline };
     const reason = "[server-campaign-planned-original-changed] 重测发现 Original 文件绑定变化；保留 Candidate 与原终验并停止，不自动重新规划。";
     const paused: EvolveProject = { ...measured, stage: inputProject.stage, campaign: {
       ...measured.campaign, status: "paused", stopReason: reason,
@@ -474,6 +493,7 @@ export async function runServerBaseline(
     }, updatedAt: checkpointAt };
     return { project: paused, baseline, ready: false, reason, capabilityGaps: ["server-planned-original"] };
   }
+  if (plannedRefresh?.checkpoint) { baseline = { ...baseline, plannedRefresh: undefined }; measured = { ...measured, baselineRun: baseline }; }
   // Both a committed Plan and frozen recovery continue with the freshly measured comparison.
   const readyProject: EvolveProject = {
     ...measured,

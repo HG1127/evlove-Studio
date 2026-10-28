@@ -3,6 +3,7 @@ import {ProductionGoalEvidenceSchema} from "./production-goal-evidence";
 import {BusinessBenefitPolicySchema} from "./business-benefit-contract";
 import {FailureObservationSourcesSchema,FailureObservationUseSchema} from "./failure-observation-contract";
 import {OriginalArtifactReferenceProofSchema} from "./original-reference-contract";
+import {PlannedBaselineRefreshSchema} from "./planned-baseline-refresh-contract";
 import { GitRepositoryBindingSchema, GitTargetSnapshotBindingSchema } from "./git-target-contract";
 import {HtmlNativeRunProofSchema,HtmlRenderedDocumentEvidenceSchema} from "./html-native-observation-contract";
 import {ConnectorCandidateBindingSchema,ConnectorTargetBindingSchema,ConnectorTargetSnapshotBindingSchema} from "./connector-contract";
@@ -581,6 +582,7 @@ export const EvaluationResultSchema = z.object({
 export type EvaluationResult = z.infer<typeof EvaluationResultSchema>;
 
 export const BaselineRunSchema = z.object({
+  plannedRefresh:PlannedBaselineRefreshSchema.optional(),
   originalReferences:z.array(OriginalArtifactReferenceProofSchema).optional(),
   referenceOnlyCriterionIds:z.array(z.string().min(1)).optional(),
   measurementFingerprint: z.string().optional(),

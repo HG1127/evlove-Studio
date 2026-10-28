@@ -247,8 +247,7 @@ async function callResponses<T>(args:{operation:AiOperation;config:Extract<Serve
     }),
   });
   const response=request.response;
-  const json=await response.json().catch(()=>({})) as ResponsesJson;
-  await request.observe(json);
+  const json=await request.readJson() as ResponsesJson;
   if(!response.ok){
     const error=Object.assign(new Error(json.error?.message||("Server AI Responses HTTP "+response.status)),{httpStatus:response.status});
     throw error;
@@ -285,8 +284,7 @@ async function callChat<T>(args:{operation:AiOperation;config:Extract<ServerAiCo
     }),
   });
   const response=request.response;
-  const json=await response.json().catch(()=>({})) as ChatJson;
-  await request.observe(json);
+  const json=await request.readJson() as ChatJson;
   if(!response.ok)throw Object.assign(new Error(json.error?.message||("Server AI Chat HTTP "+response.status)),{httpStatus:response.status});
   return parseStructuredResult(chatText(json),args.contract);
 }

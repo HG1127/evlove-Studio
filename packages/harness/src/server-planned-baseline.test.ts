@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { CandidateSchema, TestCaseSchema, type EvolveProject } from "@evolution/contracts";
+import { CandidateSchema, EvolveProjectSchema, TestCaseSchema, type EvolveProject } from "@evolution/contracts";
 import { finalHoldoutContractFingerprint, finalHoldoutPaperHash } from "@evolution/core";
 import { experimentRecoveryAt, experimentRecoveryFixture } from "@evolution/testkit";
 import { canReuseServerBaseline, runServerBaseline } from "./server-baseline";
@@ -9,6 +9,7 @@ import { advanceServerCampaignPreparation } from "./server-campaign-preparation"
 
 const route = "unchanged-scoring-route", later = new Date(Date.parse(experimentRecoveryAt) + 11 * 60_000).toISOString();
 const ids = ["CONTENT", "DETAIL", "CONSISTENCY"];
+const rejectedRequest = () => Object.assign(Error("temporary request rejection"), { httpStatus: 429 });
 function planned() {
   const p = experimentRecoveryFixture().project;
   p.acceptanceRubric = ids.map((id, index) => ({ ...p.acceptanceRubric[0]!, id, title: id, weight: index === 0 ? 34 : 33 }));
@@ -104,6 +105,35 @@ describe("Baseline refresh after committed planning", () => {
     expect(result.project.campaign.checkpoint).toEqual(p.campaign.checkpoint);
   });
 
+  it("can explicitly retry a persisted transient refresh failure without creating another Plan", async () => {
+    const p = EvolveProjectSchema.parse(planned()), io = ports();
+    p.finalHoldout!.contractFingerprint = finalHoldoutContractFingerprint(p);
+    p.baselineRun.measurementFingerprint = serverBaselineFingerprint(p, route);
+    p.campaign.startedAt = experimentRecoveryAt;
+    p.campaign.stopCriteria.maxWallMinutes = 30;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.parse(later));
+    try {
+      io.judge.mockRejectedValueOnce(rejectedRequest());
+      const failed = await runServerBaseline(p, io, { now: () => later });
+      expect(failed.ready).toBe(false);
+      expect(failed.baseline.status).toBe("failed");
+      expect(failed.baseline.plannedRefresh).toMatchObject({ status: "retryable", failureKind: "judge" });
+      const persisted = EvolveProjectSchema.parse(JSON.parse(JSON.stringify(failed.project)));
+      const retryAt = new Date(Date.parse(later) + 60_000).toISOString(); clock.mockReturnValue(Date.parse(retryAt));
+      const recovered = await runServerBaseline(persisted, io, { now: () => retryAt });
+      expect(recovered.ready).toBe(true);
+      expect(io.judge).toHaveBeenCalledTimes(2);
+      expect(recovered.baseline.plannedRefresh).toBeUndefined();
+      expect(recovered.project.stage).toBe("plan");
+      expect(recovered.project.candidates).toEqual(p.candidates);
+      expect(recovered.project.finalHoldout).toEqual(p.finalHoldout);
+      expect(recovered.project.campaign.checkpoint).toEqual(p.campaign.checkpoint);
+      expect(recovered.project.campaign.startedAt).toBe(p.campaign.startedAt);
+      expect(recovered.project.campaign.stopCriteria).toEqual(p.campaign.stopCriteria);
+      expect(recovered.project.artifactAcceptance.attempts).toBe(p.artifactAcceptance.attempts);
+    } finally { clock.mockRestore(); }
+  });
+
   it("records a changed physical Original but stops before the existing Plan can consume it", async () => {
     const p = planned(), base = ports();
     p.sourceArtifacts[0]!.storageRef = "original";
@@ -124,6 +154,130 @@ describe("Baseline refresh after committed planning", () => {
     expect(result.project.candidates).toEqual(p.candidates);
     expect(result.project.finalHoldout).toEqual(p.finalHoldout);
     expect(result.project.campaign.checkpoint).toEqual(p.campaign.checkpoint);
+    expect(result.baseline.plannedRefresh).toMatchObject({ status: "retryable", failureKind: "original-binding", originalReferences: [old] });
+  });
+
+  it.each([
+    ["unknown running attempt", (p: EvolveProject) => {
+      p.baselineRun.plannedRefresh!.status = "refreshing";
+      delete p.baselineRun.plannedRefresh!.failedAt; delete p.baselineRun.plannedRefresh!.failureKind;
+    }],
+    ["orphaned receipt", (p: EvolveProject) => { p.campaign.checkpoint = undefined; }],
+    ["changed plan fingerprint", (p: EvolveProject) => { p.baselineRun.plannedRefresh!.planFingerprint = "changed"; }],
+    ["failure timestamp still in the future", (p: EvolveProject) => { p.baselineRun.plannedRefresh!.failedAt = new Date(Date.parse(later) + 60_000).toISOString(); }],
+    ["changed Candidate contents", (p: EvolveProject) => { p.candidates[0]!.change += "different instructions"; }],
+    ["extended budget", (p: EvolveProject) => { p.campaign.stopCriteria.maxWallMinutes = 60; }],
+    ["changed checkpoint", (p: EvolveProject) => { p.campaign.checkpoint!.at = later; }],
+    ["changed Original receipt", (p: EvolveProject) => {
+      p.baselineRun.plannedRefresh!.originalReferences = [{ schemaVersion: "original-artifact-reference-v1", missionId: p.id,
+        sourceArtifactId: "source", blobId: "original", sha256: "a".repeat(64), sizeBytes: 40 }];
+    }],
+  ] as const)("blocks recovery after %s before calling an external service", async (_label, change) => {
+    const p = planned(), failedPorts = ports(); failedPorts.judge.mockRejectedValueOnce(rejectedRequest());
+    const failed = await runServerBaseline(p, failedPorts, { now: () => later });
+    expect(failed.baseline.plannedRefresh?.status).toBe("retryable");
+    change(failed.project);
+    const retryPorts = ports(), retry = await runServerBaseline(failed.project, retryPorts, { now: () => later });
+    expect(retry.ready).toBe(false);
+    expect(retryPorts.judge).not.toHaveBeenCalled();
+    expect(retryPorts.executeExternalBatch).not.toHaveBeenCalled();
+    expect(retry.project.candidates).toEqual(failed.project.candidates);
+    expect(retry.project.finalHoldout).toEqual(failed.project.finalHoldout);
+  });
+
+  it("does not treat a pending continuation as reusable even when someone attaches positive scores", async () => {
+    const p = planned(), io = ports(); io.judge.mockRejectedValueOnce(Error("temporary failure"));
+    const failed = await runServerBaseline(p, io, { now: () => later });
+    const pending = { ...failed.project, baselineRun: { ...p.baselineRun, completedAt: later, plannedRefresh: failed.baseline.plannedRefresh } };
+    expect(canReuseServerBaseline(pending, route, Date.parse(later))).toBe(false);
+  });
+
+  it.each(["execution", "incomplete-review"] as const)("can retry a persisted %s gap without changing the Plan", async kind => {
+    const p = EvolveProjectSchema.parse(planned()), io = ports();
+    p.finalHoldout!.contractFingerprint = finalHoldoutContractFingerprint(p);
+    p.baselineRun.measurementFingerprint = serverBaselineFingerprint(p, route);
+    if (kind === "execution") io.executeExternalBatch.mockRejectedValueOnce(rejectedRequest());
+    else io.judge.mockResolvedValueOnce({ accuracy: 70, evidence: 80, riskCoverage: 80, completeness: 70, safety: "PASS", notes: [], failures: [], cases: [], criteria: [] });
+    const failed = await runServerBaseline(p, io, { now: () => later });
+    expect(failed.ready).toBe(false);
+    expect(failed.baseline.plannedRefresh).toMatchObject({ status: "retryable", failureKind: "evidence" });
+    expect(canReuseServerBaseline(failed.project, route, Date.parse(later) + 1)).toBe(false);
+    const persisted = EvolveProjectSchema.parse(JSON.parse(JSON.stringify(failed.project)));
+    const retry = await runServerBaseline(persisted, io, { now: () => new Date(Date.parse(later) + 60_000).toISOString() });
+    expect(retry.ready).toBe(true);
+    expect(retry.project.candidates).toEqual(p.candidates);
+    expect(retry.project.campaign.checkpoint).toEqual(p.campaign.checkpoint);
+    expect(retry.project.finalHoldout).toEqual(p.finalHoldout);
+    expect(retry.baseline.plannedRefresh).toBeUndefined();
+  });
+
+  it("does not restart the original clock when a persisted refresh is retried", async () => {
+    const p = planned(), io = ports(); p.campaign.startedAt = experimentRecoveryAt; p.campaign.stopCriteria.maxWallMinutes = 30;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.parse(later));
+    try {
+      io.judge.mockRejectedValueOnce(rejectedRequest());
+      const failed = await runServerBaseline(p, io, { now: () => later });
+      expect(plannedBaselineRefresh(failed.project, route, later)?.checkpoint).toEqual(p.campaign.checkpoint);
+      const expired = new Date(Date.parse(experimentRecoveryAt) + 31 * 60_000).toISOString(); clock.mockReturnValue(Date.parse(expired));
+      const retryPorts = ports(), retry = await runServerBaseline(failed.project, retryPorts, { now: () => expired });
+      expect(retry.ready).toBe(false);
+      expect(retryPorts.executeExternalBatch).not.toHaveBeenCalled();
+      expect(retry.project.campaign.startedAt).toBe(experimentRecoveryAt);
+    } finally { clock.mockRestore(); }
+  });
+
+  it.each(["judge-timeout", "runner-network-error", "semantic-timeout", "native-timeout"] as const)("keeps %s unsettled and does not repeat it", async kind => {
+    const p = planned(), io = { ...ports(), executeNativeHtmlBatch: vi.fn(async () => []) };
+    if (kind === "judge-timeout") io.judge.mockRejectedValueOnce(Object.assign(Error("timeout"), { code: "SERVER_AI_PROVIDER_TIMEOUT" }));
+    else if (kind === "runner-network-error") io.executeExternalBatch.mockRejectedValueOnce(Object.assign(Error("network"), { code: "SERVER_AI_PROVIDER_NETWORK_ERROR" }));
+    else if (kind === "native-timeout") {
+      p.evalSuite[0]!.tags = ["source-grounded-html-assertions"];
+      p.acceptanceRubric.forEach(criterion => { criterion.validationMethod = "semantic-judge"; });
+      p.finalHoldout!.contractFingerprint = finalHoldoutContractFingerprint(p);
+      p.baselineRun.measurementFingerprint = serverBaselineFingerprint(p, route);
+      io.executeNativeHtmlBatch.mockRejectedValueOnce(new DOMException("timeout", "TimeoutError"));
+    } else {
+      p.evalSuite[0]!.executionMode = "artifact-runtime";
+      p.baselineRun.measurementFingerprint = serverBaselineFingerprint(p, route);
+      io.executeSemanticBatch.mockRejectedValueOnce(Object.assign(Error("timeout"), { code: "SERVER_AI_PROVIDER_TIMEOUT" }));
+    }
+    const failed = await runServerBaseline(p, io, { now: () => later });
+    expect(failed.ready).toBe(false);
+    expect(failed.baseline.plannedRefresh?.status).toBe("unsettled");
+    if (kind !== "judge-timeout") expect(io.judge).not.toHaveBeenCalled();
+    if (kind === "native-timeout") {
+      expect(io.executeExternalBatch).not.toHaveBeenCalled();
+      expect(io.executeSemanticBatch).not.toHaveBeenCalled();
+    }
+    const retryPorts = ports(), retry = await runServerBaseline(failed.project, retryPorts, { now: () => later });
+    expect(retry.ready).toBe(false);
+    expect(retryPorts.judge).not.toHaveBeenCalled();
+    expect(retryPorts.executeExternalBatch).not.toHaveBeenCalled();
+    expect(retryPorts.executeSemanticBatch).not.toHaveBeenCalled();
+  });
+
+  it("recovers the original physical binding from its receipt after the failed measurement lost current references", async () => {
+    let p = planned(); p.sourceArtifacts[0]!.storageRef = "original"; p.evalSuite[0]!.executionMode = "artifact-runtime";
+    p.acceptanceRubric.forEach(criterion => { criterion.validationMethod = "semantic-judge"; });
+    p = EvolveProjectSchema.parse(p);
+    const original = { schemaVersion: "original-artifact-reference-v1" as const, missionId: p.id, sourceArtifactId: "source", blobId: "original", sha256: "a".repeat(64), sizeBytes: p.sourceArtifacts[0]!.size };
+    p.baselineRun.originalReferences = [original]; p.finalHoldout!.contractFingerprint = finalHoldoutContractFingerprint(p);
+    p.baselineRun.measurementFingerprint = serverBaselineFingerprint(p, route);
+    const io = { ...ports(), buildCurrentArtifactContext: async () => [{ id: "source", artifactSha256: original.sha256, originalReference: original,
+      content: "Complete synthetic Original text", originalChars: 32, projectionChars: 32, truncated: false,
+      contextRepresentation: "complete-html-static-text-projection", excludes: ["scripts", "styles", "visual-fidelity", "runtime-behavior"] }] };
+    io.judge.mockRejectedValueOnce(rejectedRequest());
+    const failed = await runServerBaseline(p, io, { now: () => later });
+    expect(failed.baseline.originalReferences).toBeUndefined();
+    expect(failed.baseline.plannedRefresh?.originalReferences).toEqual([original]);
+    const persisted = EvolveProjectSchema.parse(JSON.parse(JSON.stringify(failed.project)));
+    const retryAt = new Date(Date.parse(later) + 60_000).toISOString();
+    const retry = await runServerBaseline(persisted, io, { now: () => retryAt });
+    expect(retry.ready).toBe(true);
+    expect(retry.baseline.originalReferences).toEqual([original]);
+    expect(retry.baseline.plannedRefresh).toBeUndefined();
+    expect(retry.project.candidates).toEqual(p.candidates);
+    expect(retry.project.finalHoldout).toEqual(p.finalHoldout);
   });
 
   it("recognizes only complete plans and compares physical Original references without order dependence", () => {

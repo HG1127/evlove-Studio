@@ -12,6 +12,30 @@ const scope={missionId:"mission",jobId:"job",phase:"experiment"};
 const reply=()=>({id:"req_1",model:"model",usage:{prompt_tokens:10,completion_tokens:4,total_tokens:14},choices:[{message:{content:"PRIVATE_REPLY"}}]});
 afterEach(()=>{vi.unstubAllGlobals();vi.restoreAllMocks();});
 describe("request-bound server usage collection",()=>{
+  it.each(["responses","chat-completions"] as const)("does not regenerate after a %s response body is interrupted",async protocol=>{
+    const records:AiUsageLedgerRecord[]=[];
+    const interrupted=new ReadableStream({start(controller){controller.error(new DOMException("PRIVATE_BODY_TIMEOUT","TimeoutError"));}});
+    const fetchMock=vi.fn().mockResolvedValueOnce(new Response(interrupted,{status:200}));
+    vi.stubGlobal("fetch",fetchMock);
+    await expect(withServerAiUsageScope(scope,()=>withExplicitServerAiConnection({connectionId:"test",label:"Test",apiKey:"PRIVATE_API_KEY",
+      baseUrl:"https://provider.test/v1",model:"model",protocol,responseFormat:"json-object"},()=>runServerAi("execute-artifact",{diagnostic:"PRIVATE_PROMPT"})),async record=>{records.push(record);}))
+      .rejects.toMatchObject({code:"SERVER_AI_PROVIDER_TIMEOUT"});
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(summarizeAiUsageLedger(records)).toMatchObject({startedRequests:1,matchedObservations:1,transportFailures:1,ledgerComplete:true,tokenCoverageComplete:false,billingStatus:"unavailable"});
+    expect(records[1]?.kind==="request-result"&&records[1].observation).toMatchObject({outcome:"transport-error",httpStatus:200,transportReason:"provider-timeout"});
+    expect(JSON.stringify(records)).not.toMatch(/PRIVATE|provider\.test|Authorization|choices/);
+  });
+  it("allows one correction for a fully read malformed HTTP JSON body and keeps both usage gaps",async()=>{
+    const records:AiUsageLedgerRecord[]=[];
+    const fetchMock=vi.fn()
+      .mockResolvedValueOnce(new Response("{invalid",{status:200}))
+      .mockResolvedValueOnce(new Response(JSON.stringify({...reply(),choices:[{finish_reason:"stop",message:{content:JSON.stringify({output:"UNVERIFIED: diagnostic without source input"})}}]})));
+    vi.stubGlobal("fetch",fetchMock);
+    await withServerAiUsageScope(scope,()=>withExplicitServerAiConnection({connectionId:"test",label:"Test",apiKey:"PRIVATE_API_KEY",
+      baseUrl:"https://provider.test/v1",model:"model",protocol:"chat-completions",responseFormat:"json-object"},()=>runServerAi("execute-artifact",{diagnostic:"PRIVATE_PROMPT"})),async record=>{records.push(record);});
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(summarizeAiUsageLedger(records)).toMatchObject({startedRequests:2,matchedObservations:2,transportFailures:0,ledgerComplete:true,tokenCoverageComplete:false,billingStatus:"unavailable"});
+  });
   it("retains both provider responses when malformed task JSON requires one structured retry",async()=>{
     const records:AiUsageLedgerRecord[]=[];
     const fetchMock=vi.fn()

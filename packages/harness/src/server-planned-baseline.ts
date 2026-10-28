@@ -1,19 +1,28 @@
-import type { EvolveProject, OriginalArtifactReferenceProof } from "@evolution/contracts";
+import { PlannedBaselineRefreshSchema, type BaselineRun, type EvolveProject, type OriginalArtifactReferenceProof, type PlannedBaselineRefresh } from "@evolution/contracts";
 import {
-  assertIndependentFinalPaper, baselineReadiness, candidateFailureContextBlocker, finalHoldoutContractFingerprint, finalHoldoutPaperHash,
+  assertIndependentFinalPaper, baselineReadiness, campaignRepairLimitStopReason, candidateFailureContextBlocker,
+  fastHash, finalHoldoutContractFingerprint, finalHoldoutPaperHash,
 } from "@evolution/core";
 import { serverBaselineFingerprint } from "./server-baseline-evidence";
+import { serverHtmlNativeRunsMatchOriginal } from "./server-html-native-runs";
 
 const blocked = "[server-campaign-planned-baseline-refresh-pending] 已有 Candidate 规划，但其输入、终验或审批绑定不完整；保留原规划并停止，不自动重新生成。";
 
 /** Refresh observations for an existing hypothesis without spending another planning slot. */
-export function plannedBaselineRefresh(project: EvolveProject, routeFingerprint?: string) {
+export function plannedBaselineRefresh(project: EvolveProject, routeFingerprint?: string, at = new Date().toISOString()) {
   const checkpoint = project.campaign.checkpoint;
-  if (checkpoint?.completedPhase !== "plan") return undefined;
+  const stored = project.baselineRun.plannedRefresh;
+  if (checkpoint?.completedPhase !== "plan") return stored ? { blocker: blocked } : undefined;
+  const parsed = stored ? PlannedBaselineRefreshSchema.safeParse(stored) : undefined;
+  if (parsed && !parsed.success) return { blocker: blocked };
+  const prior = parsed?.success ? parsed.data : undefined;
+  if (!Number.isFinite(Date.parse(at)) || prior?.failedAt && Date.parse(at) < Date.parse(prior.failedAt)) return { blocker: blocked };
   const selected = project.selectedCandidateIds;
   const paper = project.finalHoldout;
-  if (project.stage !== "plan" || checkpoint.round !== project.campaign.currentRound + 1
-    || !baselineReadiness(project).ready
+  if (!(prior ? ["plan", "baseline"].includes(project.stage) : project.stage === "plan")
+    || checkpoint.round !== project.campaign.currentRound + 1 || campaignRepairLimitStopReason(project)
+    || (prior ? prior.status !== "retryable" || !["failed", "completed"].includes(project.baselineRun.status)
+      : !baselineReadiness(project).ready || !serverHtmlNativeRunsMatchOriginal(project, project.baselineRun.runs))
     || project.baselineRun.measurementFingerprint !== serverBaselineFingerprint(project, routeFingerprint)
     || project.gates.find(g => g.id === "experiment-ready")?.status !== "approved"
     || !selected.length || selected.length > project.campaign.candidateCount || new Set(selected).size !== selected.length
@@ -31,7 +40,34 @@ export function plannedBaselineRefresh(project: EvolveProject, routeFingerprint?
       || project.experimentRun.candidateResults.some(result => result.candidateId === id)
       || project.experimentRun.executionCheckpoints?.some(record => record.candidateId === id)) return { blocker: blocked };
   }
-  return { checkpoint };
+  const originalReferences = prior?.originalReferences ?? project.baselineRun.originalReferences ?? [];
+  const sourceBaselineId = prior?.sourceBaselineId ?? project.baselineRun.id;
+  const measurementFingerprint = serverBaselineFingerprint(project, routeFingerprint);
+  const planFingerprint = fastHash({
+    version: "planned-baseline-refresh-v1", missionId: project.id, checkpoint, sourceBaselineId, measurementFingerprint,
+    selected, candidates: selected.map(id => project.candidates.find(candidate => candidate.id === id)),
+    paperHash: paper.paperHash, paperContract: paper.contractFingerprint, originalReferences,
+    experimentApproval: project.gates.find(g => g.id === "experiment-ready"),
+    failureSources: project.failureObservationSources, policy: project.experimentPolicy,
+    bounds: { startedAt: project.campaign.startedAt, stopCriteria: project.campaign.stopCriteria, candidateCount: project.campaign.candidateCount,
+      repairAttempts: project.artifactAcceptance.attempts, maxRepairAttempts: project.artifactAcceptance.maxRepairAttempts },
+  });
+  if (prior && (prior.missionId !== project.id || prior.round !== checkpoint.round || prior.checkpointAt !== checkpoint.at
+    || prior.measurementFingerprint !== measurementFingerprint || prior.planFingerprint !== planFingerprint
+    || JSON.stringify(prior.candidateIds) !== JSON.stringify(selected) || prior.paperHash !== paper.paperHash)) return { blocker: blocked };
+  const continuation = PlannedBaselineRefreshSchema.safeParse({
+    schemaVersion: "planned-baseline-refresh-v1", missionId: project.id, round: checkpoint.round, checkpointAt: checkpoint.at,
+    sourceBaselineId, measurementFingerprint, planFingerprint, candidateIds: selected, paperHash: paper.paperHash, originalReferences,
+    createdAt: prior?.createdAt ?? at, attemptStartedAt: at, status: "refreshing",
+  });
+  return continuation.success ? { checkpoint, continuation: continuation.data } : { blocker: blocked };
+}
+
+export function failedPlannedBaselineRefresh(baseline: BaselineRun, kind: NonNullable<PlannedBaselineRefresh["failureKind"]>, at: string,
+  status: "retryable" | "unsettled"): BaselineRun {
+  return baseline.plannedRefresh ? { ...baseline, plannedRefresh: PlannedBaselineRefreshSchema.parse({
+    ...baseline.plannedRefresh, status, failedAt: at, failureKind: kind,
+  }) } : baseline;
 }
 
 /** A fresh read may not silently change the Original underneath an already planned edit. */

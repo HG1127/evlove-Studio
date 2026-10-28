@@ -25,6 +25,11 @@ function fixture(){
   return {project,candidate,run,test};
 }
 describe("injected native HTML execution",()=>{
+  it("retains a caught execution failure for an explicit recovery observer",async()=>{
+    const {project,test}=fixture(),error=new DOMException("request outcome unknown","TimeoutError"),observe=vi.fn();
+    expect((await collectServerHtmlNativeRuns(project,[test],{executeNativeHtmlBatch:async()=>{throw error;}},undefined,observe)).size).toBe(0);
+    expect(observe).toHaveBeenCalledExactlyOnceWith(error);
+  });
   it("cannot reuse or normalize a profile-only receipt for a frozen source-grounded search plan",async()=>{
     const {project,candidate,run,test}=fixture();
     const html='<html><head><style>.search-hidden{display:none}</style></head><body><input id="search"><span id="searchCount"></span><article class="slide-card" id="slide-2" data-search="intro">Intro</article><article class="slide-card" id="slide-3" data-search="end">End</article><script>search.addEventListener("input",()=>card.dataset.search.includes(search.value));</script></body></html>';

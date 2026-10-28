@@ -41,13 +41,13 @@ export function serverHtmlNativeRunsMatchOriginal(project:EvolveProject,runs:Tar
 }
 
 /** A missing/unknown profile leaves the existing executor in charge. Invalid returned receipts never strengthen evidence. */
-export async function collectServerHtmlNativeRuns(project:EvolveProject,testCases:TestCase[],ports:ServerHtmlNativePort,candidate?:Candidate){
+export async function collectServerHtmlNativeRuns(project:EvolveProject,testCases:TestCase[],ports:ServerHtmlNativePort,candidate?:Candidate,onExecutionFailure?:(error:unknown)=>void){
   const eligible=testCases.filter(test=>htmlNativeCaseSource(project,test)
     &&(candidate||!test.criterionIds.includes("SYS-PAIRWISE")));
   const ordered=new Map<string,TargetRunResult>();
   if(!eligible.length||!ports.executeNativeHtmlBatch)return ordered;
   let results:TargetRunResult[];
-  try{results=await ports.executeNativeHtmlBatch({project,testCases:eligible,candidate});}catch{return ordered;}
+  try{results=await ports.executeNativeHtmlBatch({project,testCases:eligible,candidate});}catch(error){onExecutionFailure?.(error);return ordered;}
   const {byId,duplicateIds}=indexUniqueBatchResults(results);
   for(const test of eligible){
     const run=byId.get(test.id);

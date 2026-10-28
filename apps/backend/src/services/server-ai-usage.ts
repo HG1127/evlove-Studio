@@ -1,6 +1,6 @@
 import {AsyncLocalStorage} from "node:async_hooks";
 import {createHash,randomUUID} from "node:crypto";
-import {fetchAiProvider,observeAiProviderUsage,observeAiProviderCompletion} from "@evolution/adapters";
+import {aiProviderTransportFailure,fetchAiProvider,observeAiProviderUsage,observeAiProviderCompletion} from "@evolution/adapters";
 import {AiProviderUsageObservationSchema,AiUsageLedgerRecordSchema,AiUsageRequestStartedSchema,AiUsageScopeSchema,createEvolutionEvent,
   type AiOperation,type AiProviderUsageObservation,type AiUsageLedgerRecord,type AiUsageLedgerWriter,type AiUsageProtocol,type AiUsageRequestStarted,type AiUsageRoute,type AiUsageScope} from "@evolution/contracts";
 import type {ServerAiConfig} from "../server-env";
@@ -66,10 +66,30 @@ export async function fetchServerAiProviderUsage(config:ServerAiConfig,protocol:
     failedAttempt:async(_attempt,reason)=>finish(call,undefined,"transport-error",{transportReason:reason??"unknown"}),
   });
   let recorded=false;
-  return {response,observe:async(raw:unknown)=>{
+  const observe=async(raw:unknown)=>{
     if(recorded)return;recorded=true;
     await finish(call,raw,"response",{httpStatus:response.status});
     await assertServerControlExecutionActive();
+  };
+  return {response,observe,readJson:async():Promise<unknown>=>{
+    let text:string;
+    try{text=await response.text();}
+    catch(error){
+      if(!recorded){recorded=true;await finish(call,undefined,"transport-error",{
+        httpStatus:response.status,transportReason:aiProviderTransportFailure(error)??"unknown",
+      });}
+      throw error;
+    }
+    let raw:unknown;
+    try{raw=JSON.parse(text);}
+    catch{
+      // The body is fully received, so a format correction is safe. Missing
+      // usage remains unknown; an interrupted body never reaches this branch.
+      await observe(undefined);
+      if(!response.ok)return {};
+      throw Object.assign(new Error("模型服务返回的响应不是有效 JSON。"),{code:"AI_OUTPUT_INVALID_JSON"});
+    }
+    await observe(raw);return raw;
   }};
 }
 
