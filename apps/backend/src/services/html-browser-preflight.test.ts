@@ -23,6 +23,24 @@ function probes(s:SandboxHealth=sandbox(true),b:SandboxBrowserHealth=browser()){
 }
 
 describe("HTML Mission execution preflight - actual Browser capability",()=>{
+  it("preflights selected local HTML with the same real database/evidence gates and no cloud probe",async()=>{
+    const project=mission([source("sop","html")]);project.experimentPolicy={nativeHtmlRuntime:"local-browser-v1"} as EvolveProject["experimentPolicy"];
+    const ports={...probes(),localBrowser:vi.fn(async()=>{})};
+    await assertServerHtmlBrowserExecutionReady(project,ports);
+    expect(ports.admission).toHaveBeenCalledOnce();expect(ports.evidence).toHaveBeenCalledWith(project.id);expect(ports.localBrowser).toHaveBeenCalledWith(project);
+    for(const probe of [ports.credentials,ports.sandbox,ports.browser])expect(probe).not.toHaveBeenCalled();
+  });
+  it.each(["missing","failed"])("keeps %s local readiness unverified rather than invoking a cloud fallback",async kind=>{
+    const project=mission([source("sop","html")]);project.experimentPolicy={nativeHtmlRuntime:"local-browser-v1"} as EvolveProject["experimentPolicy"];
+    const ports={...probes(),...(kind==="failed"?{localBrowser:vi.fn(async()=>{throw Error("private diagnostic");})}:{})};
+    await expect(assertServerHtmlBrowserExecutionReady(project,ports)).rejects.toMatchObject({status:503,data:{code:"NATIVE_HTML_LOCAL_EXECUTION_UNAVAILABLE"}});
+    expect(ports.sandbox).not.toHaveBeenCalled();expect(ports.browser).not.toHaveBeenCalled();expect(ports.credentials).not.toHaveBeenCalled();
+  });
+  it.each(["admission","evidence"])("never probes a local browser after %s persistence failure",async kind=>{
+    const project=mission([source("sop","html")]);project.experimentPolicy={nativeHtmlRuntime:"local-browser-v1"} as EvolveProject["experimentPolicy"];
+    const ports={...probes(),localBrowser:vi.fn(async()=>{})};ports[kind as "admission"|"evidence"].mockRejectedValueOnce(Error("persistence unavailable"));
+    await expect(assertServerHtmlBrowserExecutionReady(project,ports)).rejects.toThrow("persistence unavailable");expect(ports.localBrowser).not.toHaveBeenCalled();expect(ports.sandbox).not.toHaveBeenCalled();
+  });
   it("rejects a fixed local credential that cannot cover the Campaign before any database, Sandbox or Browser probes",async()=>{
     const project=mission([source("real-sop","html")]);
     project.campaign={stopCriteria:{maxWallMinutes:30}} as EvolveProject["campaign"];

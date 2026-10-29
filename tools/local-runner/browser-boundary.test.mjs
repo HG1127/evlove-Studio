@@ -2,8 +2,13 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {chromium} from 'playwright';
-import {executeLocalNativeHtml} from './index.mjs';
+import {executeLocalNativeHtml,probeLocalNativeBrowser,localNativeKernelIdentity} from './index.mjs';
 import {createLocalNativePage} from './browser-boundary.mjs';
+
+test('startup readiness performs twenty real sandboxed local assertions and reports the loaded kernel',{timeout:45000},async()=>{
+ const result=await probeLocalNativeBrowser();assert.equal(result.ready,true);assert.equal(result.assertions,20);assert.equal(result.kernelSha256,localNativeKernelIdentity().kernelSha256);assert.match(result.browserVersion,/^\d+\./);
+ console.log(JSON.stringify({kind:'local-browser-startup-preflight',...result}));
+});
 
 // Trusted fixture only. This test never reads or executes user HTML.
 test('real local browser denies document egress and keeps clipboard and storage inside fresh processes',{timeout:45000},async()=>{

@@ -2,7 +2,7 @@
 import {afterEach,describe,expect,it,vi} from "vitest";
 import type {SandboxHtmlNativeRequest} from "@evolution/contracts";
 import {acceptedPackageFixture} from "@evolution/testkit";
-import {serverNativeHtmlRuntime} from "./server-html-native-runtime";
+import {serverNativeHtmlRuntime,assertServerLocalHtmlBrowserReady} from "./server-html-native-runtime";
 import {serverLocalHtmlNativeAuthorized} from "./server-html-native-consent";
 import {executeServerArtifactExternal} from "./server-artifact-external";
 const mocks=vi.hoisted(()=>({cloud:vi.fn(),local:vi.fn()}));
@@ -10,6 +10,14 @@ vi.mock("@evolution/adapters/sandbox",()=>({HTML_NATIVE_KERNEL_SHA256:"f".repeat
 vi.mock("@evolution/adapters/html-native-local",()=>({LOCAL_HTML_NATIVE_RUNTIME_VERSION:"native-html-local-browser-v1",runLocalKnownHtmlNativeProfile:mocks.local}));
 afterEach(()=>{vi.unstubAllEnvs();vi.clearAllMocks();});
 describe("explicit local runtime selection",()=>{
+  it("refuses unauthorized or unknown source preflight before launching any browser or cloud request",async()=>{
+    const {project}=acceptedPackageFixture(false);project.experimentPolicy.nativeHtmlRuntime="local-browser-v1";
+    vi.stubEnv("VERCEL","");vi.stubEnv("EVOLUTION_HTML_NATIVE_LOCAL_MISSIONS","");
+    await expect(assertServerLocalHtmlBrowserReady(project)).rejects.toThrow("not authorized");
+    vi.stubEnv("EVOLUTION_HTML_NATIVE_LOCAL_MISSIONS",project.id);
+    await expect(assertServerLocalHtmlBrowserReady(project)).rejects.toThrow("known complete HTML targets");
+    expect(mocks.cloud).not.toHaveBeenCalled();expect(mocks.local).not.toHaveBeenCalled();
+  });
   it("keeps legacy defaults and requires separate exact-Mission local permission",()=>{
     const {project}=acceptedPackageFixture(false);vi.stubEnv("VERCEL","");vi.stubEnv("EVOLUTION_HTML_NATIVE_MISSIONS",project.id);vi.stubEnv("EVOLUTION_HTML_NATIVE_LOCAL_MISSIONS","");
     expect(serverNativeHtmlRuntime(project)).toMatchObject({local:false,authorized:true,fingerprint:"f".repeat(64)});

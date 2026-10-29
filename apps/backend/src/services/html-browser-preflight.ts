@@ -5,6 +5,8 @@ import {checkVercelSandboxBrowserHealth,checkVercelSandboxHealth,sandboxCredenti
 import {serverHtmlArtifactTargetEnabled} from "./server-html-artifact-execution";
 import {assertServerHtmlCampaignAdmissionReady} from "./html-campaign-admission-readiness";
 import {assertServerArtifactEvidenceReady} from "./artifact-evidence-readiness";
+import {serverLocalHtmlNativeSelected,assertServerLocalHtmlBrowserReady} from "./server-html-native-runtime";
+import {HTML_NATIVE_LOCAL_UNAVAILABLE} from "@evolution/contracts";
 
 type HtmlProbePorts={
   credentials:(windowMs:number)=>SandboxCredentialWindowIssue|undefined;
@@ -12,6 +14,7 @@ type HtmlProbePorts={
   evidence:(missionId:string)=>Promise<void>;
   sandbox:()=>Promise<SandboxHealth>;
   browser:()=>Promise<SandboxBrowserHealth>;
+  localBrowser?:(project:EvolveProject)=>Promise<void>;
 };
 
 const defaultPorts:HtmlProbePorts={
@@ -20,6 +23,7 @@ const defaultPorts:HtmlProbePorts={
   evidence:assertServerArtifactEvidenceReady,
   sandbox:checkVercelSandboxHealth,
   browser:checkVercelSandboxBrowserHealth,
+  localBrowser:assertServerLocalHtmlBrowserReady,
 };
 
 /**
@@ -45,6 +49,19 @@ export async function assertServerHtmlBrowserExecutionReady(
     });
   }
   if(!serverHtmlArtifactTargetEnabled(project))return;
+
+  if(serverLocalHtmlNativeSelected(project)){
+    await ports.admission();
+    await ports.evidence(project.id);
+    try{
+      if(!ports.localBrowser)throw Error("Local browser preflight port is unavailable");
+      await ports.localBrowser(project);
+    }catch{
+      throw createError({statusCode:503,statusMessage:"本地 HTML 浏览器执行未实际就绪，进化任务尚未启动",
+        data:{code:HTML_NATIVE_LOCAL_UNAVAILABLE,action:"核对本 Mission 的本地执行授权、已知 HTML 类型和启用沙箱的 Chromium；不会自动改用云端。"}});
+    }
+    return;
+  }
 
   const maxWallMinutes=project.campaign?.stopCriteria?.maxWallMinutes;
   const windowMs=maxWallMinutes===undefined?0:maxWallMinutes*60_000;
