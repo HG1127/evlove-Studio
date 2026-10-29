@@ -43,6 +43,15 @@ try{
   localParse='passed';
  }
  const racePage=await context.newPage();
+ // The Parse race uses HTTP execution with the existing local Mission ports.
+ const selectServerParseRuntime=async()=>{
+  const mode=await racePage.evaluate(async()=>{
+   const runtime=await import('/src/features/evolve/runtime/production-runtime.ts');
+   runtime.configureProductionRuntime(runtime.getProductionRuntime(),'http');
+   return runtime.productionRuntimeMode();
+  });
+  assert.equal(mode,'http','Server Parse fixture must select HTTP execution');
+ };
  racePage.on('pageerror',error=>errors.push(error.message));
  let releaseStart;
  let markStarted;
@@ -91,6 +100,7 @@ try{
  });
  await racePage.goto(`${baseUrl}/#/`);
  await within(listSeen,'initial Parse list');
+ await selectServerParseRuntime();
  await racePage.locator('input[type="file"]').first().setInputFiles({name:'smoke-late.md',mimeType:'text/markdown',buffer:Buffer.from('late source')});
  await within(startSeen,'delayed Parse start');
  releaseInitialList();
@@ -102,6 +112,7 @@ try{
  assert.equal(await racePage.getByText('smoke-late.md',{exact:true}).count(),0,'removed Parse input reappeared after delayed start');
  const recoveredList=racePage.waitForResponse(response=>response.url().includes('/api/evolution/parse-jobs')&&response.ok());
  await racePage.reload();
+ await selectServerParseRuntime();
  await recoveredList;
  await racePage.getByRole('heading',{name:'工作台',exact:true}).waitFor();
  await racePage.waitForTimeout(250);
