@@ -1,6 +1,6 @@
 # Bind a malformed Plan final to its existing JSON correction
 
-Status: implemented. All 472 related tests across 24 files, 11 Runner tests, architecture, changed-file lint and the complete TypeScript/production build pass. No fresh real confirmation of draft-assisted correction has run yet.
+Status: implemented. All 472 related tests across 24 files, 11 Runner tests, architecture, changed-file lint and the complete TypeScript/production build pass. C40 used this version and its first Plan reply passed JSON/schema parsing, so draft-assisted correction was not invoked. Real correction efficacy remains unproved.
 
 C39's actual initial and correction requests exactly match offline reconstructions. The complete original user goals and qualified historical Visible facts reached the first request; the safe JSON syntax feedback reached the second with identical user evidence. Both physical replies nevertheless failed JSON parsing, at normalized-final offsets 9292 and 8651. The old correction contained no previous draft. This establishes an omitted correction input and an observed unsuccessful correction; it does not prove that supplying the draft will succeed.
 

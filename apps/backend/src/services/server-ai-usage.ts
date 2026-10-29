@@ -66,6 +66,7 @@ export async function fetchServerAiProviderUsage(config:ServerAiConfig,protocol:
       await assertServerControlExecutionActive();
     },
     failedAttempt:async(_attempt,reason)=>finish(call,undefined,"transport-error",{transportReason:reason??"unknown"}),
+    retryableResponse:async(_attempt,response,raw)=>finish(call,raw,"response",{httpStatus:response.status}),
   });
   let recorded=false;
   const observe=async(raw:unknown)=>{

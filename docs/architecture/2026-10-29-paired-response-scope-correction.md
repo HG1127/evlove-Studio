@@ -1,6 +1,6 @@
 # Validate issued paired-response identifiers inside format correction
 
-Status: implemented; 441 related tests across 22 files, 11 Runner tests, architecture, changed-file lint and the complete TypeScript/production build pass. C38 and C39 used this implementation but stopped earlier on invalid Plan JSON and never exercised paired assessment. Real correction efficacy remains unproved.
+Status: implemented; 441 related tests across 22 files, 11 Runner tests, architecture, changed-file lint and the complete TypeScript/production build pass. C40 subsequently produced two identity-valid replies on its actual seven-criterion issued scope; neither required a format correction. The missing eighth protection criterion and scoring conflicts still prevent promotion. Real malformed-response correction efficacy remains unproved.
 
 C37 froze a real 330,005-byte Candidate, retained all 57 exact code blocks and completed six qualified native runs, but stopped with `Paired response criterion/case coverage differs`. Its two `evaluate-paired` HTTP completions do not establish a valid two-order receipt. The raw replies were not retained, so their exact invalid fields and order coverage remain unverified. A separate synthetic integration reproduces the same error category by putting a criterion ID in `testCaseIds`; this is not presented as a recovered C37 reply.
 

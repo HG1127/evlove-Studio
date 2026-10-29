@@ -12,6 +12,15 @@ const scope={missionId:"mission",jobId:"job",phase:"experiment"};
 const reply=()=>({id:"req_1",model:"model",usage:{prompt_tokens:10,completion_tokens:4,total_tokens:14},choices:[{message:{content:"PRIVATE_REPLY"}}]});
 afterEach(()=>{vi.unstubAllGlobals();vi.restoreAllMocks();});
 describe("request-bound server usage collection",()=>{
+  it("records a capacity rejection and its successful reconnection as separate physical attempts",async()=>{
+    const records:AiUsageLedgerRecord[]=[],fetchMock=vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({error:{message:"Selected model is at capacity. Please try a different model."}}),{status:503}))
+      .mockResolvedValueOnce(new Response(JSON.stringify(reply())));vi.stubGlobal("fetch",fetchMock);
+    await withServerAiUsageScope(scope,async()=>{const measured=await fetchServerAiProviderUsage(config,"chat-completions","plan",config.baseUrl,{body:"PRIVATE_PROMPT"});await measured.readJson();},async record=>{records.push(record);});
+    expect(fetchMock).toHaveBeenCalledTimes(2);expect(records.map(r=>r.kind)).toEqual(["request-start","request-result","request-start","request-result"]);
+    expect(records[1]?.kind==="request-result"&&records[1].observation).toMatchObject({outcome:"response",httpStatus:503});
+    expect(summarizeAiUsageLedger(records)).toMatchObject({startedRequests:2,matchedObservations:2,ledgerComplete:true,tokenCoverageComplete:false});
+    expect(JSON.stringify(records)).not.toMatch(/PRIVATE|provider\.test|Authorization|Selected model/);
+  });
   it("keeps usage route identities distinct for different explicit reasoning efforts",async()=>{
     const records:AiUsageLedgerRecord[]=[];vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(reply()))));
     await withServerAiUsageScope(scope,async()=>{
