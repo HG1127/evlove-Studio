@@ -5,7 +5,7 @@ import { candidateWinnerDecision } from "./experiment-winner";
 import { campaignScoringInputBlocker, campaignScoringInputFingerprint } from "./campaign-scoring-input";
 import { evidenceFingerprint } from "./evidence-binding";
 import { finalHoldoutContractFingerprint } from "./independent-final-holdout";
-import { originalUserGoalCriteria, USER_GOAL_SCOPE_POLICY, userGoalProgress, userGoalScopeContext } from "./user-goal-scope";
+import { originalUserGoalCriteria, USER_GOAL_SCOPE_POLICY, userGoalProgress, userGoalScopeContext,userGoalPlanningScope } from "./user-goal-scope";
 
 function fixture() {
   const { project: p, current: candidate } = experimentRecoveryFixture();
@@ -33,6 +33,15 @@ function fixture() {
 }
 
 describe("explicit complete user-goal scope", () => {
+  it("binds every original user goal and Target for each independent plan, regardless of the selected local problem",()=>{
+    const {p}=fixture(),source=p.sourceArtifacts[0]!;
+    p.sourceArtifacts=[source,{...source,id:"second-target"},{...source,id:"reference-only",role:"reference"}];
+    const before=JSON.stringify(p),scope=userGoalPlanningScope(p)!;
+    expect(scope.schemaVersion).toBe("user-goal-planning-scope-v1");
+    expect(scope.requiredCriteria.map(c=>c.criterionId)).toEqual(["CLOSURE","UNDERSTAND","DETAIL"]);
+    expect(scope.targetArtifactIds).toEqual([source.id,"second-target"]);expect(JSON.stringify(p)).toBe(before);
+    delete p.experimentPolicy.winnerGoalScope;expect(userGoalPlanningScope(p)).toBeUndefined();
+  });
   it("preserves the old policy and prevents self-selected coverage from excluding a regressed user goal", () => {
     const { p, candidate, baseline, result } = fixture(), original = structuredClone(result);
     delete p.experimentPolicy.winnerGoalScope;

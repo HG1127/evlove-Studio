@@ -1,10 +1,20 @@
 import type { EvaluationResult, EvolveProject, TestCase } from "@evolution/contracts";
+import {UserGoalPlanningScopeSchema} from "@evolution/contracts";
 import { indexScopedAcceptanceResults } from "./acceptance-result-identity";
 import {pairedComparisonBaseline} from "./paired-judge";
 
 export const USER_GOAL_SCOPE_POLICY = "all-user-goals-v1" as const;
 export const originalUserGoalCriteria = (project: EvolveProject) =>
   project.acceptanceRubric.filter(c => c.source === "user-command" && !c.protectedConstraint);
+
+export const COMPLETE_USER_GOAL_PLAN_INSTRUCTION="Generate a small diverse population of independently complete Candidate proposals for the full original user goal. Each Candidate must address EVERY required user criterion across its declared artifact, chapter or module scope. The selected diagnosed problem supplies evidence and priority; it does not replace or narrow the complete goal. Never split mandatory requirements across mutually exclusive Candidates or assume unselected proposals will be merged later. When the requirement covers all chapters or configuration modules, identify those locations from supplied source evidence and distribute concrete changes across the required existing locations. Preserve all Original facts, protected scope and existing renderer constraints. Explain whole-goal coverage, source evidence and causal mechanisms in the existing designRationale fields. Coverage statements are unverified plans, never measured improvement or acceptance. Keep the original rubric, thresholds, budget and independent-final boundaries unchanged.";
+
+/** Explicit versioned generation input; legacy Missions retain their old planning contract. */
+export function userGoalPlanningScope(project:EvolveProject){
+  const scope=userGoalScopeContext(project);if(!scope)return undefined;
+  return UserGoalPlanningScopeSchema.parse({schemaVersion:"user-goal-planning-scope-v1",requiredCriteria:scope.requiredCriteria,
+    targetArtifactIds:project.sourceArtifacts.filter(s=>s.role==="target").map(s=>s.id)});
+}
 
 export function userGoalScopeContext(project: EvolveProject) {
   if (project.experimentPolicy?.winnerGoalScope !== USER_GOAL_SCOPE_POLICY) return undefined;

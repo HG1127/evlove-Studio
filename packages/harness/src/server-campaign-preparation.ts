@@ -23,6 +23,7 @@ import {
   planningDeferredCriterionIds,planningBaselineFailures,
   planningBaselineEvidence,PLANNING_EVIDENCE_INSTRUCTION,
   userGoalScopeContext,
+  userGoalPlanningScope,
   fastHash,
   finalHoldoutContractFingerprint,finalHoldoutPaperHash,
 } from "@evolution/core";
@@ -350,6 +351,7 @@ export async function advanceServerCampaignPreparation(
     const generated = await ai.plan({
       ...(failureObservations?{failureObservations}:{}),
       ...(userGoalScopeContext(project)?{winnerGoalScope:userGoalScopeContext(project)}:{}),
+      ...(userGoalPlanningScope(project)?{planningGoalScope:userGoalPlanningScope(project)}:{}),
       project: {
         goal: project.goal,
         problemStatement: project.problemStatement,

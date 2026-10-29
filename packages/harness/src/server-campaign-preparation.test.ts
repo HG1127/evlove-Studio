@@ -85,8 +85,9 @@ describe("server campaign preparation",()=>{
     p.diagnosis={problemId:"P",rootCause:"gap",summary:"gap",affectedComponent:"source",confidence:0.9,evidence:["流程缺口"],evidenceRefs:[],counterEvidence:[],falsifier:"no gain",suggestedScopes:["code"],trace:[]};
     p.campaign.checkpoint={round:1,completedPhase:"diagnose",at:p.updatedAt};
     const plan=vi.fn(async(payload:unknown)=>{
-      if(enabled)expect(payload).toMatchObject({winnerGoalScope:{policy:"all-user-goals-v1",requiredCriteria:[{criterionId:"CONTENT"},{criterionId:"UNDERSTAND"}]}});
-      else expect(payload).not.toHaveProperty("winnerGoalScope");
+      if(enabled)expect(payload).toMatchObject({winnerGoalScope:{policy:"all-user-goals-v1",requiredCriteria:[{criterionId:"CONTENT"},{criterionId:"UNDERSTAND"}]},
+        planningGoalScope:{schemaVersion:"user-goal-planning-scope-v1",requiredCriteria:[{criterionId:"CONTENT"},{criterionId:"UNDERSTAND"}],targetArtifactIds:p.sourceArtifacts.filter(s=>s.role==="target").map(s=>s.id)}});
+      else {expect(payload).not.toHaveProperty("winnerGoalScope");expect(payload).not.toHaveProperty("planningGoalScope");}
       return {candidates:[],recommendedCandidateIds:[],summary:"scope checked",experimentDesign:[]};
     });
     const never=async()=>{throw Error("completed phase");};
