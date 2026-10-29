@@ -28,6 +28,17 @@ describe("Supabase production security invariants",()=>{
     expect(tailSql).toContain("revoke execute on functions from public, anon, authenticated");
   });
 
+  it("revokes global PUBLIC function defaults and keeps cancellation-fenced CAS service-only",()=>{
+    expect(tailSql).toContain("alter default privileges revoke execute on functions from public;");
+    const signature="public.compare_and_swap_control_mission(text,bigint,text,text,text,jsonb,timestamptz,timestamptz,text,integer,jsonb)";
+    expect(allSql).toContain("create or replace function public.compare_and_swap_control_mission(");
+    expect(tailSql).toContain(`revoke execute on function ${signature} from public, anon, authenticated;`);
+    expect(tailSql).toContain(`grant execute on function ${signature} to service_role;`);
+    expect(tailSql).not.toContain(`grant execute on function ${signature} to public`);
+    expect(tailSql).not.toContain(`grant execute on function ${signature} to anon`);
+    expect(tailSql).not.toContain(`grant execute on function ${signature} to authenticated`);
+  });
+
   it("guards HTML Campaign starts atomically with a Mission-level lock and service-only RPC",()=>{
     expect(tailSql).toContain("create or replace function public.create_evolution_html_campaign_control(");
     expect(tailSql).toContain("pg_advisory_xact_lock(hashtextextended('html-campaign-start:'||v_mission,0))");

@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
+import { BaselineRunSchema, type EvolveProject, type TargetRunResult, type TestCase } from "@evolution/contracts";
 import { currentSemanticArtifactContext, storedBaselineEvidence } from "./server-baseline-evidence";
 import { executeServerCurrentArtifactSuite } from "./server-current-artifact-runner";
 
 const testCase: TestCase = { id: "H1", title: "Check guide", input: "Check actual file", expected: [], tags: [], hidden: true, criterionIds: [], executionMode: "static-evidence", evidenceScope: "implementation" };
 function project(stored = true): EvolveProject {
-  return { sourceArtifacts: [{ id: "guide", role: "target", name: "guide.md", extension: "md", storageRef: stored ? "raw-guide" : undefined, textContent: "STALE METADATA", structure: [] }], acceptanceRubric: [] } as unknown as EvolveProject;
+  return { baselineRun: BaselineRunSchema.parse({ id: "baseline", status: "idle", suiteName: "Visible", totalCases: 0 }), sourceArtifacts: [{ id: "guide", role: "target", name: "guide.md", extension: "md", storageRef: stored ? "raw-guide" : undefined, textContent: "STALE METADATA", structure: [] }], acceptanceRubric: [] } as unknown as EvolveProject;
 }
 
 describe("Server current-version file evidence routing", () => {

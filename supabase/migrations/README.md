@@ -22,3 +22,9 @@ Security invariants:
 - *_security_invariants.sql must remain the final migration whenever new server-side tables or RPCs are added. migration-security-invariants.test.ts enforces this in CI.
 
 Earlier migrations preserve historical bootstrap steps, including temporary internal-MVP grants. Do not infer the production security posture from an intermediate migration; the tail security-invariants migration defines the required final state.
+
+## Cancellation fence final security tail · 2026-10-29
+
+`20261029025416_control_mission_fence_security_invariants.sql` was generated with the installed Supabase CLI's `migration new` command. It reasserts the unchanged 2026-10-21 security snapshot after the cancellation-fenced CAS RPC, explicitly revokes its PUBLIC/anon/authenticated execution and grants service_role, and removes PostgreSQL's global PUBLIC default function execution. Earlier migrations remain byte-unchanged. The existing per-schema revocations, table RLS, append-only Event permissions, private Storage and Artifact retention permissions remain in the final snapshot.
+
+This file is authored and statically checked only; it has not been applied to any database by this development task. Database catalog/default-ACL and role-access verification, along with an authorized isolated migration rehearsal, remain rollout prerequisites for the dedicated delivery owner. No production migration or deployment approval is granted by the static test result. See `docs/architecture/2026-10-29-restore-control-cancellation-security-tail.md` for scope.

@@ -24,7 +24,8 @@ describe("issued HTML node proposal to physical frozen file",()=>{
   ai.mockImplementationOnce(async(_operation,payload)=>{
    const target=payload.project.currentTargets[0];expect(target).toMatchObject({bodyAnchorPolicy:"issued-body-nodes-v1",mutationMode:"html-build-body-node-edits-v1"});
    expect(payload.outputInstruction).toContain("For an unchanged text Target with mutationMode text-edits,");
-   expect(payload.htmlBodyContextInstruction).toContain("complete RAW replacement");
+   expect(payload.htmlBodyContextInstruction).toContain("after is the RAW replacement INSIDE the existing parent.");
+   expect(payload.htmlBodyContextInstruction).toContain("Valid structural insertions, ordinary paragraphs/lists and inline markup remain supported");
    expect(JSON.stringify(payload)).not.toMatch(/PRIVATE_PROGRAM|magenta|STALE INDEX|finalHoldout/);
    const node=target.htmlBuildBodyContext.anchors.filter((a:{before:string})=>a.before==="工具")[1],after="工具</p><p><strong>具体参数</strong>与完成检查 🚀";
    expected=original.slice(0,node.start)+after+original.slice(node.end);return output(node.anchorId,after);

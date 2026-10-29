@@ -1,5 +1,5 @@
 import {describe,expect,it} from "vitest";
-import {CandidateSchema,SourceArtifactSchema,TestCaseSchema,type EvolveProject} from "@evolution/contracts";
+import {BaselineRunSchema,CandidateSchema,SourceArtifactSchema,TestCaseSchema,type EvolveProject} from "@evolution/contracts";
 import {boundedBaselineArtifacts,currentSemanticArtifactContext} from "./server-baseline-evidence";
 import {candidateArtifactContext} from "./server-experiment-evidence";
 import {executeServerExperimentCandidate} from "./server-experiment-runner";
@@ -9,7 +9,7 @@ const quote="REFUND_APPROVAL_CASE 必须由主管批准并记录退款编号。"
 const html="<html><head><style>"+".presentation-style{color:red}\n".repeat(2500)+"</style></head><body>"+"<p>其他章节</p>".repeat(6000)+"<article>"+quote+"</article>"+"<p>后续附件</p>".repeat(6000)+"</body></html>";
 const source=SourceArtifactSchema.parse({id:"source",name:"sop.html",extension:"html",mimeType:"text/html",role:"target",artifactKind:"document",inputMode:"paste",parseStatus:"ready",textContent:html,size:html.length,createdAt:"2026-10-08T00:00:00.000Z"});
 const testCase=TestCaseSchema.parse({id:"H1",title:"退款审批",input:quote,expected:[quote],criterionIds:["CONTENT"],executionMode:"artifact-runtime",hidden:true});
-const project={id:"mission",version:"V1",goal:"细化流程",evolutionCommand:"细化流程",sourceArtifacts:[source],acceptanceRubric:[],evalSuite:[testCase],hiddenEvalSuite:[testCase]} as unknown as EvolveProject;
+const project={baselineRun:BaselineRunSchema.parse({id:"baseline",status:"idle",suiteName:"Visible",totalCases:0}),id:"mission",version:"V1",goal:"细化流程",evolutionCommand:"细化流程",sourceArtifacts:[source],acceptanceRubric:[],evalSuite:[testCase],hiddenEvalSuite:[testCase]} as unknown as EvolveProject;
 const candidate=CandidateSchema.parse({id:"C1",name:"candidate",change:"improve",artifactSnapshots:[{id:"snapshot",sourceArtifactId:source.id,name:source.name,mimeType:source.mimeType,content:html,createdAt:source.createdAt}]});
 
 describe("same-paper semantic source context",()=>{

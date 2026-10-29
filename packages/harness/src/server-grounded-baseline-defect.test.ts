@@ -1,5 +1,5 @@
 import {describe,expect,it} from "vitest";
-import type {EvolveProject,TestCase} from "@evolution/contracts";
+import {BaselineRunSchema,type EvolveProject,type TestCase} from "@evolution/contracts";
 import {groundedOriginalCitationDefect} from "./server-grounded-baseline-defect";
 import {executeServerCurrentArtifactSuite} from "./server-current-artifact-runner";
 
@@ -10,7 +10,7 @@ const text=[
 function fixture(){
  const source={id:"target-1",name:"research.md",role:"target",extension:"md",size:new TextEncoder().encode(text).length,
    inputMode:"paste",parseStatus:"ready",textContent:text,artifactKind:"document",structure:[],warnings:[]};
- const project={targetConnection:{adapter:"artifact"},evolutionCommand:"重要结论应当有可核验出处，不编造引用",
+ const project={baselineRun:BaselineRunSchema.parse({id:"baseline",status:"idle",suiteName:"Visible",totalCases:0}),targetConnection:{adapter:"artifact"},evolutionCommand:"重要结论应当有可核验出处，不编造引用",
    acceptanceRubric:[{id:"USER-PRIMARY-INTENT",source:"user-command",hardGate:true,validationMethod:"semantic-judge",requirement:"重要结论绑定可靠引用来源"}],
    sourceArtifacts:[source]} as unknown as EvolveProject;
  const testCase={id:"H1",title:"核验原版引用能力",input:"重要结论能否附带可信出处？",expected:["来源链接"],tags:[],hidden:true,executionMode:"artifact-runtime",evidenceScope:"product-behavior",criterionIds:["USER-PRIMARY-INTENT"]} as TestCase;
