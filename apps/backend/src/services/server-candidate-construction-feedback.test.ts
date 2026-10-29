@@ -1,9 +1,22 @@
 // @vitest-environment node
 import {describe,expect,it} from "vitest";
-import {ExactEditAnchorError,HtmlOriginalCodeRetentionError,HtmlSemanticLayoutError,HtmlParagraphConstructionError,HtmlNumberedListConstructionError,assertHtmlNumberedListConstruction,htmlNativeCodeRetention,assertHtmlOriginalCodeRetention} from "@evolution/core";
+import {ExactEditAnchorError,HtmlOriginalCodeRetentionError,HtmlSemanticLayoutError,HtmlParagraphConstructionError,HtmlNumberedListConstructionError,HtmlRendererStepNumberError,assertHtmlNumberedListConstruction,htmlNativeCodeRetention,assertHtmlOriginalCodeRetention} from "@evolution/core";
 import {serverCandidateConstructionCorrection} from "./server-candidate-construction-feedback";
 import {ServerHtmlConstructionPreflightError} from "./server-html-construction-preflight";
 describe("bounded pre-freeze construction feedback",()=>{
+  it("bounds renderer-number feedback without source prose or granting an extra correction",()=>{
+    const error=new HtmlRendererStepNumberError(Array.from({length:23},(_,i)=>({section:"slide-64",gridIndex:1,cardIndex:i+1,label:"01",detailPrefix:"01"})));
+    const correction=serverCandidateConstructionCorrection(error,[]);
+    expect(correction).toMatchObject({code:error.code,issues:error.issues.slice(0,20),omittedIssueCount:3,invalidProposal:[]});
+    expect(correction?.instruction).toContain("existing single pre-write");expect(correction?.instruction).toContain("Preserve the Original label");expect(correction?.instruction).toContain("not classified as new defects");
+    expect(serverCandidateConstructionCorrection({...error},[])).toBeUndefined();
+  });
+  it("aggregates all five distinct static checks in the same existing correction",()=>{
+    const errors=[new HtmlSemanticLayoutError([{section:"slide-11",label:"label",expectedParagraphs:2,code:"missing-or-ambiguous-component"}]),new HtmlOriginalCodeRetentionError(htmlNativeCodeRetention('<pre>original</pre>','<pre>changed</pre>')),new HtmlParagraphConstructionError([{section:"slide-64",role:"introductory",chars:300,maxChars:240}]),new HtmlNumberedListConstructionError([{section:"slide-64",listIndex:1,itemIndex:2,expectedNumber:2,observedNumber:3}]),new HtmlRendererStepNumberError([{section:"slide-64",gridIndex:1,cardIndex:1,label:"01",detailPrefix:"01"}])];
+    const aggregate=new ServerHtmlConstructionPreflightError(errors.map(error=>({stage:"after-layout",error})));
+    const result=serverCandidateConstructionCorrection(aggregate,[]);
+    expect(result&&"violations" in result?result.violations:undefined).toHaveLength(5);
+  });
   it("explains a nested list-item text replacement using numeric shapes without copying source bodies",()=>{
     const original='<article id="slide-84"><ul><li>1. PRIVATE_REQUIREMENT</li><li>2. PRIVATE_CHECK</li></ul></article>';
     let error:unknown;try{assertHtmlNumberedListConstruction(original,original.replace('1. PRIVATE_REQUIREMENT','<li>5. PRIVATE_RECOVERY</li>'));}catch(e){error=e;}

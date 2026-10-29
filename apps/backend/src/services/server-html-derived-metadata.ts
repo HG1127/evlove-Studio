@@ -1,5 +1,5 @@
 import {compileKnownHtmlDerivedMetadata,isKnownHtmlNativeSubject} from "@evolution/adapters/html-native-profile";
-import {assertHtmlOriginalCodeRetention,assertHtmlParagraphConstruction,assertHtmlNumberedListConstruction,HtmlSemanticLayoutError} from "@evolution/core";
+import {assertHtmlOriginalCodeRetention,assertHtmlParagraphConstruction,assertHtmlNumberedListConstruction,assertHtmlRendererStepNumbers,HtmlSemanticLayoutError} from "@evolution/core";
 import {isServerHtmlConstructionCheckError,ServerHtmlConstructionPreflightError,type ServerHtmlConstructionFailure} from "./server-html-construction-preflight";
 
 /** Compilation of model-authored content, before freezing; never a post-acceptance file rewrite. */
@@ -19,6 +19,7 @@ export async function compileServerHtmlDerivedMetadata(args:{extension:string;co
   const retention=check(()=>assertHtmlOriginalCodeRetention(original,compiled.html));
   const paragraphs=check(()=>assertHtmlParagraphConstruction(original,compiled.html));
   const numbered=check(()=>assertHtmlNumberedListConstruction(original,compiled.html));
+  const stepNumbers=check(()=>assertHtmlRendererStepNumbers(original,compiled.html));
   if(failures.length>1)throw new ServerHtmlConstructionPreflightError(failures);
   if(failures.length)throw failures[0]!.error;
   return {content:compiled.html,checks:[
@@ -28,5 +29,6 @@ export async function compileServerHtmlDerivedMetadata(args:{extension:string;co
     ...(retention?.originalCount?[`HTML 构建前置检查：${retention.retainedCount}/${retention.originalCount} 个原始代码／指令块按既有静态策略保留；不替代原生与语义验收。`]:[]),
     ...(paragraphs?.checkedParagraphs?[`HTML 新段落构建预算：${paragraphs.checkedParagraphs} 个新增或修改段落通过静态长度检查；不代表渲染可读性或验收通过。`]:[]),
     ...(numbered?.checkedLists?[`HTML 编号列表构建检查（${numbered.policy}）：${numbered.checkedLists} 个修改列表的显式编号连续；不证明操作含义保留或验收通过。`]:[]),
+    ...(stepNumbers?.checkedCards?[`HTML 步骤卡片构建检查（${stepNumbers.policy}）：${stepNumbers.checkedCards} 个已绑定卡片未新增与原编号标签重复的详情前缀；不代表语义或验收通过。`]:[]),
   ]};
 }

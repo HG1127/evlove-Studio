@@ -7,6 +7,14 @@ const {known,compile}=vi.hoisted(()=>({known:vi.fn(),compile:vi.fn()}));
 vi.mock("@evolution/adapters/html-native-profile",()=>({isKnownHtmlNativeSubject:known,compileKnownHtmlDerivedMetadata:compile}));
 beforeEach(()=>{known.mockReset();compile.mockReset();});
 describe("pre-freeze derived HTML compilation",()=>{
+  it("rejects a new detail prefix that repeats the retained tool-card label without rewriting either file",async()=>{
+    const original='<html><body><article class="slide-card" data-kind="tool" id="slide-64"><div class="slide-body"><div class="mini-grid"><div class="mini-card"><p>01</p><p>Open project</p></div></div></div></article></body></html>';
+    const bad=original.replace('Open project','01\nOpen project and verify');known.mockReturnValue(true);compile.mockReturnValue({html:bad,updatedIds:[]});
+    await expect(compileServerHtmlDerivedMetadata({extension:"html",content:bad,parentText:original,readOriginal:async()=>original})).rejects.toMatchObject({code:"HTML_RENDERER_STEP_NUMBER_ECHO",issues:[{section:"slide-64",label:"01"}]});
+    const fixed=original.replace('Open project','Open project and verify');compile.mockReturnValue({html:fixed,updatedIds:[]});
+    const result=await compileServerHtmlDerivedMetadata({extension:"html",content:fixed,parentText:original,readOriginal:async()=>original});
+    expect(result.content).toBe(fixed);expect(bad).toContain('01\nOpen project');expect(result.checks).toContainEqual(expect.stringContaining('未新增与原编号标签重复'));
+  });
   it("records the renderer text-slot projection before freezing and retains the original blocks",async()=>{
     const source='<html><body><p>Original</p><pre><code>05\n写 .env.local</code></pre></body></html>';
     const projected=source.replace('Original','Updated').replace('</pre>','</pre><p>05\n写 .env.local</p>');
