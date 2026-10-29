@@ -10,14 +10,37 @@ console.log('浏览器已启动');
 const errors=[];
 const failedResponses=[];
 const rows=[];
+const requestFailures=[];
+const network=[];
+let phase='navigation';
+let activePage;
+const record=(event)=>{if(network.length<200)network.push({phase,...event});};
 let page;
 try{
  const context=await browser.newContext({viewport:{width:1440,height:1045}});
  console.log('检查上下文已创建');
+ context.on('page',current=>{
+  activePage=current;
+  current.on('pageerror',error=>errors.push(error.stack??error.message));
+  current.on('console',message=>{if(message.type()==='error')errors.push(message.text().slice(0,450));});
+  current.on('request',request=>{
+   const url=new URL(request.url());
+   if(url.pathname.startsWith('/api/evolution/'))record({event:'request',method:request.method(),path:url.pathname});
+  });
+  current.on('response',response=>{
+   const url=new URL(response.url());
+   if(response.status()>=400)failedResponses.push({phase,path:url.pathname,status:response.status()});
+   if(url.pathname.startsWith('/api/evolution/'))record({event:'response',path:url.pathname,status:response.status()});
+  });
+  current.on('requestfailed',request=>{
+   const failure={phase,path:new URL(request.url()).pathname,error:request.failure()?.errorText};
+   requestFailures.push(failure);
+   record({event:'requestfailed',...failure});
+  });
+  current.on('domcontentloaded',()=>record({event:'domcontentloaded'}));
+  current.on('load',()=>record({event:'load'}));
+ });
  page=await context.newPage();
- page.on('pageerror',error=>errors.push(error.message));
- page.on('console',message=>{if(message.type()==='error')errors.push(message.text().slice(0,450));});
- page.on('response',response=>{if(response.status()>=400)failedResponses.push({path:new URL(response.url()).pathname,status:response.status()});});
  for(const [name,route,title] of [['home','/','工作台'],['projects','/projects','进化任务'],['project','/projects/demo',''],['settings','/settings',''],['outputs','/outputs',''],['templates','/templates','']]){
   console.log(`检查 ${name}`);
   await page.goto(`${baseUrl}/#${route}`);
@@ -42,9 +65,11 @@ try{
   await page.getByText('已读取 · 后台解析完成',{exact:true}).waitFor({timeout:15000});
   localParse='passed';
  }
+ phase='parse-initial';
  const racePage=await context.newPage();
  // The Parse race uses HTTP execution with the existing local Mission ports.
  const selectServerParseRuntime=async()=>{
+  await racePage.getByRole('heading',{name:'工作台',exact:true}).waitFor();
   const mode=await racePage.evaluate(async()=>{
    const runtime=await import('/src/features/evolve/runtime/production-runtime.ts');
    runtime.configureProductionRuntime(runtime.getProductionRuntime(),'http');
@@ -52,7 +77,6 @@ try{
   });
   assert.equal(mode,'http','Server Parse fixture must select HTTP execution');
  };
- racePage.on('pageerror',error=>errors.push(error.message));
  let releaseStart;
  let markStarted;
  let markCancelled;
@@ -111,6 +135,7 @@ try{
  await within(cancelSeen,'Parse cancellation');
  assert.equal(await racePage.getByText('smoke-late.md',{exact:true}).count(),0,'removed Parse input reappeared after delayed start');
  const recoveredList=racePage.waitForResponse(response=>response.url().includes('/api/evolution/parse-jobs')&&response.ok());
+ phase='parse-reload';
  await racePage.reload();
  await selectServerParseRuntime();
  await recoveredList;
@@ -121,8 +146,8 @@ try{
  await racePage.getByText('smoke-good.md',{exact:true}).waitFor();
  await racePage.getByText(/1 个 Server Parse 任务的附件信息无效/).waitFor();
  await racePage.close();
+ phase='denied-storage';
  const deniedStoragePage=await context.newPage();
- deniedStoragePage.on('pageerror',error=>errors.push(error.message));
  await deniedStoragePage.addInitScript(()=>{
   Object.defineProperty(window,'sessionStorage',{configurable:true,get(){throw new DOMException('Storage denied','SecurityError');}});
  });
@@ -130,7 +155,6 @@ try{
  await deniedStoragePage.getByRole('heading',{name:'工作台',exact:true}).waitFor();
  await deniedStoragePage.close();
  const deniedLocalStoragePage=await context.newPage();
- deniedLocalStoragePage.on('pageerror',error=>errors.push(error.stack??error.message));
  await deniedLocalStoragePage.addInitScript(()=>{
   Object.defineProperty(window,'localStorage',{configurable:true,get(){throw new Error('Storage denied');}});
  });
@@ -139,6 +163,12 @@ try{
  await deniedLocalStoragePage.close();
  assert.equal(errors.length,0,errors.join('\n'));
  assert.ok(rows.every(row=>row.scrollWidth<=row.width+2),JSON.stringify(rows));
- console.log(JSON.stringify({status:'PASS',rows,pageErrors:errors,failedResponses,mobilePaste:'passed',localParse,lateParseRemoval:'passed',parseRecoveryIsolation:'passed',deniedSessionStorage:'passed',deniedLocalStorage:'passed'},null,2));
+ console.log(JSON.stringify({status:'PASS',rows,pageErrors:errors,failedResponses,requestFailures,network,mobilePaste:'passed',localParse,lateParseRemoval:'passed',parseRecoveryIsolation:'passed',deniedSessionStorage:'passed',deniedLocalStorage:'passed'},null,2));
  await context.close();
-}catch(error){console.error(JSON.stringify({errors,failedResponses,rows,body:await page?.locator('body').innerText().catch(()=>''),failure:String(error)},null,2));throw error;}finally{await closeBrowser();}
+}catch(error){
+ const failingPage=activePage&&!activePage.isClosed()?activePage:page;
+ await failingPage?.screenshot({path:path.join(output,'ui-failure.png'),fullPage:true}).catch(()=>undefined);
+ console.error(JSON.stringify({errors,failedResponses,requestFailures,network,rows,phase,failurePage:failingPage?.url(),
+  body:await failingPage?.locator('body').innerText().catch(()=>''),failure:String(error)},null,2));
+ throw error;
+}finally{await closeBrowser();}
