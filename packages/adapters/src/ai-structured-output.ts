@@ -17,8 +17,8 @@ function syntaxFeedback(body:string,cause:unknown):string{
   return `JSON syntax${offset===undefined?"":` at UTF-16 offset ${offset}`}: expected ${expected}${token?`; got ${token}`:""}.${nesting}`;
 }
 
-/** Remove transport presentation wrappers only; the caller must validate the task schema. */
-export function parseStructuredAiOutput(text: string): unknown {
+/** Extract final transport text without reasoning; this does not parse or validate its JSON. */
+export function structuredAiFinalText(text: string): string {
   let body = text.trim();
   let hadReasoning = false;
   while (/^<think>/i.test(body)) {
@@ -40,6 +40,12 @@ export function parseStructuredAiOutput(text: string): unknown {
   }
   const fenced = /^```(?:json)?\s*\n?([\s\S]*?)\n?```$/i.exec(body);
   if (fenced) body = fenced[1]!.trim();
+  return body;
+}
+
+/** Remove transport presentation wrappers only; the caller must validate the task schema. */
+export function parseStructuredAiOutput(text: string): unknown {
+  const body=structuredAiFinalText(text);
   try {
     return JSON.parse(body) as unknown;
   } catch(cause) {

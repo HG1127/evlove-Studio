@@ -63,6 +63,7 @@ import {resolveServerAiConfig} from "./server-ai-connection";
 import {fetchServerAiProviderUsage,measureServerAiSdkUsage} from "./server-ai-usage";
 import {serverAiPlanningInstruction} from "./server-plan-contract";
 import {serverAiPairedContract} from "./server-paired-ai-contract";
+import {PLAN_JSON_CORRECTION_INSTRUCTION,serverPlanJsonCorrectionPayload} from "./server-plan-json-correction";
 
 export type ServerAiOperation=AiOperation;
 /** Public scoring-route identity; API keys and timeout settings are deliberately excluded. */
@@ -177,8 +178,10 @@ function chatText(json:ChatJson){
   throw new Error("模型未返回最终 JSON 结果，请检查模型与接口协议。");
 }
 
-function parseStructuredResult<T>(text:string,contract:Contract<T>):T{
-  const result=contract.parser.safeParse(parseStructuredAiOutput(text));
+function parseStructuredResult<T>(text:string,contract:Contract<T>,onInvalidJson?:(text:string)=>void):T{
+  let parsed:unknown;
+  try{parsed=parseStructuredAiOutput(text);}catch(error){if((error as {code?:string}).code==="AI_OUTPUT_INVALID_JSON")onInvalidJson?.(text);throw error;}
+  const result=contract.parser.safeParse(parsed);
   if(result.success)return result.data;
   const fields=[...new Set(result.error.issues.map((issue)=>issue.path.join(".")||"结果"))].slice(0,4);
   const validationIssues=result.error.issues.slice(0,4).map(issue=>`${issue.path.join(".")||"结果"}: ${issue.message.slice(0,240)}`);
@@ -216,9 +219,9 @@ async function callVercelGateway<T>(args:{
   return args.contract.parser.parse(generated.output);
 }
 
-function directSystem<T>(config:Extract<ServerAiConfig,{mode:"openai-compatible"}>,contract:Contract<T>,repairFields?:string[]){
+function directSystem<T>(config:Extract<ServerAiConfig,{mode:"openai-compatible"}>,contract:Contract<T>,repairFields?:string[],planDraftIncluded=false){
   const repair=repairFields ? "\nPREVIOUS OUTPUT INVALID: "+(repairFields.join(", ")||"required fields")+". Generate a COMPLETE syntactically valid JSON object, concise strings, no Markdown or commentary, and include ALL required fields with correct types. Recompute from the same evidence; never invent source facts or verification." : "";
-  const base=SYSTEM+"\n\nTask: "+contract.instruction+repair;
+  const base=SYSTEM+"\n\nTask: "+contract.instruction+repair+(planDraftIncluded?"\n"+PLAN_JSON_CORRECTION_INSTRUCTION:"");
   return config.responseFormat&&config.responseFormat!=="json-schema"
     ?base+"\nReturn JSON matching this exact schema:\n"+JSON.stringify(contract.schema.schema)
     :base;
@@ -230,7 +233,8 @@ function directFormat<T>(config:Extract<ServerAiConfig,{mode:"openai-compatible"
   return {type:"json_schema" as const,name:contract.schema.name,strict:true,schema:contract.schema.schema};
 }
 
-async function callResponses<T>(args:{operation:AiOperation;config:Extract<ServerAiConfig,{mode:"openai-compatible"}>;contract:Contract<T>;payload:unknown;images:ParsedImage[];repairFields?:string[]}){
+type DirectArgs<T>={operation:AiOperation;config:Extract<ServerAiConfig,{mode:"openai-compatible"}>;contract:Contract<T>;payload:unknown;images:ParsedImage[];repairFields?:string[];planDraftIncluded?:boolean;onInvalidJson?:(text:string)=>void};
+async function callResponses<T>(args:DirectArgs<T>){
   const request=await fetchServerAiProviderUsage(args.config,"responses",args.operation,args.config.baseUrl+"/responses",{
     method:"POST",
     redirect:"error",
@@ -240,7 +244,7 @@ async function callResponses<T>(args:{operation:AiOperation;config:Extract<Serve
       model:args.config.model,
       store:false,
       input:[
-        {role:"system",content:[{type:"input_text",text:directSystem(args.config,args.contract,args.repairFields)}]},
+        {role:"system",content:[{type:"input_text",text:directSystem(args.config,args.contract,args.repairFields,args.planDraftIncluded)}]},
         {role:"user",content:[
           {type:"input_text",text:JSON.stringify(args.payload)},
           ...args.images.map((image)=>({type:"input_image",image_url:image.dataUrl})),
@@ -258,10 +262,10 @@ async function callResponses<T>(args:{operation:AiOperation;config:Extract<Serve
     throw error;
   }
   if(json.status&&json.status!=="completed")throw new Error("Server AI response status: "+json.status);
-  return parseStructuredResult(responseText(json),args.contract);
+  return parseStructuredResult(responseText(json),args.contract,args.onInvalidJson);
 }
 
-async function callChat<T>(args:{operation:AiOperation;config:Extract<ServerAiConfig,{mode:"openai-compatible"}>;contract:Contract<T>;payload:unknown;images:ParsedImage[];repairFields?:string[]}){
+async function callChat<T>(args:DirectArgs<T>){
   // An independent multi-case Judge requires more room than providers default to.
   // Only request the larger budget for the evidence-scoring contract. This
   // remains a strict JSON + Zod check; longer output never implies acceptance.
@@ -276,7 +280,7 @@ async function callChat<T>(args:{operation:AiOperation;config:Extract<ServerAiCo
       ...(isEvaluation?{max_tokens:8192}:args.operation==="evaluate-paired"?{max_tokens:16384}:{}),
       ...(args.config.reasoningEffort?{reasoning_effort:args.config.reasoningEffort}:{}),
       messages:[
-        {role:"system",content:directSystem(args.config,args.contract,args.repairFields)},
+        {role:"system",content:directSystem(args.config,args.contract,args.repairFields,args.planDraftIncluded)},
         {role:"user",content:args.images.length?[
           {type:"text",text:JSON.stringify(args.payload)},
           ...args.images.map((image)=>({type:"image_url",image_url:{url:image.dataUrl}})),
@@ -292,10 +296,11 @@ async function callChat<T>(args:{operation:AiOperation;config:Extract<ServerAiCo
   const response=request.response;
   const json=await request.readJson() as ChatJson;
   if(!response.ok)throw Object.assign(new Error(json.error?.message||("Server AI Chat HTTP "+response.status)),{httpStatus:response.status});
-  return parseStructuredResult(chatText(json),args.contract);
+  return parseStructuredResult(chatText(json),args.contract,args.onInvalidJson);
 }
 
 async function structured<T>(operation:AiOperation,payload:unknown,schema:Contract<T>,media?:ServerAiMedia):Promise<T>{
+  const originalPayload=operation==="plan"&&payload!==null&&typeof payload==="object"?JSON.parse(JSON.stringify(payload)) as unknown:payload;
   const config=await resolveServerAiConfig();
   if(!config){
     throw Object.assign(
@@ -307,8 +312,11 @@ async function structured<T>(operation:AiOperation,payload:unknown,schema:Contra
   if(config.mode==="vercel-gateway"){
     return callVercelGateway({operation,config,contract:schema,payload,images});
   }
+  let failedPlanFinal:string|undefined;
   const invoke=async(repairFields?:string[])=>{
-    const args={operation,config,contract:schema,payload,images,repairFields};
+    const correction=operation==="plan"&&repairFields?serverPlanJsonCorrectionPayload(originalPayload,failedPlanFinal,config.apiKey):{payload:originalPayload,draftIncluded:false};
+    const args={operation,config,contract:schema,payload:correction.payload,images,repairFields,planDraftIncluded:correction.draftIncluded,
+      onInvalidJson:operation==="plan"?(text:string)=>{failedPlanFinal=text;}:undefined};
     if(config.protocol==="chat-completions")return callChat(args);
     if(config.protocol==="responses")return callResponses(args);
     try{return await callResponses(args);}
