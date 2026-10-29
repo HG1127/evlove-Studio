@@ -63,6 +63,7 @@ import {resolveServerAiConfig} from "./server-ai-connection";
 import {fetchServerAiProviderUsage,measureServerAiSdkUsage} from "./server-ai-usage";
 import {serverAiPlanningInstruction} from "./server-plan-contract";
 import {serverAiPairedContract} from "./server-paired-ai-contract";
+import {SERVER_PAIRED_GENERATION_SCHEMA_VERSION} from "./server-paired-json-schema";
 import {PLAN_JSON_CORRECTION_INSTRUCTION,serverPlanJsonCorrectionPayload} from "./server-plan-json-correction";
 
 export type ServerAiOperation=AiOperation;
@@ -73,7 +74,7 @@ export async function serverAiScoringRouteFingerprint(): Promise<string | undefi
   const route = config.mode === "openai-compatible"
     ? [config.mode, config.baseUrl, config.model, ...(config.protocol || config.responseFormat ? [config.protocol,config.responseFormat] : []),...(config.reasoningEffort?[{reasoningEffort:config.reasoningEffort}]:[])]
     : [config.mode, config.model];
-  return createHash("sha256").update(JSON.stringify({ route, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION,measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION })).digest("hex");
+  return createHash("sha256").update(JSON.stringify({ route, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION,measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION,pairedGenerationSchemaVersion:SERVER_PAIRED_GENERATION_SCHEMA_VERSION })).digest("hex");
 }
 
 type StructuredSchema={name:string;schema:Record<string,unknown>};

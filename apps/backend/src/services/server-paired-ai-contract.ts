@@ -1,5 +1,6 @@
 import {z} from "zod";
 import {PairedEvaluationAiResultSchema,pairedEvaluationJsonSchema} from "@evolution/contracts";
+import {serverIssuedPairedJsonSchema} from "./server-paired-json-schema";
 
 const id=z.string().min(1),unique=(ids:string[])=>new Set(ids).size===ids.length;
 const issued=z.object({
@@ -14,12 +15,14 @@ const instruction="Act as an independent paired evidence judge. Evaluate ALL THR
 /** Only inadmissible identifiers enter the existing single format correction; valid verdicts remain data. */
 export function serverAiPairedContract(payload:unknown){
   let parser=PairedEvaluationAiResultSchema;
+  let schema:{name:string;schema:Record<string,unknown>}=pairedEvaluationJsonSchema;
   if(payload&&typeof payload==="object"&&("schemaVersion" in payload||"issuedCriterionCaseBindings" in payload)){
     const p=issued.parse(payload),criterionIds=p.acceptanceRubric.map(c=>c.id),caseIds=p.testCases.map(t=>t.id);
     if(!unique(caseIds)||!same(criterionIds,p.issuedCriterionCaseBindings.map(b=>b.criterionId))
       ||p.issuedCriterionCaseBindings.some(b=>!same(b.testCaseIds,p.testCases.filter(t=>t.criterionIds.includes(b.criterionId)).map(t=>t.id))))
       throw Error("Issued paired criterion/case bindings differ from the request contract");
     const expected=new Map(p.issuedCriterionCaseBindings.map(b=>[b.criterionId,b.testCaseIds]));
+    schema=serverIssuedPairedJsonSchema(p.requestFingerprint,p.issuedCriterionCaseBindings,caseIds);
     parser=PairedEvaluationAiResultSchema.superRefine((value,ctx)=>{
       if(value.requestFingerprint!==p.requestFingerprint)ctx.addIssue({code:"custom",path:["requestFingerprint"],message:`Echo the issued requestFingerprint exactly: ${p.requestFingerprint}`});
       value.versions.forEach((v,index)=>{
@@ -30,5 +33,5 @@ export function serverAiPairedContract(payload:unknown){
       });
     });
   }
-  return {schema:pairedEvaluationJsonSchema,parser,instruction};
+  return {schema,parser,instruction};
 }

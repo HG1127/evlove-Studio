@@ -1,6 +1,7 @@
 // @vitest-environment node
 import {createHash} from "node:crypto";
 import {SERVER_SEMANTIC_CONTEXT_VERSION,SERVER_MEASURED_REVIEW_VERSION} from "@evolution/harness";
+import {SERVER_PAIRED_GENERATION_SCHEMA_VERSION} from "./server-paired-json-schema";
 import {withExplicitServerAiConnection} from "./server-ai-connection";
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
 import {isServerAiUnavailable,runServerAi,serverAiScoringRouteFingerprint,serverAiUnavailableReason} from "./ai-gateway";
@@ -51,10 +52,12 @@ describe("server AI scoring route identity",()=> {
     const route=["openai-compatible","https://ai.example.test/v1","model-a"];
     const legacy=createHash("sha256").update(JSON.stringify(route)).digest("hex");
     const contextOnly=createHash("sha256").update(JSON.stringify({route,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION})).digest("hex");
-    const expected=createHash("sha256").update(JSON.stringify({route,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION})).digest("hex");
+    const previousSchemaRoute=createHash("sha256").update(JSON.stringify({route,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION})).digest("hex");
+    const expected=createHash("sha256").update(JSON.stringify({route,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION,pairedGenerationSchemaVersion:SERVER_PAIRED_GENERATION_SCHEMA_VERSION})).digest("hex");
     expect(await serverAiScoringRouteFingerprint()).toBe(expected);
     expect(await serverAiScoringRouteFingerprint()).not.toBe(legacy);
     expect(await serverAiScoringRouteFingerprint()).not.toBe(contextOnly);
+    expect(await serverAiScoringRouteFingerprint()).not.toBe(previousSchemaRoute);
   });
 
   it("changes with provider/model but excludes credentials and timeout",async()=> {
