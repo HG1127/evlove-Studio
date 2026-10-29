@@ -61,6 +61,17 @@ function judge(score:number):EvaluateAiResult{
 }
 
 describe("server experiment",()=>{
+  it("pauses a payment-blocked exact Candidate without judging, archiving a product failure or advancing Holdout",async()=>{
+    const p=fixture("external-runner");p.sourceArtifacts[0]!.extension="html";p.acceptanceRubric[0]!.id="PROTECT-ALL";p.evalSuite[0]!.criterionIds=["PROTECT-ALL"];
+    const built=frozenCandidate(p.candidates[0]!);built.artifactSnapshots[0]!.frozenArtifact!.sha256="a".repeat(64);
+    const semantic=vi.fn(),external=vi.fn(),judge=vi.fn(),before=structuredClone(p);
+    const outcome=await runServerExperiment(p,{buildCandidate:async()=>built,executeSemanticBatch:semantic,executeExternalBatch:external,judge,
+      executeNativeHtmlBatch:async()=>[{testCaseId:"V1",artifactHash:"a".repeat(64),verificationStatus:"unverified",error:"NATIVE_HTML_PAYMENT_REQUIRED",output:"quota exhausted",trace:[],cost:0,latencyMs:0}]});
+    expect(outcome).toMatchObject({control:"stop",readyForHoldout:false,project:{campaign:{status:"paused"}},experiment:{status:"failed",candidateResults:[]}});
+    expect(outcome.reason).toContain("需要付费或恢复免费额度");expect(outcome.project.candidates[0]!.artifactSnapshots).toEqual(built.artifactSnapshots);
+    expect(outcome.project.evolutionArchive).toEqual(before.evolutionArchive);expect(outcome.project.lessons).toEqual(before.lessons);expect(outcome.project.outputArtifacts).toEqual(before.outputArtifacts);
+    expect(semantic).not.toHaveBeenCalled();expect(external).not.toHaveBeenCalled();expect(judge).not.toHaveBeenCalled();expect(p).toEqual(before);
+  });
   it("rejects a changed historical-memory treatment before build, recovery or execution",async()=>{
     const p=fixture(),x=failureObservationFixture(),build=vi.fn(),execute=vi.fn(),judge=vi.fn(),verify=vi.fn();
     p.failureObservationSources=[x.sourceRef()];

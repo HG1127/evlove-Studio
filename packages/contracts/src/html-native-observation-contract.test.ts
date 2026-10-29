@@ -1,9 +1,16 @@
 import {describe,expect,it} from "vitest";
 import {htmlNativeEvidenceFixture} from "@evolution/testkit";
 import {ExecuteArtifactAiResultSchema,ExecuteArtifactBatchAiResultSchema} from "./ai-schemas";
-import {HtmlNativeBrowserAssertionsSchema,HtmlNativeStyleComparisonSchema} from "./html-native-observation-contract";
+import {HtmlNativeBrowserAssertionsSchema,HtmlNativeStyleComparisonSchema,SandboxHtmlNativeResponseSchema} from "./html-native-observation-contract";
 
 describe("native observation trust boundary",()=>{
+  it("retains legacy unavailable responses and permits only the explicit payment-required reason code",()=>{
+    const legacy={status:"unavailable",reason:"Unsupported profile"};
+    expect(SandboxHtmlNativeResponseSchema.parse(legacy)).toEqual(legacy);
+    expect(SandboxHtmlNativeResponseSchema.parse({...legacy,reasonCode:"payment-required"})).toHaveProperty("reasonCode","payment-required");
+    expect(SandboxHtmlNativeResponseSchema.safeParse({...legacy,reasonCode:"success"}).success).toBe(false);
+    expect(SandboxHtmlNativeResponseSchema.safeParse({...legacy,httpStatus:402}).success).toBe(false);
+  });
   it("preserves legacy style receipts without inventing matching UI state",()=>{
     const legacy=htmlNativeEvidenceFixture().nativeHtmlProof!.observation.styleComparison[0]!;
     expect(HtmlNativeStyleComparisonSchema.parse(legacy)).toEqual(legacy);

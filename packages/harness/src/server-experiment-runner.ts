@@ -26,7 +26,7 @@ import {
 import { normalizeLocallyVerifiableCandidateRuns } from "./candidate-snapshot-evidence";
 import { indexUniqueBatchResults } from "./server-batch-results";
 import { measuredDocumentObservations, SERVER_MEASURED_REVIEW_VERSION,SERVER_NATIVE_REVIEW_INSTRUCTION } from "./server-measured-review-evidence";
-import {collectServerHtmlNativeRuns,type ServerHtmlNativePort} from "./server-html-native-runs";
+import {assertServerHtmlNativePaymentAvailable,collectServerHtmlNativeRuns,serverHtmlNativePaymentBlockedRuns,type ServerHtmlNativePort} from "./server-html-native-runs";
 import {serverPairedJudgeRequest,settleServerPairedJudgment} from "./server-paired-judge";
 
 export type ServerExperimentExecutionPorts = ServerHtmlNativePort & {
@@ -81,6 +81,7 @@ export async function executeServerExperimentCandidate(
   testCases: TestCase[] = project.evalSuite,
 ): Promise<TargetRunResult[]> {
   const ordered = await collectServerHtmlNativeRuns(project,testCases,ports,candidate);
+  const paymentBlocked=serverHtmlNativePaymentBlockedRuns(testCases,ordered);if(paymentBlocked)return paymentBlocked;
   const semanticCases: TestCase[] = [];
   const externalCases: TestCase[] = [];
   for (const testCase of testCases) {
@@ -247,6 +248,7 @@ export async function judgeServerExperimentCandidate(
   mode = "server-candidate",
   comparisonRuns: TargetRunResult[] = project.baselineRun.runs,
 ) {
+  assertServerHtmlNativePaymentAvailable([...runs,...comparisonRuns]);
   const judgeCriteria = criteriaRequiringJudge(project.acceptanceRubric, testCases, runs);
   const judgeIds = new Set(judgeCriteria.map((criterion) => criterion.id));
   const evaluableRunIds = new Set(runs

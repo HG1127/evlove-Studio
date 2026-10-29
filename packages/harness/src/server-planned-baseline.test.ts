@@ -41,6 +41,16 @@ function ports() {
 }
 
 describe("Baseline refresh after committed planning", () => {
+  it("retains the committed Plan and paper after a definite native payment limit without a new model call",async()=>{
+    const p=planned(),base=ports();p.acceptanceRubric.forEach(criterion=>{criterion.validationMethod="semantic-judge";});
+    p.finalHoldout!.contractFingerprint=finalHoldoutContractFingerprint(p);p.baselineRun.measurementFingerprint=serverBaselineFingerprint(p,route);
+    const before=structuredClone(p),executeNativeHtmlBatch=vi.fn(async()=>[{testCaseId:"V1",artifactHash:"a".repeat(64),error:"NATIVE_HTML_PAYMENT_REQUIRED",verificationStatus:"unverified" as const,output:"quota exhausted",trace:[],cost:0,latencyMs:0}]);
+    const out=await runServerBaseline(p,{...base,executeNativeHtmlBatch},{now:()=>later});
+    expect(out.ready).toBe(false);expect(executeNativeHtmlBatch).toHaveBeenCalledOnce();
+    expect(out.baseline.plannedRefresh).toMatchObject({status:"retryable",failureKind:"evidence",round:1});
+    expect(out.project.candidates).toEqual(before.candidates);expect(out.project.finalHoldout).toEqual(before.finalHoldout);expect(out.project.campaign.checkpoint).toEqual(before.campaign.checkpoint);
+    expect(base.judge).not.toHaveBeenCalled();expect(base.executeExternalBatch).not.toHaveBeenCalled();expect(base.executeSemanticBatch).not.toHaveBeenCalled();expect(p).toEqual(before);
+  });
   it.each(["draft", "queued"] as const)("remeasures an expired Original then continues the same %s Plan without another generation", async status => {
     const p = planned(), io = ports();
     p.candidates[0]!.status = status;

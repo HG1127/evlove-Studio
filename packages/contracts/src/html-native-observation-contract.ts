@@ -127,8 +127,9 @@ export const SandboxHtmlNativeRequestSchema=z.object({
 }).strict();
 export type SandboxHtmlNativeRequest=z.infer<typeof SandboxHtmlNativeRequestSchema>;
 
+export const HTML_NATIVE_PAYMENT_REQUIRED="NATIVE_HTML_PAYMENT_REQUIRED";
 export const SandboxHtmlNativeResponseSchema=z.discriminatedUnion("status",[
-  z.object({status:z.literal("unavailable"),reason:z.string().min(1).max(500)}).strict(),
+  z.object({status:z.literal("unavailable"),reason:z.string().min(1).max(500),reasonCode:z.literal("payment-required").optional()}).strict(),
   z.object({status:z.literal("observed"),observation:HtmlNativeObservationSchema,
     subjectText:z.string().min(1).max(64_000)}).strict(),
 ]);

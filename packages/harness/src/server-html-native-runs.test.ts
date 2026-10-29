@@ -4,8 +4,8 @@ import {AcceptanceCriterionSchema,HtmlNativeBrowserAssertionsSchema,TestCaseSche
 import {evidenceFingerprint,sourceGroundedHtmlSearchSteps} from "@evolution/core";
 import {acceptedPackageFixture,htmlNativeEvidenceFixture} from "@evolution/testkit";
 import {collectServerHtmlNativeRuns,bindServerHtmlNativeOriginalReferences,serverHtmlNativeRunsMatchOriginal} from "./server-html-native-runs";
-import {executeServerExperimentCandidate} from "./server-experiment-runner";
-import {executeServerCurrentArtifactSuite} from "./server-current-artifact-runner";
+import {executeServerExperimentCandidate,judgeServerExperimentCandidate} from "./server-experiment-runner";
+import {executeServerCurrentArtifactSuite,judgeServerCurrentArtifactSuite} from "./server-current-artifact-runner";
 import {recoverableServerExperimentRuns,serverExperimentBuildCheckpoint,serverExperimentExecutionCheckpoint,serverExperimentObservationBinding} from "./server-experiment-recovery";
 import {recoverableServerHoldout,serverHoldoutExecutionEvidenceFingerprint} from "./server-holdout-recovery";
 import {hasServerNativeHtmlHoldoutRetry} from "./server-frozen-validation-checkpoint";
@@ -25,6 +25,28 @@ function fixture(){
   return {project,candidate,run,test};
 }
 describe("injected native HTML execution",()=>{
+  it("stops dependent execution and both Judge routes at a bound payment limit while preserving exact files",async()=>{
+    const {project,candidate,test,run}=fixture(),before=structuredClone(candidate),native={testCaseId:test.id,artifactHash:run.artifactHash!,verificationStatus:"unverified" as const,error:"NATIVE_HTML_PAYMENT_REQUIRED",output:"PRIVATE_SERVICE_ERROR",latencyMs:0,cost:0,trace:[]};
+    const semantic={...test,id:"semantic",criterionIds:[],executionMode:"artifact-runtime" as const},external={...test,id:"external",criterionIds:[]};
+    project.evalSuite=[test,semantic,external];
+    const ports={executeNativeHtmlBatch:vi.fn(async()=>[native]),executeSemanticBatch:vi.fn(),executeExternalBatch:vi.fn(),judge:vi.fn()};
+    for(const runs of [await executeServerExperimentCandidate(project,candidate,ports),await executeServerCurrentArtifactSuite(project,project.evalSuite,ports)]){
+      expect(runs.map(r=>r.testCaseId)).toEqual(project.evalSuite.map(t=>t.id));expect(runs.every(r=>r.verificationStatus==="unverified")).toBe(true);
+      expect(JSON.stringify(runs)).not.toContain("PRIVATE_SERVICE_ERROR");
+      await expect(judgeServerExperimentCandidate(project,candidate,runs,ports)).rejects.toMatchObject({code:"NATIVE_HTML_PAYMENT_REQUIRED"});
+      await expect(judgeServerCurrentArtifactSuite(project,project.evalSuite,runs,ports)).rejects.toMatchObject({code:"NATIVE_HTML_PAYMENT_REQUIRED"});
+    }
+    expect(ports.executeSemanticBatch).not.toHaveBeenCalled();expect(ports.executeExternalBatch).not.toHaveBeenCalled();expect(ports.judge).not.toHaveBeenCalled();expect(candidate).toEqual(before);
+  });
+  it.each(["wrong-hash","duplicate","claimed-pass","with-proof"])("rejects %s payment-unavailability bindings instead of trusting a forged marker",async kind=>{
+    const {project,candidate,test,run}=fixture(),native={...run,nativeHtmlProof:undefined,renderedDocumentEvidence:undefined,error:"NATIVE_HTML_PAYMENT_REQUIRED",verificationStatus:"unverified" as const};
+    if(kind==="wrong-hash")native.artifactHash="f".repeat(64);
+    if(kind==="claimed-pass")Object.assign(native,{verificationStatus:"verified"});
+    if(kind==="with-proof")Object.assign(native,{nativeHtmlProof:run.nativeHtmlProof});
+    const results=kind==="duplicate"?[native,native]:[native];
+    expect((await collectServerHtmlNativeRuns(project,[test],{executeNativeHtmlBatch:async()=>results},candidate)).get(test.id))
+      .toMatchObject({error:"NATIVE_HTML_EVIDENCE_INVALID",verificationStatus:"unverified"});
+  });
   it("retains a caught execution failure for an explicit recovery observer",async()=>{
     const {project,test}=fixture(),error=new DOMException("request outcome unknown","TimeoutError"),observe=vi.fn();
     expect((await collectServerHtmlNativeRuns(project,[test],{executeNativeHtmlBatch:async()=>{throw error;}},undefined,observe)).size).toBe(0);

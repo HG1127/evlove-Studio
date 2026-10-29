@@ -69,6 +69,11 @@ export async function runKnownHtmlNativeProfile(raw:SandboxHtmlNativeRequest,cre
         "Observed execution and rendered text do not declare semantic quality, independent final acceptance or actual user benefit.",
         "Page-copy whitespace is normalized; original code blocks and prompt-copy internal whitespace are checked separately."]});
     return SandboxHtmlNativeResponseSchema.parse({status:"observed",observation,subjectText:subject.bodyText});
-  }catch{return unavailable("The isolated native profile is unavailable; original evidence and unknown states must be retained.");}
+  }catch(error){
+    // SDK HTTP provenance, never provider prose or a model-authored observation.
+    if(z.object({response:z.object({status:z.literal(402)}).passthrough()}).passthrough().safeParse(error).success)
+      return SandboxHtmlNativeResponseSchema.parse({status:"unavailable",reasonCode:"payment-required",reason:"Isolated execution requires payment or restored free quota; dependent execution must stop without an upgrade."});
+    return unavailable("The isolated native profile is unavailable; original evidence and unknown states must be retained.");
+  }
   finally{if(sandbox)await sandbox.stop();}
 }

@@ -56,6 +56,19 @@ function judge(): EvaluateAiResult {
 }
 
 describe("server baseline",()=>{
+  it("preserves a native payment limit and pauses before source enrichment, model execution or diagnosis",async()=>{
+    const p=fixture(),before=structuredClone(p);p.sourceArtifacts[0]!.extension="html";
+    p.acceptanceRubric[0]={...p.acceptanceRubric[0]!,id:"PROTECT-ALL",validationMethod:"executable-test"};
+    p.evalSuite[0]={...p.evalSuite[0]!,criterionIds:["PROTECT-ALL"],executionMode:"external-runner"};
+    p.hiddenEvalSuite[0]={...p.hiddenEvalSuite[0]!,criterionIds:["PROTECT-ALL"],executionMode:"external-runner"};
+    const semantic=vi.fn(),external=vi.fn(),judge=vi.fn(),context=vi.fn();
+    const outcome=await runServerBaseline(p,{executeNativeHtmlBatch:async()=>[{testCaseId:"V1",artifactHash:"a".repeat(64),error:"NATIVE_HTML_PAYMENT_REQUIRED",verificationStatus:"unverified",output:"quota exhausted",trace:[],cost:0,latencyMs:0}],
+      executeSemanticBatch:semantic,executeExternalBatch:external,buildCurrentArtifactContext:context,judge});
+    expect(outcome).toMatchObject({ready:false,capabilityGaps:["native-html-payment-required"],project:{campaign:{status:"paused"}},baseline:{status:"failed"}});
+    expect(outcome.baseline.runs).toHaveLength(3);expect(outcome.baseline.runs.every(run=>run.error==="NATIVE_HTML_PAYMENT_REQUIRED"&&run.verificationStatus==="unverified")).toBe(true);
+    expect(outcome.baseline.result).toBeUndefined();for(const port of [semantic,external,judge,context])expect(port).not.toHaveBeenCalled();
+    expect(outcome.project.lessons).toEqual(before.lessons);expect(outcome.project.outputArtifacts).toEqual(before.outputArtifacts);
+  });
   it.each(["native-only","later-provider-failure"])("locks the physical Original and preserves native evidence under %s",async mode=>{
     const p=fixture(),run=htmlNativeEvidenceFixture();
     p.evalSuite=[p.evalSuite[0]!];p.hiddenEvalSuite=[p.hiddenEvalSuite[0]!];

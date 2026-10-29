@@ -19,7 +19,7 @@ import { indexUniqueBatchResults } from "./server-batch-results";
 import { groundedOriginalCitationDefect, groundedOriginalDocumentProtection } from "./server-grounded-baseline-defect";
 import { currentHtmlDocumentTextObservation } from "./server-current-document-evidence";
 import { measuredDocumentObservations, SERVER_MEASURED_REVIEW_VERSION,SERVER_NATIVE_REVIEW_INSTRUCTION } from "./server-measured-review-evidence";
-import {collectServerHtmlNativeRuns,bindServerHtmlNativeOriginalReferences,type ServerHtmlNativePort} from "./server-html-native-runs";
+import {assertServerHtmlNativePaymentAvailable,collectServerHtmlNativeRuns,bindServerHtmlNativeOriginalReferences,serverHtmlNativePaymentBlockedRuns,type ServerHtmlNativePort} from "./server-html-native-runs";
 
 export type ServerCurrentArtifactPorts = ServerHtmlNativePort & {
   executeSemanticBatch(args: {
@@ -50,6 +50,7 @@ export async function executeServerCurrentArtifactSuite(
 ){
   const ordered=await collectServerHtmlNativeRuns(project,testCases,ports);
   bindServerHtmlNativeOriginalReferences(ordered,project.baselineRun.originalReferences??[],project.id);
+  const paymentBlocked=serverHtmlNativePaymentBlockedRuns(testCases,ordered);if(paymentBlocked)return paymentBlocked;
   const semanticCases:TestCase[]=[];
   const externalCases:TestCase[]=[];
   for(const testCase of testCases){
@@ -129,6 +130,7 @@ export async function judgeServerCurrentArtifactSuite(
   runs:TargetRunResult[],
   ports:ServerCurrentArtifactPorts,
 ){
+  assertServerHtmlNativePaymentAvailable(runs);
   const judgeCriteria=criteriaRequiringJudge(project.acceptanceRubric,testCases,runs);
   const judgeIds=new Set(judgeCriteria.map((criterion)=>criterion.id));
   const evaluableIds=new Set(runs.filter((run)=>run.verificationStatus==="verified"||run.verificationStatus==="partial").map((run)=>run.testCaseId));

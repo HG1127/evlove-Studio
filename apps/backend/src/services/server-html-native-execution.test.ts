@@ -1,7 +1,7 @@
 // @vitest-environment node
 import {createHash} from "node:crypto";
 import {afterEach,describe,expect,it,vi} from "vitest";
-import {AcceptanceCriterionSchema,ArtifactMetadataSchema,EvolutionJobSchema,SourceArtifactSchema,TestCaseSchema,type ArtifactStorePort,type SandboxHtmlNativeRequest} from "@evolution/contracts";
+import {AcceptanceCriterionSchema,ArtifactMetadataSchema,EvolutionJobSchema,SourceArtifactSchema,TestCaseSchema,type ArtifactStorePort,type SandboxHtmlNativeRequest,type SandboxHtmlNativeResponse} from "@evolution/contracts";
 import {withServerControlExecution} from "./server-control-execution";
 import {acceptedPackageFixture,htmlNativeEvidenceFixture} from "@evolution/testkit";
 import {executeServerExperimentCandidate} from "@evolution/harness";
@@ -47,6 +47,16 @@ function withSearchPlan(){
   return x;
 }
 describe("Mission-authorized native HTML composition",()=>{
+  it("binds payment unavailability to the exact physical Candidate and stops before another source",async()=>{
+    const x=fixture(),before=structuredClone(x.candidate),other={...x.source,id:"other-source",storageRef:"other"};
+    x.project.sourceArtifacts.push(other);x.project.acceptanceRubric.push({...x.project.acceptanceRubric[0]!,id:"SEM-CROSS-CONSISTENCY",artifactIds:[other.id]});
+    const test2={...x.test,id:"other-case",criterionIds:["SEM-CROSS-CONSISTENCY"]};
+    const execute=vi.fn(async():Promise<SandboxHtmlNativeResponse>=>({status:"unavailable",reason:"do not echo this private service detail",reasonCode:"payment-required"}));
+    const runs=await createServerHtmlNativeExecutor({...x.ports,execute})({...x,testCases:[x.test,test2]});
+    expect(execute).toHaveBeenCalledOnce();expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({testCaseId:x.test.id,artifactHash:sha(x.subject),verificationStatus:"unverified",error:"NATIVE_HTML_PAYMENT_REQUIRED"});
+    expect(runs[0]).not.toHaveProperty("nativeHtmlProof");expect(JSON.stringify(runs)).not.toContain("private service detail");expect(x.candidate).toEqual(before);
+  });
   it("does not start another native Sandbox if the Job was cancelled while reading the physical Original",async()=>{
     const x=fixture(),at="2026-10-27T00:00:00Z";
     let job=EvolutionJobSchema.parse({schemaVersion:"job-v1",id:"control",missionId:x.project.id,type:"campaign",status:"running",label:"control",idempotencyKey:"workflow-control:control",generation:1,attempts:1,priority:70,createdAt:at,updatedAt:at});

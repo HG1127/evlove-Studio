@@ -1,4 +1,4 @@
-import {HtmlNativeBrowserAssertionsSchema,OriginalArtifactReferenceProofSchema,SandboxHtmlNativeResponseSchema,TargetRunResultSchema,
+import {HTML_NATIVE_PAYMENT_REQUIRED,HtmlNativeBrowserAssertionsSchema,OriginalArtifactReferenceProofSchema,SandboxHtmlNativeResponseSchema,TargetRunResultSchema,
   type ArtifactStorePort,type Candidate,type CandidateArtifactSnapshot,type EvolveProject,
   type SandboxHtmlNativeRequest,type SandboxHtmlNativeResponse,type SourceArtifact,type TargetRunResult,type TestCase} from "@evolution/contracts";
 import {fastHash,htmlNativeBrowserPlanKey,htmlNativeCaseSource,isSourceGroundedHtmlSearchPlan} from "@evolution/core";
@@ -67,7 +67,16 @@ export function createServerHtmlNativeExecutor(ports:Ports){
         await assertServerControlExecutionActive(project.id);
         const result=SandboxHtmlNativeResponseSchema.parse(await ports.execute({original:original.bytes,subject,
           expectedOriginalSha256:original.sha256,expectedSubjectSha256:subjectSha,...(browserAssertions?{browserAssertions}:{})}));
-        if(result.status!=="observed")continue;
+        if(result.status!=="observed"){
+          if(result.reasonCode==="payment-required"){
+            for(const test of tests)runs.push(TargetRunResultSchema.parse({
+              testCaseId:test.id,artifactHash:subjectSha,verificationStatus:"unverified",error:HTML_NATIVE_PAYMENT_REQUIRED,
+              output:"UNVERIFIED: 隔离执行需要付费或恢复免费额度；保留冻结文件，停止依赖执行与评分，不自动升级。",latencyMs:0,cost:0,trace:[],
+            }));
+            break;
+          }
+          continue;
+        }
         const observation=result.observation;
         if(observation.original.sha256!==original.sha256||observation.subject.sha256!==subjectSha
           ||observation.subject.bodyTextFingerprint!==fastHash(result.subjectText)

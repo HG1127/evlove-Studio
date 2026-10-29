@@ -26,6 +26,18 @@ function runtime(result=rawResult(),exitCode=0,wire=envelope(Buffer.from(JSON.st
   return {sandbox,writeFiles,stop,runCommand,create:vi.fn(async()=>sandbox)};
 }
 describe("known isolated native HTML transport",()=>{
+  it.each([402,401,403,429,503])("classifies actual SDK HTTP %s provenance without preserving raw service errors",async status=>{
+    const create=vi.fn(async()=>{throw Object.assign(new Error("PRIVATE_KEY and Hobby plan usage limit exceeded"),{response:new Response("PRIVATE_BODY",{status})});});
+    const result=await runKnownHtmlNativeProfile(args(),create,profiles);
+    expect(create).toHaveBeenCalledOnce();expect(result.status).toBe("unavailable");
+    expect(result).not.toHaveProperty("observation");expect(JSON.stringify(result)).not.toMatch(/PRIVATE|Hobby/);
+    if(status===402)expect(result).toMatchObject({reasonCode:"payment-required"});else expect(result).not.toHaveProperty("reasonCode");
+  });
+  it("does not classify a plain error message or an unsupported source as a payment limit",async()=>{
+    const create=vi.fn(async()=>{throw Error("Status code 402: Hobby plan usage limit exceeded");});
+    expect(await runKnownHtmlNativeProfile(args(),create,profiles)).not.toHaveProperty("reasonCode");
+    expect(await runKnownHtmlNativeProfile(args(),create,[])).not.toHaveProperty("reasonCode");expect(create).toHaveBeenCalledOnce();
+  });
   it.each(["missing","missing-focus","legacy-policy","foreign-source","foreign-subject","foreign-equal-target","wrong-active","wrong-location","wrong-focus","wrong-focus-path","wrong-document-focus","open-menu"])("rejects a claimed passing style comparison with %s navigation state",async kind=>{
     const raw=rawResult(),row=raw.styleComparison[0]!;
     if(kind==="missing")delete (row as {state?:unknown}).state;

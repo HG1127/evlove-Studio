@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
+import {acceptedPackageFixture} from "@evolution/testkit";
 import { currentSemanticArtifactContext, storedBaselineEvidence } from "./server-baseline-evidence";
 import { executeServerCurrentArtifactSuite } from "./server-current-artifact-runner";
 
 const testCase: TestCase = { id: "H1", title: "Check guide", input: "Check actual file", expected: [], tags: [], hidden: true, criterionIds: [], executionMode: "static-evidence", evidenceScope: "implementation" };
 function project(stored = true): EvolveProject {
-  return { sourceArtifacts: [{ id: "guide", role: "target", name: "guide.md", extension: "md", storageRef: stored ? "raw-guide" : undefined, textContent: "STALE METADATA", structure: [] }], acceptanceRubric: [] } as unknown as EvolveProject;
+  const current=acceptedPackageFixture(false).project;
+  return {...current,sourceArtifacts:[{...current.sourceArtifacts[0]!,id:"guide",role:"target",artifactKind:"document",mimeType:"text/markdown",
+    name:"guide.md",extension:"md",inputMode:"paste",storageRef:stored?"raw-guide":undefined,textContent:"STALE METADATA",structure:[]}],acceptanceRubric:[]};
 }
 
 describe("Server current-version file evidence routing", () => {

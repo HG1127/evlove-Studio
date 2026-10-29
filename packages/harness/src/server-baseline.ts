@@ -34,7 +34,7 @@ import {
 } from "./server-baseline-evidence";
 import { indexUniqueBatchResults } from "./server-batch-results";
 import {groundedOriginalCitationDefect,groundedOriginalDocumentProtection} from "./server-grounded-baseline-defect";
-import {collectServerHtmlNativeRuns,bindServerHtmlNativeOriginalReferences,serverHtmlNativeRunsMatchOriginal,type ServerHtmlNativePort} from "./server-html-native-runs";
+import {collectServerHtmlNativeRuns,bindServerHtmlNativeOriginalReferences,serverHtmlNativeRunsMatchOriginal,serverHtmlNativePaymentBlockedRuns,type ServerHtmlNativePort} from "./server-html-native-runs";
 import { serverExperimentRecoveryCheckpoint } from "./server-experiment-wait";
 import { failedPlannedBaselineRefresh, plannedBaselineRefresh, samePlannedOriginalReferences } from "./server-planned-baseline";
 import {currentHtmlDocumentTextObservation} from "./server-current-document-evidence";
@@ -168,6 +168,13 @@ export async function runServerBaseline(
   let unsettledExecution = false;
   const ordered = await collectServerHtmlNativeRuns(project,project.evalSuite,ports,undefined,
     plannedRefresh?.checkpoint ? error => { unsettledExecution ||= !CompletedBaselineFailureSchema.safeParse(error).success; } : undefined);
+  const paymentBlocked=serverHtmlNativePaymentBlockedRuns(project.evalSuite,ordered);
+  if(paymentBlocked){
+    const reason="[server-campaign-baseline-evidence-pending] 必要隔离执行需要付费或恢复免费额度；尚未继续执行、评分或诊断。";
+    const baseline:BaselineRun=failedPlannedBaselineRefresh({...project.baselineRun,status:"failed",completedAt:now(),runs:paymentBlocked},"evidence",now(),"retryable");
+    return {project:{...project,baselineRun:baseline,campaign:{...project.campaign,status:"paused",stopReason:reason,
+      schedule:{...project.campaign.schedule,enabled:false,nextRunAt:undefined}},updatedAt:now()},baseline,ready:false,reason,capabilityGaps:["native-html-payment-required"]};
+  }
   let currentArtifactContext:Array<Record<string,unknown>>=[];
   let referenceOnlyCriterionIds=new Set<string>();
   let originalReferences:OriginalArtifactReferenceProof[]=[];

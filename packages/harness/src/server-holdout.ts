@@ -30,6 +30,7 @@ import {
 import { serverBaselineFingerprint } from "./server-baseline-evidence";
 import { knownServerHoldoutRejection, readServerHoldoutArtifactFingerprint, recoverableServerHoldout, reusableServerHoldoutAssessment, serverHoldoutExecutionEvidenceFingerprint, type ServerHoldoutArtifactReader } from "./server-holdout-recovery";
 import { exactServerHoldoutSuite, pauseServerHoldoutPreflight } from "./server-holdout-preflight";
+import {assertServerHtmlNativePaymentAvailable} from "./server-html-native-runs";
 import {fastHash} from "@evolution/core";
 
 export type ServerHoldoutPorts = {
@@ -258,6 +259,7 @@ export async function runServerHoldout(
         executionArtifactFingerprint = after;
       }
     }
+    assertServerHtmlNativePaymentAvailable([...runs,...baselineRuns]);
     const retainedPairedAssessment=Boolean(prior&&inputProject.experimentPolicy.judgeComparison==="paired-two-order-v1"&&prior.evaluation);
     const candidateJudgment=prior && (retainedPairedAssessment||retainedRejection||reusableServerHoldoutAssessment(inputProject, suite, runs, prior.evaluation))
       ? Promise.resolve(prior.evaluation!)

@@ -96,6 +96,17 @@ function addLimitedProtection(project:EvolveProject,ports:ServerHoldoutPorts){
 }
 
 describe("server hidden holdout",()=>{
+  it("retains both payment-blocked arms and stops before either Judge, final acceptance or release review",async()=>{
+    const p=fixture("external-runner"),before=structuredClone(p),io=semanticPorts(),judge=vi.fn(),review=vi.fn();
+    const execute=vi.fn(async()=>[{testCaseId:"H1",output:"necessary native execution unavailable",verificationStatus:"unverified" as const,error:"NATIVE_HTML_PAYMENT_REQUIRED",latencyMs:0,cost:0,trace:[]}]);
+    io.ports.current.executeExternalBatch=execute;io.ports.candidate.executeExternalBatch=execute;io.ports.current.judge=judge;io.ports.candidate.judge=judge;io.ports.releaseReview=review;
+    const out=await runServerHoldout(p,io.ports);
+    expect(out.control).toBe("stop");expect(out.project.campaign.status).toBe("paused");
+    expect(out.project.validationRun).toMatchObject({status:"failed",runs:[{error:"NATIVE_HTML_PAYMENT_REQUIRED"}],baselineRuns:[{error:"NATIVE_HTML_PAYMENT_REQUIRED"}]});
+    expect(out.reason).toContain("需要付费或恢复免费额度");expect(out.project.validationRun.evaluation).toBeUndefined();expect(out.project.validationRun.baselineEvaluation).toBeUndefined();
+    expect(judge).not.toHaveBeenCalled();expect(review).not.toHaveBeenCalled();expect(io.currentCases).toEqual([]);expect(io.candidateCases).toEqual([]);
+    expect(out.project.outputArtifacts).toEqual(before.outputArtifacts);expect(out.project.lessons).toEqual(before.lessons);expect(p).toEqual(before);
+  });
   it("rejects missing historical planning provenance before reading cached Hidden evidence or invoking models",async()=>{
     const p=fixture(),io=semanticPorts(90,70);p.failureObservationSources=[failureObservationFixture().sourceRef()];
     const before=structuredClone(p.validationRun),read=vi.fn(),review=vi.fn();io.ports.readArtifactFingerprint=read;io.ports.releaseReview=review;
