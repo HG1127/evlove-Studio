@@ -8,3 +8,9 @@ export function serverHtmlNativeAuthorized(missionId:string){
   const parsed=missions.safeParse(process.env.EVOLUTION_HTML_NATIVE_MISSIONS??"");
   return parsed.success&&parsed.data.includes(missionId);
 }
+
+/** Separate local execution consent; cloud transmission consent never enables it. */
+export function serverLocalHtmlNativeAuthorized(missionId:string){
+  const parsed=missions.safeParse(process.env.EVOLUTION_HTML_NATIVE_LOCAL_MISSIONS??"");
+  return !process.env.VERCEL&&parsed.success&&parsed.data.includes(missionId);
+}

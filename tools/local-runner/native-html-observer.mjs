@@ -1,0 +1,244 @@
+// Trusted observer; source HTML is data, executed only by the sandboxed browser.
+// Shares the V1 native profile assertions; kernel parity is checked by tests.
+async function runDeclaredBrowserPlans(page, assertions, record) {
+  for (const [planIndex, plan] of (assertions?.plans ?? []).entries()) {
+    await page.reload({waitUntil:'domcontentloaded',timeout:12000});
+    for (const [stepIndex, step] of plan.entries()) {
+      let pass=false;
+      try {
+        const locator=page.locator(step.selector);
+        if(step.action==='fill'){await locator.fill(step.value);pass=true;}
+        else if(step.action==='visible')pass=await locator.isVisible();
+        else if(step.action==='text')pass=(await locator.innerText()).includes(step.value);
+        else if(step.action==='count')pass=await locator.count()===step.count;
+      } catch { pass=false; }
+      record('declared-browser-'+planIndex+'-'+stepIndex,pass,{tested:1,failed:pass?0:1});
+    }
+  }
+  if(assertions?.plans.length)await page.reload({waitUntil:'domcontentloaded',timeout:12000});
+}
+import {createHash} from 'node:crypto';
+import {createLocalNativePage} from './browser-boundary.mjs';
+const hash=value=>createHash('sha256').update(value).digest('hex');
+export async function observeNativeHtml({inputs,subjects,launchBrowser}) {
+let browser=await launchBrowser();
+const results=[];
+let styleTargetHref;
+try{
+  for(const label of ['original','candidate']){
+    if(label==='candidate'){await browser.close();browser=await launchBrowser();}
+    const subjectStarted=Date.now();
+    const html=subjects[label];
+    if(hash(html)!==(label==='original'?inputs.originalSha256:inputs.subjectSha256))throw Error('Physical native subject hash mismatch');
+    const {context,page,blocked,pageErrors}=await createLocalNativePage(browser,html);
+    const failures=[],checks=[];
+    const record=(id,pass,detail={})=>{checks.push({id,pass,...detail});if(!pass)failures.push(id);};
+    try{
+      await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded',timeout:12000});
+      await runDeclaredBrowserPlans(page,inputs.browserAssertions,record);
+      const inventory=await page.evaluate(()=>({
+        cards:document.querySelectorAll('article.slide-card').length,
+        menu:document.querySelectorAll('#menuBtn').length,
+        top:document.querySelectorAll('#toTop').length,
+        progress:document.querySelectorAll('#progress').length,
+        pageCopy:document.querySelectorAll('.copy-slide[data-slide]').length,
+        promptCopy:document.querySelectorAll('.prompt-copy-all').length,
+        editablePrompts:document.querySelectorAll('.prompt-code[contenteditable="true"]').length,
+        checkItems:document.querySelectorAll('.check-item').length,
+        checkPanels:document.querySelectorAll('.checklist-panel').length,
+        details:document.querySelectorAll('details').length,
+        internalLinks:[...document.querySelectorAll('.sidebar a[href^="#"]')].filter(a=>document.getElementById(a.hash.slice(1))).map(a=>a.hash),
+        unknownControls:[...document.querySelectorAll('button,input,select,textarea,summary,[role="button"],[onclick],[contenteditable="true"]')]
+          .filter(el=>!el.matches('#search,#menuBtn,#toTop,.copy-slide,.prompt-copy-all,.check-item,summary,.copy-btn,.prompt-code')).map(el=>({tag:el.tagName,type:el.getAttribute('type'),id:el.id})),
+      }));
+      if(label==='original')styleTargetHref=inventory.internalLinks[0];
+      record('initial-card-inventory',inventory.cards>=inputs.expectedCardCount,{count:inventory.cards});
+      const search=page.locator('#search');
+      const query=await page.locator('article.slide-card').first().getAttribute('data-search');
+      const word=query?.match(/[\p{L}]{2,32}/u)?.[0];
+      if(word){
+        await search.fill(word);
+        const counts=await page.evaluate(()=>({visible:[...document.querySelectorAll('article.slide-card')].filter(e=>!e.classList.contains('search-hidden')).length,expected:[...document.querySelectorAll('article.slide-card')].filter(e=>e.dataset.search?.includes(document.querySelector('#search').value.trim().toLowerCase())).length}));
+        record('search-positive',counts.visible===counts.expected&&counts.visible>0,counts);
+        await search.fill('__evolution_native_no_match_c825a__');
+        record('search-negative',await page.locator('article.slide-card:not(.search-hidden)').count()===0);
+        await search.fill('');record('search-reset',await page.locator('article.slide-card:not(.search-hidden)').count()===inventory.cards);
+      }else record('search-positive',false,{reason:'no real indexed search word'});
+      for(const item of inputs.contentSearchQueries??[]){
+        await search.fill(item.query);
+        const matched=await page.locator('#'+item.cardId).isVisible(),expectedMatched=label==='candidate';
+        record('content-search-#'+item.cardId,matched===expectedMatched,{query:item.query,targetCardId:item.cardId,expectedMatched,matched});
+        await search.fill('');
+      }
+      for(const href of inventory.internalLinks){
+        try{
+          await page.locator('.sidebar a[href="'+href+'"]').first().click();
+          await page.waitForFunction(hash=>location.hash===hash,href,{timeout:2000});
+          await page.waitForFunction(hash=>document.querySelector('.sidebar a.active')?.hash===hash,href,{timeout:2500});
+          const target=page.locator(href);
+          record('navigation-'+href,await target.count()===1&&await target.isVisible());
+        }catch(error){record('navigation-'+href,false,{error:error.name});}
+      }
+      await page.setViewportSize({width:390,height:844});
+      try{
+        await page.locator('#menuBtn').click();
+        record('mobile-menu-opens',await page.locator('body').evaluate(el=>el.classList.contains('menu-open')));
+        const href=inventory.internalLinks[0];
+        if(href)await page.locator('.sidebar a[href="'+href+'"]').first().click();
+        record('mobile-menu-closes-on-navigation',await page.locator('body').evaluate(el=>!el.classList.contains('menu-open')));
+      }catch(error){record('mobile-menu',false,{error:error.name});}
+      await page.setViewportSize({width:1440,height:960});
+      const copies=[];
+      for(const selector of ['.copy-slide[data-slide]','.prompt-copy-all']){
+        const buttons=page.locator(selector),count=await buttons.count();
+        for(let index=0;index<count;index++){
+          try{
+            await page.evaluate(()=>navigator.clipboard.writeText('EVOLUTION_SENTINEL'));
+            const expected=await buttons.nth(index).evaluate(el=>{
+              const card=el.closest('article.slide-card');
+              if(el.matches('.prompt-copy-all')){
+                const editor=el.closest('.prompt-editor');
+                return {kind:'prompt',text:editor?.querySelector('pre')?.textContent??null};
+              }
+              const clone=card?.cloneNode(true);
+              clone?.querySelectorAll('button').forEach(node=>node.remove());
+              return {kind:'page',text:clone?.textContent??null};
+            });
+            await buttons.nth(index).click();
+            const text=await page.evaluate(()=>navigator.clipboard.readText());
+            const valid=text.trim().length>0&&text!=='EVOLUTION_SENTINEL';
+            const normalize=value=>value.replace(/\s+/gu,'').trim();
+            const fidelity=expected.text!==null&&normalize(expected.text)===normalize(text);
+            copies.push({kind:selector,index,sha256:hash(text),chars:text.length,pass:valid,fidelity,exactTrimmed:expected.text?.trim()===text.trim(),expectedChars:expected.text?.length??0});
+          }catch(error){copies.push({kind:selector,index,pass:false,error:error.name});}
+        }
+      }
+      record('all-copy-controls-write-real-clipboard',copies.length>0&&copies.every(item=>item.pass),{tested:copies.length,failed:copies.filter(item=>!item.pass).length});
+      record('copied-content-matches-current-dom-order',copies.length>0&&copies.every(item=>item.fidelity),{tested:copies.length,failed:copies.filter(item=>!item.fidelity).length});
+      record('prompt-copy-preserves-internal-whitespace',copies.filter(item=>item.kind==='.prompt-copy-all').every(item=>item.exactTrimmed));
+      const editableResults=[];
+      for(let index=0;index<inventory.editablePrompts;index++){
+        const editor=page.locator('.prompt-code[contenteditable="true"]').nth(index),original=await editor.textContent();
+        await editor.fill('Evolution editable prompt validation 23');
+        await editor.locator('xpath=ancestor::*[contains(concat(" ",normalize-space(@class)," ")," prompt-editor ")]').locator('.prompt-copy-all').click();
+        const text=await page.evaluate(()=>navigator.clipboard.readText());
+        await editor.fill(original??'');editableResults.push(text==='Evolution editable prompt validation 23');
+      }
+      record('editable-prompts-copy-current-edited-content',editableResults.length===inventory.editablePrompts&&editableResults.every(Boolean),{tested:editableResults.length});
+      const checklist=[];
+      const checklistState=()=>page.evaluate(async()=>{
+        const counter=document.querySelector('.check-progress b')?.textContent??null,counts=counter?.match(/(\d+)\s*\/\s*(\d+)/u),bar=document.querySelector('.check-progress i');
+        if(bar){getComputedStyle(bar).width;await Promise.allSettled(bar.getAnimations().map(animation=>animation.finished));}
+        return {checked:document.querySelectorAll('.check-item.checked').length,completed:counts?Number(counts[1]):null,total:counts?Number(counts[2]):null,
+          barPixels:bar?Number.parseFloat(getComputedStyle(bar).width):null,declaredPercent:bar?Number.parseFloat(bar.style.width):null};
+      });
+      for(let index=0;index<inventory.checkItems;index++){
+        const item=page.locator('.check-item').nth(index);
+        const beforeProgress=await checklistState();
+        const before=await item.evaluate(el=>el.classList.contains('checked'));
+        await item.click();const after=await item.evaluate(el=>el.classList.contains('checked'));
+        const afterProgress=await checklistState();
+        await item.click();const restored=await item.evaluate(el=>el.classList.contains('checked'));
+        const restoredProgress=await checklistState();
+        checklist.push({index,pass:before!==after&&before===restored,
+          progressChanges:beforeProgress.completed!==afterProgress.completed&&beforeProgress.barPixels!==afterProgress.barPixels,
+          progressRestored:beforeProgress.checked===restoredProgress.checked&&beforeProgress.completed===restoredProgress.completed&&beforeProgress.total===restoredProgress.total&&beforeProgress.barPixels===restoredProgress.barPixels});
+      }
+      record('all-checklist-items-toggle-and-restore',checklist.length>0&&checklist.every(item=>item.pass),{tested:checklist.length});
+      record('all-checklist-counters-and-bars-track-state',checklist.length>0&&checklist.every(item=>item.progressChanges&&item.progressRestored),{tested:checklist.length});
+      for(let index=0;index<inventory.checkItems;index++)await page.locator('.check-item').nth(index).click();
+      const completeChecklist=await checklistState();
+      record('complete-checklist-reaches-total-and-100-percent',completeChecklist.checked===inventory.checkItems&&completeChecklist.completed===inventory.checkItems&&completeChecklist.total===inventory.checkItems&&completeChecklist.declaredPercent===100,{...completeChecklist});
+      for(let index=0;index<inventory.checkItems;index++)await page.locator('.check-item').nth(index).click();
+      const details=[];
+      for(let index=0;index<inventory.details;index++){
+        const detail=page.locator('details').nth(index),summary=detail.locator(':scope > summary').first();
+        if(!await summary.count())continue;
+        const before=await detail.evaluate(el=>el.open);
+        await summary.click();const after=await detail.evaluate(el=>el.open);
+        await summary.click();details.push({index,pass:before!==after&&before===await detail.evaluate(el=>el.open)});
+      }
+      record('all-details-toggle-and-restore',details.length===inventory.details&&details.every(item=>item.pass),{tested:details.length});
+      await page.locator('body').press('Control+End');
+      try{await page.waitForFunction(()=>Math.abs(scrollY+innerHeight-document.documentElement.scrollHeight)<4,{timeout:3500});}
+      catch{record('keyboard-reaches-physical-document-end',false,{...await page.evaluate(()=>({scrollY,innerHeight,scrollHeight:document.documentElement.scrollHeight,activeTag:document.activeElement?.tagName}))});}
+      // Observe the real scroll event after physical motion has finished; do not modify the UI state.
+      await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+      const endProgress=await page.locator('#progress').evaluate(el=>parseFloat(el.style.width)||0);
+      const scrollPosition=await page.evaluate(()=>({scrollY,innerHeight,scrollHeight:document.documentElement.scrollHeight}));
+      record('reading-progress-at-end',endProgress>=99,{percent:endProgress,...scrollPosition});
+      await page.locator('#toTop').click();
+      await page.waitForFunction(()=>scrollY<2,{timeout:2500});
+      const startProgress=await page.locator('#progress').evaluate(el=>parseFloat(el.style.width)||0);
+      record('return-to-top-and-progress-reset',startProgress<=1,{percent:startProgress});
+      const layouts=[],styleSnapshots=[],renderedParagraphs=[];let renderedBodyText;
+      for(const width of [1440,390]){
+        await page.setViewportSize({width,height:900});
+        try{
+          if(!styleTargetHref||!inventory.internalLinks.includes(styleTargetHref))throw Error('Source style navigation unavailable');
+          if(width<981&&!await page.locator('body').evaluate(el=>el.classList.contains('menu-open')))await page.locator('#menuBtn').click();
+          await page.locator('.sidebar a[href="'+styleTargetHref+'"]').first().click();
+          await page.waitForFunction(href=>location.hash===href&&document.querySelector('.sidebar a.active')?.hash===href&&!document.body.classList.contains('menu-open'),styleTargetHref,{timeout:2500});
+          await page.evaluate(()=>new Promise((resolve,reject)=>{let previous=scrollY,stable=0;const timer=setTimeout(()=>reject(Error('Style navigation scroll did not settle')),3500);const sample=()=>{const current=scrollY;stable=Math.abs(current-previous)<0.5?stable+1:0;previous=current;if(stable>=4){clearTimeout(timer);resolve(true);}else requestAnimationFrame(sample);};requestAnimationFrame(sample);}));
+          record('style-comparison-navigation-'+width,true);
+        }catch(error){record('style-comparison-navigation-'+width,false,{error:error.name});}
+        await page.mouse.move(0,0);
+        await page.evaluate(async()=>{
+          getComputedStyle(document.body).color;
+          await Promise.allSettled(document.getAnimations().filter(animation=>animation.effect?.getComputedTiming().iterations!==Infinity).map(animation=>animation.finished));
+        });
+        const layout=await page.evaluate(()=>({overflow:document.documentElement.scrollWidth>innerWidth+2,bodyWidth:document.body.getBoundingClientRect().width,viewport:innerWidth}));
+        if(width===1440)renderedBodyText=await page.locator('body').innerText();
+        renderedParagraphs.push(await page.evaluate(viewport=>({viewport,paragraphs:[...document.querySelectorAll('article.slide-card p')].map(p=>{
+          const section=p.closest('article.slide-card'),rectangle=p.getBoundingClientRect(),range=document.createRange();range.selectNodeContents(p);
+          return {section:section?.id??'',role:p.closest('.mini-card')?'card-detail':p.closest('.content-block')?'introductory':'paragraph',
+            chars:p.innerText.replace(/\s+/g,' ').trim().length,lineCount:new Set([...range.getClientRects()].filter(r=>r.width>0&&r.height>0).map(r=>Math.round(r.y*2)/2)).size,
+            height:rectangle.height,cardCount:section?.querySelectorAll('.mini-card').length??0,
+            cardDetailChars:[...(section?.querySelectorAll('.mini-card p')??[])].reduce((n,node)=>n+node.innerText.replace(/\s+/g,' ').trim().length,0)};
+        }).filter(row=>row.height>0).sort((a,b)=>b.chars-a.chars).slice(0,12)}),width));
+        layouts.push({width,...layout});record('no-horizontal-overflow-'+width,!layout.overflow,layout);
+        const samples=await page.evaluate(requestedHref=>{
+          const properties=['font-family','font-size','font-weight','font-style','line-height','letter-spacing','color','background-color',
+            'border-top-width','border-right-width','border-bottom-width','border-left-width','border-top-style','border-right-style','border-bottom-style','border-left-style',
+            'border-top-color','border-right-color','border-bottom-color','border-left-color','border-radius','box-shadow','box-sizing',
+            'padding-top','padding-right','padding-bottom','padding-left','margin-top','margin-right','margin-bottom','margin-left',
+            'display','position','text-align','white-space','word-break','overflow-wrap','overflow-x','overflow-y','align-items','justify-content','gap',
+            'min-width','max-width','min-height','max-height','text-decoration-line','list-style-type','direction','writing-mode'];
+          const focused=document.activeElement,parts=[];let node=focused;
+          while(node&&parts.length<64){const parent=node.parentElement,index=parent?[...parent.children].indexOf(node):0;parts.unshift(node.tagName.toUpperCase()+':'+index);node=parent;}
+          if(node)throw Error('Focused element identity exceeds the observation boundary');
+          return {state:{requestedHref,locationHref:location.hash,activeHref:document.querySelector('.sidebar a.active')?.hash??null,focusedHref:focused?.matches('.sidebar a[href]')?focused.hash:null,menuOpen:document.body.classList.contains('menu-open'),focus:{path:parts.length?parts.join('/'):null,documentFocused:document.hasFocus()}},
+            propertyCount:properties.length,infiniteAnimations:document.getAnimations().filter(animation=>animation.effect?.getComputedTiming().iterations===Infinity).length,
+            elements:[...document.querySelectorAll('*')].map(el=>{const style=getComputedStyle(el);return {id:el.id,
+              group:el.namespaceURI+'|'+el.tagName+'|'+[...el.classList].sort().join('.'),values:properties.map(name=>style.getPropertyValue(name))};})};
+        },styleTargetHref);
+        const state=samples.state;record('style-comparison-state-'+width,state.requestedHref===styleTargetHref&&state.locationHref===styleTargetHref&&state.activeHref===styleTargetHref&&!state.menuOpen);
+        const groups=new Map();
+        for(const el of samples.elements){const digest=hash(JSON.stringify(el.values));const hashes=groups.get(el.group)??new Set();hashes.add(digest);groups.set(el.group,hashes);}
+        styleSnapshots.push({width,state:samples.state,propertyCount:samples.propertyCount,infiniteAnimations:samples.infiniteAnimations,
+          named:samples.elements.filter(el=>el.id).map(el=>({id:el.id,digest:hash(JSON.stringify(el.values))})),
+          groups:[...groups].map(([group,hashes])=>({group,digests:[...hashes].sort()}))});
+      }
+      record('no-unknown-interactive-controls',inventory.unknownControls.length===0,{count:inventory.unknownControls.length});
+      record('no-runtime-errors',pageErrors.length===0,{count:pageErrors.length});
+      record('no-external-resource-dependency',blocked.length===0,{count:blocked.length});
+      results.push({label,sha256:hash(html),inventory,checks,failures,copies,checklist,details,layouts,styleSnapshots,renderedParagraphs,bodyText:renderedBodyText,elapsedMs:Date.now()-subjectStarted,pageErrors,blockedOrigins:[...new Set(blocked)],
+        limitations:['Exploratory observations only; not a settled quality verdict, final-paper result, or complete visual acceptance.','Clipboard content comparison normalizes whitespace; exact code whitespace fidelity needs a stricter check.']});
+    }catch(error){results.push({label,sha256:hash(html),checks,failures,fatal:{name:error.name,message:error.message.slice(0,250)},pageErrors,blockedOrigins:[...new Set(blocked)]});}
+    finally{await context.close();}
+  }
+}finally{await browser.close();}
+const styleComparison=(results[0]?.styleSnapshots??[]).map(source=>{
+  const candidate=results[1]?.styleSnapshots?.find(row=>row.width===source.width);
+  if(!candidate)return {width:source.width,pass:false,reason:'Candidate style observations missing'};
+  const named=new Map(candidate.named.map(row=>[row.id,row.digest])),groups=new Map(candidate.groups.map(row=>[row.group,new Set(row.digests)]));
+  const changedNamed=source.named.filter(row=>named.get(row.id)!==row.digest).map(row=>row.id);
+  const missingGroups=source.groups.filter(row=>row.digests.some(digest=>!groups.get(row.group)?.has(digest))).map(row=>row.group);
+  const target=source.state.requestedHref,stateMatches=[source.state,candidate.state].every(s=>s.requestedHref===target&&s.locationHref===target&&s.activeHref===target&&!s.menuOpen)&&source.state.focusedHref===candidate.state.focusedHref&&source.state.focus.path===candidate.state.focus.path&&source.state.focus.documentFocused===candidate.state.focus.documentFocused;
+  return {width:source.width,propertyCount:source.propertyCount,namedElementsCompared:source.named.length,styleGroupsCompared:source.groups.length,
+    state:{policy:'source-navigation-style-v2',original:source.state,subject:candidate.state},
+    changedNamed,missingGroups,infiniteAnimations:source.infiniteAnimations+candidate.infiniteAnimations,
+    pass:stateMatches&&changedNamed.length===0&&missingGroups.length===0&&source.infiniteAnimations===0&&candidate.infiniteAnimations===0};
+});
+return {observedAt:new Date().toISOString(),results:results.map(r=>({label:r.label,sha256:r.sha256,inventory:r.inventory,checks:r.checks,failures:r.failures,fatal:r.fatal,elapsedMs:r.elapsedMs,renderedParagraphs:r.renderedParagraphs,bodyText:r.bodyText})),styleComparison,browserAssertions:inputs.browserAssertions};
+}

@@ -1,4 +1,4 @@
-import {HTML_NATIVE_PAYMENT_REQUIRED,HtmlNativeRunProofSchema,OriginalArtifactReferenceProofSchema,type Candidate,type EvolveProject,type OriginalArtifactReferenceProof,type TargetRunResult,type TestCase} from "@evolution/contracts";
+import {HTML_NATIVE_PAYMENT_REQUIRED,HTML_NATIVE_LOCAL_UNAVAILABLE,HtmlNativeRunProofSchema,OriginalArtifactReferenceProofSchema,type Candidate,type EvolveProject,type OriginalArtifactReferenceProof,type TargetRunResult,type TestCase} from "@evolution/contracts";
 import {htmlNativeCaseSource,inspectHtmlNativeEvidence} from "@evolution/core";
 import {indexUniqueBatchResults} from "./server-batch-results";
 
@@ -56,6 +56,11 @@ export async function collectServerHtmlNativeRuns(project:EvolveProject,testCase
     const snapshots=candidate?.artifactSnapshots.filter(snapshot=>snapshot.sourceArtifactId===source.id);
     const frozen=snapshots?.length===1?snapshots[0]?.frozenArtifact:undefined;
     const sha=candidate&&frozen?.sourceArtifactId===source.id?frozen.sha256:undefined;
+    if(!duplicateIds.has(test.id)&&run?.error===HTML_NATIVE_LOCAL_UNAVAILABLE&&run.verificationStatus==="unverified"&&!run.nativeHtmlProof){
+      ordered.set(test.id,{testCaseId:test.id,verificationStatus:"unverified",error:HTML_NATIVE_LOCAL_UNAVAILABLE,
+        output:"UNVERIFIED: 必要本地浏览器执行不可用；停止依赖执行与评分，未改用云端。",latencyMs:run.latencyMs,cost:0,trace:[]});
+      continue;
+    }
     if(!duplicateIds.has(test.id)&&run?.error===HTML_NATIVE_PAYMENT_REQUIRED&&run.verificationStatus==="unverified"
       &&!run.nativeHtmlProof&&typeof run.artifactHash==="string"&&/^[a-f0-9]{64}$/.test(run.artifactHash)
       &&(!candidate||Boolean(sha)&&run.artifactHash===sha)){
@@ -75,15 +80,21 @@ export async function collectServerHtmlNativeRuns(project:EvolveProject,testCase
 }
 
 /** Preserve existing observations; unstarted dependent cases remain unknown, never failed products. */
-export function serverHtmlNativePaymentBlockedRuns(testCases:TestCase[],ordered:Map<string,TargetRunResult>){
-  if(![...ordered.values()].some(run=>run.error===HTML_NATIVE_PAYMENT_REQUIRED))return undefined;
-  return testCases.map(test=>ordered.get(test.id)??{testCaseId:test.id,verificationStatus:"unverified" as const,error:HTML_NATIVE_PAYMENT_REQUIRED,
-    output:"UNVERIFIED: 本轮必要隔离执行需要付费或恢复免费额度，依赖步骤尚未执行。",latencyMs:0,cost:0,trace:[]});
+export function serverHtmlNativeCapabilityBlockedRuns(testCases:TestCase[],ordered:Map<string,TargetRunResult>){
+  const blocker=[...ordered.values()].find(run=>run.error===HTML_NATIVE_PAYMENT_REQUIRED||run.error===HTML_NATIVE_LOCAL_UNAVAILABLE);
+  if(!blocker)return undefined;
+  return testCases.map(test=>ordered.get(test.id)??{testCaseId:test.id,verificationStatus:"unverified" as const,error:blocker.error,
+    output:blocker.error===HTML_NATIVE_LOCAL_UNAVAILABLE?"UNVERIFIED: 必要本地浏览器执行不可用，依赖步骤尚未执行。":"UNVERIFIED: 本轮必要隔离执行需要付费或恢复免费额度，依赖步骤尚未执行。",latencyMs:0,cost:0,trace:[]});
 }
 
-export function assertServerHtmlNativePaymentAvailable(runs:TargetRunResult[]){
+export function assertServerHtmlNativeCapabilityAvailable(runs:TargetRunResult[]){
   if(runs.some(run=>run.error===HTML_NATIVE_PAYMENT_REQUIRED))throw Object.assign(new Error("必要隔离执行需要付费或恢复免费额度；冻结文件与原观察已保留，尚未进行本轮评分。"),{code:HTML_NATIVE_PAYMENT_REQUIRED});
+  if(runs.some(run=>run.error===HTML_NATIVE_LOCAL_UNAVAILABLE))throw Object.assign(new Error("必要本地浏览器执行不可用；冻结文件与原观察已保留，尚未进行本轮评分。"),{code:HTML_NATIVE_LOCAL_UNAVAILABLE});
 }
+
+// Compatibility names retained for existing callers; both capability gaps stop dependent work.
+export const serverHtmlNativePaymentBlockedRuns=serverHtmlNativeCapabilityBlockedRuns;
+export const assertServerHtmlNativePaymentAvailable=assertServerHtmlNativeCapabilityAvailable;
 
 export function bindServerHtmlNativeOriginalReferences(runs:Map<string,TargetRunResult>,references:OriginalArtifactReferenceProof[],missionId:string){
   for(const [id,run] of runs){

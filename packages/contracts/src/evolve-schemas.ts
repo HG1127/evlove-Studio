@@ -1205,6 +1205,8 @@ export type ProjectAiProfile = z.infer<typeof ProjectAiProfileSchema>;
 
 
 export const ExperimentPolicySchema = z.object({
+  /** Explicit new-Mission execution boundary; legacy Missions keep the Vercel VM route. */
+  nativeHtmlRuntime:z.literal("local-browser-v1").optional(),
   /** New comparisons only; legacy evidence retains its original scoring protocol. */
   judgeComparison:z.literal("paired-two-order-v1").optional(),
   /** Explicit new-Mission reference metadata projection; never infer it for sealed older receipts. */

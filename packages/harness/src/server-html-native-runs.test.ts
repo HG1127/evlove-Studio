@@ -1,6 +1,6 @@
 import {createHash} from "node:crypto";
 import {describe,expect,it,vi} from "vitest";
-import {AcceptanceCriterionSchema,HtmlNativeBrowserAssertionsSchema,TestCaseSchema,ValidationRunSchema} from "@evolution/contracts";
+import {HTML_NATIVE_LOCAL_UNAVAILABLE,AcceptanceCriterionSchema,HtmlNativeBrowserAssertionsSchema,TestCaseSchema,ValidationRunSchema} from "@evolution/contracts";
 import {evidenceFingerprint,sourceGroundedHtmlSearchSteps} from "@evolution/core";
 import {acceptedPackageFixture,htmlNativeEvidenceFixture} from "@evolution/testkit";
 import {collectServerHtmlNativeRuns,bindServerHtmlNativeOriginalReferences,serverHtmlNativeRunsMatchOriginal} from "./server-html-native-runs";
@@ -25,6 +25,18 @@ function fixture(){
   return {project,candidate,run,test};
 }
 describe("injected native HTML execution",()=>{
+  it("stops dependent calls and both judges when local execution is denied before reading any file",async()=>{
+    const {project,candidate,test}=fixture(),before=structuredClone(candidate);
+    project.evalSuite=[test,{...test,id:"semantic",criterionIds:[],executionMode:"artifact-runtime"},{...test,id:"external",criterionIds:[]}];
+    const ports={executeNativeHtmlBatch:vi.fn(async()=>[{testCaseId:test.id,verificationStatus:"unverified" as const,error:HTML_NATIVE_LOCAL_UNAVAILABLE,output:"private failure",latencyMs:0,cost:0,trace:[]}]),executeSemanticBatch:vi.fn(),executeExternalBatch:vi.fn(),judge:vi.fn()};
+    for(const runs of [await executeServerExperimentCandidate(project,candidate,ports),await executeServerCurrentArtifactSuite(project,project.evalSuite,ports)]){
+      expect(runs).toHaveLength(3);expect(runs.every(r=>r.error===HTML_NATIVE_LOCAL_UNAVAILABLE&&r.verificationStatus==="unverified"&&!r.nativeHtmlProof)).toBe(true);
+      expect(JSON.stringify(runs)).not.toContain("private failure");
+      await expect(judgeServerExperimentCandidate(project,candidate,runs,ports)).rejects.toMatchObject({code:HTML_NATIVE_LOCAL_UNAVAILABLE});
+      await expect(judgeServerCurrentArtifactSuite(project,project.evalSuite,runs,ports)).rejects.toMatchObject({code:HTML_NATIVE_LOCAL_UNAVAILABLE});
+    }
+    for(const port of [ports.executeSemanticBatch,ports.executeExternalBatch,ports.judge])expect(port).not.toHaveBeenCalled();expect(candidate).toEqual(before);
+  });
   it("stops dependent execution and both Judge routes at a bound payment limit while preserving exact files",async()=>{
     const {project,candidate,test,run}=fixture(),before=structuredClone(candidate),native={testCaseId:test.id,artifactHash:run.artifactHash!,verificationStatus:"unverified" as const,error:"NATIVE_HTML_PAYMENT_REQUIRED",output:"PRIVATE_SERVICE_ERROR",latencyMs:0,cost:0,trace:[]};
     const semantic={...test,id:"semantic",criterionIds:[],executionMode:"artifact-runtime" as const},external={...test,id:"external",criterionIds:[]};

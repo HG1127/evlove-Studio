@@ -1,9 +1,19 @@
 import {describe,expect,it} from "vitest";
 import {htmlNativeEvidenceFixture} from "@evolution/testkit";
 import {ExecuteArtifactAiResultSchema,ExecuteArtifactBatchAiResultSchema} from "./ai-schemas";
-import {HtmlNativeBrowserAssertionsSchema,HtmlNativeStyleComparisonSchema,SandboxHtmlNativeResponseSchema} from "./html-native-observation-contract";
+import {HtmlNativeBrowserAssertionsSchema,HtmlNativeStyleComparisonSchema,HtmlNativeObservationSchema,SandboxHtmlNativeResponseSchema} from "./html-native-observation-contract";
 
 describe("native observation trust boundary",()=>{
+  it("preserves legacy serialization and requires truthful separate local boundary fields",()=>{
+    const old=htmlNativeEvidenceFixture().nativeHtmlProof!.observation;
+    expect(JSON.stringify(HtmlNativeObservationSchema.parse(old))).toBe(JSON.stringify(old));
+    const executionBoundary={kind:"local-browser-process-sandbox-v1",runId:"local-native-contract",browserVersion:"156.0",chromiumSandbox:true,headless:true,freshProcessPerSubject:true,networkPolicy:"deny-all",serviceWorkers:"block",downloads:false,popups:"blocked",credentialEnvironment:"excluded",storage:"ephemeral"};
+    const local={...old,schemaVersion:"html-native-observation-v2-local-browser",executionBoundary};
+    expect(HtmlNativeObservationSchema.parse(local)).toEqual(local);
+    for(const [key,value] of Object.entries({chromiumSandbox:false,headless:false,freshProcessPerSubject:false,networkPolicy:"allow",downloads:true,storage:"persistent",extra:"unknown"}))expect(HtmlNativeObservationSchema.safeParse({...local,executionBoundary:{...executionBoundary,[key]:value}}).success).toBe(false);
+    expect(HtmlNativeObservationSchema.safeParse({...old,executionBoundary}).success).toBe(false);
+    expect(HtmlNativeObservationSchema.safeParse({...local,executionBoundary:undefined}).success).toBe(false);
+  });
   it("retains legacy unavailable responses and permits only the explicit payment-required reason code",()=>{
     const legacy={status:"unavailable",reason:"Unsupported profile"};
     expect(SandboxHtmlNativeResponseSchema.parse(legacy)).toEqual(legacy);

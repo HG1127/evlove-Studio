@@ -4,7 +4,7 @@ import {isZipArtifact} from "@evolution/core";
 import type { EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
 
 import { canReuseServerBaseline, runServerBaseline } from "@evolution/harness";
-import {HTML_NATIVE_KERNEL_SHA256} from "@evolution/adapters/sandbox";
+import {serverNativeHtmlRuntime} from "./server-html-native-runtime";
 import { runServerAi, serverAiScoringRouteFingerprint } from "./ai-gateway";
 import {runServerEvidenceJudge} from "./server-evidence-judge";
 
@@ -19,7 +19,9 @@ import {executeServerHtmlNativeBatch} from "./server-html-native-execution";
 
 /** Native text from an older, unverified wire must not be reused as the Original comparison. */
 export function canReuseServerMissionBaseline(project:EvolveProject,routeFingerprint?:string){
-  return project.baselineRun.runs.every(run=>!run.nativeHtmlProof||run.nativeHtmlProof.observation.kernelSha256===HTML_NATIVE_KERNEL_SHA256)
+  const runtime=serverNativeHtmlRuntime(project);
+  return project.baselineRun.runs.every(run=>!run.nativeHtmlProof||run.nativeHtmlProof.observation.kernelSha256===runtime.kernelSha256
+    &&(run.nativeHtmlProof.observation.schemaVersion==="html-native-observation-v2-local-browser")===runtime.local)
     &&canReuseServerBaseline(project,routeFingerprint);
 }
 

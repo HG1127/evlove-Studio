@@ -7,7 +7,7 @@ import type {
   TestCase,
   OriginalArtifactReferenceProof,
 } from "@evolution/contracts";
-import {CompletedBaselineFailureSchema,OriginalArtifactReferenceProofSchema} from "@evolution/contracts";
+import {HTML_NATIVE_LOCAL_UNAVAILABLE,CompletedBaselineFailureSchema,OriginalArtifactReferenceProofSchema} from "@evolution/contracts";
 import {
   baselineReadiness,
   campaignLiveObservationFresh,
@@ -170,10 +170,11 @@ export async function runServerBaseline(
     plannedRefresh?.checkpoint ? error => { unsettledExecution ||= !CompletedBaselineFailureSchema.safeParse(error).success; } : undefined);
   const paymentBlocked=serverHtmlNativePaymentBlockedRuns(project.evalSuite,ordered);
   if(paymentBlocked){
-    const reason="[server-campaign-baseline-evidence-pending] 必要隔离执行需要付费或恢复免费额度；尚未继续执行、评分或诊断。";
+    const localUnavailable=paymentBlocked.some(run=>run.error===HTML_NATIVE_LOCAL_UNAVAILABLE);
+    const reason=localUnavailable?"[server-campaign-baseline-evidence-pending] 必要本地浏览器执行不可用；尚未继续执行、评分或诊断。":"[server-campaign-baseline-evidence-pending] 必要隔离执行需要付费或恢复免费额度；尚未继续执行、评分或诊断。";
     const baseline:BaselineRun=failedPlannedBaselineRefresh({...project.baselineRun,status:"failed",completedAt:now(),runs:paymentBlocked},"evidence",now(),"retryable");
     return {project:{...project,baselineRun:baseline,campaign:{...project.campaign,status:"paused",stopReason:reason,
-      schedule:{...project.campaign.schedule,enabled:false,nextRunAt:undefined}},updatedAt:now()},baseline,ready:false,reason,capabilityGaps:["native-html-payment-required"]};
+      schedule:{...project.campaign.schedule,enabled:false,nextRunAt:undefined}},updatedAt:now()},baseline,ready:false,reason,capabilityGaps:[localUnavailable?"native-html-local-unavailable":"native-html-payment-required"]};
   }
   let currentArtifactContext:Array<Record<string,unknown>>=[];
   let referenceOnlyCriterionIds=new Set<string>();

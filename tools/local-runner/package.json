@@ -1,0 +1,8 @@
+{
+  "name":"@evolution/local-runner",
+  "private":true,
+  "version":"0.1.0",
+  "type":"module",
+  "exports":{".":{"types":"./index.d.ts","import":"./index.mjs","require":"./index.mjs"}},
+  "dependencies":{"playwright":"1.63.0"}
+}

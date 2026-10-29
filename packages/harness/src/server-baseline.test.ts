@@ -56,6 +56,15 @@ function judge(): EvaluateAiResult {
 }
 
 describe("server baseline",()=>{
+  it("pauses a locally unavailable baseline before source enrichment or model calls without calling it a payment error",async()=>{
+    const p=fixture();p.sourceArtifacts[0]!.extension="html";p.acceptanceRubric[0]={...p.acceptanceRubric[0]!,id:"PROTECT-ALL",validationMethod:"executable-test"};
+    p.evalSuite[0]={...p.evalSuite[0]!,criterionIds:["PROTECT-ALL"],executionMode:"external-runner"};
+    p.hiddenEvalSuite[0]={...p.hiddenEvalSuite[0]!,criterionIds:["PROTECT-ALL"],executionMode:"external-runner"};
+    const semantic=vi.fn(),external=vi.fn(),judge=vi.fn(),context=vi.fn();
+    const outcome=await runServerBaseline(p,{executeNativeHtmlBatch:async()=>[{testCaseId:"V1",error:"NATIVE_HTML_LOCAL_EXECUTION_UNAVAILABLE",verificationStatus:"unverified",output:"private",trace:[],cost:0,latencyMs:0}],executeSemanticBatch:semantic,executeExternalBatch:external,buildCurrentArtifactContext:context,judge});
+    expect(outcome).toMatchObject({ready:false,capabilityGaps:["native-html-local-unavailable"],project:{campaign:{status:"paused"}}});
+    expect(outcome.reason).not.toContain("付费");expect(outcome.baseline.result).toBeUndefined();for(const port of [semantic,external,judge,context])expect(port).not.toHaveBeenCalled();
+  });
   it("preserves a native payment limit and pauses before source enrichment, model execution or diagnosis",async()=>{
     const p=fixture(),before=structuredClone(p);p.sourceArtifacts[0]!.extension="html";
     p.acceptanceRubric[0]={...p.acceptanceRubric[0]!,id:"PROTECT-ALL",validationMethod:"executable-test"};

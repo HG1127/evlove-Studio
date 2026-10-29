@@ -14,6 +14,7 @@
       "@evolution/harness": ["./packages/harness/src/index.ts"],
       "@evolution/adapters/sandbox": ["./packages/adapters/src/sandbox.ts"],
       "@evolution/adapters/html-native-profile": ["./packages/adapters/src/native-html/profile.ts"],
+      "@evolution/adapters/html-native-local": ["./packages/adapters/src/html-native-local.ts"],
       "@evolution/adapters/outcome-telemetry": ["./packages/adapters/src/outcome-telemetry.ts"],
       "@evolution/adapters": ["./packages/adapters/src/index.ts"],
       "@evolution/ui": ["./packages/ui/src/index.ts"],

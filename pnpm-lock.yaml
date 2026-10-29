@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@evolution/local-runner':
+        specifier: workspace:*
+        version: link:tools/local-runner
       '@hookform/resolvers':
         specifier: ^5.2.2
         version: 5.2.2(react-hook-form@7.75.0(react@19.2.6))
@@ -296,6 +299,12 @@ importers:
         version: link:../core
 
   packages/ui: {}
+
+  tools/local-runner:
+    dependencies:
+      playwright:
+        specifier: 1.63.0
+        version: 1.63.0
 
 packages:
 

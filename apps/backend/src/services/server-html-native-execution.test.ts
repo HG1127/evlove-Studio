@@ -7,7 +7,9 @@ import {acceptedPackageFixture,htmlNativeEvidenceFixture} from "@evolution/testk
 import {executeServerExperimentCandidate} from "@evolution/harness";
 import {createServerHtmlNativeExecutor,executeServerHtmlNativeBatch} from "./server-html-native-execution";
 import {serverHtmlNativeAuthorized} from "./server-html-native-consent";
+import {HTML_NATIVE_LOCAL_UNAVAILABLE} from "@evolution/contracts";
 import {sourceGroundedHtmlSearchSteps} from "@evolution/core";
+import * as artifactRuntime from "./artifact-runtime";
 
 const sha=(text:string)=>createHash("sha256").update(text).digest("hex");
 function fixture(){
@@ -35,7 +37,7 @@ function fixture(){
   const ports={artifacts,execute,verifyFrozen,authorized};
   return {project,candidate,test,source,original,subject,metadata,blobs,ports,response};
 }
-afterEach(()=>vi.unstubAllEnvs());
+afterEach(()=>{vi.unstubAllEnvs();vi.restoreAllMocks();});
 function withSearchPlan(){
   const x=fixture();
   x.original='<html><head><style>.search-hidden{display:none}</style></head><body><input id="search"><span id="searchCount"></span><article class="slide-card" id="slide-2" data-search="intro">Intro</article><article class="slide-card" id="slide-3" data-search="end">End</article><script>search.addEventListener("input",()=>card.dataset.search.includes(search.value));</script></body></html>';
@@ -47,6 +49,28 @@ function withSearchPlan(){
   return x;
 }
 describe("Mission-authorized native HTML composition",()=>{
+  it("stops local work before file access when champion binding is unsupported or the artifact port cannot initialize",async()=>{
+    const x=fixture();x.project.experimentPolicy.nativeHtmlRuntime="local-browser-v1";
+    vi.stubEnv("VERCEL","");vi.stubEnv("EVOLUTION_HTML_NATIVE_LOCAL_MISSIONS",x.project.id);
+    const getStore=vi.spyOn(artifactRuntime,"getServerArtifactStore").mockImplementation(()=>{throw Error("private storage configuration");});
+    Object.assign(x.project,{searchChampion:{}});
+    expect((await executeServerHtmlNativeBatch({...x,testCases:[x.test],candidate:undefined}))[0]).toMatchObject({error:HTML_NATIVE_LOCAL_UNAVAILABLE});expect(getStore).not.toHaveBeenCalled();
+    x.project.searchChampion=undefined;
+    const result=await executeServerHtmlNativeBatch({...x,testCases:[x.test]});
+    expect(result[0]).toMatchObject({error:HTML_NATIVE_LOCAL_UNAVAILABLE});expect(JSON.stringify(result)).not.toContain("private storage configuration");expect(getStore).toHaveBeenCalledOnce();
+  });
+  it("reports denied local execution without reading blobs or silently using the ordinary route",async()=>{
+    const x=fixture();x.project.experimentPolicy.nativeHtmlRuntime="local-browser-v1";
+    vi.stubEnv("EVOLUTION_HTML_NATIVE_LOCAL_MISSIONS","");
+    const runs=await executeServerHtmlNativeBatch({...x,testCases:[x.test]});
+    expect(runs[0]).toMatchObject({verificationStatus:"unverified",error:HTML_NATIVE_LOCAL_UNAVAILABLE});expect(runs[0]).not.toHaveProperty("nativeHtmlProof");
+    expect(x.ports.artifacts.get).not.toHaveBeenCalled();
+  });
+  it("stops further sources and retains a local capability marker on an execution failure",async()=>{
+    const x=fixture(),execute=vi.fn(async()=>{throw Error("private");});
+    const runs=await createServerHtmlNativeExecutor({...x.ports,execute,unavailableCode:HTML_NATIVE_LOCAL_UNAVAILABLE})({...x,testCases:[x.test]});
+    expect(runs[0]).toMatchObject({error:HTML_NATIVE_LOCAL_UNAVAILABLE,verificationStatus:"unverified"});expect(JSON.stringify(runs)).not.toContain("private");expect(execute).toHaveBeenCalledOnce();
+  });
   it("binds payment unavailability to the exact physical Candidate and stops before another source",async()=>{
     const x=fixture(),before=structuredClone(x.candidate),other={...x.source,id:"other-source",storageRef:"other"};
     x.project.sourceArtifacts.push(other);x.project.acceptanceRubric.push({...x.project.acceptanceRubric[0]!,id:"SEM-CROSS-CONSISTENCY",artifactIds:[other.id]});

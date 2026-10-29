@@ -80,7 +80,7 @@ export const HtmlNativeStyleComparisonSchema=z.object({
 });
 
 /** Observation of one known renderer profile; it never declares a semantic quality/acceptance pass. */
-export const HtmlNativeObservationSchema=z.object({
+const HtmlNativeVmObservationSchema=z.object({
   schemaVersion:z.literal(HTML_NATIVE_OBSERVATION_VERSION),profileId:z.literal(HTML_NATIVE_PROFILE_ID),
   isolation:z.literal("network-denied-ephemeral"),
   observedAt:z.iso.datetime(),kernelSha256:sha,programSignature:sha,styleSignature:sha,
@@ -103,6 +103,25 @@ export const HtmlNativeObservationSchema=z.object({
   if(value.styleComparison.some(row=>row.state&&[row.state.original,row.state.subject].some(s=>s.requestedHref!==target)))
     ctx.addIssue({code:"custom",path:["styleComparison"],message:"Navigation state must bind the Original's first recorded internal link"});
 });
+export const HTML_NATIVE_LOCAL_OBSERVATION_VERSION="html-native-observation-v2-local-browser";
+export const HtmlNativeLocalBoundarySchema=z.object({
+  kind:z.literal("local-browser-process-sandbox-v1"),runId:z.string().min(1).max(200),
+  browserVersion:z.string().min(1).max(160),chromiumSandbox:z.literal(true),headless:z.literal(true),
+  freshProcessPerSubject:z.literal(true),networkPolicy:z.literal("deny-all"),
+  serviceWorkers:z.literal("block"),downloads:z.literal(false),popups:z.literal("blocked"),
+  credentialEnvironment:z.literal("excluded"),storage:z.literal("ephemeral"),
+}).strict();
+const {schemaVersion:legacyVersion,...observationShape}=HtmlNativeVmObservationSchema.shape;void legacyVersion;
+export const HtmlNativeLocalObservationSchema=z.object({
+  schemaVersion:z.literal(HTML_NATIVE_LOCAL_OBSERVATION_VERSION),...observationShape,
+  executionBoundary:HtmlNativeLocalBoundarySchema,
+}).strict().superRefine((value,ctx)=>{
+  // Keep the same source/navigation constraints as V1; only the execution provenance differs.
+  const {executionBoundary:_,...legacy}=value;void _;
+  const validated=HtmlNativeVmObservationSchema.safeParse({...legacy,schemaVersion:HTML_NATIVE_OBSERVATION_VERSION});
+  if(!validated.success)for(const issue of validated.error.issues)ctx.addIssue({code:"custom",path:issue.path,message:issue.message});
+});
+export const HtmlNativeObservationSchema=z.discriminatedUnion("schemaVersion",[HtmlNativeVmObservationSchema,HtmlNativeLocalObservationSchema]);
 export type HtmlNativeObservation=z.infer<typeof HtmlNativeObservationSchema>;
 
 /** Server-only execution provenance; AI execute-result schemas intentionally do not accept this field. */
@@ -128,6 +147,7 @@ export const SandboxHtmlNativeRequestSchema=z.object({
 export type SandboxHtmlNativeRequest=z.infer<typeof SandboxHtmlNativeRequestSchema>;
 
 export const HTML_NATIVE_PAYMENT_REQUIRED="NATIVE_HTML_PAYMENT_REQUIRED";
+export const HTML_NATIVE_LOCAL_UNAVAILABLE="NATIVE_HTML_LOCAL_EXECUTION_UNAVAILABLE";
 export const SandboxHtmlNativeResponseSchema=z.discriminatedUnion("status",[
   z.object({status:z.literal("unavailable"),reason:z.string().min(1).max(500),reasonCode:z.literal("payment-required").optional()}).strict(),
   z.object({status:z.literal("observed"),observation:HtmlNativeObservationSchema,

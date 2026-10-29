@@ -1,4 +1,5 @@
 import type {Candidate,EvolveProject,SourceArtifact,TargetRunResult,TestCase} from "@evolution/contracts";
+import {HTML_NATIVE_LOCAL_UNAVAILABLE} from "@evolution/contracts";
 import {isZipArtifact,resolveTestTargetArtifact,fastHash} from "@evolution/core";
 import {trustedServerBaselineChampion} from "@evolution/harness";
 import {runVercelSandboxCodebaseValidation} from "@evolution/adapters/sandbox";
@@ -28,6 +29,7 @@ function unavailable(test:TestCase,message:string):TargetRunResult{
 }
 /** Shared by Baseline, Experiment and paired Hidden. Each batch executes one exact target. */
 export async function executeServerArtifactExternal(project:EvolveProject,testCases:TestCase[],phase:Phase,candidate?:Candidate):Promise<TargetRunResult[]>{
+  if(project.experimentPolicy?.nativeHtmlRuntime==="local-browser-v1")return testCases.map(test=>({...unavailable(test,"本地模式缺少该执行能力；未自动改用云端。"),error:HTML_NATIVE_LOCAL_UNAVAILABLE}));
   const groups=new Map<string,{source:SourceArtifact;cases:TestCase[]}>();
   const ordered=new Map<string,TargetRunResult>();
   for(const test of testCases){

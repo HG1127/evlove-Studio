@@ -26,6 +26,7 @@ function facts(native:NonNullable<ReturnType<typeof inspectHtmlNativeEvidence>>)
   const proof=native.proof,o=proof.observation;
   return {scope:"known-renderer-physical-observations-only" as const,sourceArtifactId:proof.sourceArtifactId,profileId:o.profileId,
     isolation:o.isolation,observedAt:o.observedAt,kernelSha256:o.kernelSha256,programSignature:o.programSignature,styleSignature:o.styleSignature,
+    ...(o.schemaVersion==="html-native-observation-v2-local-browser"?{executionBoundary:o.executionBoundary}:{}),
     originalHealthy:native.originalHealthy,profilePass:native.pass,failures:native.failures.map(safeId),
     ...(o.styleComparison.some(row=>row.state?.policy==="source-navigation-style-v2")?{styleMeasurementPending:native.styleMeasurementPending}:{}),
     declaredBrowserPlanStepCounts:o.browserAssertions?.plans.map(plan=>plan.length)??[],

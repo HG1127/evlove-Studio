@@ -1,15 +1,14 @@
-import {HTML_NATIVE_PAYMENT_REQUIRED,HtmlNativeBrowserAssertionsSchema,OriginalArtifactReferenceProofSchema,SandboxHtmlNativeResponseSchema,TargetRunResultSchema,
+import {HTML_NATIVE_PAYMENT_REQUIRED,HTML_NATIVE_LOCAL_UNAVAILABLE,HtmlNativeBrowserAssertionsSchema,OriginalArtifactReferenceProofSchema,SandboxHtmlNativeResponseSchema,TargetRunResultSchema,
   type ArtifactStorePort,type Candidate,type CandidateArtifactSnapshot,type EvolveProject,
   type SandboxHtmlNativeRequest,type SandboxHtmlNativeResponse,type SourceArtifact,type TargetRunResult,type TestCase} from "@evolution/contracts";
 import {fastHash,htmlNativeBrowserPlanKey,htmlNativeCaseSource,isSourceGroundedHtmlSearchPlan} from "@evolution/core";
-import {runVercelSandboxHtmlNativeProfile} from "@evolution/adapters/sandbox";
 import {getServerArtifactStore} from "./artifact-runtime";
 import {serverArtifactSha256,verifyServerCandidateFrozenArtifact} from "./server-experiment-artifacts";
-import {serverHtmlNativeAuthorized} from "./server-html-native-consent";
+import {serverNativeHtmlRuntime} from "./server-html-native-runtime";
 import {assertServerControlExecutionActive,ServerControlExecutionStoppedError} from "./server-control-execution";
 
 type Request={project:EvolveProject;testCases:TestCase[];candidate?:Candidate};
-type Ports={artifacts:ArtifactStorePort;authorized:(missionId:string)=>boolean;
+type Ports={artifacts:ArtifactStorePort;authorized:(missionId:string)=>boolean;unavailableCode?:typeof HTML_NATIVE_LOCAL_UNAVAILABLE;
   verifyFrozen:(snapshot:CandidateArtifactSnapshot)=>Promise<boolean>;
   execute:(request:SandboxHtmlNativeRequest)=>Promise<SandboxHtmlNativeResponse>};
 const limit=12_000_000;
@@ -31,7 +30,7 @@ async function originalBytes(project:EvolveProject,source:SourceArtifact,ports:P
   return {bytes,sha256};
 }
 
-/** Server composition only. Unsupported/unavailable profiles leave the ordinary route in charge. */
+/** Server composition only. Local capability failures stop dependent execution. */
 export function createServerHtmlNativeExecutor(ports:Ports){
   return async({project,testCases,candidate}:Request):Promise<TargetRunResult[]>=>{
     if(!ports.authorized(project.id)||!candidate&&project.searchChampion)return [];
@@ -82,7 +81,9 @@ export function createServerHtmlNativeExecutor(ports:Ports){
           ||observation.subject.bodyTextFingerprint!==fastHash(result.subjectText)
           ||JSON.stringify(observation.browserAssertions)!==JSON.stringify(browserAssertions))throw Error("Native observation physical subjects or declared predicates differ");
         for(const test of tests)runs.push(TargetRunResultSchema.parse({testCaseId:test.id,artifactHash:subjectSha,
-          output:"NATIVE HTML OBSERVATIONS: exact physical subjects observed in a network-denied ephemeral Sandbox. Tool assertions do not establish semantic quality or final acceptance.",
+          output:observation.schemaVersion==="html-native-observation-v2-local-browser"
+            ?"NATIVE HTML OBSERVATIONS: exact physical subjects observed in fresh local sandboxed headless browser processes with network denied. Tool assertions do not establish semantic quality or final acceptance."
+            :"NATIVE HTML OBSERVATIONS: exact physical subjects observed in a network-denied ephemeral Sandbox. Tool assertions do not establish semantic quality or final acceptance.",
           verificationStatus:"verified",latencyMs:observation.subject.elapsedMs,cost:0,trace:[],
           nativeHtmlProof:{sourceArtifactId:source.id,testCaseId:test.id,subjectSha256:subjectSha,producer:"native-html-observer-v1",observation},
           renderedDocumentEvidence:{schemaVersion:"rendered-html-document-v1",sourceArtifactId:source.id,artifactSha256:subjectSha,
@@ -91,15 +92,29 @@ export function createServerHtmlNativeExecutor(ports:Ports){
       }catch(error){
         if(error instanceof ServerControlExecutionStoppedError)throw error;
         for(const test of tests)runs.push({testCaseId:test.id,output:"UNVERIFIED: 原生 HTML 执行未取得同一 Mission、Baseline 原版及冻结文件的完整证据。",
-          verificationStatus:"unverified",error:"NATIVE_HTML_EXECUTION_UNAVAILABLE",latencyMs:0,cost:0,trace:[]});
+          verificationStatus:"unverified",error:ports.unavailableCode??"NATIVE_HTML_EXECUTION_UNAVAILABLE",latencyMs:0,cost:0,trace:[]});
+        if(ports.unavailableCode)break;
       }
     }
     return runs;
   };
 }
 
-export function executeServerHtmlNativeBatch(args:Request){
-  if(!serverHtmlNativeAuthorized(args.project.id))return Promise.resolve([]);
-  return createServerHtmlNativeExecutor({artifacts:getServerArtifactStore(),authorized:serverHtmlNativeAuthorized,
-    verifyFrozen:verifyServerCandidateFrozenArtifact,execute:runVercelSandboxHtmlNativeProfile})(args);
+export async function executeServerHtmlNativeBatch(args:Request){
+  const runtime=serverNativeHtmlRuntime(args.project);
+  const localUnavailable=()=>args.testCases.map(test=>({testCaseId:test.id,verificationStatus:"unverified" as const,error:HTML_NATIVE_LOCAL_UNAVAILABLE,output:"UNVERIFIED: 本地浏览器执行缺少授权、运行能力或当前文件绑定；停止依赖步骤，未改用云端。",latencyMs:0,cost:0,trace:[]}));
+  if(runtime.local&&(!runtime.authorized||!runtime.kernelSha256||!args.candidate&&args.project.searchChampion))return localUnavailable();
+  if(!runtime.authorized)return [];
+  const execute=async(request:SandboxHtmlNativeRequest)=>{
+    const result=await runtime.execute(request);
+    if(runtime.local&&result.status!=="observed")throw Object.assign(Error("Local native execution unavailable"),{code:HTML_NATIVE_LOCAL_UNAVAILABLE});
+    return result;
+  };
+  try{
+    return await createServerHtmlNativeExecutor({artifacts:getServerArtifactStore(),authorized:()=>runtime.authorized,...(runtime.local?{unavailableCode:HTML_NATIVE_LOCAL_UNAVAILABLE}:{}),
+      verifyFrozen:verifyServerCandidateFrozenArtifact,execute})(args);
+  }catch(error){
+    if(error instanceof ServerControlExecutionStoppedError||!runtime.local)throw error;
+    return localUnavailable();
+  }
 }
