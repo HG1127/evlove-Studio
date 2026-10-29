@@ -29,4 +29,26 @@ describe("structured AI final output",()=>{
     try{parseStructuredAiOutput(output);throw new Error("unexpected success");}
     catch(error){expect((error as Error).message).not.toContain(output);}
   });
+  it("reports an extra object close at an array boundary without retaining model text",()=>{
+    const output='{"items":[{"rationale":"PRIVATE_MODEL_TEXT"}}]}';
+    try{parseStructuredAiOutput(output);throw new Error("unexpected success");}
+    catch(error){
+      expect(error).toMatchObject({code:"AI_OUTPUT_INVALID_JSON",validationIssues:[expect.stringContaining("expected comma or closing square bracket")]});
+      expect(JSON.stringify(error)).toContain("got closing brace");
+      expect(JSON.stringify(error)).not.toMatch(/PRIVATE_MODEL_TEXT|rationale/);
+    }
+  });
+  it("reports a missing object separator without including either private value",()=>{
+    const output='{"first":"PRIVATE_FIRST" "second":"PRIVATE_SECOND"}';
+    try{parseStructuredAiOutput(output);throw new Error("unexpected success");}
+    catch(error){expect(error).toMatchObject({validationIssues:[expect.stringContaining("expected comma or closing brace")]});expect(JSON.stringify(error)).not.toMatch(/PRIVATE|first|second/);}
+  });
+  it("keeps syntax diagnostics bound to the final JSON after presentation wrappers",()=>{
+    const output='<think>PRIVATE_REASONING</think>\n```json\n{"items":[{"value":"PRIVATE_VALUE"}}]}\n```';
+    try{parseStructuredAiOutput(output);throw new Error("unexpected success");}
+    catch(error){expect(error).toMatchObject({validationIssues:[expect.stringContaining("JSON syntax")]});expect(JSON.stringify(error)).not.toMatch(/PRIVATE|think|value/);}
+  });
+  it("does not accept syntax that could be repaired by removing a single brace",()=>{
+    expect(()=>parseStructuredAiOutput('{"items":[{"ok":true}}]}')).toThrow(expect.objectContaining({code:"AI_OUTPUT_INVALID_JSON"}));
+  });
 });

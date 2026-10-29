@@ -1,3 +1,22 @@
+/** Whitelisted grammar metadata only; engine messages may contain private model text. */
+function syntaxFeedback(body:string,cause:unknown):string{
+  const message=cause instanceof Error?cause.message:"";
+  const found=/\bposition (\d+)\b/.exec(message),position=found?Number(found[1]):/Unexpected end of JSON/i.test(message)?body.length:undefined;
+  const offset=position!==undefined&&Number.isSafeInteger(position)&&position>=0&&position<=body.length?position:undefined;
+  const tokens:Record<string,string>={"}":"closing brace","]":"closing square bracket","{":"opening brace","[":"opening square bracket",",":"comma",":":"colon",'"':"quotation mark"};
+  const token=offset===body.length?"end of input":offset===undefined?undefined:tokens[body[offset]!]??"another token";
+  const expected=message.includes("Expected ',' or ']'")?"comma or closing square bracket"
+    :message.includes("Expected ',' or '}'")?"comma or closing brace"
+    :/Expected (?:property name|double-quoted property name)/.test(message)?"a quoted object property name"
+    :message.includes("Expected ':'")?"a colon after the property name"
+    :/Unexpected end of JSON/i.test(message)?"a complete JSON value and matched containers"
+    :/Unexpected non-whitespace character after JSON/.test(message)?"end of input after one JSON value"
+    :/escape|control character/i.test(message)?"a valid escaped JSON string":"valid JSON grammar";
+  const nesting=expected==="comma or closing square bracket"&&token==="closing brace"
+    ?" Close each array item object once; check object and array nesting before closing the array.":" Check quotes, separators and matching object/array boundaries.";
+  return `JSON syntax${offset===undefined?"":` at UTF-16 offset ${offset}`}: expected ${expected}${token?`; got ${token}`:""}.${nesting}`;
+}
+
 /** Remove transport presentation wrappers only; the caller must validate the task schema. */
 export function parseStructuredAiOutput(text: string): unknown {
   let body = text.trim();
@@ -23,9 +42,10 @@ export function parseStructuredAiOutput(text: string): unknown {
   if (fenced) body = fenced[1]!.trim();
   try {
     return JSON.parse(body) as unknown;
-  } catch {
+  } catch(cause) {
     throw Object.assign(new Error("模型最终回复不是完整、有效的 JSON。请检查 JSON 输出方式或切换支持结构化输出的模型。"), {
       code: "AI_OUTPUT_INVALID_JSON",
+      validationIssues:[syntaxFeedback(body,cause)],
     });
   }
 }

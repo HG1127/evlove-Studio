@@ -280,6 +280,19 @@ describe("custom provider protocols and JSON output",()=>{
     expect(retry.messages[0]!.content).toContain("JSON syntax");
     expect(retry.messages[0]!.content).toContain("COMPLETE syntactically valid JSON");
   });
+  it("sends a bounded structural diagnosis on the single format correction without forwarding invalid prose",async()=>{
+    const broken='{"scores":[{"private":"PRIVATE_INVALID_REPLY"}}]}';
+    const fetchMock=vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({choices:[{message:{content:broken}}]}),{status:200}))
+      .mockResolvedValueOnce(new Response(JSON.stringify({choices:[{message:{content:JSON.stringify(result)}}]}),{status:200}));
+    vi.stubGlobal("fetch",fetchMock);
+    expect(await withExplicitServerAiConnection(input,()=>runServerAi("visual-judge",{}))).toEqual(result);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const first=JSON.parse(String(fetchMock.mock.calls[0]![1]?.body)),retry=JSON.parse(String(fetchMock.mock.calls[1]![1]?.body));
+    expect(retry.messages[0].content).toContain("expected comma or closing square bracket");
+    expect(retry.messages[0].content).toContain("got closing brace");
+    expect(retry.messages[0].content).not.toContain("PRIVATE_INVALID_REPLY");
+    expect(retry.messages[1].content).toBe(first.messages[1].content);
+  });
   it.each([1,9])("repairs a %s-case Hidden paper with the unchanged cardinality contract and exact source payload",async(count)=>{
     const makeCase=(id:string,hidden:boolean)=>({id,title:id,input:"independent scenario "+id,expected:["observed"],tags:[],hidden,
       criterionIds:["CONTENT"],executionMode:"artifact-runtime",evidenceScope:"product-behavior"});
