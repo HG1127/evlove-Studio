@@ -1,6 +1,6 @@
 # Keep every Candidate plan within the complete original user goal
 
-Status: implemented. 430 related tests across 21 files, 11 Runner tests, architecture, changed-file lint and the complete TypeScript/production build pass. A new real confirmation remains required.
+Status: implemented. 430 related tests across 21 files, 11 Runner tests, architecture, changed-file lint and the complete TypeScript/production build pass. C37 used the new guidance and froze a real file with wider chapter coverage, but stopped on invalid paired-response identities before semantic qualification; accepted whole-goal improvement remains unproved.
 
 C36's actual corrected planning response contains three grounded proposals, all limited to parts of the Supabase configuration path or its onboarding. The selected proposal declares edits only to slides 64, 65 and 69. The original detail criterion requires effective refinement across chapters, while the independent review explicitly reports incomplete scope. Existing planning payloads already carried the original goals and the complete-goal Winner policy, but the provider's instruction still scoped the population to the selected diagnosed problem. This is evidence of inconsistent generation guidance; it does not prove that a new prompt will yield an accepted file.
 
