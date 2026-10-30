@@ -6,7 +6,9 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist', 'docs', '.vercel', '.output']),
+  // Private generated evidence includes bundled/archived source with its own configs.
+  // Match the existing /artifacts/ Git exclusion rather than linting old snapshots.
+  globalIgnores(['dist', 'docs', '.vercel', '.output', 'artifacts/**']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [

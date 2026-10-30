@@ -5,11 +5,62 @@ import {resolve,join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {execFile,spawn} from 'node:child_process';
 import {promisify} from 'node:util';
-import {initializeControlSession,recordCancellationIntent,readControlSession} from './control-session.mjs';
+import {initializeControlSession,recordCancellationIntent,readControlSession,reconcileControlSession} from './control-session.mjs';
 const exec=promisify(execFile);
 const binding=deadlineUtc=>({schemaVersion:'local-control-binding-v1',missionId:'fixture-mission',jobId:'fixture-job',
  runId:'fixture-run',sourceCommit:'a'.repeat(40),deadlineUtc,entrypointSha256:'b'.repeat(64)});
 async function directory(){await mkdir(resolve('artifacts'),{recursive:true});return mkdtemp(resolve('artifacts/control-intent-fixture-'));}
+async function cancellationFixture(){
+ const dir=await directory(),now=Date.now(),b=binding(new Date(now+1000).toISOString());
+ initializeControlSession(dir,b,{...b,now});recordCancellationIntent(dir,'runtime-loss',now);
+ return {dir,b,now:()=>now+1001};
+}
+const status=(jobStatus='running',runStatus='running')=>({job:{id:'fixture-job',missionId:'fixture-mission',
+ status:jobStatus,metadata:{runId:'fixture-run'},secret:'never-persist'},workflow:{exists:true,status:runStatus},events:[]});
+
+test('reconciliation persists exact authoritative terminal and never restarts or repeats cancel',async()=>{
+ const {dir,now}=await cancellationFixture();let reads=0,cancels=0;
+ const readStatus=async query=>{assert.deepEqual(query,{jobId:'fixture-job',runId:'fixture-run'});return status(++reads===1?'running':'cancelled',reads===1?'running':'cancelled');};
+ const cancel=async scope=>{assert.deepEqual(scope,{missionId:'fixture-mission',jobId:'fixture-job',runId:'fixture-run'});cancels++;};
+ const result=await reconcileControlSession(dir,{readStatus,cancel,now});
+ assert.equal(result.terminalConfirmed,true);assert.equal(result.cancellationConfirmed,true);
+ assert.equal(result.intent.reason,'runtime-loss');assert.equal(result.automaticRestart,false);
+ await reconcileControlSession(dir,{readStatus,cancel,now});assert.equal(reads,2);assert.equal(cancels,1);
+ assert.equal((await readFile(join(dir,'terminal-receipt.json'),'utf8')).includes('secret'),false);
+});
+
+test('unreachable and unknown cancel outcomes stay unconfirmed; recovery only reads',async()=>{
+ const {dir,now}=await cancellationFixture();let cancels=0;
+ const unavailable=()=>{throw Error('unreachable');};
+ assert.equal((await reconcileControlSession(dir,{readStatus:unavailable,cancel:unavailable,now})).cancelAttempt,null);
+ const cancel=()=>{cancels++;throw Error('unknown outcome');};
+ let reads=0;
+ await reconcileControlSession(dir,{readStatus:()=>++reads===1?status():unavailable(),cancel,now});
+ const uncertain=await reconcileControlSession(dir,{readStatus:()=>status(),cancel,now});
+ assert.equal(uncertain.terminalConfirmed,false);assert.equal(cancels,1);
+ const recovered=await reconcileControlSession(dir,{readStatus:()=>status('cancelled','cancelled'),cancel,now});
+ assert.equal(recovered.cancellationConfirmed,true);assert.equal(cancels,1);
+});
+
+test('workflow completion with waiting Job is not terminal; natural completion is not cancellation',async()=>{
+ const {dir,now}=await cancellationFixture();
+ assert.equal((await reconcileControlSession(dir,{readStatus:()=>status('waiting','completed'),now})).terminalConfirmed,false);
+ const result=await reconcileControlSession(dir,{readStatus:()=>status('completed','completed'),now});
+ assert.equal(result.terminalConfirmed,true);assert.equal(result.cancellationConfirmed,false);
+});
+
+test('reconciliation rejects mismatched identity before cancel and corrupted terminal binding',async()=>{
+ for(const field of ['id','missionId','runId']){
+  const {dir,now}=await cancellationFixture();const raw=status();let cancels=0;
+  if(field==='runId')raw.job.metadata.runId='other';else raw.job[field]='other';
+  await assert.rejects(reconcileControlSession(dir,{readStatus:()=>raw,cancel:()=>{cancels++;},now}),/binding differs/);
+  assert.equal(cancels,0);assert.equal(readControlSession(dir).cancelAttempt,null);
+ }
+ const {dir,now}=await cancellationFixture();await reconcileControlSession(dir,{readStatus:()=>status('failed','failed'),now});
+ const file=join(dir,'terminal-receipt.json'),receipt=JSON.parse(await readFile(file,'utf8'));
+ await writeFile(file,JSON.stringify({...receipt,bindingSha256:'c'.repeat(64)}));
+ assert.throws(()=>readControlSession(dir),/binding differs/);
+});
 test('backend-unreachable intent remains bound, immutable and unconfirmed',async()=>{
  const dir=await directory(),now=Date.now(),b=binding(new Date(now+5000).toISOString());
  initializeControlSession(dir,b,{...b,now});
