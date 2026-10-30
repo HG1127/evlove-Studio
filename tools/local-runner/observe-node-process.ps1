@@ -2,7 +2,8 @@ param(
  [Parameter(Mandatory)][string]$EntryPoint,
  [Parameter(Mandatory)][string]$EvidenceDirectory,
  [Parameter(Mandatory)][string]$DeadlineUtc,
- [string[]]$EnvironmentFiles=@()
+ [string[]]$EnvironmentFiles=@(),
+ [string]$ControlBindingPath
 )
 $ErrorActionPreference='Stop'
 $root=[IO.Path]::GetFullPath((Get-Location).Path)+[IO.Path]::DirectorySeparatorChar
@@ -36,6 +37,18 @@ $child=[Diagnostics.Process]::new();$child.StartInfo=$info
 $stdout=[IO.FileStream]::new((Join-Path $evidence 'stdout.log'),[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read,1,$true)
 $stderr=[IO.FileStream]::new((Join-Path $evidence 'stderr.log'),[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read,1,$true)
 $started=$false;$terminalWritten=$false;$deadlineStop=$false
+$controlModule=Join-Path $PSScriptRoot 'control-session.mjs'
+if($ControlBindingPath){
+ $controlBinding=Workspace-Path $ControlBindingPath
+ & $nodePath $controlModule initialize $evidence $controlBinding $deadline.ToUniversalTime().ToString('o') (Get-FileHash -LiteralPath $entry -Algorithm SHA256).Hash.ToLowerInvariant()
+ if($LASTEXITCODE -ne 0){throw 'Control binding rejected before process start'}
+}
+function Record-CancelIntent([string]$reason){
+ if($ControlBindingPath){
+  & $nodePath $controlModule intent $evidence $reason
+  if($LASTEXITCODE -ne 0){throw 'Cancellation intent could not be durably recorded; authoritative cancellation remains unknown'}
+ }
+}
 function Record([hashtable]$record){
  $record.at=[DateTimeOffset]::UtcNow.ToString('o')
  $record.supervisorPid=$PID
@@ -52,13 +65,14 @@ try{
  while(!$child.WaitForExit([Math]::Max(1,[Math]::Min(500,[int]($deadline-[DateTimeOffset]::UtcNow).TotalMilliseconds)))){
   $child.Refresh()
   Record @{kind='heartbeat';workingSetBytes=$child.WorkingSet64}
-  if([DateTimeOffset]::UtcNow -ge $deadline){$deadlineStop=$true;$child.Kill($true);$child.WaitForExit();break}
+  if([DateTimeOffset]::UtcNow -ge $deadline){$deadlineStop=$true;$child.Kill($true);$child.WaitForExit();Record-CancelIntent 'deadline';break}
  }
  $outCopy.GetAwaiter().GetResult();$errCopy.GetAwaiter().GetResult()
  Record @{kind='exited';exitCode=$child.ExitCode;deadlineStop=$deadlineStop;automaticRestart=$false}
+ if(!$deadlineStop -and $child.ExitCode -ne 0){Record-CancelIntent 'runtime-loss'}
  $terminalWritten=$true
 }finally{
  if($started -and !$child.HasExited){$child.Kill($true);$child.WaitForExit()}
- if($started -and !$terminalWritten){Record @{kind='supervision-failed';exitCode=$child.ExitCode;executionEvidenceComplete=$false}}
+ if($started -and !$terminalWritten){Record-CancelIntent 'supervision-failed';Record @{kind='supervision-failed';exitCode=$child.ExitCode;executionEvidenceComplete=$false}}
  $stdout.Dispose();$stderr.Dispose();$child.Dispose()
 }

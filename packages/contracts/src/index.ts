@@ -46,3 +46,5 @@ export * from "./paired-judge-contract";
 export * from "./user-goal-planning-contract";
 
 export * from "./paired-order-observation-contract";
+
+export * from "./confirmation-admission-contract";
