@@ -44,3 +44,5 @@ export * from "./failure-observation-contract";
 export * from "./repair-baseline-document-contract";
 export * from "./paired-judge-contract";
 export * from "./user-goal-planning-contract";
+
+export * from "./paired-order-observation-contract";

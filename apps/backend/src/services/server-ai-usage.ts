@@ -27,7 +27,7 @@ export function withServerAiUsageScope<T>(scope:AiUsageScope,work:()=>Promise<T>
   return active.run({scope:AiUsageScopeSchema.parse({...parent?.scope,...scope}),write:writer??parent?.write??persistServerAiUsageRecord},work);
 }
 
-function route(config:ServerAiConfig,protocol:AiUsageProtocol,operation:AiOperation):AiUsageRoute{
+export function serverAiUsageRoute(config:ServerAiConfig,protocol:AiUsageProtocol,operation:AiOperation):AiUsageRoute{
   return {operation,protocol,model:config.model,routeFingerprint:createHash("sha256").update(JSON.stringify([
     config.mode,config.mode==="openai-compatible"?config.baseUrl:undefined,config.model,protocol,
     ...(config.mode==="openai-compatible"&&config.reasoningEffort?[{reasoningEffort:config.reasoningEffort}]:[]),
@@ -64,7 +64,7 @@ export async function fetchServerAiProviderUsage(config:ServerAiConfig,protocol:
   const response=await fetchAiProvider(url,{...init,signal:serverControlExecutionSignal(init.signal)},{
     beforeAttempt:async attempt=>{
       await assertServerControlExecutionActive();
-      call=await start(route(config,protocol,operation),attempt,"physical-http-attempt");
+      call=await start(serverAiUsageRoute(config,protocol,operation),attempt,"physical-http-attempt");
       await assertServerControlExecutionActive();
     },
     failedAttempt:async(_attempt,reason)=>finish(call,undefined,"transport-error",{transportReason:reason??"unknown"}),
@@ -108,7 +108,7 @@ export async function measureServerAiSdkUsage<T>(config:ServerAiConfig,operation
   // SDK transport does not expose the complete provider response body.
   assertServerAiResponseProvenanceReady(undefined,undefined);
   await assertServerControlExecutionActive();
-  const call=await start(route(config,"ai-sdk",operation),1,"sdk-generation");
+  const call=await start(serverAiUsageRoute(config,"ai-sdk",operation),1,"sdk-generation");
   let recorded=false;
   try{
     await assertServerControlExecutionActive();
