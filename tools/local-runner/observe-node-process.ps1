@@ -3,6 +3,7 @@ param(
  [Parameter(Mandatory)][string]$EvidenceDirectory,
  [Parameter(Mandatory)][string]$DeadlineUtc,
  [ValidateRange(0,60)][int]$CleanupGraceSeconds=0,
+ [ValidateRange(0,60)][int]$DiagnosticStartupAllowanceSeconds=0,
  [string[]]$EnvironmentFiles=@(),
  [string]$ControlBindingPath
 )
@@ -20,7 +21,8 @@ if(!$evidence.StartsWith($artifactRoot+[IO.Path]::DirectorySeparatorChar,[String
 if(!(Test-Path -LiteralPath $entry -PathType Leaf) -or [IO.Path]::GetExtension($entry) -ne '.mjs'){throw 'Existing trusted mjs entrypoint required'}
 $deadline=[DateTimeOffset]::Parse($DeadlineUtc,[Globalization.CultureInfo]::InvariantCulture)
 $remaining=($deadline-[DateTimeOffset]::UtcNow).TotalMilliseconds
-if($remaining -le 0 -or $remaining -gt 1800000){throw 'Deadline must be in the next 30 minutes'}
+if($DiagnosticStartupAllowanceSeconds -gt 0 -and $ControlBindingPath){throw 'Diagnostic startup allowance cannot extend a bound execution window'}
+if($remaining -le 0 -or $remaining -gt (1800000+1000*$DiagnosticStartupAllowanceSeconds)){throw 'Deadline exceeds the next 30 minutes plus explicit diagnostic startup allowance'}
 $cleanupDeadline=$deadline.AddSeconds($CleanupGraceSeconds)
 if(Test-Path -LiteralPath $evidence){throw 'Evidence directory already exists; inspect instead of overwriting'}
 $environmentPaths=@($EnvironmentFiles | ForEach-Object { $v=Workspace-Path $_;if(!(Test-Path -LiteralPath $v -PathType Leaf)){throw 'Environment file missing'};$v })
@@ -62,6 +64,7 @@ function Record([hashtable]$record){
  $record.deadlineUtc=$deadline.ToUniversalTime().ToString('o')
  $record.cleanupDeadlineUtc=$cleanupDeadline.ToUniversalTime().ToString('o')
  $record.cleanupGraceSeconds=$CleanupGraceSeconds
+ $record.diagnosticStartupAllowanceSeconds=$DiagnosticStartupAllowanceSeconds
  [IO.File]::AppendAllText((Join-Path $evidence 'events.jsonl'),(($record|ConvertTo-Json -Compress)+[Environment]::NewLine))
 }
 try{

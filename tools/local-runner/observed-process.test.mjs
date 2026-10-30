@@ -7,6 +7,24 @@ import {promisify} from 'node:util';
 import {createHash} from 'node:crypto';
 import {readControlSession} from './control-session.mjs';
 const exec=promisify(execFile),root=process.cwd();
+test('diagnostic startup allowance is explicit, capped and cannot extend a bound execution',
+ {skip:process.platform!=='win32',timeout:20000},async()=>{
+ await mkdir(resolve('artifacts'),{recursive:true});const dir=await mkdtemp(resolve('artifacts/diagnostic-startup-fixture-'));
+ const launcher=resolve('tools/local-runner/observe-node-process.ps1'),entry=join(dir,'immediate.mjs');
+ await writeFile(entry,'process.exit(0);');
+ const deadlineUtc=new Date(Date.now()+1820000).toISOString(),out=join(dir,'allowed');
+ await exec('pwsh',['-NoProfile','-File',launcher,'-EntryPoint',entry,'-EvidenceDirectory',out,
+  '-DeadlineUtc',deadlineUtc,'-DiagnosticStartupAllowanceSeconds','60'],{cwd:root,timeout:10000});
+ const rows=(await readFile(join(out,'events.jsonl'),'utf8')).trim().split(/\r?\n/).map(JSON.parse);
+ assert.equal(rows.at(-1).exitCode,0);assert.equal(rows[0].diagnosticStartupAllowanceSeconds,60);
+ assert.equal(Date.parse(rows[0].deadlineUtc),Date.parse(deadlineUtc));
+ for(const [name,extra] of [['default',[]],['bound',['-DiagnosticStartupAllowanceSeconds','60','-ControlBindingPath',join(dir,'absent-binding.json')]],
+  ['over-cap',['-DiagnosticStartupAllowanceSeconds','61']]]){
+  const invalid=join(dir,name);await assert.rejects(exec('pwsh',['-NoProfile','-File',launcher,'-EntryPoint',entry,
+   '-EvidenceDirectory',invalid,'-DeadlineUtc',deadlineUtc,...extra],{cwd:root,timeout:10000}));
+  await assert.rejects(access(invalid));
+ }
+});
 test('cleanup grace preserves original binding and intent, allows natural cleanup and still hard-stops',
  {skip:process.platform!=='win32',timeout:30000},async()=>{
  await mkdir(resolve('artifacts'),{recursive:true});const dir=await mkdtemp(resolve('artifacts/owned-process-cleanup-fixture-'));
