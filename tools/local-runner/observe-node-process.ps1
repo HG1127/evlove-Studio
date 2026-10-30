@@ -2,6 +2,7 @@ param(
  [Parameter(Mandatory)][string]$EntryPoint,
  [Parameter(Mandatory)][string]$EvidenceDirectory,
  [Parameter(Mandatory)][string]$DeadlineUtc,
+ [ValidateRange(0,60)][int]$CleanupGraceSeconds=0,
  [string[]]$EnvironmentFiles=@(),
  [string]$ControlBindingPath
 )
@@ -20,6 +21,7 @@ if(!(Test-Path -LiteralPath $entry -PathType Leaf) -or [IO.Path]::GetExtension($
 $deadline=[DateTimeOffset]::Parse($DeadlineUtc,[Globalization.CultureInfo]::InvariantCulture)
 $remaining=($deadline-[DateTimeOffset]::UtcNow).TotalMilliseconds
 if($remaining -le 0 -or $remaining -gt 1800000){throw 'Deadline must be in the next 30 minutes'}
+$cleanupDeadline=$deadline.AddSeconds($CleanupGraceSeconds)
 if(Test-Path -LiteralPath $evidence){throw 'Evidence directory already exists; inspect instead of overwriting'}
 $environmentPaths=@($EnvironmentFiles | ForEach-Object { $v=Workspace-Path $_;if(!(Test-Path -LiteralPath $v -PathType Leaf)){throw 'Environment file missing'};$v })
 [IO.Directory]::CreateDirectory($evidence) | Out-Null
@@ -30,13 +32,17 @@ $info.UseShellExecute=$false
 $info.CreateNoWindow=$true
 $info.RedirectStandardOutput=$true
 $info.RedirectStandardError=$true
+# Trusted child controllers must enforce this original deadline before any new work.
+# Cleanup grace is process lifetime only; it grants no model or trial authority.
+$info.Environment['EVOLUTION_EXECUTION_DEADLINE_UTC']=$deadline.ToUniversalTime().ToString('o')
+$info.Environment['EVOLUTION_PROCESS_CLEANUP_DEADLINE_UTC']=$cleanupDeadline.ToUniversalTime().ToString('o')
 $info.ArgumentList.Add('--max-old-space-size=768')
 foreach($v in $environmentPaths){$info.ArgumentList.Add('--env-file='+$v)}
 $info.ArgumentList.Add($entry)
 $child=[Diagnostics.Process]::new();$child.StartInfo=$info
 $stdout=[IO.FileStream]::new((Join-Path $evidence 'stdout.log'),[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read,1,$true)
 $stderr=[IO.FileStream]::new((Join-Path $evidence 'stderr.log'),[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read,1,$true)
-$started=$false;$terminalWritten=$false;$deadlineStop=$false
+$started=$false;$terminalWritten=$false;$deadlineStop=$false;$executionDeadlineReached=$false
 $controlModule=Join-Path $PSScriptRoot 'control-session.mjs'
 if($ControlBindingPath){
  $controlBinding=Workspace-Path $ControlBindingPath
@@ -54,6 +60,8 @@ function Record([hashtable]$record){
  $record.supervisorPid=$PID
  $record.pid=$child.Id
  $record.deadlineUtc=$deadline.ToUniversalTime().ToString('o')
+ $record.cleanupDeadlineUtc=$cleanupDeadline.ToUniversalTime().ToString('o')
+ $record.cleanupGraceSeconds=$CleanupGraceSeconds
  [IO.File]::AppendAllText((Join-Path $evidence 'events.jsonl'),(($record|ConvertTo-Json -Compress)+[Environment]::NewLine))
 }
 try{
@@ -62,13 +70,23 @@ try{
  $outCopy=$child.StandardOutput.BaseStream.CopyToAsync($stdout)
  $errCopy=$child.StandardError.BaseStream.CopyToAsync($stderr)
  Record @{kind='started';entrypointSha256=(Get-FileHash -LiteralPath $entry -Algorithm SHA256).Hash.ToLowerInvariant();automaticRestart=$false}
- while(!$child.WaitForExit([Math]::Max(1,[Math]::Min(500,[int]($deadline-[DateTimeOffset]::UtcNow).TotalMilliseconds)))){
+ while($true){
+  $nextDeadline=if($executionDeadlineReached){$cleanupDeadline}else{$deadline}
+  if($child.WaitForExit([Math]::Max(1,[Math]::Min(500,[int]($nextDeadline-[DateTimeOffset]::UtcNow).TotalMilliseconds)))){break}
   $child.Refresh()
   Record @{kind='heartbeat';workingSetBytes=$child.WorkingSet64}
-  if([DateTimeOffset]::UtcNow -ge $deadline){$deadlineStop=$true;$child.Kill($true);$child.WaitForExit();Record-CancelIntent 'deadline';break}
+  if(!$executionDeadlineReached -and [DateTimeOffset]::UtcNow -ge $deadline){
+   $executionDeadlineReached=$true;Record-CancelIntent 'deadline'
+   Record @{kind='execution-deadline-reached';automaticRestart=$false}
+  }
+  if([DateTimeOffset]::UtcNow -ge $cleanupDeadline){$deadlineStop=$true;$child.Kill($true);$child.WaitForExit();break}
+ }
+ if(!$executionDeadlineReached -and ([DateTimeOffset]($child.ExitTime.ToUniversalTime())) -ge $deadline){
+  $executionDeadlineReached=$true;Record-CancelIntent 'deadline'
+  Record @{kind='execution-deadline-reached';automaticRestart=$false}
  }
  $outCopy.GetAwaiter().GetResult();$errCopy.GetAwaiter().GetResult()
- Record @{kind='exited';exitCode=$child.ExitCode;deadlineStop=$deadlineStop;automaticRestart=$false}
+ Record @{kind='exited';exitCode=$child.ExitCode;deadlineStop=$deadlineStop;executionDeadlineReached=$executionDeadlineReached;automaticRestart=$false}
  if(!$deadlineStop -and $child.ExitCode -ne 0){Record-CancelIntent 'runtime-loss'}
  $terminalWritten=$true
 }finally{
