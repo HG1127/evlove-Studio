@@ -5,6 +5,7 @@ import {AiProviderUsageObservationSchema,AiUsageLedgerRecordSchema,AiUsageReques
   type AiOperation,type AiProviderUsageObservation,type AiUsageLedgerRecord,type AiUsageLedgerWriter,type AiUsageProtocol,type AiUsageRequestStarted,type AiUsageRoute,type AiUsageScope} from "@evolution/contracts";
 import type {ServerAiConfig} from "../server-env";
 import {assertServerControlExecutionActive,serverControlExecutionSignal} from "./server-control-execution";
+import {assertServerAiResponseProvenanceReady,observeServerAiResponseProvenance} from "./server-ai-response-provenance";
 
 const active=new AsyncLocalStorage<{scope:AiUsageScope;write:AiUsageLedgerWriter}>();
 export const currentServerAiUsageScope=()=>{const scope=active.getStore()?.scope;return scope?{...scope}:undefined;};
@@ -58,6 +59,7 @@ async function finish(call:ActiveCall,raw:unknown,outcome:AiProviderUsageObserva
 
 /** Each physical connection retry gets its own durable start/result pair. */
 export async function fetchServerAiProviderUsage(config:ServerAiConfig,protocol:Exclude<AiUsageProtocol,"ai-sdk">,operation:AiOperation,url:string,init:RequestInit){
+  assertServerAiResponseProvenanceReady(currentServerAiUsageScope(),init.body);
   let call:ActiveCall;
   const response=await fetchAiProvider(url,{...init,signal:serverControlExecutionSignal(init.signal)},{
     beforeAttempt:async attempt=>{
@@ -89,10 +91,13 @@ export async function fetchServerAiProviderUsage(config:ServerAiConfig,protocol:
       // The body is fully received, so a format correction is safe. Missing
       // usage remains unknown; an interrupted body never reaches this branch.
       await observe(undefined);
+      await observeServerAiResponseProvenance(call?.request,init.body,text,response.status);
       if(!response.ok)return {};
       throw Object.assign(new Error("模型服务返回的响应不是有效 JSON。"),{code:"AI_OUTPUT_INVALID_JSON"});
     }
-    await observe(raw);return raw;
+    await observe(raw);
+    await observeServerAiResponseProvenance(call?.request,init.body,text,response.status);
+    return raw;
   }};
 }
 
@@ -100,6 +105,8 @@ const object=(value:unknown):Record<string,unknown>=>value&&typeof value==="obje
 
 /** SDK retries remain opaque; a generation receipt never claims physical-attempt coverage. */
 export async function measureServerAiSdkUsage<T>(config:ServerAiConfig,operation:AiOperation,invoke:()=>Promise<T>):Promise<T>{
+  // SDK transport does not expose the complete provider response body.
+  assertServerAiResponseProvenanceReady(undefined,undefined);
   await assertServerControlExecutionActive();
   const call=await start(route(config,"ai-sdk",operation),1,"sdk-generation");
   let recorded=false;

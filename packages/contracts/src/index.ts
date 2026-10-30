@@ -37,6 +37,7 @@ export * from "./artifact-package-contract";
 export * from "./server-ai-connection-contract";
 export * from "./original-reference-contract";
 export * from "./ai-usage-contract";
+export * from "./ai-response-provenance-contract";
 export * from "./business-benefit-contract";
 export * from "./learning-context-contract";
 export * from "./failure-observation-contract";
