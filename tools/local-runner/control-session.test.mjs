@@ -49,6 +49,23 @@ test('workflow completion with waiting Job is not terminal; natural completion i
  assert.equal(result.terminalConfirmed,true);assert.equal(result.cancellationConfirmed,false);
 });
 
+test('legacy workflow-control Job requires canonical outputRef; conflicting or unrelated bindings fail closed',async()=>{
+ const legacy=()=>{const raw=status('cancelled','cancelled');delete raw.job.metadata;
+  Object.assign(raw.job,{type:'campaign',idempotencyKey:'workflow-control:fixture-mission',outputRef:'fixture-run'});return raw;};
+ const {dir,now}=await cancellationFixture();
+ assert.equal((await reconcileControlSession(dir,{readStatus:legacy,now})).cancellationConfirmed,true);
+ for(const variant of ['type','key','ref','missing','conflict']){
+  const fixture=await cancellationFixture(),raw=legacy();let cancels=0;
+  if(variant==='type')raw.job.type='experiment';
+  if(variant==='key')raw.job.idempotencyKey='unrelated';
+  if(variant==='ref')raw.job.outputRef='other-run';
+  if(variant==='missing')delete raw.job.outputRef;
+  if(variant==='conflict')raw.job.metadata={runId:'other-run'};
+  await assert.rejects(reconcileControlSession(fixture.dir,{readStatus:()=>raw,cancel:()=>{cancels++;},now:fixture.now}),/binding differs/);
+  assert.equal(cancels,0);assert.equal(readControlSession(fixture.dir).terminalConfirmed,false);
+ }
+});
+
 test('reconciliation rejects mismatched identity before cancel and corrupted terminal binding',async()=>{
  for(const field of ['id','missionId','runId']){
   const {dir,now}=await cancellationFixture();const raw=status();let cancels=0;

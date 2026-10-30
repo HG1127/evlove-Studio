@@ -11,9 +11,10 @@ const Intent=z.object({schemaVersion:z.literal('local-cancellation-intent-v1'),b
  cancellationConfirmed:z.literal(false),automaticRestart:z.literal(false)}).strict();
 const JobStatus=z.enum(['queued','running','waiting','completed','partial','failed','cancelled']);
 const RunStatus=z.enum(['pending','running','completed','failed','cancelled']);
-// Subset of /evolution/status: discard payloads/events; require explicit Job -> Run metadata.
+// Subset of /evolution/status: discard payloads/events; accept only explicit canonical Job -> Run bindings.
 const Status=z.object({job:z.object({id,missionId:id,status:JobStatus,
- metadata:z.object({runId:id})}),workflow:z.object({exists:z.literal(true),status:RunStatus})});
+ metadata:z.object({runId:id.optional()}).optional(),type:id.optional(),idempotencyKey:id.optional(),outputRef:id.optional()}),
+ workflow:z.object({exists:z.literal(true),status:RunStatus})});
 const Attempt=z.object({schemaVersion:z.literal('local-cancel-attempt-v1'),bindingSha256:hash,
  recordedAt:z.iso.datetime(),automaticRetry:z.literal(false)}).strict();
 const Terminal=z.object({schemaVersion:z.literal('local-terminal-receipt-v1'),bindingSha256:hash,
@@ -22,6 +23,17 @@ const Terminal=z.object({schemaVersion:z.literal('local-terminal-receipt-v1'),bi
 const digest=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const load=(path,schema)=>schema.parse(JSON.parse(readFileSync(path,'utf8')));
 const pathOf=(directory,name)=>join(directory,name+'.json');
+/** Validate a read against an explicit expected identity without creating execution/intent records. */
+export function validateControlStatusBinding(raw,expected){
+ const binding=Binding.pick({missionId:true,jobId:true,runId:true}).parse(expected),status=Status.parse(raw);
+ const job=status.job,metadataRunId=job.metadata?.runId;
+ const outputRunId=job.type==='campaign'&&job.idempotencyKey?.startsWith('workflow-control:')?job.outputRef:undefined;
+ if(job.id!==binding.jobId||job.missionId!==binding.missionId
+  ||!(metadataRunId||outputRunId)||[metadataRunId,outputRunId].some(runId=>runId&&runId!==binding.runId)){
+  throw Error('Authoritative status binding differs');
+ }
+ return status;
+}
 function optionalRecord(directory,name,schema,binding){
  let value;try{value=load(pathOf(directory,name),schema);}catch(error){if(error.code!=='ENOENT')throw error;}
  if(value&&value.bindingSha256!==digest(binding))throw Error(name+' binding differs');
@@ -66,10 +78,7 @@ export async function reconcileControlSession(directory,{readStatus,cancel,now=(
  const binding=session.binding,query=Object.freeze({jobId:binding.jobId,runId:binding.runId});
  const observe=async()=>{
   let raw;try{raw=await readStatus(query);}catch{return null;}
-  const status=Status.parse(raw);
-  if(status.job.id!==binding.jobId||status.job.missionId!==binding.missionId
-   ||status.job.metadata.runId!==binding.runId)throw Error('Authoritative status binding differs');
-  return status;
+  return validateControlStatusBinding(raw,{missionId:binding.missionId,...query});
  };
  const persistTerminal=status=>{
   if(!status||!['completed','partial','failed','cancelled'].includes(status.job.status)
