@@ -17,7 +17,7 @@
     "runner:setup": "npm ci --prefix runner-gateway",
     "runner:install-browser": "node runner-gateway/node_modules/playwright/cli.js install chromium",
     "runner:test:local-browser": "node --test tools/local-runner/browser-boundary.test.mjs",
-    "runner:test": "node --test runner-gateway/browser-runner.test.mjs runner-gateway/build-runner.test.mjs runner-gateway/release/release-controller.test.mjs tools/local-runner/index.test.mjs"
+    "runner:test": "node --test runner-gateway/browser-runner.test.mjs runner-gateway/build-runner.test.mjs runner-gateway/release/release-controller.test.mjs tools/local-runner/index.test.mjs tools/local-runner/observed-process.test.mjs"
   },
   "dependencies": {
     "@evolution/local-runner": "workspace:*",
