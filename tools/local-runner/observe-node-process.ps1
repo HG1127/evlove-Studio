@@ -33,8 +33,8 @@ $info.ArgumentList.Add('--max-old-space-size=768')
 foreach($v in $environmentPaths){$info.ArgumentList.Add('--env-file='+$v)}
 $info.ArgumentList.Add($entry)
 $child=[Diagnostics.Process]::new();$child.StartInfo=$info
-$stdout=[IO.File]::Create((Join-Path $evidence 'stdout.log'))
-$stderr=[IO.File]::Create((Join-Path $evidence 'stderr.log'))
+$stdout=[IO.FileStream]::new((Join-Path $evidence 'stdout.log'),[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read,1,$true)
+$stderr=[IO.FileStream]::new((Join-Path $evidence 'stderr.log'),[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read,1,$true)
 $started=$false;$terminalWritten=$false;$deadlineStop=$false
 function Record([hashtable]$record){
  $record.at=[DateTimeOffset]::UtcNow.ToString('o')

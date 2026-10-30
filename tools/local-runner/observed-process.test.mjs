@@ -2,9 +2,25 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,writeFile,readFile,mkdir,access} from 'node:fs/promises';
 import {resolve,join} from 'node:path';
-import {execFile} from 'node:child_process';
+import {execFile,spawn} from 'node:child_process';
 import {promisify} from 'node:util';
 const exec=promisify(execFile),root=process.cwd();
+test('live output remains readable without closing or restarting the observed child',{skip:process.platform!=='win32',timeout:20000},async()=>{
+ await mkdir(resolve('artifacts'),{recursive:true});const dir=await mkdtemp(resolve('artifacts/owned-process-live-fixture-')),entry=join(dir,'live.mjs'),out=join(dir,'evidence');
+ await writeFile(entry,'console.log("live-fixture-started");setTimeout(()=>console.log("live-fixture-complete"),5000);');
+ const proc=spawn('pwsh',['-NoProfile','-File',resolve('tools/local-runner/observe-node-process.ps1'),'-EntryPoint',entry,'-EvidenceDirectory',out,'-DeadlineUtc',new Date(Date.now()+14000).toISOString()],{cwd:root,stdio:'ignore'});
+ const completed=new Promise((resolve,reject)=>{proc.once('error',reject);proc.once('exit',code=>resolve(code));});
+ let visible=false;
+ try{
+  for(let i=0;i<40;i++){
+   try{visible=(await readFile(join(out,'stdout.log'),'utf8')).includes('live-fixture-started');}catch{}
+   if(visible)break;await new Promise(r=>setTimeout(r,100));
+  }
+  assert.equal(visible,true);assert.equal(proc.exitCode,null);
+  await assert.rejects(exec('pwsh',['-NoProfile','-File',resolve('tools/local-runner/observe-node-process.ps1'),'-EntryPoint',entry,'-EvidenceDirectory',out,'-DeadlineUtc',new Date(Date.now()+10000).toISOString()],{cwd:root}));
+  assert.equal(await completed,0);assert.match(await readFile(join(out,'stdout.log'),'utf8'),/live-fixture-complete/);
+ }finally{if(proc.exitCode===null)proc.kill();}
+});
 test('Windows owned-process evidence retains failure and enforces an unchanged absolute deadline',{skip:process.platform!=='win32',timeout:30000},async()=>{
  await mkdir(resolve('artifacts'),{recursive:true});const dir=await mkdtemp(resolve('artifacts/owned-process-fixture-'));
  const launcher=resolve('tools/local-runner/observe-node-process.ps1');
