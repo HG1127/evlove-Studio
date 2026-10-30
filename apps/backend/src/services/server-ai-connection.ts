@@ -3,7 +3,7 @@ import {
   ServerAiConnectionPutSchema,ServerAiConnectionSettingsSchema,ServerAiConnectionStatusSchema,
   ServerAiStoredConnectionSchema,type EvolutionActor,type ServerAiConnectionPut,
 } from "@evolution/contracts";
-import {getServerAiConfig,serverAiConfigured,serverAiReasoningEffort,serverAiTimeoutMs,vaultEncryptionConfigured,type ServerAiConfig} from "../server-env";
+import {getServerAiConfig,serverAiConfigured,serverAiReasoningEffort,serverAiJudgeReasoningEffort,serverAiTimeoutMs,vaultEncryptionConfigured,type ServerAiConfig} from "../server-env";
 import {getVaultSecretMetadata,putVaultSecret,resolveVaultSecret} from "./server-vault";
 
 const VAULT_ID="server-ai-default-connection-v1";
@@ -31,10 +31,12 @@ export function assertServerAiEndpoint(baseUrl:string){
 function directConfig(input:ServerAiConnectionPut):ServerAiConfig{
   assertServerAiEndpoint(input.baseUrl);
   const reasoningEffort=serverAiReasoningEffort();
+  const judgeReasoningEffort=serverAiJudgeReasoningEffort();
   return {
     mode:"openai-compatible",apiKey:input.apiKey,baseUrl:normalizeBaseUrl(input.baseUrl),
     model:input.model,timeoutMs:serverAiTimeoutMs(),protocol:input.protocol,responseFormat:input.responseFormat,
     ...(reasoningEffort?{reasoningEffort}:{}),
+    ...(judgeReasoningEffort?{judgeReasoningEffort}:{}),
   };
 }
 

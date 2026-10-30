@@ -5,7 +5,7 @@ import {runServerAi,serverAiScoringRouteFingerprint} from "./ai-gateway";
 import {resolveServerAiConfig,withExplicitServerAiConnection} from "./server-ai-connection";
 
 const key="EVOLUTION_AI_REASONING_EFFORT",previous=new Map<string,string|undefined>();
-const keys=[key,"EVOLUTION_AI_API_KEY","EVOLUTION_AI_MODEL","EVOLUTION_AI_BASE_URL","OPENAI_API_KEY","OPENAI_MODEL","VERCEL","VERCEL_ENV","VERCEL_OIDC_TOKEN","EVOLUTION_AI_GATEWAY_ENABLED"];
+const keys=[key,"EVOLUTION_AI_JUDGE_REASONING_EFFORT","EVOLUTION_AI_API_KEY","EVOLUTION_AI_MODEL","EVOLUTION_AI_BASE_URL","OPENAI_API_KEY","OPENAI_MODEL","VERCEL","VERCEL_ENV","VERCEL_OIDC_TOKEN","EVOLUTION_AI_GATEWAY_ENABLED"];
 const input={connectionId:"reasoning-test",label:"Test",apiKey:"private-test-key",model:"test-model",baseUrl:"https://provider.test/v1",protocol:"chat-completions" as const,responseFormat:"prompt-json" as const};
 const result={scores:{usability:90,aesthetics:90,responsiveness:90,interaction:90},summary:"Observed",findings:["observed layout"]};
 beforeEach(()=>{for(const k of keys){previous.set(k,process.env[k]);delete process.env[k];}});

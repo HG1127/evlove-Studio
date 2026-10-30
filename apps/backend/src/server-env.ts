@@ -266,9 +266,12 @@ const DirectAiReasoningEffortSchema=z.enum(["none","minimal","low","medium","hig
 export function serverAiReasoningEffort(){
   return DirectAiReasoningEffortSchema.optional().parse(value(process.env.EVOLUTION_AI_REASONING_EFFORT));
 }
+export function serverAiJudgeReasoningEffort(){
+  return DirectAiReasoningEffortSchema.optional().parse(value(process.env.EVOLUTION_AI_JUDGE_REASONING_EFFORT));
+}
 export type ServerAiConfig=
   | {mode:"vercel-gateway";model:string;timeoutMs:number}
-  | {mode:"openai-compatible";apiKey:string;model:string;baseUrl:string;timeoutMs:number;protocol?:"chat-completions"|"responses";responseFormat?:"json-schema"|"json-object"|"prompt-json";reasoningEffort?:z.infer<typeof DirectAiReasoningEffortSchema>};
+  | {mode:"openai-compatible";apiKey:string;model:string;baseUrl:string;timeoutMs:number;protocol?:"chat-completions"|"responses";responseFormat?:"json-schema"|"json-object"|"prompt-json";reasoningEffort?:z.infer<typeof DirectAiReasoningEffortSchema>;judgeReasoningEffort?:z.infer<typeof DirectAiReasoningEffortSchema>};
 
 export function serverAiTimeoutMs(){
   const timeoutRaw=value(process.env.EVOLUTION_AI_TIMEOUT_MS,process.env.OPENAI_TIMEOUT_MS);
@@ -295,11 +298,12 @@ export function getServerAiConfig():ServerAiConfig|undefined{
     const rawBase=value(process.env.EVOLUTION_AI_BASE_URL,process.env.OPENAI_BASE_URL)??"https://api.openai.com/v1";
     const baseUrl=rawBase.replace(/\/+$/,"").replace(/\/(?:responses|chat\/completions)$/i,"");
     const reasoningEffort=serverAiReasoningEffort();
-    return {mode:"openai-compatible",apiKey,model,baseUrl,timeoutMs,...(reasoningEffort?{reasoningEffort}:{})};
+    const judgeReasoningEffort=serverAiJudgeReasoningEffort();
+    return {mode:"openai-compatible",apiKey,model,baseUrl,timeoutMs,...(reasoningEffort?{reasoningEffort}:{}),...(judgeReasoningEffort?{judgeReasoningEffort}:{})};
   }
   const oidcAvailable=serverAiOidcAvailable();
   if(oidcAvailable&&serverAiGatewayEnabled()){
-    if(value(process.env.EVOLUTION_AI_REASONING_EFFORT))throw Object.assign(new Error("EVOLUTION_AI_REASONING_EFFORT 仅适用于直接模型连接；请清除该设置或使用直接连接。"),{code:"SERVER_AI_REASONING_UNSUPPORTED_ROUTE"});
+    if(value(process.env.EVOLUTION_AI_REASONING_EFFORT,process.env.EVOLUTION_AI_JUDGE_REASONING_EFFORT))throw Object.assign(new Error("EVOLUTION_AI_REASONING_EFFORT / EVOLUTION_AI_JUDGE_REASONING_EFFORT 仅适用于直接模型连接；请清除该设置或使用直接连接。"),{code:"SERVER_AI_REASONING_UNSUPPORTED_ROUTE"});
     return {
       mode:"vercel-gateway",
       model:value(process.env.EVOLUTION_AI_GATEWAY_MODEL,process.env.EVOLUTION_AI_MODEL)??"openai/gpt-5.5",

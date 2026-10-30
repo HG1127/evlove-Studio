@@ -20,7 +20,7 @@ const input={
   model:"arbitrary-model-id",apiKey:"private-key-never-return",
   protocol:"chat-completions" as const,responseFormat:"json-object" as const,
 };
-const keys=["NODE_ENV","EVOLUTION_AI_API_KEY","OPENAI_API_KEY","EVOLUTION_AI_MODEL","OPENAI_MODEL","EVOLUTION_AI_BASE_URL","VERCEL","VERCEL_ENV","VERCEL_OIDC_TOKEN","EVOLUTION_AI_GATEWAY_ENABLED","EVOLUTION_AI_TIMEOUT_MS","OPENAI_TIMEOUT_MS","EVOLUTION_AI_REASONING_EFFORT"];
+const keys=["NODE_ENV","EVOLUTION_AI_API_KEY","OPENAI_API_KEY","EVOLUTION_AI_MODEL","OPENAI_MODEL","EVOLUTION_AI_BASE_URL","VERCEL","VERCEL_ENV","VERCEL_OIDC_TOKEN","EVOLUTION_AI_GATEWAY_ENABLED","EVOLUTION_AI_TIMEOUT_MS","OPENAI_TIMEOUT_MS","EVOLUTION_AI_REASONING_EFFORT","EVOLUTION_AI_JUDGE_REASONING_EFFORT"];
 const previous=new Map<string,string|undefined>();
 beforeEach(()=>{
   for(const key of keys){previous.set(key,process.env[key]);delete process.env[key];}
@@ -34,6 +34,15 @@ afterEach(()=>{
 });
 
 describe("user-selected backend AI connection",()=>{
+  it("pins a Vault connection's separate judge effort alongside its generation effort",async()=>{
+    process.env.EVOLUTION_AI_REASONING_EFFORT="medium";process.env.EVOLUTION_AI_JUDGE_REASONING_EFFORT="high";
+    vault.resolve.mockResolvedValue(JSON.stringify({...input,version:"server-ai-connection-v1"}));
+    await withServerAiConnection(async()=>{
+      process.env.EVOLUTION_AI_JUDGE_REASONING_EFFORT="low";
+      expect(await resolveServerAiConfig()).toMatchObject({reasoningEffort:"medium",judgeReasoningEffort:"high"});
+    });
+    expect(await resolveServerAiConfig()).toMatchObject({reasoningEffort:"medium",judgeReasoningEffort:"low"});
+  });
   it("pins the explicit server reasoning effort for a saved Vault connection",async()=>{
     process.env.EVOLUTION_AI_REASONING_EFFORT="medium";
     vault.resolve.mockResolvedValue(JSON.stringify({...input,version:"server-ai-connection-v1"}));
