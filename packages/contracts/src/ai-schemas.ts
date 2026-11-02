@@ -307,7 +307,7 @@ export type CopilotAiResult = z.infer<typeof CopilotAiResultSchema>;
 
 // 分数范围不在这里硬卡：AI 偶尔越界（105 / -2）或返回 0-1 小数，交给 evaluation/service 归一化兜底，
 // 避免一次评审因单个数字直接抛错报废整轮评测。
-export const EvaluateAiResultSchema = z.object({
+const EvaluationWithIdentitiesSchema = z.object({
   accuracy: z.coerce.number(),
   evidence: z.coerce.number(),
   riskCoverage: z.coerce.number(),
@@ -335,10 +335,6 @@ export const EvaluateAiResultSchema = z.object({
     testCaseIds: z.array(z.string()).default([]),
   })),
 }).superRefine((value, ctx) => {
-  // 评阅模型敷衍时常直接交全 0 —— 视为无效评审，让调用方按 fallback 换下一个连接重试。
-  if (value.accuracy === 0 && value.evidence === 0 && value.riskCoverage === 0) {
-    ctx.addIssue({ code: "custom", message: "Evaluator returned all-zero scores; treating as invalid response" });
-  }
   const caseIds = new Set<string>();
   value.cases.forEach((item, index) => {
     if (caseIds.has(item.testCaseId)) {
@@ -354,11 +350,18 @@ export const EvaluateAiResultSchema = z.object({
     criterionIds.add(item.criterionId);
   });
 });
+/** Compatibility: unpaired callers retain their historical all-zero heuristic. */
+export const EvaluateAiResultSchema = EvaluationWithIdentitiesSchema.superRefine((value, ctx) => {
+  if (value.accuracy === 0 && value.evidence === 0 && value.riskCoverage === 0) {
+    ctx.addIssue({ code: "custom", message: "Evaluator returned all-zero scores; treating as invalid response" });
+  }
+});
 export type EvaluateAiResult = z.infer<typeof EvaluateAiResultSchema>;
 
 export const PairedEvaluationAiResultSchema=z.object({
   schemaVersion:z.literal("paired-evaluation-v1"),requestFingerprint:z.string().min(1).max(200),
-  versions:z.array(z.object({slot:z.enum(["A","B","C"]),result:EvaluateAiResultSchema}).strict()).length(3),
+  // A valid adverse verdict, including zero, is data; it cannot spend a format-correction request.
+  versions:z.array(z.object({slot:z.enum(["A","B","C"]),result:EvaluationWithIdentitiesSchema}).strict()).length(3),
 }).strict().superRefine((value,ctx)=>{
   if(new Set(value.versions.map(v=>v.slot)).size!==3)ctx.addIssue({code:"custom",path:["versions"],message:"All three unique slots are required"});
   for(const [i,version] of value.versions.entries()){

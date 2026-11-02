@@ -60,6 +60,8 @@ describe("server AI scoring route identity",()=> {
     expect(await serverAiScoringRouteFingerprint()).not.toBe(legacy);
     expect(await serverAiScoringRouteFingerprint()).not.toBe(contextOnly);
     expect(await serverAiScoringRouteFingerprint()).not.toBe(previousSchemaRoute);
+    const oldZeroRejectingRoute=createHash("sha256").update(JSON.stringify({route,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION,pairedGenerationSchemaVersion:"issued-paired-generation-schema-v1"})).digest("hex");
+    expect(await serverAiScoringRouteFingerprint()).not.toBe(oldZeroRejectingRoute);
   });
 
   it("changes with provider/model but excludes credentials and timeout",async()=> {

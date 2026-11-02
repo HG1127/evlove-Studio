@@ -14,12 +14,17 @@ function reply(fingerprint:string,score=95):PairedEvaluationAiResult{
   return {schemaVersion:"paired-evaluation-v1",requestFingerprint:fingerprint,versions:[{slot:"A",result:reversed?candidate:original},{slot:"B",result:reversed?original:candidate},{slot:"C",result:structuredClone(original)}]};
 }
 afterEach(()=>vi.unstubAllGlobals());
-async function assess(mode:"first-scope-bad"|"all-scope-bad"|"valid-negative"|"valid-safety-fail"|"valid-conflict"|"bad-echo-once"|"both-orders-scope-bad"){
+async function assess(mode:"first-scope-bad"|"all-scope-bad"|"valid-negative"|"valid-zero"|"valid-safety-fail"|"valid-conflict"|"bad-echo-once"|"both-orders-scope-bad"){
   const counts=new Map<string,number>(),bodies:string[]=[],claim=vi.fn(async()=>{});
   const fetch=vi.fn(async(_url:unknown,init?:RequestInit)=>{
     const body=String(init?.body);bodies.push(body);const messages=(JSON.parse(body) as {messages:Array<{role:string;content:string}>}).messages;
     const input=JSON.parse(messages.findLast(m=>m.role==="user")!.content) as {requestFingerprint:string},count=counts.get(input.requestFingerprint)??0;counts.set(input.requestFingerprint,count+1);
     const result=reply(input.requestFingerprint,mode==="valid-negative"?80:mode==="valid-conflict"&&input.requestFingerprint.endsWith(":1")?84:95);
+    if(mode==="valid-zero"){
+      const negative=result.versions.find(v=>v.slot===(input.requestFingerprint.endsWith(":1")?"A":"B"))!.result;
+      Object.assign(negative,{accuracy:0,evidence:0,riskCoverage:0,completeness:0,safety:"FAIL",failures:["Required task output is absent."]});
+      Object.assign(negative.criteria[0]!,{score:0,pass:false,evidence:["Observed output contains no required task result."],gaps:["Required output missing."]});
+    }
     if(mode==="bad-echo-once"&&bodies.length===1)result.requestFingerprint="not-the-issued-request";
     if(mode==="all-scope-bad"||mode==="first-scope-bad"&&bodies.length===1||mode==="both-orders-scope-bad"&&count===0)
       for(const v of result.versions)v.result.criteria[0]!.testCaseIds=["GOAL"];
@@ -49,10 +54,15 @@ describe("issued paired scope inside the existing format-correction budget",()=>
   it("uses the same single format correction for a wrong echoed request identity",async()=>{
     const x=await assess("bad-echo-once");await x.result;expect(x.fetch).toHaveBeenCalledTimes(3);expect(x.claim).toHaveBeenCalledOnce();
   });
-  it.each(["valid-negative","valid-safety-fail","valid-conflict"] as const)("never retries an admitted %s assessment to improve its verdict",async mode=>{
+  it.each(["valid-negative","valid-zero","valid-safety-fail","valid-conflict"] as const)("never retries an admitted %s assessment to improve its verdict",async mode=>{
     const x=await assess(mode),result=await x.result;
     expect(x.fetch).toHaveBeenCalledTimes(2);expect(x.invoke).toHaveBeenCalledTimes(2);expect(x.claim).toHaveBeenCalledOnce();
     if(mode==="valid-negative")expect(result.criteria[0]).toMatchObject({score:80,pass:false});
+    else if(mode==="valid-zero"){
+      expect(result).toMatchObject({accuracy:0,evidence:0,riskCoverage:0,completeness:0,safety:"FAIL"});
+      expect(result.criteria[0]).toMatchObject({score:0,pass:false});
+      expect([...x.counts.values()]).toEqual([1,1]);
+    }
     else if(mode==="valid-safety-fail")expect(result.safety).toBe("FAIL");
     else expect(result.pairedComparison!.receipt.samples.map(s=>s.candidate.criteria[0]!.score)).toEqual([95,84]);
   });

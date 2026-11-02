@@ -19,7 +19,18 @@ describe("explicit paired JSONL transport",()=>{
   const x=fixture();expect(parsePairedJsonl(wire(x.records),scope)).toEqual(x.expected);
   expect(parsePairedJsonl(wire(x.records).replaceAll("\n","\r\n")+"\r\n",scope)).toEqual(x.expected);
  });
- for(const mode of ["truncated","missing-end","missing-row","duplicate-row","duplicate-slot","foreign-criterion","foreign-case","fingerprint","missing-evidence","extra-field","header-schema","string-score","range","zero-summary","foreign-case-score","end-count","protocol"]){
+ it("preserves a complete zero-score negative verdict instead of rejecting it as transport syntax",()=>{
+  const {records}=fixture();
+  for(const record of records){
+   if(!("value" in record))continue;
+   if(record.kind==="summary")Object.assign(record.value!,{accuracy:0,evidence:0,riskCoverage:0,completeness:0,safety:"FAIL",failures:["Required result missing."]});
+   if(record.kind==="criterion")Object.assign(record.value!,{score:0,pass:false,evidence:["Observed required output missing."]});
+  }
+  const before=JSON.stringify(records),result=parsePairedJsonl(wire(records),scope);
+  for(const version of result.versions){expect(version.result).toMatchObject({accuracy:0,evidence:0,riskCoverage:0,completeness:0,safety:"FAIL"});expect(version.result.criteria[0]).toMatchObject({score:0,pass:false});}
+  expect(JSON.stringify(records)).toBe(before);
+ });
+ for(const mode of ["truncated","missing-end","missing-row","duplicate-row","duplicate-slot","foreign-criterion","foreign-case","fingerprint","missing-evidence","extra-field","header-schema","string-score","range","foreign-case-score","end-count","protocol"]){
   it("rejects "+mode+" without changing its input",()=>{
    const {records}=fixture();const r=records as Array<Record<string,unknown>>;
    if(mode==="missing-end")r.pop();
@@ -35,7 +46,6 @@ describe("explicit paired JSONL transport",()=>{
    if(mode==="header-schema")r[0]!.$schema="https://json-schema.org/draft/2020-12/schema";
    if(mode==="string-score")row.score="97";
    if(mode==="range")row.score=101;
-   if(mode==="zero-summary")Object.assign(summary,{accuracy:0,evidence:0,riskCoverage:0});
    if(mode==="foreign-case-score")summary.cases=[{testCaseId:"OTHER",accuracy:99,evidence:99,completeness:99,reason:"foreign"}];
    if(mode==="end-count")r.at(-1)!.criterionRecords=6;
    if(mode==="protocol")r[0]!.protocol="unknown";

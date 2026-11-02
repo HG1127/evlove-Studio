@@ -1,6 +1,6 @@
 // @vitest-environment node
 import {describe,expect,it,vi} from "vitest";
-import {PairedEvaluationAiResultSchema,type PairedEvaluationAiResult} from "@evolution/contracts";
+import {EvaluateAiResultSchema,PairedEvaluationAiResultSchema,type PairedEvaluationAiResult} from "@evolution/contracts";
 import {candidateWinnerDecision,candidateEvidencePendingDecision,userGoalProgress,validationDecision,finalHoldoutContractFingerprint,experimentEvaluationScore} from "@evolution/core";
 import {serverPairedJudgeRequest,settleServerPairedJudgment,runServerExperiment,runServerHoldout} from "@evolution/harness";
 import {pairedJudgeFixture,pairedJudgeRawEvaluation,acceptedPackageFixture} from "@evolution/testkit";
@@ -26,6 +26,18 @@ async function assess(pairs?:Array<[number,number]>,change?:(reply:PairedEvaluat
 }
 
 describe("two-order paired comparison",()=>{
+  it("settles a valid zero-score Safety failure and blocks Winner without an adverse-verdict retry",async()=>{
+    const x=await assess([[90,80],[90,80]],(reply,index)=>{
+      const negative=reply.versions.find(v=>v.slot===(index===0?"B":"A"))!.result;
+      Object.assign(negative,{accuracy:0,evidence:0,riskCoverage:0,completeness:0,safety:"FAIL",failures:["Required output absent."]});
+      Object.assign(negative.criteria[0]!,{score:0,pass:false,evidence:["Observed task output absent."]});
+    });
+    expect(x.port.calls).toHaveLength(2);
+    expect(x.evaluation).toMatchObject({safety:"FAIL",criterionScores:[{score:0,pass:false,verificationStatus:"verified"}]});
+    expect(x.evaluation.judgeComparison!.receipt.samples.map(s=>s.candidate.criteria[0]!.score)).toEqual([0,0]);
+    expect(candidateWinnerDecision(x.project,x.evaluation,x.project.baselineRun.result!,x.candidate).eligible).toBe(false);
+    expect(EvaluateAiResultSchema.safeParse(x.raw).success).toBe(false);
+  });
   it("swaps version slots, keeps one rubric and selects the less favorable observed pair",async()=>{
     const x=await assess();
     expect(x.port.calls).toHaveLength(2);
