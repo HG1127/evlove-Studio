@@ -89,3 +89,4 @@ export * from "./paired-judge";
 export * from "./html-tool-text-projection";
 
 export * from "./measurement-calibration";
+export * from "./html-card-paragraph-diff";
