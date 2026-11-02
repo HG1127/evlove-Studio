@@ -1,5 +1,5 @@
 import {compileKnownHtmlDerivedMetadata,isKnownHtmlNativeSubject} from "@evolution/adapters/html-native-profile";
-import {assertHtmlOriginalCodeRetention,assertHtmlParagraphConstruction,assertHtmlNumberedListConstruction,assertHtmlRendererStepNumbers,HtmlSemanticLayoutError} from "@evolution/core";
+import {assertHtmlOriginalCodeRetention,assertHtmlParagraphConstruction,assertHtmlNumberedListConstruction,assertHtmlRendererStepNumbers,assertHtmlSlideIndexConstruction,HtmlSemanticLayoutError} from "@evolution/core";
 import {isServerHtmlConstructionCheckError,ServerHtmlConstructionPreflightError,type ServerHtmlConstructionFailure} from "./server-html-construction-preflight";
 
 /** Compilation of model-authored content, before freezing; never a post-acceptance file rewrite. */
@@ -20,6 +20,7 @@ export async function compileServerHtmlDerivedMetadata(args:{extension:string;co
   const paragraphs=check(()=>assertHtmlParagraphConstruction(original,compiled.html));
   const numbered=check(()=>assertHtmlNumberedListConstruction(original,compiled.html));
   const stepNumbers=check(()=>assertHtmlRendererStepNumbers(original,compiled.html));
+  const slideIndexes=check(()=>assertHtmlSlideIndexConstruction(original,compiled.html));
   if(failures.length>1)throw new ServerHtmlConstructionPreflightError(failures);
   if(failures.length)throw failures[0]!.error;
   return {content:compiled.html,checks:[
@@ -30,5 +31,6 @@ export async function compileServerHtmlDerivedMetadata(args:{extension:string;co
     ...(paragraphs?.checkedParagraphs?[`HTML 新段落构建预算：${paragraphs.checkedParagraphs} 个新增或修改段落通过静态长度检查；不代表渲染可读性或验收通过。`]:[]),
     ...(numbered?.checkedLists?[`HTML 编号列表构建检查（${numbered.policy}）：${numbered.checkedLists} 个修改列表的显式编号连续；不证明操作含义保留或验收通过。`]:[]),
     ...(stepNumbers?.checkedCards?[`HTML 步骤卡片构建检查（${stepNumbers.policy}）：${stepNumbers.checkedCards} 个已绑定卡片未新增与原编号标签重复的详情前缀；不代表语义或验收通过。`]:[]),
+    ...(slideIndexes?.checkedCards?[`HTML 页码构建检查（${slideIndexes.policy}）：${slideIndexes.checkedCards} 个原始页码与对应卡片保持绑定；不代表完整结构、渲染或语义验收通过。`]:[]),
   ]};
 }

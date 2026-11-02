@@ -7,6 +7,17 @@ const {known,compile}=vi.hoisted(()=>({known:vi.fn(),compile:vi.fn()}));
 vi.mock("@evolution/adapters/html-native-profile",()=>({isKnownHtmlNativeSubject:known,compileKnownHtmlDerivedMetadata:compile}));
 beforeEach(()=>{known.mockReset();compile.mockReset();});
 describe("pre-freeze derived HTML compilation",()=>{
+  it("rejects paragraph-list duplication and missing page labels independently at the shared build/repair entry",async()=>{
+    const source='<html><body><article class="slide-card" id="slide-98"><div class="slide-index">098</div><div class="slide-body"><div class="text-lines"><p>1. Open</p><p>2. Deploy</p></div></div></article></body></html>';
+    known.mockReturnValue(true);
+    const duplicated=source.replace('<p>2. Deploy</p>','<p>1. Verify</p><p>2. Deploy</p>');compile.mockReturnValue({html:duplicated,updatedIds:[]});
+    await expect(compileServerHtmlDerivedMetadata({extension:'html',content:duplicated,parentText:source,readOriginal:async()=>source})).rejects.toMatchObject({code:'HTML_NUMBERED_LIST_INCOHERENT'});
+    const missing=source.replace('>098<','><');compile.mockReturnValue({html:missing,updatedIds:[]});
+    await expect(compileServerHtmlDerivedMetadata({extension:'html',content:missing,parentText:source,readOriginal:async()=>source})).rejects.toMatchObject({code:'HTML_SLIDE_INDEX_RETENTION_FAILED',issues:[{section:'slide-98',expectedIndex:'098'}]});
+    const valid=source.replace('2. Deploy','2. Deploy and verify');compile.mockReturnValue({html:valid,updatedIds:[]});
+    const result=await compileServerHtmlDerivedMetadata({extension:'html',content:valid,parentText:source,readOriginal:async()=>source});
+    expect(result.content).toBe(valid);expect(result.checks).toContainEqual(expect.stringContaining('1 个原始页码'));
+  });
   it("rejects a new detail prefix that repeats the retained tool-card label without rewriting either file",async()=>{
     const original='<html><body><article class="slide-card" data-kind="tool" id="slide-64"><div class="slide-body"><div class="mini-grid"><div class="mini-card"><p>01</p><p>Open project</p></div></div></div></article></body></html>';
     const bad=original.replace('Open project','01\nOpen project and verify');known.mockReturnValue(true);compile.mockReturnValue({html:bad,updatedIds:[]});

@@ -3,6 +3,34 @@ import {assertHtmlNumberedListConstruction,HtmlNumberedListConstructionError} fr
 const html=(items:string[])=>`<html><body><article id="slide-87"><ul>${items.map(s=>`<li>${s}</li>`).join("")}</ul></article></body></html>`;
 const original=html(["1. Open page","2. Phone works","3. No errors"]);
 describe("numbered instruction construction",()=>{
+  it("checks explicit consecutive paragraph steps in known slide text containers",()=>{
+    const wrap=(items:string[])=>`<article class="slide-card" id="slide-97"><div class="text-lines">${items.map(s=>`<p>${s}</p>`).join("\n")}</div></article>`;
+    const source=wrap(["1. Open","2. Authorize","3. Deploy"]);
+    const bad=wrap(["1. Open","2. Authorize","2. Authorize and verify","3. Deploy"]);
+    expect(()=>assertHtmlNumberedListConstruction(source,bad)).toThrow(HtmlNumberedListConstructionError);
+    try{assertHtmlNumberedListConstruction(source,bad);}catch(e){expect(e).toMatchObject({issues:[{section:"slide-97",itemIndex:3,expectedNumber:3,observedNumber:2},{section:"slide-97",itemIndex:4,expectedNumber:4,observedNumber:3}],listContext:{groups:[{prefixNumbers:[1,2,2,3],originalSourceLists:[{prefixNumbers:[1,2,3]}]}]}});}
+    expect(assertHtmlNumberedListConstruction(source,wrap(["1. <strong>Open</strong>","2. Authorize and verify","3. Check scope","4. Deploy"]))).toMatchObject({checkedLists:1});
+    expect(bad).toContain("2. Authorize and verify");
+  });
+  it("limits paragraph numbering to explicit runs and preserves unchanged source defects",()=>{
+    const wrap=(s:string)=>`<article id="slide-97"><div class="text-lines">${s}</div></article>`;
+    const legacy=wrap('<p>1. First</p><p>3. Last</p>');
+    expect(assertHtmlNumberedListConstruction(legacy,legacy).checkedLists).toBe(0);
+    expect(()=>assertHtmlNumberedListConstruction(legacy,legacy.replace('First','Edited first'))).toThrow();
+    for(const prose of ['<p>15 分钟</p><p>240 字</p>','<p>2.5 version</p><p>3.5 version</p>','<p>01</p><p>04</p>','<p>1. Single example</p><p>Ordinary prose</p>'])
+      expect(assertHtmlNumberedListConstruction('',wrap(prose)).checkedLists).toBe(0);
+    expect(assertHtmlNumberedListConstruction('','<div class="text-lines"><p>1. One</p><p>3. Three</p></div>').checkedLists).toBe(0);
+    expect(assertHtmlNumberedListConstruction('',wrap('<pre><p>1. One</p><p>3. Three</p></pre>')).checkedLists).toBe(0);
+    expect(()=>assertHtmlNumberedListConstruction('',wrap('<p>1. One</p><!-- formatting --><p>3. Three</p>'))).toThrow();
+  });
+  it("checks steps across individual renderer content blocks without duplicate group reports",()=>{
+    const wrap=(items:string[])=>`<article id="slide-97"><div class="slide-body">${items.map(s=>`<div class="content-block"><p>${s}</p></div>`).join('')}</div></article>`;
+    const source=wrap(['1. Open','2. Authorize','3. Deploy']);
+    expect(()=>assertHtmlNumberedListConstruction(source,wrap(['1. Open','2. Authorize','2. Verify','3. Deploy']))).toThrow();
+    expect(assertHtmlNumberedListConstruction(source,wrap(['1. Open','2. Authorize and verify','3. Deploy']))).toMatchObject({checkedLists:1});
+    const nested='<article id="slide-97"><div class="slide-body"><div class="content-block"><div class="text-lines"><p>1. One</p><p>3. Three</p></div></div></div></article>';
+    try{assertHtmlNumberedListConstruction('',nested);}catch(e){expect((e as HtmlNumberedListConstructionError).listContext?.groups).toHaveLength(1);}
+  });
   it("reports source numbering and parser-created empty rows without prescribing the damaged sequence's start",()=>{
     const source=html(["1. Confirm requirement","2. List files","3. List boundaries","4. Run locally","5. Check build","6. User checks","7. Commit"]);
     const bad=source.replace('1. Confirm requirement','<li>5. Check build with recovery</li>');

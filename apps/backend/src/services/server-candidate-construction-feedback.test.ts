@@ -1,9 +1,16 @@
 // @vitest-environment node
 import {describe,expect,it} from "vitest";
-import {ExactEditAnchorError,HtmlOriginalCodeRetentionError,HtmlSemanticLayoutError,HtmlParagraphConstructionError,HtmlNumberedListConstructionError,HtmlRendererStepNumberError,assertHtmlNumberedListConstruction,htmlNativeCodeRetention,assertHtmlOriginalCodeRetention} from "@evolution/core";
+import {ExactEditAnchorError,HtmlOriginalCodeRetentionError,HtmlSemanticLayoutError,HtmlParagraphConstructionError,HtmlNumberedListConstructionError,HtmlRendererStepNumberError,HtmlSlideIndexConstructionError,assertHtmlNumberedListConstruction,htmlNativeCodeRetention,assertHtmlOriginalCodeRetention} from "@evolution/core";
 import {serverCandidateConstructionCorrection} from "./server-candidate-construction-feedback";
 import {ServerHtmlConstructionPreflightError} from "./server-html-construction-preflight";
 describe("bounded pre-freeze construction feedback",()=>{
+  it("bounds Original slide-index feedback and shares the same construction correction",()=>{
+    const error=new HtmlSlideIndexConstructionError(Array.from({length:23},(_,i)=>({section:`slide-${i}`,expectedIndex:'098',observedIndexes:[],observedIndexCount:0})));
+    const correction=serverCandidateConstructionCorrection(error,[]);
+    expect(correction).toMatchObject({code:error.code,issues:error.issues.slice(0,20),omittedIssueCount:3});
+    expect(correction?.instruction).toContain('SAME slide-card');expect(correction?.instruction).toContain('existing single pre-write');
+    expect(serverCandidateConstructionCorrection({...error},[])).toBeUndefined();
+  });
   it("bounds renderer-number feedback without source prose or granting an extra correction",()=>{
     const error=new HtmlRendererStepNumberError(Array.from({length:23},(_,i)=>({section:"slide-64",gridIndex:1,cardIndex:i+1,label:"01",detailPrefix:"01"})));
     const correction=serverCandidateConstructionCorrection(error,[]);
@@ -11,11 +18,12 @@ describe("bounded pre-freeze construction feedback",()=>{
     expect(correction?.instruction).toContain("existing single pre-write");expect(correction?.instruction).toContain("Preserve the Original label");expect(correction?.instruction).toContain("not classified as new defects");
     expect(serverCandidateConstructionCorrection({...error},[])).toBeUndefined();
   });
-  it("aggregates all five distinct static checks in the same existing correction",()=>{
+  it("aggregates all six distinct static checks in the same existing correction",()=>{
     const errors=[new HtmlSemanticLayoutError([{section:"slide-11",label:"label",expectedParagraphs:2,code:"missing-or-ambiguous-component"}]),new HtmlOriginalCodeRetentionError(htmlNativeCodeRetention('<pre>original</pre>','<pre>changed</pre>')),new HtmlParagraphConstructionError([{section:"slide-64",role:"introductory",chars:300,maxChars:240}]),new HtmlNumberedListConstructionError([{section:"slide-64",listIndex:1,itemIndex:2,expectedNumber:2,observedNumber:3}]),new HtmlRendererStepNumberError([{section:"slide-64",gridIndex:1,cardIndex:1,label:"01",detailPrefix:"01"}])];
-    const aggregate=new ServerHtmlConstructionPreflightError(errors.map(error=>({stage:"after-layout",error})));
+    const allErrors=[...errors,new HtmlSlideIndexConstructionError([{section:'slide-98',expectedIndex:'098',observedIndexes:[],observedIndexCount:0}])];
+    const aggregate=new ServerHtmlConstructionPreflightError(allErrors.map(error=>({stage:"after-layout",error})));
     const result=serverCandidateConstructionCorrection(aggregate,[]);
-    expect(result&&"violations" in result?result.violations:undefined).toHaveLength(5);
+    expect(result&&"violations" in result?result.violations:undefined).toHaveLength(6);
   });
   it("explains a nested list-item text replacement using numeric shapes without copying source bodies",()=>{
     const original='<article id="slide-84"><ul><li>1. PRIVATE_REQUIREMENT</li><li>2. PRIVATE_CHECK</li></ul></article>';

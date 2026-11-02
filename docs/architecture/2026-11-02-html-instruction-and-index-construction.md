@@ -1,0 +1,13 @@
+# Paragraph instruction numbering and Original slide indexes
+
+An independent AI source review identified two concrete defects in a frozen SOP: duplicated step 4 on card 097 and a missing visible 098 page label. Its qualitative review does not establish calibrated numeric scores, acceptance, business benefit or causal transfer. The exact old file is already rejected by the current compiler for a separate renderer step-label echo on card 064, which did not establish coverage of these two defects.
+
+Two isolated local controls reproduce the omissions on `11bffd0`: insert only the observed extra fourth-step paragraph, or remove only the Original 098 text node. Each inverse edit reconstructs the exact Original bytes. Both controls pass the old shared build/repair compiler. No model, browser, remote write, production Mission or evolved Candidate is involved in this diagnostic.
+
+Core's numbered-list policy v2 also checks adjacent explicitly numbered `p` elements across a known slide's `slide-body`, `content-block` and `text-lines` wrappers. This includes one step per block, which is how the actual 097 card is structured. Nested wrappers are counted once. Numeric punctuation identifies these runs; bare card numbers, quantities, decimal values and ordinary prose remain outside this extension. Existing unchanged malformed source groups remain readable, and coherent additions or rewrites remain possible. This is a bounded construction check, not a complete validator of every way to express steps or their operational meaning.
+
+The new Original slide-index construction policy binds each unambiguous numeric `.slide-index` to its original `.slide-card` ID. Missing, duplicated, moved and changed labels fail before freezing. Unsupported or ambiguous Original indexes are reported as unbound rather than invented protection evidence. The check compares static labels only; it does not establish rendered visibility, screenshot equivalence or complete chapter preservation.
+
+Both checks run through the existing shared HTML build/repair compiler. Typed failures enter the same bounded pre-write correction as the prior layout, code, paragraph and renderer-step checks; the aggregation limit grows to six distinct checks, without adding a correction, evaluation repair, model budget or trial window. Correction feedback retains bounded structural metadata. It does not renumber, remove instructions, repair source bytes automatically or alter old artifacts and verdicts.
+
+The usual paired semantic, Visible, ordinary Hidden, preregistered independent final, Gate F and exact-byte delivery requirements remain necessary. A better construction mechanism does not make the old SOP an accepted evolution or qualify the current measurement route.

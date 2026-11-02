@@ -1,15 +1,25 @@
 import {parse,type DefaultTreeAdapterTypes} from "parse5";
 
-export const HTML_NUMBERED_LIST_CONSTRUCTION_POLICY={version:"known-sop-numbered-list-coherence-v1"} as const;
-type Group={section:string;listIndex:number;texts:string[]};
+export const HTML_NUMBERED_LIST_CONSTRUCTION_POLICY={version:"known-sop-numbered-list-coherence-v2-paragraphs"} as const;
+type Group={section:string;listIndex:number;texts:string[];kind:"items"|"paragraphs"};
 type Issue={section:string;listIndex:number;itemIndex:number;expectedNumber:number;observedNumber?:number};
 type ListShape={listIndex:number;itemCount:number;prefixNumbers:Array<number|null>;emptyItemIndexes:number[]};
 type ListContext={schemaVersion:"numbered-list-construction-context-v1";groups:Array<ListShape&{section:string;originalSourceLists:ListShape[]}>;omittedGroupCount:number;numberHintsAreNotRenumberingTargets:true};
 const omitted=new Set(["head","script","style","template","noscript","pre","code"]);
 const text=(node:DefaultTreeAdapterTypes.Node):string=>"tagName" in node&&omitted.has(node.tagName)?"":
   node.nodeName==="#text"&&"value" in node?node.value:"childNodes" in node?node.childNodes.filter(n=>!("tagName" in n&&["ul","ol"].includes(n.tagName))).map(text).join(""):"";
+const paragraphContainer=(node:DefaultTreeAdapterTypes.Element)=>node.attrs.some(a=>a.name==="class"&&a.value.split(/\s+/u).some(c=>["slide-body","content-block","text-lines"].includes(c)));
+function wrappedParagraphs(node:DefaultTreeAdapterTypes.Node):DefaultTreeAdapterTypes.Element[]|undefined{
+  if(node.nodeName==="#comment"||node.nodeName==="#text"&&"value" in node&&!node.value.trim())return [];
+  if(!("tagName" in node)||omitted.has(node.tagName))return undefined;
+  if(node.tagName==="p")return [node];
+  if(!paragraphContainer(node))return undefined;
+  const found:DefaultTreeAdapterTypes.Element[]=[];
+  for(const child of node.childNodes){const paragraphs=wrappedParagraphs(child);if(!paragraphs)return undefined;found.push(...paragraphs);}
+  return found;
+}
 function groups(html:string){
-  const result:Group[]=[],counts=new Map<string,number>();
+  const result:Group[]=[],counts=new Map<string,number>(),claimedParagraphs=new Set<DefaultTreeAdapterTypes.Element>();
   const visit=(node:DefaultTreeAdapterTypes.Node,section="")=>{
     if("tagName" in node){
       if(omitted.has(node.tagName))return;
@@ -17,7 +27,19 @@ function groups(html:string){
       if(node.tagName==="ul"||node.tagName==="ol"){
         const listIndex=(counts.get(section)??0)+1;counts.set(section,listIndex);
         const texts=node.childNodes.filter(n=>"tagName" in n&&n.tagName==="li").map(n=>text(n).replace(/\s+/g," ").trim());
-        if(texts.length>=2)result.push({section,listIndex,texts});
+        if(texts.length>=2)result.push({section,listIndex,texts,kind:"items"});
+      }
+      if(/^slide-\d+$/u.test(section)&&paragraphContainer(node)){
+        let run:Array<{node:DefaultTreeAdapterTypes.Element;text:string}>=[];
+        const flush=()=>{if(run.length>=2){const listIndex=(counts.get(section)??0)+1;counts.set(section,listIndex);result.push({section,listIndex,texts:run.map(p=>p.text),kind:"paragraphs"});run.forEach(p=>claimedParagraphs.add(p.node));}run=[];};
+        for(const child of node.childNodes){
+          const paragraphs=wrappedParagraphs(child);if(!paragraphs){flush();continue;}
+          for(const p of paragraphs){
+            const value=text(p).replace(/\s+/gu," ").trim();
+            if(!claimedParagraphs.has(p)&&explicitOrdinal(value)!==undefined)run.push({node:p,text:value});else flush();
+          }
+        }
+        flush();
       }
     }
     if("childNodes" in node)node.childNodes.forEach(n=>visit(n,section));
@@ -25,7 +47,10 @@ function groups(html:string){
   visit(parse(html));return result;
 }
 const ordinal=(value:string)=>{const match=value.match(/^(?:步骤\s*)?(\d{1,3})(?:[.．](?!\d)\s*|[、)）:：]\s*|\s+|$)/u);return match?Number(match[1]):undefined;};
-const shape=(group:Group):ListShape=>({listIndex:group.listIndex,itemCount:group.texts.length,prefixNumbers:group.texts.map(t=>ordinal(t)??null),emptyItemIndexes:group.texts.flatMap((t,i)=>t?[]:[i+1])});
+// Paragraph prose requires an explicit step delimiter; quantities, decimals and bare card labels are not lists.
+const explicitOrdinal=(value:string)=>{const match=value.match(/^(?:步骤\s*)?(\d{1,3})(?:[.．](?!\d)\s*|[、)）:：]\s*)/u);return match?Number(match[1]):undefined;};
+const groupOrdinal=(group:Group,value:string)=>group.kind==="paragraphs"?explicitOrdinal(value):ordinal(value);
+const shape=(group:Group):ListShape=>({listIndex:group.listIndex,itemCount:group.texts.length,prefixNumbers:group.texts.map(t=>groupOrdinal(group,t)??null),emptyItemIndexes:group.texts.flatMap((t,i)=>t?[]:[i+1])});
 function listContext(failed:Group[],original:Group[]):ListContext{
   const result:ListContext={schemaVersion:"numbered-list-construction-context-v1",groups:[],omittedGroupCount:failed.length,numberHintsAreNotRenumberingTargets:true};
   for(const group of failed){
@@ -50,14 +75,14 @@ export class HtmlNumberedListConstructionError extends Error{
 
 /** Static construction only. Does not renumber, delete checks or infer semantic preservation. */
 export function assertHtmlNumberedListConstruction(originalHtml:string,subjectHtml:string){
-  const unchanged=new Map<string,number>(),key=(g:Group)=>JSON.stringify([g.section,g.texts]);
+  const unchanged=new Map<string,number>(),key=(g:Group)=>JSON.stringify([g.section,g.kind,g.texts]);
   const originalGroups=groups(originalHtml);
   for(const group of originalGroups){const k=key(group);unchanged.set(k,(unchanged.get(k)??0)+1);}
   const issues:Issue[]=[],failedGroups:Group[]=[];let checkedLists=0;
   for(const group of groups(subjectHtml)){
     const k=key(group),remaining=unchanged.get(k)??0;
     if(remaining){unchanged.set(k,remaining-1);continue;}
-    const numbers=group.texts.map(ordinal),first=numbers.findIndex(n=>n!==undefined);
+    const numbers=group.texts.map(t=>groupOrdinal(group,t)),first=numbers.findIndex(n=>n!==undefined);
     if(first===-1)continue; // Normal bullets and native <ol> markers are outside this text-prefix check.
     checkedLists++;const start=numbers[first]!-first,beforeCount=issues.length;
     numbers.forEach((number,index)=>{if(start<0||number!==start+index)issues.push({section:group.section,listIndex:group.listIndex,itemIndex:index+1,expectedNumber:start+index,observedNumber:number});});
