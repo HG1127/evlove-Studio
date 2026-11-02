@@ -11,3 +11,4 @@ export * from "./spreadsheet-overlay";
 export * from "./structured-text-validation";
 export * from "./ai-provider-usage";
 export * from "./ai-provider-completion";
+export * from "./paired-jsonl";
