@@ -3,6 +3,7 @@ import { aiProviderTransportFailure,parseStructuredAiOutput } from "@evolution/a
 import { createHash } from "node:crypto";
 import {serverAiRepairContract} from "./server-ai-repair-contract";
 import {serverAiBuildContract} from "./server-ai-build-contract";
+import {serverAiFormatCorrectionAllowed} from "./server-ai-output-policy";
 import {ServerControlExecutionStoppedError,serverControlExecutionSignal} from "./server-control-execution";
 import {
   AiOperationSchema,
@@ -337,6 +338,7 @@ async function structured<T>(operation:AiOperation,payload:unknown,schema:Contra
       // Provider auth, billing, network and arbitrary execution failures do not get retried.
       // Neither attempt bypasses JSON parsing or the versioned Zod task contract.
       const code=(error as {code?:string}).code;
+      if(!serverAiFormatCorrectionAllowed())throw error;
       if(!["AI_OUTPUT_SCHEMA_MISMATCH","AI_OUTPUT_INVALID_JSON","AI_OUTPUT_INCOMPLETE","AI_OUTPUT_MISSING_FINAL"].includes(code??""))throw error;
       const invalid=error as {fields?:string[];validationIssues?:string[]};
       const failedFields=invalid.validationIssues?.length?invalid.validationIssues:invalid.fields;

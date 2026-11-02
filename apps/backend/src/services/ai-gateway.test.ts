@@ -3,6 +3,7 @@ import {createHash} from "node:crypto";
 import {SERVER_SEMANTIC_CONTEXT_VERSION,SERVER_MEASURED_REVIEW_VERSION} from "@evolution/harness";
 import {SERVER_PAIRED_GENERATION_SCHEMA_VERSION} from "./server-paired-json-schema";
 import {withExplicitServerAiConnection} from "./server-ai-connection";
+import {withServerAiOutputPolicy} from "./server-ai-output-policy";
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
 import {isServerAiUnavailable,runServerAi,serverAiScoringRouteFingerprint,serverAiUnavailableReason} from "./ai-gateway";
 
@@ -270,6 +271,13 @@ describe("custom provider protocols and JSON output",()=>{
     expect(retry.messages[0]!.content).toContain("PREVIOUS OUTPUT INVALID");
     expect(retry.messages[0]!.content).toContain("scores");
     expect(retry.messages[1]!.content).toBe(original.messages[1]!.content);
+  });
+  it("preserves malformed-output failure without a correction request when its scope forbids it",async()=>{
+    const fetchMock=vi.fn().mockImplementation(async()=>new Response(JSON.stringify({choices:[{message:{content:'{"scores":'}}]}),{status:200}));
+    vi.stubGlobal("fetch",fetchMock);
+    await expect(withServerAiOutputPolicy({formatCorrection:"forbid"},()=>
+      withExplicitServerAiConnection(input,()=>runServerAi("visual-judge",{})))).rejects.toMatchObject({code:"AI_OUTPUT_INVALID_JSON"});
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
   it("retries malformed final JSON once with concise, schema-bound instructions",async()=>{
     const broken={choices:[{message:{content:'{"scores":'}}]};
