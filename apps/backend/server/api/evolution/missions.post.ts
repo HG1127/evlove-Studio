@@ -4,6 +4,7 @@ import {rubricTargetBindingIssues} from "@evolution/core";
 import {createServerMissionEnvelope} from "../../../src/services/production-runtime";
 import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 import {requireServerDataPlaneAvailable} from "../../../src/services/data-plane-guard";
+import {assertServerConfirmationAdmission} from "../../../src/services/server-confirmation-admission";
 
 export default defineEventHandler(async(event)=>{
   await requireGovernedEvolutionPermission(event,"mission.write");
@@ -14,5 +15,6 @@ export default defineEventHandler(async(event)=>{
   // Otherwise static evidence would fail much later at Hidden Holdout/Gate F.
   const bindingIssues=rubricTargetBindingIssues(parsed.data.acceptanceRubric,parsed.data.sourceArtifacts);
   if(bindingIssues.length)throw createError({statusCode:422,statusMessage:"Mission 验收标准引用了无效的目标文件",data:{code:"MISSION_RUBRIC_TARGET_BINDING",issues:bindingIssues}});
+  await assertServerConfirmationAdmission(parsed.data,"registration");
   return createServerMissionEnvelope(parsed.data);
 });

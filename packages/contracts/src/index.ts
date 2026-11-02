@@ -48,5 +48,7 @@ export * from "./user-goal-planning-contract";
 export * from "./paired-order-observation-contract";
 
 export * from "./confirmation-admission-contract";
+export * from "./confirmation-mission-reference";
+export * from "./confirmation-evidence-catalog";
 export * from "./paired-jsonl-contract";
 export * from "./html-card-paragraph-evidence-contract";

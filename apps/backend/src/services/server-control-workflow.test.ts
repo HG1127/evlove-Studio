@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AcceptanceCriterionSchema, SourceArtifactSchema, EvolutionJobSchema, type AiUsageLedgerRecord,type EvolveProject } from "@evolution/contracts";
 import { buildServerHarnessPlan, serverControlCapabilityWaitPlan, type ServerHarnessPlan } from "@evolution/harness";
 import {demoProject} from "../../../../src/features/evolve/data/mock-project";
-import { executeServerControlStep, planMissionStep,prepareScheduledTriggerStep,settleScheduledManualRoundStep } from "../../../../workflows/evolution-mission/steps";
+import { executeServerControlStep, initializeWorkflowControlStep,planMissionStep,prepareScheduledTriggerStep,settleScheduledManualRoundStep } from "../../../../workflows/evolution-mission/steps";
 import {fetchServerAiProviderUsage,withServerAiUsageScope} from "./server-ai-usage";
 import {attachLessonGovernance,evidenceFingerprint} from "@evolution/core";
 import {learningContextFixture,syntheticLearningProject,withMeasuredProductionGoal} from "@evolution/testkit";
@@ -40,6 +40,17 @@ beforeEach(() => {
   mocks.ai.mockRejectedValue(Object.assign(new Error("provider health temporarily unavailable"), { status: 503 }));
 });
 describe("Durable Workflow AI capability wait", () => {
+  it.each(["initialize","plan","execute"])("rejects missing confirmation evidence before %s side effects",async phase=>{
+    const p=structuredClone(demoProject);p.id=input.missionId;
+    p.experimentPolicy.confirmationAdmission={schemaVersion:"full-confirmation-mission-v1",catalogSha256:"0".repeat(64)};
+    mocks.get.mockResolvedValue(p);vi.stubEnv("EVOLUTION_CONFIRMATION_TRUST","");
+    try{
+      const call=phase==="initialize"?initializeWorkflowControlStep(input):phase==="plan"?planMissionStep(input,0):executeServerControlStep(input,plan,0);
+      await expect(call).rejects.toBeInstanceOf(FatalError);
+      expect(mocks.ai).not.toHaveBeenCalled();expect(mocks.probe).not.toHaveBeenCalled();
+      expect(mocks.save).not.toHaveBeenCalled();expect(mocks.put).not.toHaveBeenCalled();expect(mocks.append).not.toHaveBeenCalled();
+    }finally{vi.unstubAllEnvs();}
+  });
   it.each(["trigger","settle"])("fences the scheduled %s when cancellation happens during the Mission read",async phase=>{
     const p=structuredClone(demoProject);p.id=input.missionId;
     p.campaign={...p.campaign,status:"running",currentRound:1,stopCriteria:{...p.campaign.stopCriteria,maxRounds:1},

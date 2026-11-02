@@ -51,6 +51,12 @@ import { lockConnectorTargetSnapshot,materializeLockedConnectorTargetSource } fr
 import {serverAiConnectionConfigured as serverAiConfigured} from "../../apps/backend/src/services/server-ai-connection";
 import {appendWorkflowControlEvent} from "../../apps/backend/src/services/workflow-control-events";
 import {planWorkflowResultFinalization} from "../../apps/backend/src/services/workflow-result-finalization";
+import {assertServerConfirmationAdmission} from "../../apps/backend/src/services/server-confirmation-admission";
+
+async function assertWorkflowConfirmationAdmission(mission:Parameters<typeof assertServerConfirmationAdmission>[0]){
+  try{await assertServerConfirmationAdmission(mission,"execution");}
+  catch{throw new FatalError("完整确认试验的证据或输入身份已失效，禁止继续执行");}
+}
 
 async function controlJob(input:EvolutionWorkflowRunInput,args:WorkflowControlJobUpdate){
   const current=await getServerProductionRuntime().jobs.get(input.controlJobId);
@@ -67,6 +73,7 @@ export async function initializeWorkflowControlStep(input:EvolutionWorkflowRunIn
   const runtime=getServerProductionRuntime();
   const mission=await runtime.missions.get(input.missionId);
   if(!mission)throw new FatalError(`Mission 不存在：${input.missionId}`);
+  await assertWorkflowConfirmationAdmission(mission);
   const startedAt=new Date().toISOString();
   const initializedJob=await controlJob(input,{
     status:input.scheduledFor?"waiting":"running",
@@ -345,6 +352,7 @@ async function planActiveMission(input:EvolutionWorkflowRunInput,iteration:numbe
   const runtime=guardServerControlRuntime(getServerProductionRuntime());
   let mission=await runtime.missions.get(input.missionId);
   if(!mission)throw new FatalError(`Mission 不存在：${input.missionId}`);
+  await assertWorkflowConfirmationAdmission(mission);
   if(mission.targetConnection.adapter==="connector"
     &&mission.targetConnection.status==="connected"
     &&!mission.sourceArtifacts.some((artifact)=>artifact.role==="target")){
@@ -519,6 +527,7 @@ async function executeServerControlAction(
   const runtime=guardServerControlRuntime(getServerProductionRuntime());
   const mission=await runtime.missions.get(input.missionId);
   if(!mission)throw new FatalError(`Mission 不存在：${input.missionId}`);
+  await assertWorkflowConfirmationAdmission(mission);
   const now=new Date().toISOString();
   const action=plan.decision.action;
 

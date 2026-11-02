@@ -9,6 +9,9 @@ const SERVER_RELEASE_FIELDS=[
 function json(value:unknown){return JSON.stringify(value??null);}
 
 export function assertClientMissionMutationSafe(current:EvolveProject,next:EvolveProject){
+  if(json(current.experimentPolicy?.confirmationAdmission)!==json(next.experimentPolicy?.confirmationAdmission)
+    ||current.experimentPolicy?.confirmationAdmission&&current.experimentPolicy.judgeComparison!==next.experimentPolicy?.judgeComparison)
+    throw new Error("完整确认试验的证据绑定及成对判分协议不能通过通用 Mission PUT 改写");
   const reset=next.baselineRun;
   const emptyBaselineReset=Boolean(reset?.id&&reset.id!==current.baselineRun?.id&&reset.status==="idle"
     &&reset.runs.length===0&&!reset.result&&!reset.startedAt&&!reset.completedAt&&!reset.measurementFingerprint

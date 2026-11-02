@@ -5,6 +5,7 @@ import {createServerJobIdempotent,getServerProductionRuntime,JobStateConflictErr
 import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 import {requireServerDataPlaneAvailable} from "../../../src/services/data-plane-guard";
 import {requiresSandboxHtmlSourceExecution} from "@evolution/core";
+import {assertServerConfirmationAdmission} from "../../../src/services/server-confirmation-admission";
 
 export default defineEventHandler(async(event)=>{
   await requireGovernedEvolutionPermission(event,"mission.execute");
@@ -23,6 +24,7 @@ export default defineEventHandler(async(event)=>{
     throw createError({statusCode:409,statusMessage:
       "HTML Campaign 请使用 /api/evolution/start；通用 Job 创建入口不能绕过 Mission 原子启动保护"});
   }
+  if(mission)await assertServerConfirmationAdmission(mission,"execution");
   const now=new Date().toISOString();
   const job=EvolutionJobSchema.parse({
     schemaVersion:PRODUCTION_SCHEMA_VERSIONS.job,id:randomUUID(),

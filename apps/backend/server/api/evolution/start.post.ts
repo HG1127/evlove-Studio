@@ -24,6 +24,7 @@ import {serverExperimentRecoveryWait} from "@evolution/harness";
 import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 import {cancelWorkflowRunById,workflowRunIdForJob} from "../../../src/services/workflow-run-control";
 import {assertServerHtmlBrowserExecutionReady} from "../../../src/services/html-browser-preflight";
+import {assertServerConfirmationAdmission} from "../../../src/services/server-confirmation-admission";
 
 async function cleanupStartedRun(runId:string){
   try{return {ok:true as const,result:await cancelWorkflowRunById(runId)};}
@@ -89,9 +90,9 @@ export default defineEventHandler(async(event)=>{
   // Recover an already accepted same-request Workflow BEFORE a new metered
   // Browser health probe. Receipt lookup is read-only; the SQL create RPC
   // below remains authoritative for concurrent requests racing this lookup.
-  // Non-HTML Mission retries keep the original RPC path unchanged.
+  // Historical non-HTML Missions keep the original RPC path unchanged.
   const executableHtmlTarget=requiresSandboxHtmlSourceExecution(mission);
-  if(executableHtmlTarget&&(parsed.data.idempotencyKey||scheduledFor)){
+  if((executableHtmlTarget||mission.experimentPolicy.confirmationAdmission)&&(parsed.data.idempotencyKey||scheduledFor)){
     const prior=await getServerJobByIdempotencyKey(`workflow-control:${mission.id}:${operationKey}`);
     if(prior){
       if(prior.missionId!==mission.id||prior.type!=="campaign"){
@@ -141,6 +142,7 @@ export default defineEventHandler(async(event)=>{
   // Standalone HTML Missions require actual isolated Chromium execution.
   // Check before a new Job receipt or billable AI Workflow is created. A
   // compiled adapter or local Chromium smoke cannot substitute this proof.
+  await assertServerConfirmationAdmission(mission,"execution");
   await assertServerHtmlBrowserExecutionReady(mission);
 
   const controlJobId=`workflow-control-${randomUUID()}`;

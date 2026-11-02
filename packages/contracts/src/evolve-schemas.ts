@@ -1,4 +1,5 @@
 import { z } from "zod";
+import {ConfirmationMissionReferenceSchema} from "./confirmation-mission-reference";
 import {PairedJudgeReceiptSchema} from "./paired-judge-contract";
 import {ProductionGoalEvidenceSchema} from "./production-goal-evidence";
 import {BusinessBenefitPolicySchema} from "./business-benefit-contract";
@@ -1207,6 +1208,7 @@ export type ProjectAiProfile = z.infer<typeof ProjectAiProfileSchema>;
 
 
 export const ExperimentPolicySchema = z.object({
+  confirmationAdmission:ConfirmationMissionReferenceSchema.optional(),
   /** Explicit new-Mission execution boundary; legacy Missions keep the Vercel VM route. */
   nativeHtmlRuntime:z.literal("local-browser-v1").optional(),
   /** New comparisons only; legacy evidence retains its original scoring protocol. */
@@ -1231,6 +1233,8 @@ export const ExperimentPolicySchema = z.object({
   batchArtifactRuntime: z.boolean().default(true),
 }).refine(policy=>!policy.judgeFileMetadata||policy.judgeComparison==="paired-two-order-v1",{
   message:"Bound file metadata requires the paired judgment protocol",path:["judgeFileMetadata"],
+}).refine(policy=>!policy.confirmationAdmission||policy.judgeComparison==="paired-two-order-v1",{
+  message:"Full confirmation requires the paired judgment protocol",path:["confirmationAdmission"],
 }).prefault({});
 export type ExperimentPolicy = z.infer<typeof ExperimentPolicySchema>;
 

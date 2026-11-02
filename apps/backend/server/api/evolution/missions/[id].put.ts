@@ -7,6 +7,7 @@ import {
 } from "../../../../src/services/production-runtime";
 import {assertClientMissionMutationSafe} from "../../../../src/services/mission-mutation-policy";
 import {requireGovernedEvolutionPermission} from "../../../../src/services/security-policy";
+import {assertServerConfirmationAdmission} from "../../../../src/services/server-confirmation-admission";
 
 export default defineEventHandler(async(event)=>{
   await requireGovernedEvolutionPermission(event,"mission.write");
@@ -20,7 +21,7 @@ export default defineEventHandler(async(event)=>{
   if(current){
     try{assertClientMissionMutationSafe(current.payload,envelope.payload);}
     catch(error){throw createError({statusCode:409,statusMessage:error instanceof Error?error.message:String(error)});}
-  }
+  }else await assertServerConfirmationAdmission(envelope.payload,"registration");
   try{
     return await compareAndSwapServerMissionEnvelope(envelope);
   }catch(error){
