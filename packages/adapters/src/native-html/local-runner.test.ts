@@ -7,6 +7,7 @@ import {nativeHtmlSha256,type HtmlNativeProfile} from "./profile";
 import {runLocalKnownHtmlNativeProfile,type LocalHtmlNativeKernelPort} from "./local-runner";
 import {HTML_NATIVE_KERNEL_SOURCE} from "./kernel";
 import {HTML_NATIVE_DECLARED_STEPS_SOURCE} from "./declared-steps";
+import {parse} from "@babel/parser";
 
 const original='<html><head><style>p{color:red}</style><script>const keep=true;</script></head><body><article id="slide-1" class="slide-card" data-search="old"><div class="slide-body"><p>old</p></div></article></body></html>';
 const subject=original.replace('<p>old</p>','<p>new_configuration</p>');
@@ -27,6 +28,13 @@ describe("local native admission",()=>{
     const localEnd=local.indexOf("return {observedAt:");
     expect(local.slice(local.indexOf("      await runDeclaredBrowserPlans"),localEnd)).toBe(body(HTML_NATIVE_KERNEL_SOURCE));
     expect(local).toContain(HTML_NATIVE_DECLARED_STEPS_SOURCE);
+    const copyHelper=(value:string)=>{
+      const start=value.indexOf("function nativeCopyChecks(");
+      return value.slice(start,value.indexOf("\n}",start)+2);
+    };
+    expect(copyHelper(local)).toContain("copyFailures");
+    expect(copyHelper(local)).toBe(copyHelper(HTML_NATIVE_KERNEL_SOURCE));
+    expect(()=>parse(HTML_NATIVE_KERNEL_SOURCE,{sourceType:"module"})).not.toThrow();
   });
   it("binds exact bytes and local provenance without claiming a cloud VM or semantic acceptance",async()=>{
     const {result,port}=fixture(),r=request(),out=await runLocalKnownHtmlNativeProfile(r,port,profiles);

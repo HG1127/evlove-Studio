@@ -1,0 +1,15 @@
+# Retain locations for adverse local clipboard observations
+
+Status: accepted; no dependency exception or scoring-policy change.
+
+An actual prospective SOP control observation produced one failed original copy control. Two aggregate checks reported one failure each, but the returned evidence discarded the responsible selector, ordinal and content digests. The original bytes and all adverse results remain sealed; the cause cannot be inferred from these aggregates and must not be relabelled a success or a transient error.
+
+The local observer and VM kernel now attach optional `copyFailures` to the three existing copy checks, with source parity checked by tests. Each entry identifies the selector/index, available card ID, expected/actual SHA and character counts, or exception name. Clipboard plaintext is excluded. The checks retain their original pass formulas, click count and immediate read behavior; no waiting, retry, threshold change or automatic continuation is introduced. This patch improves diagnosis, not clipboard reliability or SOP acceptance. No cloud execution is required for kernel parity tests.
+
+The Zod contract accepts legacy aggregate-only observations and strictly validates the new optional detail. The local kernel identity already hashes the entire observer source, so this change necessarily gives future native observations a new kernel identity. Previous observations are not regenerated or augmented with facts they did not capture. A fresh observation would need to be registered separately; neither this change nor its synthetic tests authorize a new model trial or prove real calibration.
+
+Verification covers preserved verdict formulas, adverse selector/card/digest retention, exceptions, prompt whitespace, no plaintext, contract bounds and the existing Runner suite. A real failed copy may require further diagnosis once its detailed evidence is captured.
+
+The Runner regression also exposed a process supervision race: heartbeat/intent persistence consumed the remaining cleanup grace while a child completed naturally. The old terminal record said `deadlineStop: true` despite exit code 0 and completed cleanup output. The supervisor now refreshes and checks actual child exit immediately before issuing the deadline kill, and records the flag after the kill call succeeds. Execution and cleanup deadlines, cancellation intent and no-restart semantics remain unchanged. The first adverse record is retained; this guard does not establish complete application lifetime qualification.
+
+Runner test files now run serially. These real process/browser fixtures include deadlines measured in seconds; under competing test-file load a PowerShell child did not even reach admission before its fixture deadline, and production correctly refused it. Serial execution reduces test-worker contention without extending fixture or production windows, skipping assertions or retrying valid test outputs. Both preceding failed runs remain in the local verification record.

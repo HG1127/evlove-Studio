@@ -82,7 +82,13 @@ try{
    $executionDeadlineReached=$true;Record-CancelIntent 'deadline'
    Record @{kind='execution-deadline-reached';automaticRestart=$false}
   }
-  if([DateTimeOffset]::UtcNow -ge $cleanupDeadline){$deadlineStop=$true;$child.Kill($true);$child.WaitForExit();break}
+  if([DateTimeOffset]::UtcNow -ge $cleanupDeadline){
+   # Logging can outlast the remaining cleanup grace. Recheck after those writes,
+   # so an already completed child is not recorded as forcibly terminated.
+   $child.Refresh()
+   if($child.HasExited){break}
+   $child.Kill($true);$deadlineStop=$true;$child.WaitForExit();break
+  }
  }
  if(!$executionDeadlineReached -and ([DateTimeOffset]($child.ExitTime.ToUniversalTime())) -ge $deadline){
   $executionDeadlineReached=$true;Record-CancelIntent 'deadline'

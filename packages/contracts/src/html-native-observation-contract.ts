@@ -27,11 +27,20 @@ export const HtmlNativeInventorySchema=z.object({
   unknownControls:z.array(z.object({tag:z.string(),type:z.string().nullable(),id:z.string()})).max(1000),
 }).strict();
 
+/** Failure diagnostics only: no clipboard plaintext and no new pass/retry semantics. */
+export const HtmlNativeCopyFailureSchema=z.object({
+  selector:z.enum([".copy-slide[data-slide]",".prompt-copy-all"]),index:count,
+  cardId:z.string().min(1).max(200).optional(),
+  expectedSha256:sha.optional(),actualSha256:sha.optional(),expectedChars:count.optional(),actualChars:count.optional(),
+  reason:z.enum(["clipboard-not-written","dom-content-mismatch","prompt-whitespace-mismatch","exception"]),
+  errorName:z.string().min(1).max(160).optional(),
+}).strict();
 export const HtmlNativeCheckSchema=z.object({
   id:z.string().min(1).max(160),pass:z.boolean(),
   tested:count.optional(),failed:count.optional(),count:count.optional(),visible:count.optional(),expected:count.optional(),
   query:z.string().max(80).optional(),targetCardId:z.string().regex(/^slide-\d+$/).optional(),
   expectedMatched:z.boolean().optional(),matched:z.boolean().optional(),
+  copyFailures:z.array(HtmlNativeCopyFailureSchema).max(1000).optional(),
 }).strip();
 
 export const HtmlRenderedParagraphFactsSchema=z.object({
