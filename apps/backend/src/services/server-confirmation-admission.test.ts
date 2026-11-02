@@ -3,8 +3,8 @@ import {createHash} from "node:crypto";
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
 import {mockEvent} from "nitro/h3";
 import {ConfirmationEvidenceCatalogSchema,EvolveProjectSchema,EvolutionJobSchema,missionEnvelope,type ArtifactStorePort} from "@evolution/contracts";
-import {confirmationMissionScopeText} from "@evolution/core";
-import {absoluteCalibrationFixture,bindSyntheticCalibrationApprovals,pairedJudgeFixture} from "@evolution/testkit";
+import {confirmationMissionScopeText,fastHash} from "@evolution/core";
+import {absoluteCalibrationFixture,bindSyntheticCalibrationApprovals,pairedJudgeFixture,zeroReferenceCalibrationFixture} from "@evolution/testkit";
 import {assertServerConfirmationAdmission} from "./server-confirmation-admission";
 import {assertClientMissionMutationSafe} from "./mission-mutation-policy";
 import register from "../../server/api/evolution/missions.post";
@@ -33,8 +33,14 @@ const sha=(s:string)=>createHash("sha256").update(s).digest("hex");
 const hash="0".repeat(64);
 
 /** All provenance, labels, provider scores and application logs here are SYNTHETIC. Never publish these pins. */
-function synthetic(){
-  const x=absoluteCalibrationFixture(),project=pairedJudgeFixture().project;
+function synthetic(reference?:"declared"|"undeclared"){
+  const x=reference==="declared"?zeroReferenceCalibrationFixture():absoluteCalibrationFixture(),project=pairedJudgeFixture().project;
+  if(reference==="undeclared"){
+    x.plan.criteria[0]!.judgeType="pairwise";x.plan.rubricFingerprint=fastHash(x.plan.criteria);x.request.rubricFingerprint=x.plan.rubricFingerprint;
+    for(const control of x.plan.controls)control.context.rubricFingerprint=x.plan.rubricFingerprint;
+    for(const observation of x.observations)observation.receipt.rubricFingerprint=x.plan.rubricFingerprint;
+  }
+  project.acceptanceRubric=structuredClone(x.plan.criteria);
   project.campaign.stopCriteria.maxWallMinutes=30;
   project.sourceArtifacts[0]!.storageRef=project.sourceArtifacts[0]!.id;
   const blobs=new Map<string,string>(),metadata=new Map<string,object>();
@@ -74,7 +80,7 @@ function event(path:string,body:unknown){return mockEvent(new Request("http://lo
 const rejected={status:422,data:{code:"CONFIRMATION_ADMISSION_REQUIRED"}};
 
 describe("real full-confirmation admission composition (synthetic evidence only)",()=>{
-  beforeEach(()=>{vi.stubEnv("EVOLUTION_CONFIRMATION_TRUST","");for(const m of Object.values(mocks))m.mockReset();});
+  beforeEach(()=>{vi.stubEnv("EVOLUTION_CONFIRMATION_TRUST","");vi.stubEnv("EVOLUTION_AI_PAIRED_OUTCOME_REFERENCE","");for(const m of Object.values(mocks))m.mockReset();});
   afterEach(()=>vi.unstubAllEnvs());
   it("permits ordinary historical Missions without claiming full-confirmation qualification or reading evidence",async()=>{
     await expect(assertServerConfirmationAdmission(pairedJudgeFixture().project,"registration")).resolves.toBeUndefined();
@@ -86,6 +92,19 @@ describe("real full-confirmation admission composition (synthetic evidence only)
       expect(await assertServerConfirmationAdmission(x.project,phase)).toMatchObject({ready:true,grantsModelBudget:false,grantsNewTrialAuthority:false,technicalAcceptanceEstablished:false});
     }
     expect(x.store.get).toHaveBeenCalledWith("plan");expect(x.store.put).not.toHaveBeenCalled();
+  });
+  it("requires a registered zero reference only when explicitly configured, retaining legacy admission",async()=>{
+    const x=synthetic("undeclared");
+    await expect(assertServerConfirmationAdmission(x.project,"registration")).resolves.toMatchObject({ready:true});
+    vi.stubEnv("EVOLUTION_AI_PAIRED_OUTCOME_REFERENCE","zero-v1");
+    await expect(assertServerConfirmationAdmission(x.project,"registration")).rejects.toMatchObject(rejected);
+    expect(x.store.put).not.toHaveBeenCalled();
+    const declared=synthetic("declared");
+    await expect(assertServerConfirmationAdmission(declared.project,"registration")).resolves.toMatchObject({ready:true});
+    await expect(assertServerConfirmationAdmission(declared.project,"execution")).resolves.toMatchObject({ready:true});
+    delete declared.observations[0]!.receipt.outcomeReferencePolicy;
+    declared.catalog.observations[0]=declared.add("observation-0",JSON.stringify(declared.observations[0]));declared.pin();
+    await expect(assertServerConfirmationAdmission(declared.project,"registration")).rejects.toMatchObject(rejected);
   });
   it("allows Mission-before-upload registration but requires canonical source custody before execution",async()=>{
     const x=synthetic();x.blobs.delete(x.catalog.sources[0]!.artifactId);x.metadata.delete(x.catalog.sources[0]!.artifactId);

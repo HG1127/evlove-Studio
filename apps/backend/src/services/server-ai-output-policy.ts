@@ -1,10 +1,20 @@
 import {AsyncLocalStorage} from "node:async_hooks";
 import {z} from "zod";
-import type {AiOperation} from "@evolution/contracts";
+import {PAIRED_OUTCOME_REFERENCE_POLICY,type AiOperation} from "@evolution/contracts";
 
 const policySchema=z.object({formatCorrection:z.enum(["allow-once","forbid"]),pairedTransport:z.literal("jsonl-v1").optional()}).strict();
 const scope=new AsyncLocalStorage<z.infer<typeof policySchema>>();
 const transportSchema=z.enum(["json","jsonl-v1"]);
+export const SERVER_PAIRED_OUTCOME_REFERENCE_VERSION="paired-outcome-reference-v2-criterion-evidence-status";
+
+/** Prospective server policy shared by ordinary paired Missions and calibration. No scoped override. */
+export function serverAiPairedOutcomeReferenceMode(){
+  const raw=process.env.EVOLUTION_AI_PAIRED_OUTCOME_REFERENCE?.trim();
+  if(!raw)return undefined;
+  const parsed=z.literal(PAIRED_OUTCOME_REFERENCE_POLICY).safeParse(raw);
+  if(!parsed.success)throw Error("Invalid paired outcome reference configuration");
+  return parsed.data;
+}
 
 /** A bounded caller may prohibit an additional semantic request without global env changes. */
 export function withServerAiOutputPolicy<T>(raw:unknown,work:()=>T):T{

@@ -1,16 +1,19 @@
 import {z,type ZodType} from "zod";
-import {PAIRED_JSONL_PROTOCOL,PairedJsonlRecordSchema,PairedJsonlScopeSchema} from "@evolution/contracts";
+import {PAIRED_JSONL_PROTOCOL,PairedJsonlRecordSchema,PairedJsonlReferenceRecordSchema,PairedJsonlScopeSchema} from "@evolution/contracts";
 import {parsePairedJsonl} from "@evolution/adapters";
+import {serverPairedOutcomeReferenceCriterionIds} from "./server-paired-ai-contract";
 
 export const SERVER_PAIRED_JSONL_GENERATION_VERSION="paired-jsonl-generation-v2-explicit-records";
 
 /** Explicit generation protocol; never recover an earlier invalid JSON-object reply. */
 export function serverPairedJsonlOutput<T>(payload:unknown,parser:ZodType<T>,instruction:string){
  const issued=z.object({requestFingerprint:z.string(),issuedCriterionCaseBindings:z.unknown()}).parse(payload);
- const scope=PairedJsonlScopeSchema.parse({requestFingerprint:issued.requestFingerprint,bindings:issued.issuedCriterionCaseBindings});
+ const relativeCriterionIds=serverPairedOutcomeReferenceCriterionIds(payload);
+ const scope=PairedJsonlScopeSchema.parse({requestFingerprint:issued.requestFingerprint,bindings:issued.issuedCriterionCaseBindings,
+  ...(relativeCriterionIds.length?{relativeCriterionIds}:{})});
  const header={kind:"header",protocol:PAIRED_JSONL_PROTOCOL,requestFingerprint:scope.requestFingerprint};
  const end={kind:"end",requestFingerprint:scope.requestFingerprint,criterionRecords:scope.bindings.length*3};
- const recordSchema=z.toJSONSchema(PairedJsonlRecordSchema);
+ const recordSchema=z.toJSONSchema(relativeCriterionIds.length?PairedJsonlReferenceRecordSchema:PairedJsonlRecordSchema);
  // Only omit the grammar document's metadata, never a property from a model response.
  delete recordSchema.$schema;
  return {

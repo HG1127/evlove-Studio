@@ -1,12 +1,13 @@
 import {createHash} from "node:crypto";
 import {createError} from "nitro/h3";
 import {ArtifactMetadataSchema,ConfirmationEvidenceCatalogSchema,ConfirmationServerTrustSchema,
-  JudgeCalibrationPlanV3Schema,type ArtifactStorePort,type EvolveProject} from "@evolution/contracts";
-import {confirmationMissionScopeText,fastHash} from "@evolution/core";
+  JudgeCalibrationPlanV3Schema,JudgeCalibrationObservationSchema,type ArtifactStorePort,type EvolveProject} from "@evolution/contracts";
+import {confirmationMissionScopeText,fastHash,registeredZeroReferenceCriterionIds,zeroOutcomeReferenceCriterionIds} from "@evolution/core";
 import {checkFullConfirmationAdmission} from "@evolution/harness";
 import {getEvolutionWorkspaceId} from "../server-env";
 import {getServerArtifactStore} from "./artifact-runtime";
 import {serverAiScoringRouteFingerprint} from "./ai-gateway";
+import {serverAiPairedOutcomeReferenceMode} from "./server-ai-output-policy";
 
 type Ref={artifactId:string;sha256:string};
 const sha=(bytes:string|Uint8Array)=>createHash("sha256").update(bytes).digest("hex");
@@ -73,6 +74,12 @@ export async function assertServerConfirmationAdmission(mission:EvolveProject,ph
       }
     }
     const plan=JudgeCalibrationPlanV3Schema.parse(JSON.parse(decode(await read(catalog.plan))));
+    const outcomeReferencePolicy=serverAiPairedOutcomeReferenceMode();
+    if(outcomeReferencePolicy){
+      const eligible=zeroOutcomeReferenceCriterionIds(plan.criteria),registered=registeredZeroReferenceCriterionIds(plan);
+      if(eligible.length!==registered.length||eligible.some(id=>!registered.includes(id)))
+        throw Error("Configured outcome reference differs from the frozen calibration registration");
+    }
     if(plan.id!==request.calibrationPlanId||plan.preregistrationSha256!==catalog.preregistrationSha256
       ||plan.oracleApprovalSha256!==catalog.oracleApprovalSha256
       ||JSON.stringify(plan.criteria)!==JSON.stringify(mission.acceptanceRubric)
@@ -92,7 +99,12 @@ export async function assertServerConfirmationAdmission(mission:EvolveProject,ph
     };
     const result=await checkFullConfirmationAdmission(request,{
       readCalibrationPlan:async()=>plan,
-      readCalibrationObservations:async()=>Promise.all(catalog.observations.map(async ref=>JSON.parse(decode(await read(ref))))),
+      readCalibrationObservations:async()=>Promise.all(catalog.observations.map(async ref=>{
+        const observation=JudgeCalibrationObservationSchema.parse(JSON.parse(decode(await read(ref))));
+        if(outcomeReferencePolicy&&observation?.receipt?.outcomeReferencePolicy!==outcomeReferencePolicy)
+          throw Error("Calibration observation omits the configured outcome reference policy");
+        return observation;
+      })),
       verifyPreregistration:async hash=>hash===catalog.preregistrationSha256&&Boolean(await evidenceBytes(hash)),
       verifyOracleApproval:async hash=>hash===catalog.oracleApprovalSha256&&Boolean(await evidenceBytes(hash)),
       readApplicationEvidence:async hash=>JSON.parse(decode(await evidenceBytes(hash))),

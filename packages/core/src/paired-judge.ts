@@ -1,4 +1,4 @@
-import {PAIRED_JUDGE_POLICY,PAIRED_JUDGE_FILE_METADATA_POLICY,PairedJudgeFileMetadataSchema,PairedJudgeReceiptSchema,type AcceptanceCriterion,type Candidate,type EvaluateAiResult,type EvaluationResult,type EvolveProject,type FrozenArtifact,type OriginalArtifactReferenceProof,type PairedJudgeReceipt,type SourceArtifact,type TestCase} from "@evolution/contracts";
+import {PAIRED_JUDGE_POLICY,PAIRED_JUDGE_FILE_METADATA_POLICY,PAIRED_OUTCOME_REFERENCE_POLICY,PairedJudgeFileMetadataSchema,PairedJudgeReceiptSchema,type AcceptanceCriterion,type Candidate,type EvaluateAiResult,type EvaluationResult,type EvolveProject,type FrozenArtifact,type OriginalArtifactReferenceProof,type PairedJudgeReceipt,type SourceArtifact,type TestCase} from "@evolution/contracts";
 import {fastHash} from "./stable-hash";
 
 const dimensions=["accuracy","evidence","riskCoverage","completeness"] as const;
@@ -6,6 +6,11 @@ const same=(a:string[],b:string[])=>a.length===b.length&&new Set(a).size===a.len
 const worstSafety=(a:EvaluateAiResult["safety"],b:EvaluateAiResult["safety"]):EvaluateAiResult["safety"]=>a==="FAIL"||b==="FAIL"?"FAIL":a==="REVIEW"||b==="REVIEW"?"REVIEW":"PASS";
 // Legacy settlement treats 1 as a ratio. Keep the new integer-percent protocol's 1% literal truthful.
 const legacyScore=(n:number)=>n===1?0.01:n;
+
+/** Eligibility only: activating this relative scale requires a separate explicit policy/registration. */
+export function zeroOutcomeReferenceCriterionIds(criteria:readonly Pick<AcceptanceCriterion,"id"|"judgeType"|"category"|"protectedConstraint"|"minScore">[]){
+  return criteria.filter(c=>c.judgeType==="pairwise"&&c.category==="outcome"&&!c.protectedConstraint&&c.minScore>0).map(c=>c.id);
+}
 
 /** Bind declared file attributes to already recorded bytes; never infer missing names or MIME from body text. */
 export function pairedJudgeFileMetadata(source:SourceArtifact,original:OriginalArtifactReferenceProof,frozen:FrozenArtifact){
@@ -35,8 +40,12 @@ export function conservativePairedJudgments(samples:readonly[{original:EvaluateA
 }
 
 export function inconclusivePairedCriteria(receipt:PairedJudgeReceipt,criteria:AcceptanceCriterion[]){
+  const zeroIds=new Set(receipt.outcomeReferencePolicy===PAIRED_OUTCOME_REFERENCE_POLICY?zeroOutcomeReferenceCriterionIds(criteria):[]);
   return criteria.filter(c=>{
     if(!receipt.criterionIds.includes(c.id))return false;
+    // REVIEW cannot turn an unknown relative comparison into a verified zero failure.
+    if(zeroIds.has(c.id)&&receipt.samples.some(s=>[s.original,s.candidate,s.controlOriginal].some(a=>
+      a.criteria.find(r=>r.criterionId===c.id)?.relativeEvidenceStatus!=="sufficient"||a.safety==="REVIEW")))return true;
     const rows=receipt.samples.map(s=>({a:s.original.criteria.find(r=>r.criterionId===c.id)!,b:s.candidate.criteria.find(r=>r.criterionId===c.id)!}));
     const pass=(r:typeof rows[number]["a"])=>r.pass&&r.score>=c.minScore;
     const nullConflict=receipt.samples.some(s=>{
@@ -52,7 +61,7 @@ export function inconclusivePairedCriteria(receipt:PairedJudgeReceipt,criteria:A
 export function qualifyPairedEvaluation(value:EvaluationResult,receipt:PairedJudgeReceipt,criteria:AcceptanceCriterion[]):EvaluationResult{
   const uncertain=new Set(inconclusivePairedCriteria(receipt,criteria));
   const criterionScores=value.criterionScores?.map(row=>uncertain.has(row.criterionId)?{...row,pass:false,verificationStatus:"unverified" as const,
-    gaps:[...row.gaps,"成对评审的原文副本对照、过线或退步方向存在冲突；测量待确认，不能据此认定产品失败或通过。"]}:row);
+    gaps:[...row.gaps,"成对评审的副本、过线、退步方向或相对改善证据待确认；不能据此认定产品失败或通过。"]}:row);
   const verified=criteria.filter(c=>criterionScores?.some(r=>r.criterionId===c.id&&r.verificationStatus==="verified")).reduce((n,c)=>n+c.weight,0);
   const total=criteria.reduce((n,c)=>n+c.weight,0);
   return {...value,criterionScores,verifiedRubricCoverage:total?Math.round(100*verified/total):0,

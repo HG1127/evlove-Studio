@@ -1,5 +1,5 @@
 import { z } from "zod";
-import {PairedJudgeContextSchema,PairedJudgeFileObservationSchema,type PairedJudgeReceipt} from "./paired-judge-contract";
+import {PairedJudgeContextSchema,PairedJudgeFileObservationSchema,PairedRelativeEvidenceStatusSchema,type PairedJudgeReceipt} from "./paired-judge-contract";
 import {
   AcceptanceCriterionSchema,
   ArtifactRoleSchema,
@@ -328,6 +328,7 @@ const EvaluationWithIdentitiesSchema = z.object({
   // 而不是先接受不完整响应，再让 UI 永久停在“待补评审”。
   criteria: z.array(z.object({
     criterionId: z.string(),
+    relativeEvidenceStatus:PairedRelativeEvidenceStatusSchema.optional(),
     score: z.coerce.number(),
     pass: z.boolean(),
     evidence: z.array(z.string()).default([]),

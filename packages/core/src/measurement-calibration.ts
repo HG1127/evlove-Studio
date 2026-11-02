@@ -1,6 +1,13 @@
 import type {JudgeCalibrationObservation,JudgeCalibrationPlan} from "@evolution/contracts";
 import {fastHash} from "./stable-hash";
-import {inconclusivePairedCriteria} from "./paired-judge";
+import {inconclusivePairedCriteria,zeroOutcomeReferenceCriterionIds} from "./paired-judge";
+
+/** V2/V3 registration, rather than metadata alone, activates the existing zero reference. */
+export function registeredZeroReferenceCriterionIds(plan:JudgeCalibrationPlan){
+ if(plan.schemaVersion==="judge-calibration-plan-v1")return [];
+ return zeroOutcomeReferenceCriterionIds(plan.criteria).filter(id=>plan.controls.some(c=>c.kind==="known-regression"
+  &&c.expectations.some(e=>e.criterionId===id&&e.direction==="no-improvement")));
+}
 
 /** Exclude only the two receipt references to avoid a circular content hash. Array order stays fixed. */
 export function calibrationPlanApprovalText(plan:JudgeCalibrationPlan){
@@ -14,10 +21,7 @@ export function calibrationPlanApprovalText(plan:JudgeCalibrationPlan){
 export function assessMeasurementCalibration(plan:JudgeCalibrationPlan,observations:JudgeCalibrationObservation[]){
  const blockers:string[]=[];
  const fail=(reason:string)=>blockers.push(reason);
- const zeroReferenceIds=new Set(plan.schemaVersion!=="judge-calibration-plan-v1"?plan.criteria.filter(criterion=>
-  criterion.judgeType==="pairwise"&&!criterion.protectedConstraint&&criterion.minScore>0&&criterion.category==="outcome"
-  &&plan.controls.some(c=>c.kind==="known-regression"&&c.expectations.some(e=>e.criterionId===criterion.id&&e.direction==="no-improvement")))
-  .map(c=>c.id):[]);
+ const zeroReferenceIds=new Set(registeredZeroReferenceCriterionIds(plan));
  if(observations.length!==plan.controls.length||new Set(observations.map(o=>o.controlId)).size!==observations.length)
   fail("Calibration observations are incomplete or duplicated; no best-of selection");
  if(fastHash(plan.criteria)!==plan.rubricFingerprint||fastHash(plan.testCases)!==plan.suiteFingerprint)fail("Fixed rubric thresholds or paper differ from their fingerprints");
@@ -34,7 +38,7 @@ export function assessMeasurementCalibration(plan:JudgeCalibrationPlan,observati
  for(const control of plan.controls){
   const matches=observations.filter(o=>o.controlId===control.id),observation=matches[0];
   if(matches.length!==1||!observation){fail("Missing unique control "+control.id);continue;}
-  const r=observation.receipt,{samples,limitations,scoringRouteFingerprint,...context}=r;void limitations;
+  const r=observation.receipt,{samples,limitations,scoringRouteFingerprint,outcomeReferencePolicy,...context}=r;void limitations;void outcomeReferencePolicy;
   if(fastHash(context)!==fastHash(control.context)||scoringRouteFingerprint!==plan.scoringRouteFingerprint
    ||r.rubricFingerprint!==plan.rubricFingerprint||r.suiteFingerprint!==plan.suiteFingerprint){
    fail("Control identity/model/file/paper binding differs: "+control.id);continue;
@@ -63,6 +67,8 @@ export function assessMeasurementCalibration(plan:JudgeCalibrationPlan,observati
     fail("Missing source-text anchor for "+control.id+"/"+criterion.id+"/"+arm);
   }
   if(inconclusivePairedCriteria(r,criteria).length)fail("Unqualified control threshold/direction/copy measurement: "+control.id);
+  if(criteria.some(c=>zeroReferenceIds.has(c.id))&&samples.some(s=>[s.original,s.candidate,s.controlOriginal].some(a=>a.safety==="REVIEW")))
+   fail("Unknown zero-reference evidence cannot qualify a control: "+control.id);
   const unchanged=r.bindings.every(b=>b.originalSha256===b.candidateSha256);
   if((control.kind==="identical")!==unchanged)fail("Control subject hashes differ from its fixed label: "+control.id);
   for(const sample of samples)for(const criterion of criteria){

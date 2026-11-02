@@ -14,6 +14,7 @@ const KEYS=[
   "EVOLUTION_AI_REASONING_EFFORT",
   "EVOLUTION_AI_JUDGE_REASONING_EFFORT",
   "EVOLUTION_AI_PAIRED_TRANSPORT",
+  "EVOLUTION_AI_PAIRED_OUTCOME_REFERENCE",
 ] as const;
 const previous=new Map<string,string|undefined>();
 

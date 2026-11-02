@@ -30,6 +30,17 @@ describe("explicit paired JSONL transport",()=>{
   for(const version of result.versions){expect(version.result).toMatchObject({accuracy:0,evidence:0,riskCoverage:0,completeness:0,safety:"FAIL"});expect(version.result.criteria[0]).toMatchObject({score:0,pass:false});}
   expect(JSON.stringify(records)).toBe(before);
  });
+ it("preserves explicit relative unknown alongside known Safety FAIL only in the opted-in scope",()=>{
+  const {records}=fixture();
+  for(const r of records){if(!("value" in r))continue;
+   if(r.kind==="summary")Object.assign(r.value!,{safety:"FAIL"});
+   else if(r.kind==="criterion")Object.assign(r.value!,{relativeEvidenceStatus:"unknown",score:0,pass:false,gaps:["Relative proof missing; separate protection failure known."]});
+  }
+  expect(()=>parsePairedJsonl(wire(records),scope)).toThrow();
+  const result=parsePairedJsonl(wire(records),{...scope,relativeCriterionIds:["GOAL"]});
+  for(const v of result.versions){expect(v.result.safety).toBe("FAIL");expect(v.result.criteria[0]).toMatchObject({relativeEvidenceStatus:"unknown",score:0,pass:false});}
+  expect(()=>parsePairedJsonl(wire(records),{...scope,relativeCriterionIds:["FOREIGN"]})).toThrow();
+ });
  for(const mode of ["truncated","missing-end","missing-row","duplicate-row","duplicate-slot","foreign-criterion","foreign-case","fingerprint","missing-evidence","extra-field","header-schema","string-score","range","foreign-case-score","end-count","protocol"]){
   it("rejects "+mode+" without changing its input",()=>{
    const {records}=fixture();const r=records as Array<Record<string,unknown>>;

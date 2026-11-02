@@ -4,10 +4,12 @@ type Binding={criterionId:string;testCaseIds:string[]};
 export const SERVER_PAIRED_GENERATION_SCHEMA_VERSION="issued-paired-generation-schema-v2-valid-zero";
 
 /** Project the already validated issued scope into generation guidance, without altering any reply. */
-export function serverIssuedPairedJsonSchema(requestFingerprint:string,bindings:Binding[],caseIds:string[]){
+export function serverIssuedPairedJsonSchema(requestFingerprint:string,bindings:Binding[],caseIds:string[],relativeCriterionIds:string[]=[]){
   const base=pairedEvaluationJsonSchema.schema,versions=base.properties.versions,version=versions.items;
   const evaluation=version.properties.result,criteria=evaluation.properties.criteria,row=criteria.items;
-  const boundRows=bindings.map(binding=>({...row,properties:{...row.properties,
+  const boundRows=bindings.map(binding=>({...row,
+    ...(relativeCriterionIds.includes(binding.criterionId)?{required:[...row.required,"relativeEvidenceStatus"]}:{}),properties:{...row.properties,
+    ...(relativeCriterionIds.includes(binding.criterionId)?{relativeEvidenceStatus:{type:"string",enum:["sufficient","unknown"]}}:{}),
     criterionId:{type:"string",enum:[binding.criterionId]},
     testCaseIds:{type:"array",items:{type:"string",enum:[...binding.testCaseIds]},
       minItems:binding.testCaseIds.length,maxItems:binding.testCaseIds.length,uniqueItems:true,

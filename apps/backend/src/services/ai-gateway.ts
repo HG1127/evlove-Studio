@@ -3,7 +3,7 @@ import { aiProviderTransportFailure,parseStructuredAiOutput } from "@evolution/a
 import { createHash } from "node:crypto";
 import {serverAiRepairContract} from "./server-ai-repair-contract";
 import {serverAiBuildContract} from "./server-ai-build-contract";
-import {serverAiFormatCorrectionAllowed,serverAiPairedJsonlEnabled} from "./server-ai-output-policy";
+import {serverAiFormatCorrectionAllowed,serverAiPairedJsonlEnabled,serverAiPairedOutcomeReferenceMode,SERVER_PAIRED_OUTCOME_REFERENCE_VERSION} from "./server-ai-output-policy";
 import {serverPairedJsonlOutput,SERVER_PAIRED_JSONL_GENERATION_VERSION} from "./server-paired-jsonl-output";
 import {ServerControlExecutionStoppedError,serverControlExecutionSignal} from "./server-control-execution";
 import {
@@ -79,7 +79,9 @@ export async function serverAiScoringRouteFingerprint(): Promise<string | undefi
   const route = config.mode === "openai-compatible"
     ? [config.mode, config.baseUrl, config.model, ...(config.protocol || config.responseFormat ? [config.protocol,config.responseFormat] : []),...(config.reasoningEffort?[{reasoningEffort:config.reasoningEffort}]:[])]
     : [config.mode, config.model];
+  const outcomeReference=serverAiPairedOutcomeReferenceMode();
   return createHash("sha256").update(JSON.stringify({ route, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION,measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION,pairedGenerationSchemaVersion:SERVER_PAIRED_GENERATION_SCHEMA_VERSION,pairedInputVersion:SERVER_PAIRED_INPUT_VERSION,
+    ...(outcomeReference?{pairedOutcomeReference:outcomeReference,pairedOutcomeReferenceVersion:SERVER_PAIRED_OUTCOME_REFERENCE_VERSION}:{}),
     ...(serverAiPairedJsonlEnabled()?{pairedOutputTransport:PAIRED_JSONL_PROTOCOL,pairedOutputGenerationVersion:SERVER_PAIRED_JSONL_GENERATION_VERSION}:{}) })).digest("hex");
 }
 

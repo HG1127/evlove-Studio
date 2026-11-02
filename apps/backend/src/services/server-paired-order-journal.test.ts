@@ -6,7 +6,7 @@ import {withServerAiUsageScope,serverAiUsageRoute} from "./server-ai-usage";
 import {withExplicitServerAiConnection,resolveServerAiConfig} from "./server-ai-connection";
 import {serverAiConfigForOperation} from "./server-ai-role-config";
 import {runServerAi} from "./ai-gateway";
-afterEach(()=>vi.unstubAllGlobals());
+afterEach(()=>{vi.unstubAllGlobals();vi.unstubAllEnvs();});
 import type {EvolutionEvent,PairedEvaluationAiResult,PairedOrderJournalPort,PairedOrderObservation,AiUsageRoute} from "@evolution/contracts";
 import {fastHash} from "@evolution/core";
 import {serverPairedJudgeRequest,settleServerPairedJudgment} from "@evolution/harness";
@@ -14,8 +14,9 @@ import {pairedJudgeFixture,pairedJudgeRawEvaluation} from "@evolution/testkit";
 import {runServerPairedEvidenceJudge} from "./server-paired-evidence-judge";
 import {claimPairedJudgeAttempt} from "./server-paired-judge-claim";
 import {createServerPairedOrderJournal} from "./server-paired-order-journal";
-function fixture(){
- const x=pairedJudgeFixture(),request=serverPairedJudgeRequest(x.project,x.candidate,x.project.evalSuite,x.project.acceptanceRubric,x.candidateRuns,x.originalRuns,"visible");
+function fixture(relativeStatus?:"unknown"|"sufficient"|"missing"){
+ const x=pairedJudgeFixture();if(relativeStatus)x.project.acceptanceRubric[0]!.judgeType="pairwise";
+ const request=serverPairedJudgeRequest(x.project,x.candidate,x.project.evalSuite,x.project.acceptanceRubric,x.candidateRuns,x.originalRuns,"visible");
  const events=new Map<string,EvolutionEvent>(),scope={missionId:x.project.id,jobId:"same-control-job",phase:"experiment"};
  const physicalRoute={operation:"evaluate-paired" as const,model:"fixture-model",protocol:"chat-completions" as const,routeFingerprint:"f".repeat(64)};
  const storage={scope,physicalRoutes:async():Promise<AiUsageRoute[]>=>[physicalRoute],list:vi.fn(async()=>[...events.values()]),append:vi.fn(async(e:EvolutionEvent)=>{if(!events.has(e.id))events.set(e.id,structuredClone(e));}),now:()=>x.at,nonce:()=>"one-original-claim"};
@@ -28,6 +29,10 @@ function fixture(){
   const p=raw as {requestFingerprint:string},order=Number(p.requestFingerprint.slice(-1));
   const original=pairedJudgeRawEvaluation(90),candidate=pairedJudgeRawEvaluation(80);
   candidate.safety="FAIL";
+  if(relativeStatus)for(const arm of [original,candidate]){
+   arm.safety="FAIL";Object.assign(arm.criteria[0]!,{score:0,pass:false});
+   if(relativeStatus!=="missing")arm.criteria[0]!.relativeEvidenceStatus=relativeStatus;
+  }
   return record(raw,{schemaVersion:"paired-evaluation-v1",requestFingerprint:p.requestFingerprint,
    versions:[{slot:"A",result:order===0?original:candidate},{slot:"B",result:order===0?candidate:original},{slot:"C",result:structuredClone(original)}]});
  });
@@ -36,6 +41,20 @@ function fixture(){
  return {...x,request,events,storage,invoke,claim,make,record};
 }
 describe("durable per-order recovery under the original occupied claim",()=>{
+ it.each(["unknown","missing","sufficient"] as const)("retains relative %s alongside FAIL through hash-bound journal recovery without another request",async status=>{
+  vi.stubEnv("EVOLUTION_AI_PAIRED_OUTCOME_REFERENCE","zero-v1");const x=fixture(status);
+  const first=await runServerPairedEvidenceJudge(x.request,x.make()),recovered=await runServerPairedEvidenceJudge(x.request,x.make());
+  expect(recovered).toEqual(first);expect(x.invoke).toHaveBeenCalledTimes(2);
+  const settled=settleServerPairedJudgment(x.project,x.project.evalSuite,x.candidateRuns,x.originalRuns,x.request,recovered);
+  expect(settled.safety).toBe("FAIL");expect(settled.criterionScores?.[0]).toMatchObject({score:0,pass:false,verificationStatus:status==="sufficient"?"verified":"unverified"});
+  for(const sample of recovered.pairedComparison!.receipt.samples)for(const arm of [sample.original,sample.candidate,sample.controlOriginal])
+   expect(arm.criteria[0]!.relativeEvidenceStatus).toBe(status==="missing"?undefined:status);
+  if(status==="unknown"){
+   const row=[...x.events.values()].find(e=>e.source==="server-paired-order-journal")!,observation=row.payload.observation as PairedOrderObservation;
+   observation.response.versions[0]!.result.criteria[0]!.relativeEvidenceStatus="sufficient";
+   await expect(runServerPairedEvidenceJudge(x.request,x.make())).rejects.toThrow();expect(x.invoke).toHaveBeenCalledTimes(2);
+  }
+ });
  it("joins real gateway request/response-text observations to persisted orders and replays without a third HTTP call",async()=>{
   const x=fixture(),fetch=vi.fn(async(_url:unknown,init?:RequestInit)=>{
    const input=JSON.parse(JSON.parse(String(init?.body)).messages[1].content),order=Number(input.requestFingerprint.slice(-1)),a=pairedJudgeRawEvaluation(90),b=pairedJudgeRawEvaluation(80);
