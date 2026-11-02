@@ -35,19 +35,21 @@ export function nativeCopyChecks(copies){
     {id:'prompt-copy-preserves-internal-whitespace',pass:whitespace.length===0,tested:prompts.length,failed:whitespace.length,copyFailures:details(whitespace,'prompt-whitespace-mismatch')},
   ];
 }
-export async function observeNativeHtml({inputs,subjects,launchBrowser}) {
+export async function observeNativeHtml({inputs,subjects,launchBrowser,onProgress=()=>{}}) {
+onProgress({phase:'launch',arm:'original',completedChecks:0});
 let browser=await launchBrowser();
 const results=[];
 let styleTargetHref;
 try{
   for(const label of ['original','candidate']){
-    if(label==='candidate'){await browser.close();browser=await launchBrowser();}
+    if(label==='candidate'){await browser.close();onProgress({phase:'launch',arm:label,completedChecks:0});browser=await launchBrowser();}
     const subjectStarted=Date.now();
     const html=subjects[label];
     if(hash(html)!==(label==='original'?inputs.originalSha256:inputs.subjectSha256))throw Error('Physical native subject hash mismatch');
     const {context,page,blocked,pageErrors}=await createLocalNativePage(browser,html);
     const failures=[],checks=[];
-    const record=(id,pass,detail={})=>{checks.push({id,pass,...detail});if(!pass)failures.push(id);};
+    onProgress({phase:'document',arm:label,completedChecks:0});
+    const record=(id,pass,detail={})=>{checks.push({id,pass,...detail});if(!pass)failures.push(id);onProgress({phase:'assertions',arm:label,completedChecks:checks.length});};
     try{
       await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded',timeout:12000});
       await runDeclaredBrowserPlans(page,inputs.browserAssertions,record);

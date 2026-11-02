@@ -157,8 +157,17 @@ export type SandboxHtmlNativeRequest=z.infer<typeof SandboxHtmlNativeRequestSche
 
 export const HTML_NATIVE_PAYMENT_REQUIRED="NATIVE_HTML_PAYMENT_REQUIRED";
 export const HTML_NATIVE_LOCAL_UNAVAILABLE="NATIVE_HTML_LOCAL_EXECUTION_UNAVAILABLE";
+/** Incomplete local execution metadata; never a partial observation or a quality verdict. */
+export const HtmlLocalExecutionFailureSchema=z.object({
+  schemaVersion:z.literal("local-native-execution-failure-v1"),
+  runId:z.string().regex(/^local-native-[a-zA-Z0-9-]+$/).max(200),
+  kind:z.enum(["deadline","launch","observer","cleanup","protocol"]),
+  phase:z.enum(["launch","document","assertions"]),arm:z.enum(["original","candidate"]).optional(),
+  completedChecks:count,elapsedMs:z.number().int().nonnegative(),
+}).strict();
 export const SandboxHtmlNativeResponseSchema=z.discriminatedUnion("status",[
-  z.object({status:z.literal("unavailable"),reason:z.string().min(1).max(500),reasonCode:z.literal("payment-required").optional()}).strict(),
+  z.object({status:z.literal("unavailable"),reason:z.string().min(1).max(500),reasonCode:z.literal("payment-required").optional(),
+    executionFailure:HtmlLocalExecutionFailureSchema.optional()}).strict(),
   z.object({status:z.literal("observed"),observation:HtmlNativeObservationSchema,
     subjectText:z.string().min(1).max(64_000)}).strict(),
 ]);

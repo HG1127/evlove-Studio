@@ -1,5 +1,5 @@
 import {z} from "zod";
-import {HtmlNativeLocalBoundarySchema,SandboxHtmlNativeRequestSchema,SandboxHtmlNativeResponseSchema,type SandboxHtmlNativeRequest,type SandboxHtmlNativeResponse} from "@evolution/contracts";
+import {HtmlLocalExecutionFailureSchema,HtmlNativeLocalBoundarySchema,SandboxHtmlNativeRequestSchema,SandboxHtmlNativeResponseSchema,type SandboxHtmlNativeRequest,type SandboxHtmlNativeResponse} from "@evolution/contracts";
 import {isSourceGroundedHtmlSearchPlan,novelHtmlSearchQueries} from "@evolution/core";
 import {identifyHtmlNativeSubjects,nativeHtmlSha256,type HtmlNativeProfile} from "./profile";
 import {RawNativeObservationSchema,settleNativeHtmlMeasurement} from "./measurement";
@@ -28,5 +28,10 @@ export async function runLocalKnownHtmlNativeProfile(raw:SandboxHtmlNativeReques
     const boundary=HtmlNativeLocalBoundarySchema.parse({kind:"local-browser-process-sandbox-v1",runId:result.runId,browserVersion:result.browserVersion,
       chromiumSandbox:true,headless:true,freshProcessPerSubject:true,networkPolicy:"deny-all",serviceWorkers:"block",downloads:false,popups:"blocked",credentialEnvironment:"excluded",storage:"ephemeral"});
     return settleNativeHtmlMeasurement(args,identity,result.measurement,contentSearchQueries,port.kernelSha256,boundary);
-  }catch{return unavailable("Local sandboxed native browser execution did not complete; original evidence stays unverified.");}
+  }catch(error){
+    const failure=HtmlLocalExecutionFailureSchema.safeParse(error&&typeof error==="object"&&"diagnostic" in error?error.diagnostic:undefined);
+    return SandboxHtmlNativeResponseSchema.parse({status:"unavailable",
+      reason:"Local sandboxed native browser execution did not complete; original evidence stays unverified.",
+      ...(failure.success?{executionFailure:failure.data}:{})});
+  }
 }

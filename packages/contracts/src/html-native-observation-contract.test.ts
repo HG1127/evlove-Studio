@@ -21,6 +21,14 @@ describe("native observation trust boundary",()=>{
     expect(SandboxHtmlNativeResponseSchema.safeParse({...legacy,reasonCode:"success"}).success).toBe(false);
     expect(SandboxHtmlNativeResponseSchema.safeParse({...legacy,httpStatus:402}).success).toBe(false);
   });
+  it("allows only bounded incomplete-execution metadata on unavailable responses",()=>{
+    const failure={schemaVersion:"local-native-execution-failure-v1",runId:"local-native-contract",kind:"deadline",phase:"assertions",arm:"candidate",completedChecks:42,elapsedMs:170001};
+    const unavailable={status:"unavailable",reason:"Execution incomplete",executionFailure:failure};
+    expect(SandboxHtmlNativeResponseSchema.parse(unavailable)).toEqual(unavailable);
+    for(const extra of [{text:"private"},{kind:"success"},{phase:"arbitrary-selector"},{completedChecks:-1},{elapsedMs:NaN}])
+      expect(SandboxHtmlNativeResponseSchema.safeParse({...unavailable,executionFailure:{...failure,...extra}}).success).toBe(false);
+    expect(SandboxHtmlNativeResponseSchema.safeParse({status:"observed",observation:htmlNativeEvidenceFixture().nativeHtmlProof!.observation,subjectText:"actual body",executionFailure:failure}).success).toBe(false);
+  });
   it("preserves legacy style receipts without inventing matching UI state",()=>{
     const legacy=htmlNativeEvidenceFixture().nativeHtmlProof!.observation.styleComparison[0]!;
     expect(HtmlNativeStyleComparisonSchema.parse(legacy)).toEqual(legacy);

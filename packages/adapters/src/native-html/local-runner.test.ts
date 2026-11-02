@@ -66,4 +66,21 @@ describe("local native admission",()=>{
     const out=await runLocalKnownHtmlNativeProfile(request(),port,profiles);
     expect(out.status).toBe("observed");if(out.status==="observed"){expect(out.observation.subject.failures).toEqual(["initial-card-inventory"]);expect(out.observation.styleComparison[0]!.pass).toBe(false);}
   });
+  it("retains a safe incomplete-execution diagnostic without exporting its private cause",async()=>{
+    const {port}=fixture();
+    const diagnostic={schemaVersion:"local-native-execution-failure-v1",runId:"local-native-fixture",kind:"deadline",phase:"assertions",arm:"candidate",completedChecks:42,elapsedMs:170001};
+    port.execute.mockRejectedValue(Object.assign(Error("private infrastructure path and content"),{diagnostic}));
+    const out=await runLocalKnownHtmlNativeProfile(request(),port,profiles);
+    expect(out).toMatchObject({status:"unavailable",executionFailure:diagnostic});
+    expect(JSON.stringify(out)).not.toContain("private");expect(out).not.toHaveProperty("observation");
+    expect(port.execute).toHaveBeenCalledOnce();
+  });
+  it.each(["unknown-kind","unexpected-content"])("discards %s diagnostics and still refuses execution",async mode=>{
+    const {port}=fixture();
+    const diagnostic={schemaVersion:"local-native-execution-failure-v1",runId:"local-native-fixture",kind:mode==="unknown-kind"?"success":"observer",phase:"assertions",completedChecks:1,elapsedMs:5,
+      ...(mode==="unexpected-content"?{text:"private-document"}:{})};
+    port.execute.mockRejectedValue(Object.assign(Error("private error"),{diagnostic}));
+    const out=await runLocalKnownHtmlNativeProfile(request(),port,profiles);
+    expect(out.status).toBe("unavailable");expect(out).not.toHaveProperty("executionFailure");expect(JSON.stringify(out)).not.toContain("private");
+  });
 });

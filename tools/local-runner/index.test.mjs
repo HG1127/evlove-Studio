@@ -41,3 +41,38 @@ test('cleanup failure cannot be returned as observed success',async()=>{
  const x=fixture();x.ports.chromium.launch=async()=>({version:()=>"156",isConnected:()=>true,close:async()=>{throw Error('cleanup fixture');}});
  await assert.rejects(executeLocalNativeHtml({inputs:{},subjects:{}},x.ports),/cleanup incomplete/);
 });
+
+test('observer failure preserves only validated progress and closes its browser',async()=>{
+ const updates=[],x=fixture(async({launchBrowser,onProgress})=>{
+  await launchBrowser();onProgress({phase:'document',arm:'original',completedChecks:0});
+  onProgress({phase:'assertions',arm:'original',completedChecks:37});throw Error('private-api-key-and-document-content');
+ });
+ x.ports.onProgress=progress=>updates.push(progress);
+ let failure;try{await executeLocalNativeHtml({inputs:{},subjects:{}},x.ports);}catch(error){failure=error;}
+ assert.equal(failure.name,'LocalNativeExecutionError');assert.equal(failure.diagnostic.kind,'observer');
+ assert.equal(failure.diagnostic.phase,'assertions');assert.equal(failure.diagnostic.arm,'original');assert.equal(failure.diagnostic.completedChecks,37);
+ assert.match(failure.diagnostic.runId,/^local-native-/);assert.ok(failure.diagnostic.elapsedMs>=updates.at(-1).elapsedMs);
+ assert.equal(JSON.stringify(failure.diagnostic).includes('private'),false);assert.ok(x.browsers.every(b=>!b.isConnected()));
+ assert.equal(updates.length,2);assert.ok(updates.every(p=>Object.keys(p).sort().join(',')==='arm,completedChecks,elapsedMs,phase,runId'));
+});
+
+test('deadline retains the last completed stage without replaying an observation',async()=>{
+ let executions=0;
+ const x=fixture(async({launchBrowser,onProgress})=>{
+  executions++;await launchBrowser();onProgress({phase:'assertions',arm:'candidate',completedChecks:42});await new Promise(()=>{});
+ });
+ await assert.rejects(executeLocalNativeHtml({inputs:{},subjects:{},timeoutMs:1000},x.ports),error=>{
+  assert.equal(error.diagnostic.kind,'deadline');assert.equal(error.diagnostic.phase,'assertions');
+  assert.equal(error.diagnostic.arm,'candidate');assert.equal(error.diagnostic.completedChecks,42);assert.ok(error.diagnostic.elapsedMs>=1000);return true;
+ });
+ assert.equal(executions,1);assert.ok(x.browsers.every(b=>!b.isConnected()));
+});
+
+test('progress cannot introduce document content into a safe diagnostic',async()=>{
+ const x=fixture(async({launchBrowser,onProgress})=>{await launchBrowser();onProgress({phase:'assertions',arm:'original',completedChecks:1,text:'private-document'});});
+ await assert.rejects(executeLocalNativeHtml({inputs:{},subjects:{}},x.ports),error=>{
+  assert.equal(error.diagnostic.kind,'observer');assert.equal(error.diagnostic.phase,'launch');
+  assert.equal(JSON.stringify(error.diagnostic).includes('private-document'),false);return true;
+ });
+ assert.ok(x.browsers.every(b=>!b.isConnected()));
+});
