@@ -30,6 +30,7 @@ describe("explicit relative outcome reference qualification (synthetic observati
  it("preserves legacy receipt qualification and rejects unknown policy values",()=>{
   const x=zeroReferenceCalibrationFixture(),r=x.observations[0]!.receipt;
   delete r.outcomeReferencePolicy;
+  delete r.evidenceStatusPolicy;
   for(const s of r.samples)for(const a of [s.original,s.candidate,s.controlOriginal])a.safety="REVIEW";
   expect(inconclusivePairedCriteria(r,x.plan.criteria)).toEqual([]);
   expect(PairedJudgeReceiptSchema.safeParse({...r,outcomeReferencePolicy:"guess"}).success).toBe(false);
@@ -41,7 +42,7 @@ describe("explicit relative outcome reference qualification (synthetic observati
   const absolute={...x.plan.criteria[0]!,id:"ABS",judgeType:"llm" as const};const criteria=[...x.plan.criteria,absolute];
   r.criterionIds.push("ABS");
   for(const s of r.samples)for(const arm of [s.original,s.candidate,s.controlOriginal]){
-   arm.safety=safety;arm.criteria[0]!.relativeEvidenceStatus="unknown";arm.criteria.push({...arm.criteria[0]!,criterionId:"ABS",score:0,pass:false});
+   arm.safety=safety;arm.criteria[0]!.evidenceStatus="unknown";arm.criteria.push({...arm.criteria[0]!,criterionId:"ABS",score:0,pass:false,evidenceStatus:"sufficient"});
   }
   const ai={accuracy:0,evidence:0,riskCoverage:0,completeness:0,safety,notes:[],failures:[],cases:[],
    criteria:criteria.map(c=>({criterionId:c.id,score:0,pass:false,testCaseIds:["V1"],evidence:["Synthetic body"],gaps:["Synthetic gap"]}))};
@@ -56,7 +57,7 @@ describe("explicit relative outcome reference qualification (synthetic observati
  it.each(["unknown",undefined] as const)("excludes relative status %s even with a separate known Safety FAIL",status=>{
   const x=zeroReferenceCalibrationFixture(),r=x.observations[2]!.receipt;
   for(const s of r.samples)for(const a of [s.original,s.candidate,s.controlOriginal]){
-   a.safety="FAIL";if(status)a.criteria[0]!.relativeEvidenceStatus=status;else delete a.criteria[0]!.relativeEvidenceStatus;
+   a.safety="FAIL";if(status)a.criteria[0]!.evidenceStatus=status;else delete a.criteria[0]!.evidenceStatus;
   }
   expect(inconclusivePairedCriteria(r,x.plan.criteria)).toEqual(["GOAL"]);
   expect(assessMeasurementCalibration(x.plan,x.observations).ready).toBe(false);
@@ -64,6 +65,21 @@ describe("explicit relative outcome reference qualification (synthetic observati
  it("preserves fully known Safety FAIL negatives under the active per-criterion evidence policy",()=>{
   const x=zeroReferenceCalibrationFixture();expect(assessMeasurementCalibration(x.plan,x.observations).ready).toBe(true);
   expect(inconclusivePairedCriteria(x.observations[2]!.receipt,x.plan.criteria)).toEqual([]);
+ });
+ it.each([0,1] as const)("excludes absolute unknown/absent evidence in order %s despite a matching false oracle and known FAIL",order=>{
+  for(const arm of ["original","candidate","controlOriginal"] as const)for(const status of ["unknown",undefined] as const){
+   const x=absoluteCalibrationFixture();
+   for(const o of x.observations){o.receipt.evidenceStatusPolicy="criterion-evidence-v1";
+    for(const s of o.receipt.samples)for(const a of [s.original,s.candidate,s.controlOriginal])a.criteria[0]!.evidenceStatus="sufficient";
+   }
+   const r=x.observations[2]!.receipt;
+   for(const s of r.samples)for(const a of [s.original,s.candidate,s.controlOriginal])a.safety="FAIL";
+   for(const s of r.samples){s.candidate.criteria[0]!.score=0;s.candidate.criteria[0]!.pass=false;}
+   expect(assessMeasurementCalibration(x.plan,x.observations).ready).toBe(true);
+   if(status)r.samples[order][arm].criteria[0]!.evidenceStatus=status;else delete r.samples[order][arm].criteria[0]!.evidenceStatus;
+   expect(inconclusivePairedCriteria(r,x.plan.criteria)).toEqual(["GOAL"]);
+   expect(assessMeasurementCalibration(x.plan,x.observations).ready).toBe(false);
+  }
  });
  it("does not make an absolute legacy calibration negative unknown from the new zero-only rule",()=>{
   const x=absoluteCalibrationFixture();for(const s of x.observations[2]!.receipt.samples)for(const a of [s.original,s.candidate,s.controlOriginal])a.safety="REVIEW";

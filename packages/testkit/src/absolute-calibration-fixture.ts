@@ -62,10 +62,11 @@ export function zeroReferenceCalibrationFixture(){
   control.context.rubricFingerprint=x.plan.rubricFingerprint;
   const observation=x.observations.find(o=>o.controlId===control.id)!;observation.receipt.rubricFingerprint=x.plan.rubricFingerprint;
   observation.receipt.outcomeReferencePolicy="zero-v1";
+  observation.receipt.evidenceStatusPolicy="criterion-evidence-v1";
   for(const s of observation.receipt.samples){
    for(const arm of [s.original,s.controlOriginal]){arm.criteria[0]!.score=0;arm.criteria[0]!.pass=false;arm.safety="FAIL";}
    s.candidate.criteria[0]!.score=e.candidatePass?96:0;s.candidate.criteria[0]!.pass=e.candidatePass;s.candidate.safety=e.candidatePass?"PASS":"FAIL";
-   for(const arm of [s.original,s.candidate,s.controlOriginal])arm.criteria[0]!.relativeEvidenceStatus="sufficient";
+   for(const arm of [s.original,s.candidate,s.controlOriginal]){arm.criteria[0]!.relativeEvidenceStatus="sufficient";arm.criteria[0]!.evidenceStatus="sufficient";}
   }
  }
  bindSyntheticCalibrationApprovals(x.plan,x.texts);return x;

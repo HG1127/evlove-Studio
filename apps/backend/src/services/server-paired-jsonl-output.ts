@@ -1,7 +1,8 @@
 import {z,type ZodType} from "zod";
-import {PAIRED_JSONL_PROTOCOL,PairedJsonlRecordSchema,PairedJsonlReferenceRecordSchema,PairedJsonlScopeSchema} from "@evolution/contracts";
+import {PAIRED_JSONL_PROTOCOL,PAIRED_CRITERION_EVIDENCE_POLICY,PairedJsonlRecordSchema,PairedJsonlEvidenceRecordSchema,PairedJsonlScopeSchema} from "@evolution/contracts";
 import {parsePairedJsonl} from "@evolution/adapters";
 import {serverPairedOutcomeReferenceCriterionIds} from "./server-paired-ai-contract";
+import {serverAiPairedOutcomeReferenceMode} from "./server-ai-output-policy";
 
 export const SERVER_PAIRED_JSONL_GENERATION_VERSION="paired-jsonl-generation-v2-explicit-records";
 
@@ -10,10 +11,10 @@ export function serverPairedJsonlOutput<T>(payload:unknown,parser:ZodType<T>,ins
  const issued=z.object({requestFingerprint:z.string(),issuedCriterionCaseBindings:z.unknown()}).parse(payload);
  const relativeCriterionIds=serverPairedOutcomeReferenceCriterionIds(payload);
  const scope=PairedJsonlScopeSchema.parse({requestFingerprint:issued.requestFingerprint,bindings:issued.issuedCriterionCaseBindings,
-  ...(relativeCriterionIds.length?{relativeCriterionIds}:{})});
+  ...(relativeCriterionIds.length?{relativeCriterionIds}:{}),...(serverAiPairedOutcomeReferenceMode()?{evidenceStatusPolicy:PAIRED_CRITERION_EVIDENCE_POLICY}:{})});
  const header={kind:"header",protocol:PAIRED_JSONL_PROTOCOL,requestFingerprint:scope.requestFingerprint};
  const end={kind:"end",requestFingerprint:scope.requestFingerprint,criterionRecords:scope.bindings.length*3};
- const recordSchema=z.toJSONSchema(relativeCriterionIds.length?PairedJsonlReferenceRecordSchema:PairedJsonlRecordSchema);
+ const recordSchema=z.toJSONSchema(scope.evidenceStatusPolicy?PairedJsonlEvidenceRecordSchema:PairedJsonlRecordSchema);
  // Only omit the grammar document's metadata, never a property from a model response.
  delete recordSchema.$schema;
  return {

@@ -41,6 +41,13 @@ describe("explicit paired JSONL transport",()=>{
   for(const v of result.versions){expect(v.result.safety).toBe("FAIL");expect(v.result.criteria[0]).toMatchObject({relativeEvidenceStatus:"unknown",score:0,pass:false});}
   expect(()=>parsePairedJsonl(wire(records),{...scope,relativeCriterionIds:["FOREIGN"]})).toThrow();
  });
+ it("selects generic evidence status explicitly even without a relative outcome criterion, retaining missing state as data",()=>{
+  const {records}=fixture();for(const r of records)if("value" in r&&r.kind==="criterion")Object.assign(r.value!,{evidenceStatus:"unknown"});
+  expect(()=>parsePairedJsonl(wire(records),scope)).toThrow();
+  const active={...scope,evidenceStatusPolicy:"criterion-evidence-v1"};
+  for(const v of parsePairedJsonl(wire(records),active).versions)expect(v.result.criteria[0]!.evidenceStatus).toBe("unknown");
+  expect(()=>parsePairedJsonl(wire(fixture().records),active)).not.toThrow();
+ });
  for(const mode of ["truncated","missing-end","missing-row","duplicate-row","duplicate-slot","foreign-criterion","foreign-case","fingerprint","missing-evidence","extra-field","header-schema","string-score","range","foreign-case-score","end-count","protocol"]){
   it("rejects "+mode+" without changing its input",()=>{
    const {records}=fixture();const r=records as Array<Record<string,unknown>>;

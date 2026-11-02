@@ -1,6 +1,6 @@
 import {createHash} from "node:crypto";
 import {createError} from "nitro/h3";
-import {ArtifactMetadataSchema,ConfirmationEvidenceCatalogSchema,ConfirmationServerTrustSchema,
+import {ArtifactMetadataSchema,ConfirmationEvidenceCatalogSchema,ConfirmationServerTrustSchema,PAIRED_CRITERION_EVIDENCE_POLICY,
   JudgeCalibrationPlanV3Schema,JudgeCalibrationObservationSchema,type ArtifactStorePort,type EvolveProject} from "@evolution/contracts";
 import {confirmationMissionScopeText,fastHash,registeredZeroReferenceCriterionIds,zeroOutcomeReferenceCriterionIds} from "@evolution/core";
 import {checkFullConfirmationAdmission} from "@evolution/harness";
@@ -101,7 +101,8 @@ export async function assertServerConfirmationAdmission(mission:EvolveProject,ph
       readCalibrationPlan:async()=>plan,
       readCalibrationObservations:async()=>Promise.all(catalog.observations.map(async ref=>{
         const observation=JudgeCalibrationObservationSchema.parse(JSON.parse(decode(await read(ref))));
-        if(outcomeReferencePolicy&&observation?.receipt?.outcomeReferencePolicy!==outcomeReferencePolicy)
+        if(outcomeReferencePolicy&&(observation.receipt.outcomeReferencePolicy!==outcomeReferencePolicy
+          ||observation.receipt.evidenceStatusPolicy!==PAIRED_CRITERION_EVIDENCE_POLICY))
           throw Error("Calibration observation omits the configured outcome reference policy");
         return observation;
       })),

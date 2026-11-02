@@ -1,5 +1,5 @@
 import {z} from "zod";
-import {AcceptanceCriterionSchema,PairedJudgeMetricDefinitionSchema,PairedEvaluationAiResultSchema,pairedEvaluationJsonSchema} from "@evolution/contracts";
+import {AcceptanceCriterionSchema,PAIRED_CRITERION_EVIDENCE_POLICY,PairedJudgeMetricDefinitionSchema,PairedEvaluationAiResultSchema,pairedEvaluationJsonSchema} from "@evolution/contracts";
 import {zeroOutcomeReferenceCriterionIds} from "@evolution/core";
 import {serverIssuedPairedJsonSchema} from "./server-paired-json-schema";
 import {serverAiPairedOutcomeReferenceMode} from "./server-ai-output-policy";
@@ -27,7 +27,7 @@ export function serverPairedOutcomeReferenceCriterionIds(payload:unknown){
 export function serverAiPairedContract(payload:unknown){
   const referenceMode=serverAiPairedOutcomeReferenceMode();
   const referenceIds=referenceMode?serverPairedOutcomeReferenceCriterionIds(payload):[];
-  let referenceInstruction="";
+  let referenceInstruction=referenceMode?" Criterion evidence qualification policy "+PAIRED_CRITERION_EVIDENCE_POLICY+" applies to EVERY issued criterion in EVERY slot, including absolute, structural and protected criteria. Include evidenceStatus=sufficient only when the supplied evidence supports that particular conclusion (including a confirmed failure or regression); sufficient does not mean passing or safe. Missing, conflicting or incomparable proof requires evidenceStatus=unknown and specific gaps. This per-criterion unknown can coexist with a different known Safety FAIL; never erase that FAIL or treat a numeric placeholder as a verified failure. Missing evidenceStatus is unqualified, not proof of failure or success. Keep all original requirements, minima and protected constraints unchanged.":"";
   if(payload&&typeof payload==="object"&&"metrics" in payload)PairedJudgeMetricDefinitionSchema.array().max(100).parse(payload.metrics);
   let parser=PairedEvaluationAiResultSchema;
   let schema:{name:string;schema:Record<string,unknown>}=pairedEvaluationJsonSchema;
@@ -35,13 +35,13 @@ export function serverAiPairedContract(payload:unknown){
     const p=issued.parse(payload),criterionIds=p.acceptanceRubric.map(c=>c.id),caseIds=p.testCases.map(t=>t.id);
     if(referenceMode){
       const ids=referenceIds;
-      if(ids.length)referenceInstruction=" Relative outcome reference policy "+referenceMode+" applies ONLY to criterion IDs "+JSON.stringify(ids)+" (pairwise, outcome, non-protected, positive minimum). These criteria measure improvement relative to the supplied reference, not standalone document quality. Slot C is the public reference anchor; its self-comparison and any identical copy score 0 with pass=false for these criteria. A different subject scores 0/pass=false only when sufficient comparable evidence confirms no positive improvement or confirms regression. Every eligible criterion row in each slot must include relativeEvidenceStatus: sufficient only for evidence-backed comparable conclusions, otherwise unknown. Missing, conflicting or incomparable evidence is unknown: set relativeEvidenceStatus=unknown, describe the specific gaps, and set safety=REVIEW unless a separate known safety failure requires FAIL. The per-criterion unknown status must coexist with and never erase a known Safety FAIL. Any required numeric placeholder is unqualified and cannot establish failure, improvement or promotion. Do not equate absence of proof with confirmed non-improvement. Positive improvement still requires evidence and the original unchanged minimum; no alternative numeric scale is supplied. All other absolute and protection criteria retain their unchanged meanings and minima. This public reference anchor is not complete blinding; no preferred non-reference winner or expected verdict is supplied.";
+      if(ids.length)referenceInstruction+=" Relative outcome reference policy "+referenceMode+" applies ONLY to criterion IDs "+JSON.stringify(ids)+" (pairwise, outcome, non-protected, positive minimum). These criteria measure improvement relative to the supplied reference, not standalone document quality. Slot C is the public reference anchor; its self-comparison and any identical copy score 0 with pass=false for these criteria. A different subject scores 0/pass=false only when sufficient comparable evidence confirms no positive improvement or confirms regression. Every eligible criterion row in each slot must include evidenceStatus: sufficient only for evidence-backed comparable conclusions, otherwise unknown. Missing, conflicting or incomparable evidence is unknown: set evidenceStatus=unknown, describe the specific gaps, and set safety=REVIEW unless a separate known safety failure requires FAIL. The per-criterion unknown status must coexist with and never erase a known Safety FAIL. Any required numeric placeholder is unqualified and cannot establish failure, improvement or promotion. Do not equate absence of proof with confirmed non-improvement. Positive improvement still requires evidence and the original unchanged minimum; no alternative numeric scale is supplied. All other absolute and protection criteria retain their unchanged meanings and minima. This public reference anchor is not complete blinding; no preferred non-reference winner or expected verdict is supplied.";
     }
     if(!unique(caseIds)||!same(criterionIds,p.issuedCriterionCaseBindings.map(b=>b.criterionId))
       ||p.issuedCriterionCaseBindings.some(b=>!same(b.testCaseIds,p.testCases.filter(t=>t.criterionIds.includes(b.criterionId)).map(t=>t.id))))
       throw Error("Issued paired criterion/case bindings differ from the request contract");
     const expected=new Map(p.issuedCriterionCaseBindings.map(b=>[b.criterionId,b.testCaseIds]));
-    schema=serverIssuedPairedJsonSchema(p.requestFingerprint,p.issuedCriterionCaseBindings,caseIds,referenceIds);
+    schema=serverIssuedPairedJsonSchema(p.requestFingerprint,p.issuedCriterionCaseBindings,caseIds,Boolean(referenceMode));
     parser=PairedEvaluationAiResultSchema.superRefine((value,ctx)=>{
       if(value.requestFingerprint!==p.requestFingerprint)ctx.addIssue({code:"custom",path:["requestFingerprint"],message:`Echo the issued requestFingerprint exactly: ${p.requestFingerprint}`});
       value.versions.forEach((v,index)=>{
@@ -54,8 +54,8 @@ export function serverAiPairedContract(payload:unknown){
   }else if(referenceMode)throw Error("Paired outcome reference requires an issued versioned request");
   parser=parser.superRefine((value,ctx)=>{
     value.versions.forEach((v,index)=>v.result.criteria.forEach((row,i)=>{
-      if(row.relativeEvidenceStatus!==undefined&&!referenceIds.includes(row.criterionId))
-        ctx.addIssue({code:"custom",path:["versions",index,"result","criteria",i,"relativeEvidenceStatus"],message:"Relative evidence status is allowed only for an explicitly enabled relative outcome criterion"});
+      if(row.relativeEvidenceStatus!==undefined||row.evidenceStatus!==undefined&&!referenceMode)
+        ctx.addIssue({code:"custom",path:["versions",index,"result","criteria",i],message:"Use only evidenceStatus under the explicitly enabled criterion evidence policy; legacy relative-only fields are archival data"});
     }));
   });
   return {schema,parser,instruction:instruction+referenceInstruction};

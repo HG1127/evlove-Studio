@@ -10,6 +10,7 @@ import {
   AiOperationSchema,
   LessonDistillationContextSchema,
   PAIRED_JSONL_PROTOCOL,
+  PAIRED_CRITERION_EVIDENCE_POLICY,
   ArtifactAcceptanceAiResultSchema,
   CommandAiResultSchema,
   CopilotAiResultSchema,
@@ -81,7 +82,7 @@ export async function serverAiScoringRouteFingerprint(): Promise<string | undefi
     : [config.mode, config.model];
   const outcomeReference=serverAiPairedOutcomeReferenceMode();
   return createHash("sha256").update(JSON.stringify({ route, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION,measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION,pairedGenerationSchemaVersion:SERVER_PAIRED_GENERATION_SCHEMA_VERSION,pairedInputVersion:SERVER_PAIRED_INPUT_VERSION,
-    ...(outcomeReference?{pairedOutcomeReference:outcomeReference,pairedOutcomeReferenceVersion:SERVER_PAIRED_OUTCOME_REFERENCE_VERSION}:{}),
+    ...(outcomeReference?{pairedOutcomeReference:outcomeReference,pairedOutcomeReferenceVersion:SERVER_PAIRED_OUTCOME_REFERENCE_VERSION,pairedCriterionEvidencePolicy:PAIRED_CRITERION_EVIDENCE_POLICY}:{}),
     ...(serverAiPairedJsonlEnabled()?{pairedOutputTransport:PAIRED_JSONL_PROTOCOL,pairedOutputGenerationVersion:SERVER_PAIRED_JSONL_GENERATION_VERSION}:{}) })).digest("hex");
 }
 

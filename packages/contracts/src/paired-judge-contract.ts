@@ -3,6 +3,8 @@ import {z} from "zod";
 export const PAIRED_JUDGE_POLICY="paired-two-order-v1" as const;
 export const PAIRED_JUDGE_FILE_METADATA_POLICY="bound-file-reference-v1" as const;
 export const PAIRED_OUTCOME_REFERENCE_POLICY="zero-v1" as const;
+export const PAIRED_CRITERION_EVIDENCE_POLICY="criterion-evidence-v1" as const;
+export const CriterionEvidenceStatusSchema=z.enum(["sufficient","unknown"]);
 export const PairedRelativeEvidenceStatusSchema=z.enum(["sufficient","unknown"]);
 const hash=z.string().regex(/^[a-f0-9]{64}$/);
 const score=z.number().int().min(0).max(100);
@@ -30,6 +32,7 @@ const summary=z.object({
   accuracy:score,evidence:score,riskCoverage:score,completeness:score,safety:z.enum(["PASS","REVIEW","FAIL"]),
   criteria:z.array(z.object({criterionId:z.string().min(1),score,pass:z.boolean(),testCaseIds:z.array(z.string().min(1)).max(100),
     relativeEvidenceStatus:PairedRelativeEvidenceStatusSchema.optional(),
+    evidenceStatus:CriterionEvidenceStatusSchema.optional(),
   }).strict()).min(1).max(32),
 }).strict().refine(value=>new Set(value.criteria.map(c=>c.criterionId)).size===value.criteria.length,"Duplicate criterion");
 
@@ -49,6 +52,7 @@ export const PairedJudgeReceiptSchema=PairedJudgeContextSchema.extend({
   scoringRouteFingerprint:z.string().min(1).max(200),
   // Runtime-owned opt-in. Absent on legacy observations; never inferred from scores or model prose.
   outcomeReferencePolicy:z.literal(PAIRED_OUTCOME_REFERENCE_POLICY).optional(),
+  evidenceStatusPolicy:z.literal(PAIRED_CRITERION_EVIDENCE_POLICY).optional(),
   samples:z.tuple([
     z.object({order:z.literal("original-first"),resultSha256:hash,original:summary,candidate:summary,controlOriginal:summary}).strict(),
     z.object({order:z.literal("candidate-first"),resultSha256:hash,original:summary,candidate:summary,controlOriginal:summary}).strict(),

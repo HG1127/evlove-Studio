@@ -5,7 +5,7 @@ import {PAIRED_OUTCOME_REFERENCE_POLICY,type AiOperation} from "@evolution/contr
 const policySchema=z.object({formatCorrection:z.enum(["allow-once","forbid"]),pairedTransport:z.literal("jsonl-v1").optional()}).strict();
 const scope=new AsyncLocalStorage<z.infer<typeof policySchema>>();
 const transportSchema=z.enum(["json","jsonl-v1"]);
-export const SERVER_PAIRED_OUTCOME_REFERENCE_VERSION="paired-outcome-reference-v2-criterion-evidence-status";
+export const SERVER_PAIRED_OUTCOME_REFERENCE_VERSION="paired-outcome-reference-v3-all-criterion-evidence-status";
 
 /** Prospective server policy shared by ordinary paired Missions and calibration. No scoped override. */
 export function serverAiPairedOutcomeReferenceMode(){

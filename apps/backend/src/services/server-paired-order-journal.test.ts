@@ -31,7 +31,7 @@ function fixture(relativeStatus?:"unknown"|"sufficient"|"missing"){
   candidate.safety="FAIL";
   if(relativeStatus)for(const arm of [original,candidate]){
    arm.safety="FAIL";Object.assign(arm.criteria[0]!,{score:0,pass:false});
-   if(relativeStatus!=="missing")arm.criteria[0]!.relativeEvidenceStatus=relativeStatus;
+   if(relativeStatus!=="missing")arm.criteria[0]!.evidenceStatus=relativeStatus;
   }
   return record(raw,{schemaVersion:"paired-evaluation-v1",requestFingerprint:p.requestFingerprint,
    versions:[{slot:"A",result:order===0?original:candidate},{slot:"B",result:order===0?candidate:original},{slot:"C",result:structuredClone(original)}]});
@@ -48,10 +48,10 @@ describe("durable per-order recovery under the original occupied claim",()=>{
   const settled=settleServerPairedJudgment(x.project,x.project.evalSuite,x.candidateRuns,x.originalRuns,x.request,recovered);
   expect(settled.safety).toBe("FAIL");expect(settled.criterionScores?.[0]).toMatchObject({score:0,pass:false,verificationStatus:status==="sufficient"?"verified":"unverified"});
   for(const sample of recovered.pairedComparison!.receipt.samples)for(const arm of [sample.original,sample.candidate,sample.controlOriginal])
-   expect(arm.criteria[0]!.relativeEvidenceStatus).toBe(status==="missing"?undefined:status);
+   expect(arm.criteria[0]!.evidenceStatus).toBe(status==="missing"?undefined:status);
   if(status==="unknown"){
    const row=[...x.events.values()].find(e=>e.source==="server-paired-order-journal")!,observation=row.payload.observation as PairedOrderObservation;
-   observation.response.versions[0]!.result.criteria[0]!.relativeEvidenceStatus="sufficient";
+   observation.response.versions[0]!.result.criteria[0]!.evidenceStatus="sufficient";
    await expect(runServerPairedEvidenceJudge(x.request,x.make())).rejects.toThrow();expect(x.invoke).toHaveBeenCalledTimes(2);
   }
  });

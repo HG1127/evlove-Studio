@@ -1,5 +1,5 @@
 import { z } from "zod";
-import {PairedJudgeContextSchema,PairedJudgeFileObservationSchema,PairedRelativeEvidenceStatusSchema,type PairedJudgeReceipt} from "./paired-judge-contract";
+import {PairedJudgeContextSchema,PairedJudgeFileObservationSchema,PairedRelativeEvidenceStatusSchema,CriterionEvidenceStatusSchema,type PairedJudgeReceipt} from "./paired-judge-contract";
 import {
   AcceptanceCriterionSchema,
   ArtifactRoleSchema,
@@ -329,6 +329,7 @@ const EvaluationWithIdentitiesSchema = z.object({
   criteria: z.array(z.object({
     criterionId: z.string(),
     relativeEvidenceStatus:PairedRelativeEvidenceStatusSchema.optional(),
+    evidenceStatus:CriterionEvidenceStatusSchema.optional(),
     score: z.coerce.number(),
     pass: z.boolean(),
     evidence: z.array(z.string()).default([]),

@@ -1,4 +1,4 @@
-import {PAIRED_JUDGE_POLICY,PAIRED_JUDGE_FILE_METADATA_POLICY,PAIRED_OUTCOME_REFERENCE_POLICY,PairedJudgeFileMetadataSchema,PairedJudgeReceiptSchema,type AcceptanceCriterion,type Candidate,type EvaluateAiResult,type EvaluationResult,type EvolveProject,type FrozenArtifact,type OriginalArtifactReferenceProof,type PairedJudgeReceipt,type SourceArtifact,type TestCase} from "@evolution/contracts";
+import {PAIRED_JUDGE_POLICY,PAIRED_JUDGE_FILE_METADATA_POLICY,PAIRED_OUTCOME_REFERENCE_POLICY,PAIRED_CRITERION_EVIDENCE_POLICY,PairedJudgeFileMetadataSchema,PairedJudgeReceiptSchema,type AcceptanceCriterion,type Candidate,type EvaluateAiResult,type EvaluationResult,type EvolveProject,type FrozenArtifact,type OriginalArtifactReferenceProof,type PairedJudgeReceipt,type SourceArtifact,type TestCase} from "@evolution/contracts";
 import {fastHash} from "./stable-hash";
 
 const dimensions=["accuracy","evidence","riskCoverage","completeness"] as const;
@@ -41,10 +41,13 @@ export function conservativePairedJudgments(samples:readonly[{original:EvaluateA
 
 export function inconclusivePairedCriteria(receipt:PairedJudgeReceipt,criteria:AcceptanceCriterion[]){
   const zeroIds=new Set(receipt.outcomeReferencePolicy===PAIRED_OUTCOME_REFERENCE_POLICY?zeroOutcomeReferenceCriterionIds(criteria):[]);
+  const explicitEvidence=receipt.evidenceStatusPolicy===PAIRED_CRITERION_EVIDENCE_POLICY;
   return criteria.filter(c=>{
     if(!receipt.criterionIds.includes(c.id))return false;
+    if(explicitEvidence&&receipt.samples.some(s=>[s.original,s.candidate,s.controlOriginal].some(a=>
+      a.criteria.find(r=>r.criterionId===c.id)?.evidenceStatus!=="sufficient")))return true;
     // REVIEW cannot turn an unknown relative comparison into a verified zero failure.
-    if(zeroIds.has(c.id)&&receipt.samples.some(s=>[s.original,s.candidate,s.controlOriginal].some(a=>
+    if(!explicitEvidence&&zeroIds.has(c.id)&&receipt.samples.some(s=>[s.original,s.candidate,s.controlOriginal].some(a=>
       a.criteria.find(r=>r.criterionId===c.id)?.relativeEvidenceStatus!=="sufficient"||a.safety==="REVIEW")))return true;
     const rows=receipt.samples.map(s=>({a:s.original.criteria.find(r=>r.criterionId===c.id)!,b:s.candidate.criteria.find(r=>r.criterionId===c.id)!}));
     const pass=(r:typeof rows[number]["a"])=>r.pass&&r.score>=c.minScore;

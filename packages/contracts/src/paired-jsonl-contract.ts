@@ -1,5 +1,5 @@
 import {z} from "zod";
-import {PairedRelativeEvidenceStatusSchema} from "./paired-judge-contract";
+import {PairedRelativeEvidenceStatusSchema,CriterionEvidenceStatusSchema,PAIRED_CRITERION_EVIDENCE_POLICY} from "./paired-judge-contract";
 
 export const PAIRED_JSONL_PROTOCOL="paired-evaluation-jsonl-v1" as const;
 const id=z.string().min(1).max(240),slot=z.enum(["A","B","C"]);
@@ -8,6 +8,7 @@ const ids=z.array(id).min(1).max(100).refine(v=>new Set(v).size===v.length);
 export const PairedJsonlScopeSchema=z.object({requestFingerprint:id,
  bindings:z.array(z.object({criterionId:id,testCaseIds:ids}).strict()).min(1).max(32),
  relativeCriterionIds:z.array(id).min(1).max(32).refine(v=>new Set(v).size===v.length).optional(),
+ evidenceStatusPolicy:z.literal(PAIRED_CRITERION_EVIDENCE_POLICY).optional(),
 }).strict().refine(v=>new Set(v.bindings.map(b=>b.criterionId)).size===v.bindings.length)
  .refine(v=>v.relativeCriterionIds?.every(id=>v.bindings.some(b=>b.criterionId===id))??true);
 const summary=z.object({accuracy:score,evidence:score,riskCoverage:score,completeness:score,
@@ -26,6 +27,12 @@ export const PairedJsonlRecordSchema=z.discriminatedUnion("kind",[
 export const PairedJsonlReferenceRecordSchema=z.discriminatedUnion("kind",[
  PairedJsonlRecordSchema.options[0],PairedJsonlRecordSchema.options[1],
  z.object({kind:z.literal("criterion"),slot,value:criterion.extend({relativeEvidenceStatus:PairedRelativeEvidenceStatusSchema.optional()})}).strict(),
+ PairedJsonlRecordSchema.options[3],
+]);
+/** New explicit generation policy; the earlier relative-only grammar remains readable separately. */
+export const PairedJsonlEvidenceRecordSchema=z.discriminatedUnion("kind",[
+ PairedJsonlRecordSchema.options[0],PairedJsonlRecordSchema.options[1],
+ z.object({kind:z.literal("criterion"),slot,value:criterion.extend({evidenceStatus:CriterionEvidenceStatusSchema.optional()})}).strict(),
  PairedJsonlRecordSchema.options[3],
 ]);
 export type PairedJsonlScope=z.infer<typeof PairedJsonlScopeSchema>;

@@ -38,7 +38,7 @@ export function assessMeasurementCalibration(plan:JudgeCalibrationPlan,observati
  for(const control of plan.controls){
   const matches=observations.filter(o=>o.controlId===control.id),observation=matches[0];
   if(matches.length!==1||!observation){fail("Missing unique control "+control.id);continue;}
-  const r=observation.receipt,{samples,limitations,scoringRouteFingerprint,outcomeReferencePolicy,...context}=r;void limitations;void outcomeReferencePolicy;
+  const r=observation.receipt,{samples,limitations,scoringRouteFingerprint,outcomeReferencePolicy,evidenceStatusPolicy,...context}=r;void limitations;void outcomeReferencePolicy;
   if(fastHash(context)!==fastHash(control.context)||scoringRouteFingerprint!==plan.scoringRouteFingerprint
    ||r.rubricFingerprint!==plan.rubricFingerprint||r.suiteFingerprint!==plan.suiteFingerprint){
    fail("Control identity/model/file/paper binding differs: "+control.id);continue;
@@ -67,6 +67,8 @@ export function assessMeasurementCalibration(plan:JudgeCalibrationPlan,observati
     fail("Missing source-text anchor for "+control.id+"/"+criterion.id+"/"+arm);
   }
   if(inconclusivePairedCriteria(r,criteria).length)fail("Unqualified control threshold/direction/copy measurement: "+control.id);
+  if(evidenceStatusPolicy&&samples.some(s=>[s.original,s.candidate,s.controlOriginal].some(a=>a.safety==="REVIEW")))
+   fail("Unknown control Safety cannot qualify an explicit evidence measurement: "+control.id);
   if(criteria.some(c=>zeroReferenceIds.has(c.id))&&samples.some(s=>[s.original,s.candidate,s.controlOriginal].some(a=>a.safety==="REVIEW")))
    fail("Unknown zero-reference evidence cannot qualify a control: "+control.id);
   const unchanged=r.bindings.every(b=>b.originalSha256===b.candidateSha256);
