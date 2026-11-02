@@ -1,0 +1,41 @@
+// @vitest-environment node
+import {afterEach,expect,it,vi} from "vitest";
+import {PAIRED_JSONL_PROTOCOL} from "@evolution/contracts";
+import {withExplicitServerAiConnection} from "./server-ai-connection";
+import {withServerAiOutputPolicy} from "./server-ai-output-policy";
+import {runServerAi,serverAiScoringRouteFingerprint} from "./ai-gateway";
+
+const input={connectionId:"fixture",label:"Fixture",apiKey:"test-only",baseUrl:"https://fixture.invalid/v1",model:"fixture",protocol:"chat-completions" as const,responseFormat:"json-schema" as const};
+const payload={schemaVersion:"paired-judge-input-v1",requestFingerprint:"fixed:0",issuedCriterionCaseBindings:[{criterionId:"GOAL",testCaseIds:["T1"]}],acceptanceRubric:[{id:"GOAL"}],testCases:[{id:"T1",criterionIds:["GOAL"]}]};
+const summary={accuracy:90,evidence:91,riskCoverage:92,completeness:93,safety:"PASS",notes:["quoted\nsource"],failures:[],cases:[]};
+const row={criterionId:"GOAL",score:94,pass:true,evidence:["actual quote"],gaps:[],testCaseIds:["T1"]};
+const records=[{kind:"header",protocol:PAIRED_JSONL_PROTOCOL,requestFingerprint:"fixed:0"},...["A","B","C"].flatMap(slot=>[{kind:"summary",slot,value:summary},{kind:"criterion",slot,value:row}]),{kind:"end",requestFingerprint:"fixed:0",criterionRecords:3}];
+const text=records.map(r=>JSON.stringify(r)).join("\n");
+const scoped=<T>(work:()=>T)=>withServerAiOutputPolicy({formatCorrection:"forbid",pairedTransport:"jsonl-v1"},work);
+afterEach(()=>vi.unstubAllGlobals());
+for(const protocol of ["chat-completions","responses"] as const){
+ it("parses the explicit "+protocol+" line transport without an object-format constraint",async()=>{
+  const fetch=vi.fn(async(_url:unknown,init?:RequestInit)=>{
+   const body=JSON.parse(String(init?.body));expect(body).not.toHaveProperty("response_format");expect(body).not.toHaveProperty("text");
+   const system=protocol==="responses"?body.input[0].content[0].text:body.messages[0].content;
+   expect(system).toContain(PAIRED_JSONL_PROTOCOL);expect(system).toContain("one complete JSON object per line");
+   return new Response(JSON.stringify(protocol==="responses"?{status:"completed",output_text:text}:{choices:[{message:{content:text}}]}),{status:200});
+  });vi.stubGlobal("fetch",fetch);
+  const result=await scoped(()=>withExplicitServerAiConnection({...input,protocol},()=>runServerAi("evaluate-paired",payload)));
+  expect(result.versions.map(v=>v.result)).toEqual([1,2,3].map(()=>({...summary,criteria:[row]})));expect(fetch).toHaveBeenCalledTimes(1);
+ });
+}
+it("never retries malformed JSONL or falls back to a valid object reply",async()=>{
+ const fetch=vi.fn(async()=>new Response(JSON.stringify({choices:[{message:{content:text.slice(0,-1)}}]}),{status:200}));vi.stubGlobal("fetch",fetch);
+ await expect(scoped(()=>withExplicitServerAiConnection(input,()=>runServerAi("evaluate-paired",payload)))).rejects.toMatchObject({code:"AI_OUTPUT_INVALID_JSONL"});expect(fetch).toHaveBeenCalledTimes(1);
+});
+it("rejects other operations before provider I/O",async()=>{
+ const fetch=vi.fn();vi.stubGlobal("fetch",fetch);
+ await expect(scoped(()=>withExplicitServerAiConnection(input,()=>runServerAi("visual-judge",{})))).rejects.toThrow("evaluate-paired only");expect(fetch).not.toHaveBeenCalled();
+});
+it("binds line transport into scoring identity without changing the default identity",async()=>{
+ await withExplicitServerAiConnection(input,async()=>{
+  const original=await serverAiScoringRouteFingerprint();const changed=await scoped(()=>serverAiScoringRouteFingerprint());
+  expect(changed).not.toBe(original);expect(await serverAiScoringRouteFingerprint()).toBe(original);
+ });
+});

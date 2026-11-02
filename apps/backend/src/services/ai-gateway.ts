@@ -3,11 +3,13 @@ import { aiProviderTransportFailure,parseStructuredAiOutput } from "@evolution/a
 import { createHash } from "node:crypto";
 import {serverAiRepairContract} from "./server-ai-repair-contract";
 import {serverAiBuildContract} from "./server-ai-build-contract";
-import {serverAiFormatCorrectionAllowed} from "./server-ai-output-policy";
+import {serverAiFormatCorrectionAllowed,serverAiPairedJsonlEnabled} from "./server-ai-output-policy";
+import {serverPairedJsonlOutput} from "./server-paired-jsonl-output";
 import {ServerControlExecutionStoppedError,serverControlExecutionSignal} from "./server-control-execution";
 import {
   AiOperationSchema,
   LessonDistillationContextSchema,
+  PAIRED_JSONL_PROTOCOL,
   ArtifactAcceptanceAiResultSchema,
   CommandAiResultSchema,
   CopilotAiResultSchema,
@@ -77,7 +79,8 @@ export async function serverAiScoringRouteFingerprint(): Promise<string | undefi
   const route = config.mode === "openai-compatible"
     ? [config.mode, config.baseUrl, config.model, ...(config.protocol || config.responseFormat ? [config.protocol,config.responseFormat] : []),...(config.reasoningEffort?[{reasoningEffort:config.reasoningEffort}]:[])]
     : [config.mode, config.model];
-  return createHash("sha256").update(JSON.stringify({ route, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION,measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION,pairedGenerationSchemaVersion:SERVER_PAIRED_GENERATION_SCHEMA_VERSION })).digest("hex");
+  return createHash("sha256").update(JSON.stringify({ route, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION,measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION,pairedGenerationSchemaVersion:SERVER_PAIRED_GENERATION_SCHEMA_VERSION,
+    ...(serverAiPairedJsonlEnabled()?{pairedOutputTransport:PAIRED_JSONL_PROTOCOL}:{}) })).digest("hex");
 }
 
 type StructuredSchema={name:string;schema:Record<string,unknown>};
@@ -237,7 +240,7 @@ function directFormat<T>(config:Extract<ServerAiConfig,{mode:"openai-compatible"
   return {type:"json_schema" as const,name:contract.schema.name,strict:true,schema:contract.schema.schema};
 }
 
-type DirectArgs<T>={operation:AiOperation;config:Extract<ServerAiConfig,{mode:"openai-compatible"}>;contract:Contract<T>;payload:unknown;images:ParsedImage[];repairFields?:string[];planDraftIncluded?:boolean;onInvalidJson?:(text:string)=>void};
+type DirectArgs<T>={operation:AiOperation;config:Extract<ServerAiConfig,{mode:"openai-compatible"}>;contract:Contract<T>;payload:unknown;images:ParsedImage[];repairFields?:string[];planDraftIncluded?:boolean;onInvalidJson?:(text:string)=>void;lineOutput?:{system:string;parse:(text:string)=>T}};
 async function callResponses<T>(args:DirectArgs<T>){
   const request=await fetchServerAiProviderUsage(args.config,"responses",args.operation,args.config.baseUrl+"/responses",{
     method:"POST",
@@ -248,7 +251,7 @@ async function callResponses<T>(args:DirectArgs<T>){
       model:args.config.model,
       store:false,
       input:[
-        {role:"system",content:[{type:"input_text",text:directSystem(args.config,args.contract,args.repairFields,args.planDraftIncluded)}]},
+        {role:"system",content:[{type:"input_text",text:args.lineOutput?.system??directSystem(args.config,args.contract,args.repairFields,args.planDraftIncluded)}]},
         {role:"user",content:[
           {type:"input_text",text:JSON.stringify(args.payload)},
           ...args.images.map((image)=>({type:"input_image",image_url:image.dataUrl})),
@@ -256,7 +259,7 @@ async function callResponses<T>(args:DirectArgs<T>){
       ],
       max_output_tokens:10000,
       ...(args.config.reasoningEffort?{reasoning:{effort:args.config.reasoningEffort}}:{}),
-      ...(directFormat(args.config,args.contract)?{text:{format:directFormat(args.config,args.contract)}}:{}),
+      ...(!args.lineOutput&&directFormat(args.config,args.contract)?{text:{format:directFormat(args.config,args.contract)}}:{}),
     }),
   });
   const response=request.response;
@@ -266,7 +269,7 @@ async function callResponses<T>(args:DirectArgs<T>){
     throw error;
   }
   if(json.status&&json.status!=="completed")throw new Error("Server AI response status: "+json.status);
-  return parseStructuredResult(responseText(json),args.contract,args.onInvalidJson);
+  return args.lineOutput?args.lineOutput.parse(responseText(json)):parseStructuredResult(responseText(json),args.contract,args.onInvalidJson);
 }
 
 async function callChat<T>(args:DirectArgs<T>){
@@ -284,13 +287,13 @@ async function callChat<T>(args:DirectArgs<T>){
       ...(isEvaluation?{max_tokens:8192}:args.operation==="evaluate-paired"?{max_tokens:16384}:{}),
       ...(args.config.reasoningEffort?{reasoning_effort:args.config.reasoningEffort}:{}),
       messages:[
-        {role:"system",content:directSystem(args.config,args.contract,args.repairFields,args.planDraftIncluded)},
+        {role:"system",content:args.lineOutput?.system??directSystem(args.config,args.contract,args.repairFields,args.planDraftIncluded)},
         {role:"user",content:args.images.length?[
           {type:"text",text:JSON.stringify(args.payload)},
           ...args.images.map((image)=>({type:"image_url",image_url:{url:image.dataUrl}})),
         ]:JSON.stringify(args.payload)},
       ],
-      ...(args.config.responseFormat==="prompt-json"?{}:{
+      ...(args.lineOutput||args.config.responseFormat==="prompt-json"?{}:{
         response_format:args.config.responseFormat==="json-object"
           ?{type:"json_object"}
           :{type:"json_schema",json_schema:{name:args.contract.schema.name,strict:true,schema:args.contract.schema.schema}},
@@ -300,10 +303,13 @@ async function callChat<T>(args:DirectArgs<T>){
   const response=request.response;
   const json=await request.readJson() as ChatJson;
   if(!response.ok)throw Object.assign(new Error(json.error?.message||("Server AI Chat HTTP "+response.status)),{httpStatus:response.status});
-  return parseStructuredResult(chatText(json),args.contract,args.onInvalidJson);
+  return args.lineOutput?args.lineOutput.parse(chatText(json)):parseStructuredResult(chatText(json),args.contract,args.onInvalidJson);
 }
 
 async function structured<T>(operation:AiOperation,payload:unknown,schema:Contract<T>,media?:ServerAiMedia):Promise<T>{
+  const jsonl=serverAiPairedJsonlEnabled();
+  if(jsonl&&operation!=="evaluate-paired")throw Error("Paired JSONL scope permits evaluate-paired only");
+  const lineOutput=jsonl?serverPairedJsonlOutput(payload,schema.parser,schema.instruction):undefined;
   const originalPayload=operation==="plan"&&payload!==null&&typeof payload==="object"?JSON.parse(JSON.stringify(payload)) as unknown:payload;
   const saved=await resolveServerAiConfig();
   if(!saved){
@@ -313,6 +319,7 @@ async function structured<T>(operation:AiOperation,payload:unknown,schema:Contra
     );
   }
   const config=serverAiConfigForOperation(saved,operation);
+  if(jsonl&&(config.mode!=="openai-compatible"||!config.protocol))throw Error("Paired JSONL requires an explicit direct protocol; fallback is forbidden");
   const images=parseServerAiImages(media);
   if(config.mode==="vercel-gateway"){
     return callVercelGateway({operation,config,contract:schema,payload,images});
@@ -320,7 +327,7 @@ async function structured<T>(operation:AiOperation,payload:unknown,schema:Contra
   let failedPlanFinal:string|undefined;
   const invoke=async(repairFields?:string[])=>{
     const correction=operation==="plan"&&repairFields?serverPlanJsonCorrectionPayload(originalPayload,failedPlanFinal,config.apiKey):{payload:originalPayload,draftIncluded:false};
-    const args={operation,config,contract:schema,payload:correction.payload,images,repairFields,planDraftIncluded:correction.draftIncluded,
+    const args={operation,config,contract:schema,payload:correction.payload,images,repairFields,planDraftIncluded:correction.draftIncluded,lineOutput,
       onInvalidJson:operation==="plan"?(text:string)=>{failedPlanFinal=text;}:undefined};
     if(config.protocol==="chat-completions")return callChat(args);
     if(config.protocol==="responses")return callResponses(args);
