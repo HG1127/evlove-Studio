@@ -1,6 +1,7 @@
 import {withServerAiConnection} from "./server-ai-connection";
 import {executeServerArtifactExternal} from "./server-artifact-external";
 import type { Candidate, EvolveProject, TargetRunResult, TestCase } from "@evolution/contracts";
+import {HTML_CARD_PARAGRAPH_EVIDENCE_VERSION} from "@evolution/contracts";
 
 import { runServerHoldout } from "@evolution/harness";
 import { runServerAi, serverAiScoringRouteFingerprint } from "./ai-gateway";
@@ -37,7 +38,7 @@ export async function runServerMissionHoldout(project:EvolveProject){
   return withServerAiConnection(async()=>{
   return runServerHoldout(project,{
     scoringRouteFingerprint:await serverAiScoringRouteFingerprint(),
-    executionRuntimeFingerprint:JSON.stringify([HTML_PRESERVATION_EXECUTION_VERSION,serverNativeHtmlRuntime(project).fingerprint,HTML_NATIVE_EVIDENCE_POLICY_VERSION]),
+    executionRuntimeFingerprint:JSON.stringify([HTML_PRESERVATION_EXECUTION_VERSION,serverNativeHtmlRuntime(project).fingerprint,HTML_NATIVE_EVIDENCE_POLICY_VERSION,HTML_CARD_PARAGRAPH_EVIDENCE_VERSION]),
     readArtifactFingerprint:readServerHoldoutArtifactFingerprint,
     current:{
       executeNativeHtmlBatch:executeServerHtmlNativeBatch,

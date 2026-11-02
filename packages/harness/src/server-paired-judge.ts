@@ -2,6 +2,7 @@ import {PAIRED_JUDGE_POLICY,PAIRED_JUDGE_FILE_METADATA_POLICY,PairedJudgeRequest
 import {fastHash,pairedJudgeFileMetadata,qualifyPairedEvaluation,settleAiEvaluation,inspectHtmlNativeEvidence} from "@evolution/core";
 import {measuredDocumentObservations,SERVER_MEASURED_REVIEW_VERSION} from "./server-measured-review-evidence";
 import {compactExperimentRunOutput} from "./server-experiment-evidence";
+import {measuredCardParagraphChanges} from "./measured-card-paragraph-changes";
 
 export function serverPairedJudgeRequest(project:EvolveProject,candidate:Candidate,suite:TestCase[],criteria:AcceptanceCriterion[],runs:TargetRunResult[],originalRuns:TargetRunResult[],phase:"visible"|"holdout"){
   const targets=project.sourceArtifacts.filter(s=>s.role==="target"),refs=project.baselineRun.originalReferences??[];
@@ -22,9 +23,10 @@ export function serverPairedJudgeRequest(project:EvolveProject,candidate:Candida
     const proof=inspectHtmlNativeEvidence(run,run.testCaseId,binding.sourceArtifactId,candidateArm?binding.candidateSha256:binding.originalSha256);
     return proof?.complete&&proof.proof.observation.original.sha256===binding.originalSha256;
   })));
+  const paragraphChanges=measuredCardParagraphChanges(runs,originalRuns,bindings);
   const packet=(arm:TargetRunResult[],candidateArm:boolean)=>({
     ...(withMetadata?{files:bindings.map(b=>({sourceArtifactId:b.sourceArtifactId,sha256:candidateArm?b.candidateSha256:b.originalSha256,...b.fileMetadata![candidateArm?"candidate":"original"]}))}:{}),
-    documents:measuredDocumentObservations(bothRendered?arm.filter(run=>run.nativeHtmlProof):arm,undefined,bindings.map(b=>({sourceArtifactId:b.sourceArtifactId,subjectSha256:candidateArm?b.candidateSha256:b.originalSha256,originalSha256:b.originalSha256}))),
+    documents:{...measuredDocumentObservations(bothRendered?arm.filter(run=>run.nativeHtmlProof):arm,undefined,bindings.map(b=>({sourceArtifactId:b.sourceArtifactId,subjectSha256:candidateArm?b.candidateSha256:b.originalSha256,originalSha256:b.originalSha256}))),paragraphChanges},
     runs:arm.map(run=>{const test=suite.find(t=>t.id===run.testCaseId)!;return {testCaseId:run.testCaseId,verificationStatus:run.verificationStatus,
       outputChunks:[compactExperimentRunOutput(run.output,`${test.title} ${test.input} ${test.expected.join(" ")}`)],
       trace:run.trace.slice(0,12).map(step=>({stage:step.stage,status:step.status,summary:step.summary}))};}),

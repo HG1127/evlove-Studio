@@ -2,6 +2,7 @@ import {HTML_NATIVE_PAYMENT_REQUIRED,HTML_NATIVE_LOCAL_UNAVAILABLE,HtmlNativeBro
   type ArtifactStorePort,type Candidate,type CandidateArtifactSnapshot,type EvolveProject,
   type SandboxHtmlNativeRequest,type SandboxHtmlNativeResponse,type SourceArtifact,type TargetRunResult,type TestCase} from "@evolution/contracts";
 import {fastHash,htmlNativeBrowserPlanKey,htmlNativeCaseSource,isSourceGroundedHtmlSearchPlan} from "@evolution/core";
+import {observeHtmlCardParagraphChanges} from "@evolution/adapters";
 import {getServerArtifactStore} from "./artifact-runtime";
 import {serverArtifactSha256,verifyServerCandidateFrozenArtifact} from "./server-experiment-artifacts";
 import {serverNativeHtmlRuntime} from "./server-html-native-runtime";
@@ -80,11 +81,14 @@ export function createServerHtmlNativeExecutor(ports:Ports){
         if(observation.original.sha256!==original.sha256||observation.subject.sha256!==subjectSha
           ||observation.subject.bodyTextFingerprint!==fastHash(result.subjectText)
           ||JSON.stringify(observation.browserAssertions)!==JSON.stringify(browserAssertions))throw Error("Native observation physical subjects or declared predicates differ");
+        const paragraphEvidence=await observeHtmlCardParagraphChanges({sourceArtifactId:source.id,
+          original:{sha256:original.sha256,bytes:original.bytes},candidate:{sha256:subjectSha,bytes:subject}});
         for(const test of tests)runs.push(TargetRunResultSchema.parse({testCaseId:test.id,artifactHash:subjectSha,
           output:observation.schemaVersion==="html-native-observation-v2-local-browser"
             ?"NATIVE HTML OBSERVATIONS: exact physical subjects observed in fresh local sandboxed headless browser processes with network denied. Tool assertions do not establish semantic quality or final acceptance."
             :"NATIVE HTML OBSERVATIONS: exact physical subjects observed in a network-denied ephemeral Sandbox. Tool assertions do not establish semantic quality or final acceptance.",
           verificationStatus:"verified",latencyMs:observation.subject.elapsedMs,cost:0,trace:[],
+          htmlCardParagraphEvidence:paragraphEvidence,
           nativeHtmlProof:{sourceArtifactId:source.id,testCaseId:test.id,subjectSha256:subjectSha,producer:"native-html-observer-v1",observation},
           renderedDocumentEvidence:{schemaVersion:"rendered-html-document-v1",sourceArtifactId:source.id,artifactSha256:subjectSha,
             textFingerprint:fastHash(result.subjectText),text:result.subjectText,paragraphs:observation.subject.renderedParagraphs,

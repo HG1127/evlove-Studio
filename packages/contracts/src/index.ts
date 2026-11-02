@@ -49,3 +49,4 @@ export * from "./paired-order-observation-contract";
 
 export * from "./confirmation-admission-contract";
 export * from "./paired-jsonl-contract";
+export * from "./html-card-paragraph-evidence-contract";

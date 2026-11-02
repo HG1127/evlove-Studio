@@ -140,7 +140,7 @@ describe("server hidden holdout",()=>{
       executeSemanticBatch:async()=>({results:[]}),judge,
     });
     expect(JSON.stringify(judge.mock.calls)).toContain("HIDDEN-TAIL");
-    expect(result.measuredReviewVersion).toBe("server-measured-document-review-v6-observed-focus-style");
+    expect(result.measuredReviewVersion).toBe("server-measured-document-review-v7-bound-paragraph-changes");
   });
   it("keeps repeated current-version semantic evidence unverified",async()=>{
     const project=fixture();

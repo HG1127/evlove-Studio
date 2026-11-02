@@ -49,6 +49,20 @@ function withSearchPlan(){
   return x;
 }
 describe("Mission-authorized native HTML composition",()=>{
+  it("attaches paragraph changes only after physical Original and Candidate identity checks",async()=>{
+    const x=fixture();
+    const original='<html><head><script>PRIVATE_SOURCE_SCRIPT</script></head><body><article class="slide-card" id="slide-1"><p>required input</p><p>output</p></article><article class="slide-card" id="slide-2"><p>other</p></article></body></html>';
+    const subject=original.replace('<p>required input</p>','<p></p>');
+    x.source.size=Buffer.byteLength(original);x.metadata.sha256=sha(original);x.metadata.sizeBytes=x.source.size;
+    Object.assign(x.project.baselineRun.originalReferences![0]!,{sha256:sha(original),sizeBytes:x.source.size});
+    const snapshot=x.candidate.artifactSnapshots[0]!;snapshot.content=subject;snapshot.contentHash=sha(subject);
+    Object.assign(snapshot.frozenArtifact!,{sha256:sha(subject),snapshotHash:sha(subject),size:Buffer.byteLength(subject)});
+    x.blobs.set("original",new Blob([original]));x.blobs.set("candidate",new Blob([subject]));
+    x.response.observation.original.sha256=sha(original);x.response.observation.subject.sha256=sha(subject);
+    const runs=await createServerHtmlNativeExecutor(x.ports)({project:x.project,testCases:[x.test],candidate:x.candidate});
+    expect(runs[0]!.htmlCardParagraphEvidence).toMatchObject({status:"observed",original:{sha256:sha(original)},candidate:{sha256:sha(subject)},changes:[{cardId:"slide-1",removed:["required input"],added:[]}]});
+    expect(JSON.stringify(runs[0]!.htmlCardParagraphEvidence)).not.toContain("PRIVATE_SOURCE_SCRIPT");
+  });
   it("stops local work before file access when champion binding is unsupported or the artifact port cannot initialize",async()=>{
     const x=fixture();x.project.experimentPolicy.nativeHtmlRuntime="local-browser-v1";
     vi.stubEnv("VERCEL","");vi.stubEnv("EVOLUTION_HTML_NATIVE_LOCAL_MISSIONS",x.project.id);
