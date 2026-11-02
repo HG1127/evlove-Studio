@@ -19,7 +19,7 @@ describe("explicit paired JSONL transport",()=>{
   const x=fixture();expect(parsePairedJsonl(wire(x.records),scope)).toEqual(x.expected);
   expect(parsePairedJsonl(wire(x.records).replaceAll("\n","\r\n")+"\r\n",scope)).toEqual(x.expected);
  });
- for(const mode of ["truncated","missing-end","missing-row","duplicate-row","duplicate-slot","foreign-criterion","foreign-case","fingerprint","missing-evidence","extra-field","string-score","range","zero-summary","foreign-case-score","end-count","protocol"]){
+ for(const mode of ["truncated","missing-end","missing-row","duplicate-row","duplicate-slot","foreign-criterion","foreign-case","fingerprint","missing-evidence","extra-field","header-schema","string-score","range","zero-summary","foreign-case-score","end-count","protocol"]){
   it("rejects "+mode+" without changing its input",()=>{
    const {records}=fixture();const r=records as Array<Record<string,unknown>>;
    if(mode==="missing-end")r.pop();
@@ -32,6 +32,7 @@ describe("explicit paired JSONL transport",()=>{
    if(mode==="fingerprint")r[0]!.requestFingerprint="OTHER";
    if(mode==="missing-evidence")delete row.evidence;
    if(mode==="extra-field")row.secret="discard me";
+   if(mode==="header-schema")r[0]!.$schema="https://json-schema.org/draft/2020-12/schema";
    if(mode==="string-score")row.score="97";
    if(mode==="range")row.score=101;
    if(mode==="zero-summary")Object.assign(summary,{accuracy:0,evidence:0,riskCoverage:0});

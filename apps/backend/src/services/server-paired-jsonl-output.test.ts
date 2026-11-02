@@ -1,6 +1,7 @@
 // @vitest-environment node
 import {afterEach,expect,it,vi} from "vitest";
-import {PAIRED_JSONL_PROTOCOL} from "@evolution/contracts";
+import {PAIRED_JSONL_PROTOCOL,PairedEvaluationAiResultSchema} from "@evolution/contracts";
+import {serverPairedJsonlOutput,SERVER_PAIRED_JSONL_GENERATION_VERSION} from "./server-paired-jsonl-output";
 import {withExplicitServerAiConnection} from "./server-ai-connection";
 import {withServerAiOutputPolicy} from "./server-ai-output-policy";
 import {runServerAi,serverAiScoringRouteFingerprint} from "./ai-gateway";
@@ -13,6 +14,15 @@ const records=[{kind:"header",protocol:PAIRED_JSONL_PROTOCOL,requestFingerprint:
 const text=records.map(r=>JSON.stringify(r)).join("\n");
 const scoped=<T>(work:()=>T)=>withServerAiOutputPolicy({formatCorrection:"forbid",pairedTransport:"jsonl-v1"},work);
 afterEach(()=>vi.unstubAllGlobals());
+it("separates exact data examples from grammar metadata while retaining strict header rejection",()=>{
+ const output=serverPairedJsonlOutput(payload,PairedEvaluationAiResultSchema,"Unchanged evaluation instructions.");
+ expect(SERVER_PAIRED_JSONL_GENERATION_VERSION).toBe("paired-jsonl-generation-v2-explicit-records");
+ expect(output.system).toContain(JSON.stringify(records[0]));expect(output.system).toContain(JSON.stringify(records.at(-1)));
+ const grammar=JSON.parse(output.system.split("record schema:\n")[1]!);
+ expect(grammar).not.toHaveProperty("$schema");expect(output.system).toContain("NOT a record to copy");
+ const invalid=structuredClone(records);Object.assign(invalid[0]!,{$schema:"https://json-schema.org/draft/2020-12/schema"});
+ expect(()=>output.parse(invalid.map(r=>JSON.stringify(r)).join("\n"))).toThrow();
+});
 for(const protocol of ["chat-completions","responses"] as const){
  it("parses the explicit "+protocol+" line transport without an object-format constraint",async()=>{
   const fetch=vi.fn(async(_url:unknown,init?:RequestInit)=>{

@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import {serverAiRepairContract} from "./server-ai-repair-contract";
 import {serverAiBuildContract} from "./server-ai-build-contract";
 import {serverAiFormatCorrectionAllowed,serverAiPairedJsonlEnabled} from "./server-ai-output-policy";
-import {serverPairedJsonlOutput} from "./server-paired-jsonl-output";
+import {serverPairedJsonlOutput,SERVER_PAIRED_JSONL_GENERATION_VERSION} from "./server-paired-jsonl-output";
 import {ServerControlExecutionStoppedError,serverControlExecutionSignal} from "./server-control-execution";
 import {
   AiOperationSchema,
@@ -80,7 +80,7 @@ export async function serverAiScoringRouteFingerprint(): Promise<string | undefi
     ? [config.mode, config.baseUrl, config.model, ...(config.protocol || config.responseFormat ? [config.protocol,config.responseFormat] : []),...(config.reasoningEffort?[{reasoningEffort:config.reasoningEffort}]:[])]
     : [config.mode, config.model];
   return createHash("sha256").update(JSON.stringify({ route, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION,measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION,pairedGenerationSchemaVersion:SERVER_PAIRED_GENERATION_SCHEMA_VERSION,
-    ...(serverAiPairedJsonlEnabled()?{pairedOutputTransport:PAIRED_JSONL_PROTOCOL}:{}) })).digest("hex");
+    ...(serverAiPairedJsonlEnabled()?{pairedOutputTransport:PAIRED_JSONL_PROTOCOL,pairedOutputGenerationVersion:SERVER_PAIRED_JSONL_GENERATION_VERSION}:{}) })).digest("hex");
 }
 
 type StructuredSchema={name:string;schema:Record<string,unknown>};
