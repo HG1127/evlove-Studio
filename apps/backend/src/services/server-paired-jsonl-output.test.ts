@@ -1,5 +1,5 @@
 // @vitest-environment node
-import {afterEach,expect,it,vi} from "vitest";
+import {afterEach,beforeEach,expect,it,vi} from "vitest";
 import {PAIRED_JSONL_PROTOCOL,PairedEvaluationAiResultSchema} from "@evolution/contracts";
 import {serverPairedJsonlOutput,SERVER_PAIRED_JSONL_GENERATION_VERSION} from "./server-paired-jsonl-output";
 import {withExplicitServerAiConnection} from "./server-ai-connection";
@@ -13,7 +13,8 @@ const row={criterionId:"GOAL",score:94,pass:true,evidence:["actual quote"],gaps:
 const records=[{kind:"header",protocol:PAIRED_JSONL_PROTOCOL,requestFingerprint:"fixed:0"},...["A","B","C"].flatMap(slot=>[{kind:"summary",slot,value:summary},{kind:"criterion",slot,value:row}]),{kind:"end",requestFingerprint:"fixed:0",criterionRecords:3}];
 const text=records.map(r=>JSON.stringify(r)).join("\n");
 const scoped=<T>(work:()=>T)=>withServerAiOutputPolicy({formatCorrection:"forbid",pairedTransport:"jsonl-v1"},work);
-afterEach(()=>vi.unstubAllGlobals());
+beforeEach(()=>vi.stubEnv("EVOLUTION_AI_PAIRED_TRANSPORT",""));
+afterEach(()=>{vi.unstubAllGlobals();vi.unstubAllEnvs();});
 it("separates exact data examples from grammar metadata while retaining strict header rejection",()=>{
  const output=serverPairedJsonlOutput(payload,PairedEvaluationAiResultSchema,"Unchanged evaluation instructions.");
  expect(SERVER_PAIRED_JSONL_GENERATION_VERSION).toBe("paired-jsonl-generation-v2-explicit-records");

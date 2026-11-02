@@ -307,8 +307,7 @@ async function callChat<T>(args:DirectArgs<T>){
 }
 
 async function structured<T>(operation:AiOperation,payload:unknown,schema:Contract<T>,media?:ServerAiMedia):Promise<T>{
-  const jsonl=serverAiPairedJsonlEnabled();
-  if(jsonl&&operation!=="evaluate-paired")throw Error("Paired JSONL scope permits evaluate-paired only");
+  const jsonl=serverAiPairedJsonlEnabled(operation);
   const lineOutput=jsonl?serverPairedJsonlOutput(payload,schema.parser,schema.instruction):undefined;
   const originalPayload=operation==="plan"&&payload!==null&&typeof payload==="object"?JSON.parse(JSON.stringify(payload)) as unknown:payload;
   const saved=await resolveServerAiConfig();
