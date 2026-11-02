@@ -38,7 +38,28 @@ export const JudgeCalibrationPlanV2Schema=z.object({schemaVersion:z.literal("jud
     ctx.addIssue({code:"custom",path:["controls",i,"expectations",j],message:"Zero-reference non-improvement requires a known-regression pairwise outcome criterion with a positive threshold; it cannot replace absolute or protection regression contrasts"});
   }
  });
-export const JudgeCalibrationPlanSchema=z.discriminatedUnion("schemaVersion",[JudgeCalibrationPlanV1Schema,JudgeCalibrationPlanV2Schema]);
+/** Absolute labels are independent oracle data, never supplied by the model under test. */
+export const JudgeCalibrationPlanV3Schema=z.object({schemaVersion:z.literal("judge-calibration-plan-v3"),...planFields,
+ controls:z.array(z.object({...controlFields,
+  expectations:z.array(z.object({criterionId:id,direction:z.enum(["same","improve","regress","no-improvement"]),
+   originalPass:z.boolean(),candidatePass:z.boolean()}).strict()).min(1).max(32),
+  context:PairedJudgeContextSchema,anchors:z.array(anchor).min(2).max(256),
+ }).strict()).min(3).max(96),
+}).strict().refine(p=>new Set(p.criteria.map(c=>c.id)).size===p.criteria.length)
+ .refine(p=>new Set(p.controls.map(c=>c.id)).size===p.controls.length)
+ .superRefine((p,ctx)=>{
+  p.criteria.forEach((c,i)=>{if(c.minScore<=0)ctx.addIssue({code:"custom",path:["criteria",i,"minScore"],message:"Absolute numeric threshold calibration needs a positive unchanged minimum"});});
+  for(const [i,control] of p.controls.entries())for(const [j,e] of control.expectations.entries()){
+   const criterion=p.criteria.find(c=>c.id===e.criterionId),path=["controls",i,"expectations",j];
+   if(e.direction==="no-improvement"&&(control.kind!=="known-regression"||criterion?.judgeType!=="pairwise"
+    ||criterion.protectedConstraint||criterion.category!=="outcome"||e.originalPass||e.candidatePass))
+    ctx.addIssue({code:"custom",path,message:"Zero-reference non-improvement needs a non-protected pairwise outcome and two absolute failures"});
+   if(e.direction==="same"&&e.originalPass!==e.candidatePass||e.direction==="improve"&&!e.candidatePass
+    ||e.direction==="regress"&&!e.originalPass&&e.candidatePass)
+    ctx.addIssue({code:"custom",path,message:"Absolute oracle labels contradict the registered direction"});
+  }
+ });
+export const JudgeCalibrationPlanSchema=z.discriminatedUnion("schemaVersion",[JudgeCalibrationPlanV1Schema,JudgeCalibrationPlanV2Schema,JudgeCalibrationPlanV3Schema]);
 /** Immutable canonical evidence still needs the trusted preregistration/independence verifier. */
 export const JudgeCalibrationApprovalEvidenceSchema=z.object({schemaVersion:z.literal("judge-calibration-approval-v1"),
  kind:z.enum(["preregistration","independent-oracle-approval"]),planSha256:hash,recordedAt:z.iso.datetime({offset:true}),
@@ -53,10 +74,14 @@ export const ApplicationLifetimeEvidenceSchema=z.object({schemaVersion:z.literal
  exitCode:z.number().int(),deadlineStop:z.boolean(),automaticRestart:z.literal(false),
  logsComplete:z.boolean(),maximumHeartbeatGapMs:z.number().nonnegative(),
 }).strict().refine(p=>new Set(p.observedComponents).size===3);
-export const ConfirmationAdmissionRequestSchema=z.object({schemaVersion:z.literal("confirmation-admission-request-v1"),
+const admissionFields={
  sourceCommit:commit,scoringRouteFingerprint:id,rubricFingerprint:id,suiteFingerprint:id,
  calibrationPlanId:id,applicationScenarioSha256:hash,applicationEvidenceSha256:hash,maxHeartbeatGapMs:z.number().positive().max(30000),
- plannedWindowMs:z.number().int().positive().max(1800000)}).strict();
+ plannedWindowMs:z.number().int().positive().max(1800000)};
+export const ConfirmationAdmissionRequestV1Schema=z.object({schemaVersion:z.literal("confirmation-admission-request-v1"),...admissionFields}).strict();
+export const ConfirmationAdmissionRequestV2Schema=z.object({schemaVersion:z.literal("confirmation-admission-request-v2"),...admissionFields,
+ requiredCalibrationVersion:z.literal("judge-calibration-plan-v3")}).strict();
+export const ConfirmationAdmissionRequestSchema=z.discriminatedUnion("schemaVersion",[ConfirmationAdmissionRequestV1Schema,ConfirmationAdmissionRequestV2Schema]);
 export type JudgeCalibrationPlan=z.infer<typeof JudgeCalibrationPlanSchema>;
 export type JudgeCalibrationObservation=z.infer<typeof JudgeCalibrationObservationSchema>;
 export type ConfirmationAdmissionRequest=z.infer<typeof ConfirmationAdmissionRequestSchema>;

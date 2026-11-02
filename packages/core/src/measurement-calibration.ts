@@ -14,7 +14,7 @@ export function calibrationPlanApprovalText(plan:JudgeCalibrationPlan){
 export function assessMeasurementCalibration(plan:JudgeCalibrationPlan,observations:JudgeCalibrationObservation[]){
  const blockers:string[]=[];
  const fail=(reason:string)=>blockers.push(reason);
- const zeroReferenceIds=new Set(plan.schemaVersion==="judge-calibration-plan-v2"?plan.criteria.filter(criterion=>
+ const zeroReferenceIds=new Set(plan.schemaVersion!=="judge-calibration-plan-v1"?plan.criteria.filter(criterion=>
   criterion.judgeType==="pairwise"&&!criterion.protectedConstraint&&criterion.minScore>0&&criterion.category==="outcome"
   &&plan.controls.some(c=>c.kind==="known-regression"&&c.expectations.some(e=>e.criterionId===criterion.id&&e.direction==="no-improvement")))
   .map(c=>c.id):[]);
@@ -26,6 +26,10 @@ export function assessMeasurementCalibration(plan:JudgeCalibrationPlan,observati
   const directions=plan.controls.flatMap(c=>c.expectations.filter(e=>e.criterionId===criterion.id).map(e=>e.direction));
   const semanticImprovement=(criterion.judgeType==="llm"||criterion.judgeType==="pairwise")&&!criterion.protectedConstraint&&!["integrity","protected"].includes(criterion.category);
   if((!directions.includes("regress")&&!zeroReferenceIds.has(criterion.id))||(semanticImprovement&&!directions.includes("improve")))fail("Missing labelled improvement/regression contrast for "+criterion.id);
+  if(plan.schemaVersion==="judge-calibration-plan-v3"){
+   const labels=plan.controls.flatMap(c=>c.expectations.filter(e=>e.criterionId===criterion.id).flatMap(e=>[e.originalPass,e.candidatePass]));
+   if(!labels.includes(true)||!labels.includes(false))fail("Missing labelled pass/fail threshold contrasts for "+criterion.id);
+  }
  }
  for(const control of plan.controls){
   const matches=observations.filter(o=>o.controlId===control.id),observation=matches[0];
@@ -65,6 +69,14 @@ export function assessMeasurementCalibration(plan:JudgeCalibrationPlan,observati
    const a=sample.original.criteria.find(x=>x.criterionId===criterion.id)!;
    const b=sample.candidate.criteria.find(x=>x.criterionId===criterion.id)!;
    const delta=b.score-a.score,direction=control.expectations.find(e=>e.criterionId===criterion.id)?.direction;
+   if(plan.schemaVersion==="judge-calibration-plan-v3"){
+    const oracle=control.expectations.find(e=>e.criterionId===criterion.id);
+    if(!oracle||!("originalPass" in oracle)||!("candidatePass" in oracle))fail("Missing absolute threshold oracle: "+control.id+"/"+criterion.id);
+    else for(const [arm,row,expected] of [["original",a,oracle.originalPass],["candidate",b,oracle.candidatePass]] as const){
+     if(typeof expected!=="boolean"||(expected?(!row.pass||row.score<criterion.minScore):(row.pass||row.score>=criterion.minScore)))
+      fail("Absolute threshold oracle contradicted: "+control.id+"/"+criterion.id+"/"+arm);
+    }
+   }
    if(zeroReferenceIds.has(criterion.id)&&(a.score!==0||a.pass))
     fail("Original self-comparison is not the registered zero reference: "+control.id+"/"+criterion.id);
    if(direction==="no-improvement"&&(b.score!==0||b.pass))
@@ -77,7 +89,7 @@ export function assessMeasurementCalibration(plan:JudgeCalibrationPlan,observati
     fail("Known regression not detected: "+control.id+"/"+criterion.id);
   }
  }
- return {schemaVersion:plan.schemaVersion==="judge-calibration-plan-v2"?"measurement-calibration-decision-v2" as const:"measurement-calibration-decision-v1" as const,ready:blockers.length===0,blockers,
+ return {schemaVersion:plan.schemaVersion==="judge-calibration-plan-v3"?"measurement-calibration-decision-v3" as const:plan.schemaVersion==="judge-calibration-plan-v2"?"measurement-calibration-decision-v2" as const:"measurement-calibration-decision-v1" as const,ready:blockers.length===0,blockers,
   criterionIds:plan.criteria.map(c=>c.id),controls:plan.controls.map(c=>c.id),
   limitations:["Fixed labelled controls qualify only this exact route, rubric, source and paper; they are not Mission acceptance or business evidence.",
    "No thresholds, old scores, Safety failures or independent-final questions are changed; native facts do not replace semantic anchors."]};

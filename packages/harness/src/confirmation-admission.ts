@@ -6,12 +6,14 @@ import {assessMeasurementCalibration,calibrationPlanApprovalText} from "@evoluti
 export async function checkFullConfirmationAdmission(raw:unknown,ports:ConfirmationAdmissionPorts){
  const request=ConfirmationAdmissionRequestSchema.parse(raw),blockers:string[]=[];
  const plan=JudgeCalibrationPlanSchema.parse(await ports.readCalibrationPlan(request.calibrationPlanId));
+ if(request.schemaVersion!=="confirmation-admission-request-v2"||plan.schemaVersion!=="judge-calibration-plan-v3")
+  blockers.push("Current full confirmation requires a v2 request and independently labelled v3 absolute threshold calibration; legacy directional readiness is insufficient");
  if(plan.id!==request.calibrationPlanId||plan.sourceCommit!==request.sourceCommit
   ||plan.scoringRouteFingerprint!==request.scoringRouteFingerprint||plan.rubricFingerprint!==request.rubricFingerprint
   ||plan.suiteFingerprint!==request.suiteFingerprint||plan.applicationScenarioSha256!==request.applicationScenarioSha256||plan.confirmationWindowMs!==request.plannedWindowMs||plan.maxHeartbeatGapMs!==request.maxHeartbeatGapMs)blockers.push("Calibration does not bind the intended exact code/model/rubric/paper");
  if(!await ports.verifyPreregistration(plan.preregistrationSha256)||!await ports.verifyOracleApproval(plan.oracleApprovalSha256))
   blockers.push("Fixed control preregistration or independent oracle approval is unverified");
- if(plan.schemaVersion==="judge-calibration-plan-v2"){
+ if(plan.schemaVersion!=="judge-calibration-plan-v1"){
   // Existence of an older approved object cannot authorize a different interpretation.
   try{
    const planSha256=await ports.sha256Utf8(calibrationPlanApprovalText(plan));
@@ -19,9 +21,9 @@ export async function checkFullConfirmationAdmission(raw:unknown,ports:Confirmat
     const text=await ports.readText(hash),parsed=JudgeCalibrationApprovalEvidenceSchema.safeParse(JSON.parse(text));
     if(!await ports.verifyEvidenceArtifact(hash)||await ports.sha256Utf8(text)!==hash||!parsed.success
      ||parsed.data.kind!==kind||parsed.data.planSha256!==planSha256||Date.parse(parsed.data.recordedAt)>Date.parse(plan.registeredAt))
-     blockers.push("Canonical approval does not bind the registered v2 plan: "+kind);
+     blockers.push("Canonical approval does not bind the registered calibration plan: "+kind);
    }
-  }catch{blockers.push("Canonical v2 plan approval evidence is missing or invalid");}
+  }catch{blockers.push("Canonical calibration plan approval evidence is missing or invalid");}
  }
  const observations=(await ports.readCalibrationObservations(plan.id)).map(o=>JudgeCalibrationObservationSchema.parse(o));
  for(const control of plan.controls)for(const anchor of control.anchors){
@@ -41,7 +43,7 @@ export async function checkFullConfirmationAdmission(raw:unknown,ports:Confirmat
     ||!await ports.verifyEvidenceArtifact(p.eventsSha256)||!await ports.verifyEvidenceArtifact(p.faultInjectionEvidenceSha256))
    blockers.push("Exact application lifetime/fault/health/output evidence is unqualified");
  }
- return {schemaVersion:"full-confirmation-admission-v1" as const,ready:blockers.length===0,blockers,
+ return {schemaVersion:"full-confirmation-admission-v2" as const,ready:blockers.length===0,blockers,
   sourceCommit:request.sourceCommit,scoringRouteFingerprint:request.scoringRouteFingerprint,calibrationPlanId:plan.id,
   applicationEvidenceSha256:request.applicationEvidenceSha256,
   grantsNewTrialAuthority:false,grantsModelBudget:false,technicalAcceptanceEstablished:false};

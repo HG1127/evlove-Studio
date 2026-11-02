@@ -11,3 +11,4 @@ export * from "./hidden-repair-fixture";
 export * from "./learning-context-fixture";
 export * from "./failure-observation-fixture";
 export * from "./paired-judge-fixture";
+export * from "./absolute-calibration-fixture";

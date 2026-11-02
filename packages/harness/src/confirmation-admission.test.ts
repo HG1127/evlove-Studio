@@ -5,11 +5,12 @@ import {describe,expect,it} from "vitest";
 import {JudgeCalibrationPlanSchema,JudgeCalibrationPlanV1Schema,JudgeCalibrationPlanV2Schema,JudgeCalibrationObservationSchema,PairedJudgeReceiptSchema,EvolveProjectSchema,
  type ConfirmationAdmissionPorts,type PairedJudgeReceipt} from "@evolution/contracts";
 import {assessMeasurementCalibration,calibrationPlanApprovalText,inconclusivePairedCriteria,fastHash} from "@evolution/core";
-import {pairedJudgeFixture} from "@evolution/testkit";
+import {pairedJudgeFixture,absoluteCalibrationFixture} from "@evolution/testkit";
 import {serverPairedJudgeRequest} from "./server-paired-judge";
 import {checkFullConfirmationAdmission} from "./confirmation-admission";
 const sha=(s:string)=>createHash("sha256").update(s).digest("hex");
-function fixture(){
+const fixture=absoluteCalibrationFixture;
+function legacyFixture(){
  const x=pairedJudgeFixture(),r=serverPairedJudgeRequest(x.project,x.candidate,x.project.evalSuite,x.project.acceptanceRubric,x.candidateRuns,x.originalRuns,"visible");
  const code="a".repeat(40),texts=new Map([[r.context.bindings[0]!.originalSha256,"Original measured body"],[r.context.bindings[0]!.candidateSha256,"Updated measured body"]]);
  const controls=(["identical","known-improvement","known-regression"] as const).map((kind,index)=>{
@@ -47,7 +48,7 @@ function fixture(){
 }
 /** Synthetic contrasts only; no real model or independently approved oracle. */
 function zeroReferenceFixture(){
- const x=fixture(),raw=structuredClone(x.plan);
+ const x=legacyFixture(),raw=structuredClone(x.plan);
  raw.criteria[0]!.judgeType="pairwise";raw.rubricFingerprint=fastHash(raw.criteria);
  const plan=JudgeCalibrationPlanV2Schema.parse({...raw,schemaVersion:"judge-calibration-plan-v2",controls:raw.controls.map(c=>({
   ...c,context:{...c.context,rubricFingerprint:raw.rubricFingerprint},
@@ -90,16 +91,19 @@ describe("explicit v2 zero-reference contrasts",()=>{
    expect(r.blockers).toContain("Known regression not detected: control-2/GOAL");expect(JSON.stringify(observations)).toBe(before);
   }
  });
- it("admits a registered exact-zero negative plus passing positive contrast without granting authority",async()=>{
+ it("retains v2 directional readiness without allowing legacy full admission",async()=>{
   const x=zeroReferenceFixture(),before=JSON.stringify(x.observations);
   expect(assessMeasurementCalibration(x.plan,x.observations)).toMatchObject({ready:true,schemaVersion:"measurement-calibration-decision-v2"});
-  expect(await checkFullConfirmationAdmission(x.request,x.ports)).toMatchObject({ready:true,grantsModelBudget:false,grantsNewTrialAuthority:false,technicalAcceptanceEstablished:false});
+  const admission=await checkFullConfirmationAdmission(x.request,x.ports);
+  expect(admission).toMatchObject({ready:false,grantsModelBudget:false,grantsNewTrialAuthority:false,technicalAcceptanceEstablished:false});
+  expect(admission.blockers.join()).toContain("legacy directional readiness is insufficient");
   expect(JSON.stringify(x.observations)).toBe(before);
  });
  it("rejects new expectations on a v1 oracle and rejects unknown versions",()=>{
   const x=zeroReferenceFixture();
   expect(JudgeCalibrationPlanSchema.safeParse({...x.plan,schemaVersion:"judge-calibration-plan-v1"}).success).toBe(false);
   expect(JudgeCalibrationPlanSchema.safeParse({...x.plan,schemaVersion:"judge-calibration-plan-v3"}).success).toBe(false);
+  expect(JudgeCalibrationPlanSchema.safeParse({...x.plan,schemaVersion:"judge-calibration-plan-v4"}).success).toBe(false);
  });
  it("canonicalizes object keys while retaining control order and every approved treatment field",()=>{
   const {plan}=zeroReferenceFixture(),text=calibrationPlanApprovalText(plan);
@@ -220,7 +224,7 @@ describe("fixed calibration and full confirmation admission",()=>{
   for(const control of x.plan.controls){
    control.context.criterionIds.push("GUARD");control.context.rubricFingerprint=x.plan.rubricFingerprint;control.context.suiteFingerprint=x.plan.suiteFingerprint;
    const direction=control.kind==="known-regression"?"regress" as const:"same" as const;
-   control.expectations.push({criterionId:"GUARD",direction});
+   control.expectations.push({criterionId:"GUARD",direction,originalPass:true,candidatePass:control.kind!=="known-regression"});
    control.anchors.push(...control.anchors.filter(a=>a.criterionId==="GOAL").map(a=>({...a,criterionId:"GUARD"})));
    const observation=x.observations.find(o=>o.controlId===control.id)!;
    observation.receipt={...observation.receipt,...structuredClone(control.context)};
@@ -235,6 +239,7 @@ describe("fixed calibration and full confirmation admission",()=>{
   // A known failing goal may change overall Safety while an unrelated protection criterion stays identical.
   const negative=x.plan.controls[2]!,observation=x.observations[2]!;
   negative.expectations.find(e=>e.criterionId==="GUARD")!.direction="same";
+  negative.expectations.find(e=>e.criterionId==="GUARD")!.candidatePass=true;
   for(const sample of observation.receipt.samples){sample.candidate.safety="FAIL";const row=sample.candidate.criteria.find(c=>c.criterionId==="GUARD")!;row.score=100;row.pass=true;}
   expect(assessMeasurementCalibration(x.plan,x.observations).blockers).not.toContain("Nonzero identical control: control-2/GUARD");
  });
