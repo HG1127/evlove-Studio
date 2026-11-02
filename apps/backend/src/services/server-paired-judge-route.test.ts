@@ -3,6 +3,7 @@ import {beforeEach,describe,expect,it,vi} from "vitest";
 import {randomUUID} from "node:crypto";
 import {observeServerAiResponseProvenance} from "./server-ai-response-provenance";
 import {serverPairedJudgeRequest} from "@evolution/harness";
+import {fastHash} from "@evolution/core";
 import {pairedJudgeFixture,pairedJudgeRawEvaluation} from "@evolution/testkit";
 const spy=vi.hoisted(()=>({ai:vi.fn(),route:vi.fn(async()=>"fixed-test-route"),claim:vi.fn(async()=>{}),save:vi.fn(async()=>{})}));
 vi.mock("./ai-gateway",()=>({runServerAi:spy.ai,serverAiScoringRouteFingerprint:spy.route}));
@@ -13,8 +14,11 @@ import {runServerEvidenceJudge} from "./server-evidence-judge";
 beforeEach(()=>{spy.ai.mockReset();spy.route.mockClear();spy.claim.mockClear();spy.save.mockClear();});
 describe("paired judge composition route",()=>{
   it("routes an opted-in payload to two new model contracts and never to the old single-arm invoke",async()=>{
-    const x=pairedJudgeFixture(),request=serverPairedJudgeRequest(x.project,x.candidate,x.project.evalSuite,x.project.acceptanceRubric,x.candidateRuns,x.originalRuns,"visible");
-    spy.ai.mockImplementation(async(operation:string,payload:{requestFingerprint:string})=>{
+    const x=pairedJudgeFixture();
+    x.project.metrics=[{key:"quality",label:"Document quality",value:731,trend:-223,unit:"%",target:85,direction:"higher",description:"Published target definition"}];
+    const request=serverPairedJudgeRequest(x.project,x.candidate,x.project.evalSuite,x.project.acceptanceRubric,x.candidateRuns,x.originalRuns,"visible");
+    spy.ai.mockImplementation(async(operation:string,payload:{requestFingerprint:string;metrics:unknown[]})=>{
+      expect(payload.metrics).toEqual([{key:"quality",label:"Document quality",unit:"%",target:85,direction:"higher",description:"Published target definition"}]);
       expect(operation).toBe("evaluate-paired");const index=spy.ai.mock.calls.length-1,a=pairedJudgeRawEvaluation(90),b=pairedJudgeRawEvaluation(95);
       const result={schemaVersion:"paired-evaluation-v1",requestFingerprint:payload.requestFingerprint,versions:[{slot:"A",result:index===0?a:b},{slot:"B",result:index===0?b:a},{slot:"C",result:structuredClone(a)}]};
       await observeServerAiResponseProvenance({schemaVersion:"ai-usage-request-v1",callId:randomUUID(),scope:{missionId:x.project.id,jobId:"route-fixture",phase:"experiment"},route:{operation:"evaluate-paired",model:"route-fixture",protocol:"chat-completions",routeFingerprint:"f".repeat(64)},attempt:1,granularity:"physical-http-attempt",startedAt:new Date().toISOString()},JSON.stringify({messages:[{role:"user",content:JSON.stringify(payload)}]}),JSON.stringify(result),200);
@@ -27,5 +31,15 @@ describe("paired judge composition route",()=>{
   it("rejects malformed new requests without silently using the legacy judge",async()=>{
     const oldInvoke=vi.fn();await expect(runServerEvidenceJudge({pairedJudge:{}},oldInvoke)).rejects.toThrow();
     expect(oldInvoke).not.toHaveBeenCalled();expect(spy.ai).not.toHaveBeenCalled();
+  });
+  it.each(["value","trend"])("rejects externally supplied metric %s before model or claim I/O",async field=>{
+    const x=pairedJudgeFixture();
+    x.project.metrics=[{key:"quality",label:"Document quality",value:20,unit:"%",target:85,direction:"higher"}];
+    const request=serverPairedJudgeRequest(x.project,x.candidate,x.project.evalSuite,x.project.acceptanceRubric,x.candidateRuns,x.originalRuns,"visible");
+    request.metrics=[{key:"quality",label:"Document quality",unit:"%",target:85,direction:"higher",[field]:97}];
+    const {inputFingerprint,...context}=request.context;void inputFingerprint;
+    request.context.inputFingerprint=fastHash({...request,context});
+    const oldInvoke=vi.fn();await expect(runServerEvidenceJudge({pairedJudge:request},oldInvoke)).rejects.toThrow();
+    expect(spy.ai).not.toHaveBeenCalled();expect(spy.claim).not.toHaveBeenCalled();expect(oldInvoke).not.toHaveBeenCalled();
   });
 });

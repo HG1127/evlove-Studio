@@ -1,5 +1,5 @@
 import {createHash} from "node:crypto";
-import {PAIRED_JUDGE_POLICY,PairedEvaluationAiResultSchema,PairedJudgeReceiptSchema,PairedJudgeRequestSchema,type EvaluateAiResult,type PairedEvaluationAiResult,type PairedJudgeRequest,type ServerEvidenceJudgeResult,type PairedOrderJournalPort} from "@evolution/contracts";
+import {PAIRED_JUDGE_POLICY,PairedJudgeMetricDefinitionSchema,PairedEvaluationAiResultSchema,PairedJudgeReceiptSchema,PairedJudgeRequestSchema,type EvaluateAiResult,type PairedEvaluationAiResult,type PairedJudgeRequest,type ServerEvidenceJudgeResult,type PairedOrderJournalPort} from "@evolution/contracts";
 import {conservativePairedJudgments,fastHash} from "@evolution/core";
 import {runServerAi,serverAiScoringRouteFingerprint} from "./ai-gateway";
 import {recoverPairedOrderObservations} from "@evolution/harness";
@@ -17,6 +17,7 @@ const summary=(value:EvaluateAiResult)=>({accuracy:value.accuracy,evidence:value
 
 export async function runServerPairedEvidenceJudge(raw:unknown,ports:Ports={invoke:input=>runServerAi("evaluate-paired",input),routeFingerprint:serverAiScoringRouteFingerprint,claim:reserveServerPairedJudgeAttempt,journal:createProductionPairedOrderJournal()}):Promise<ServerEvidenceJudgeResult>{
   const request=PairedJudgeRequestSchema.parse(raw),{inputFingerprint,...context}=request.context;
+  PairedJudgeMetricDefinitionSchema.array().max(100).parse(request.metrics);
   if(inputFingerprint!==fastHash({...request,context}))throw Error("Paired input fingerprint differs");
   if(!same(context.criterionIds,request.criteria.map(c=>c.id))||!same(context.testCaseIds,request.testCases.map(t=>t.id))
     ||request.criteria.some(c=>!request.testCases.some(t=>t.criterionIds.includes(c.id))))throw Error("Paired issued scope differs");

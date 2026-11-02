@@ -1,0 +1,9 @@
+# Independent paired judging uses metric definitions
+
+The Baseline UI writes evaluated accuracy, evidence, coverage and completeness into `project.metrics[].value`. A metric may also contain a prior trend. The paired request previously forwarded these fields while instructing its evaluator that no score history was supplied. Its comparison could therefore depend on previous judgments rather than only the published definitions and current measured evidence. Other scoring-input fingerprints already omit mutable metric values.
+
+The Harness now projects an explicit metric allowlist: key, label, unit, target, direction and description. A strict shared Zod definition rejects extra metric fields at the paired composition boundary and the direct provider-operation boundary, before comparison claims or provider I/O. Historical request objects remain readable under the existing archive schema; they are not silently cleaned or executed under the new policy. Stored values and trends stay in the project for their existing uses; they do not enter either order of the paired judge. Published goals, rubric requirements, weights, absolute minima, case mappings and current bound observations are preserved. Free-form authored goals and descriptions are not rewritten or claimed to be automatically free of historical statements.
+
+`SERVER_PAIRED_INPUT_VERSION` joins the server scoring-route fingerprint, so the old route cannot qualify the new input policy through an earlier calibration receipt. The wire envelope remains compatible; new requests receive their own input fingerprints. This does not rescore or reinterpret historical evidence, grant a new model window, or turn a local fixture into a real calibration.
+
+Validation checks noninterference under value/trend changes, rebinding under a target change, unmodified project data, both physical model-input orders through the real composition route, and a scoring-route fingerprint distinct from the earlier policy.

@@ -1,5 +1,5 @@
 import {z} from "zod";
-import {PairedEvaluationAiResultSchema,pairedEvaluationJsonSchema} from "@evolution/contracts";
+import {PairedJudgeMetricDefinitionSchema,PairedEvaluationAiResultSchema,pairedEvaluationJsonSchema} from "@evolution/contracts";
 import {serverIssuedPairedJsonSchema} from "./server-paired-json-schema";
 
 const id=z.string().min(1),unique=(ids:string[])=>new Set(ids).size===ids.length;
@@ -14,6 +14,7 @@ const instruction="Act as an independent paired evidence judge. Evaluate ALL THR
 
 /** Only inadmissible identifiers enter the existing single format correction; valid verdicts remain data. */
 export function serverAiPairedContract(payload:unknown){
+  if(payload&&typeof payload==="object"&&"metrics" in payload)PairedJudgeMetricDefinitionSchema.array().max(100).parse(payload.metrics);
   let parser=PairedEvaluationAiResultSchema;
   let schema:{name:string;schema:Record<string,unknown>}=pairedEvaluationJsonSchema;
   if(payload&&typeof payload==="object"&&("schemaVersion" in payload||"issuedCriterionCaseBindings" in payload)){

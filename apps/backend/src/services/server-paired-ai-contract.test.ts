@@ -37,6 +37,14 @@ async function assess(mode:"first-scope-bad"|"all-scope-bad"|"valid-negative"|"v
 }
 
 describe("issued paired scope inside the existing format-correction budget",()=>{
+  it.each(["value","trend"])("rejects metric %s on direct provider-operation calls before provider I/O",async field=>{
+    const payload={schemaVersion:"paired-judge-input-v1",requestFingerprint:"issued",issuedCriterionCaseBindings:[{criterionId:"GOAL",testCaseIds:["V1"]}],
+      acceptanceRubric:[{id:"GOAL"}],testCases:[{id:"V1",criterionIds:["GOAL"]}],
+      metrics:[{key:"quality",label:"Quality",unit:"%",target:85,direction:"higher",[field]:97}]};
+    const fetch=vi.fn();vi.stubGlobal("fetch",fetch);
+    await expect(withExplicitServerAiConnection(connection,async()=>runServerAi("evaluate-paired",payload))).rejects.toThrow();
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it("repairs an invalid criterion/case namespace using only the existing one correction, then completes the other order",async()=>{
     const x=await assess("first-scope-bad"),result=await x.result;
     expect(x.fetch).toHaveBeenCalledTimes(3);expect(x.invoke).toHaveBeenCalledTimes(2);expect(x.claim).toHaveBeenCalledOnce();

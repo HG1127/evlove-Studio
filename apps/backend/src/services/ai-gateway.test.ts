@@ -1,6 +1,6 @@
 // @vitest-environment node
 import {createHash} from "node:crypto";
-import {SERVER_SEMANTIC_CONTEXT_VERSION,SERVER_MEASURED_REVIEW_VERSION} from "@evolution/harness";
+import {SERVER_SEMANTIC_CONTEXT_VERSION,SERVER_MEASURED_REVIEW_VERSION,SERVER_PAIRED_INPUT_VERSION} from "@evolution/harness";
 import {SERVER_PAIRED_GENERATION_SCHEMA_VERSION} from "./server-paired-json-schema";
 import {withExplicitServerAiConnection} from "./server-ai-connection";
 import {withServerAiOutputPolicy} from "./server-ai-output-policy";
@@ -55,11 +55,13 @@ describe("server AI scoring route identity",()=> {
     const legacy=createHash("sha256").update(JSON.stringify(route)).digest("hex");
     const contextOnly=createHash("sha256").update(JSON.stringify({route,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION})).digest("hex");
     const previousSchemaRoute=createHash("sha256").update(JSON.stringify({route,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION})).digest("hex");
-    const expected=createHash("sha256").update(JSON.stringify({route,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION,pairedGenerationSchemaVersion:SERVER_PAIRED_GENERATION_SCHEMA_VERSION})).digest("hex");
+    const mutableMetricsRoute=createHash("sha256").update(JSON.stringify({route,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION,pairedGenerationSchemaVersion:SERVER_PAIRED_GENERATION_SCHEMA_VERSION})).digest("hex");
+    const expected=createHash("sha256").update(JSON.stringify({route,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION,pairedGenerationSchemaVersion:SERVER_PAIRED_GENERATION_SCHEMA_VERSION,pairedInputVersion:SERVER_PAIRED_INPUT_VERSION})).digest("hex");
     expect(await serverAiScoringRouteFingerprint()).toBe(expected);
     expect(await serverAiScoringRouteFingerprint()).not.toBe(legacy);
     expect(await serverAiScoringRouteFingerprint()).not.toBe(contextOnly);
     expect(await serverAiScoringRouteFingerprint()).not.toBe(previousSchemaRoute);
+    expect(await serverAiScoringRouteFingerprint()).not.toBe(mutableMetricsRoute);
     const oldZeroRejectingRoute=createHash("sha256").update(JSON.stringify({route,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION,pairedGenerationSchemaVersion:"issued-paired-generation-schema-v1"})).digest("hex");
     expect(await serverAiScoringRouteFingerprint()).not.toBe(oldZeroRejectingRoute);
   });

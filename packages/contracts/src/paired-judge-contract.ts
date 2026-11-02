@@ -5,6 +5,11 @@ export const PAIRED_JUDGE_FILE_METADATA_POLICY="bound-file-reference-v1" as cons
 const hash=z.string().regex(/^[a-f0-9]{64}$/);
 const score=z.number().int().min(0).max(100);
 const ids=z.array(z.string().min(1)).min(1).max(100).refine(items=>new Set(items).size===items.length,"Duplicate identity");
+/** Goal definitions only. Mutable evaluated values/trends are not independent comparison evidence. */
+export const PairedJudgeMetricDefinitionSchema=z.object({
+  key:z.string(),label:z.string(),unit:z.string(),target:z.number().optional(),
+  direction:z.enum(["higher","lower"]),description:z.string().optional(),
+}).strict();
 const fileMetadata=z.object({
   name:z.string().min(1).max(1024).nullable(),mimeType:z.string().min(1).max(200).nullable(),
   sizeBytes:z.number().int().nonnegative(),

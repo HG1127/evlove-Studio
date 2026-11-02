@@ -4,6 +4,8 @@ import {measuredDocumentObservations,SERVER_MEASURED_REVIEW_VERSION} from "./ser
 import {compactExperimentRunOutput} from "./server-experiment-evidence";
 import {measuredCardParagraphChanges} from "./measured-card-paragraph-changes";
 
+export const SERVER_PAIRED_INPUT_VERSION="paired-judge-input-v2-metric-definitions-only";
+
 export function serverPairedJudgeRequest(project:EvolveProject,candidate:Candidate,suite:TestCase[],criteria:AcceptanceCriterion[],runs:TargetRunResult[],originalRuns:TargetRunResult[],phase:"visible"|"holdout"){
   const targets=project.sourceArtifacts.filter(s=>s.role==="target"),refs=project.baselineRun.originalReferences??[];
   const withMetadata=project.experimentPolicy.judgeFileMetadata===PAIRED_JUDGE_FILE_METADATA_POLICY;
@@ -34,7 +36,9 @@ export function serverPairedJudgeRequest(project:EvolveProject,candidate:Candida
   const value=PairedJudgeRequestSchema.parse(JSON.parse(JSON.stringify({context:{protocol:PAIRED_JUDGE_POLICY,missionId:project.id,candidateId:candidate.id,phase,
     inputFingerprint:"pending",rubricFingerprint:fastHash(project.acceptanceRubric),suiteFingerprint:fastHash(suite),testCaseIds:suite.map(t=>t.id),criterionIds:criteria.map(c=>c.id),bindings,
     ...(withMetadata?{fileMetadataPolicy:PAIRED_JUDGE_FILE_METADATA_POLICY}:{})},
-    criteria,testCases:suite,goal:project.goal,metrics:project.metrics,versions:{original:packet(originalRuns,false),candidate:packet(runs,true)}})));
+    // Metric values/trends can be written back from Baseline judgments. They are not fresh evidence for this comparison.
+    criteria,testCases:suite,goal:project.goal,metrics:project.metrics.map(({key,label,unit,target,direction,description})=>({key,label,unit,target,direction,description})),
+    versions:{original:packet(originalRuns,false),candidate:packet(runs,true)}})));
   const {inputFingerprint:_,...context}=value.context;void _;
   value.context.inputFingerprint=fastHash({...value,context});return value;
 }
