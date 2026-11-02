@@ -7,15 +7,42 @@ const anchor=z.object({criterionId:id,arm:z.enum(["original","candidate"]),sourc
  startUtf16:z.number().int().nonnegative(),endUtf16:z.number().int().positive(),quoteSha256:hash,
  scope:z.enum(["source-text","native-fact"]),assertionId:id.optional()}).strict().refine(a=>a.endUtf16>a.startUtf16)
  .refine(a=>a.scope!=="native-fact"||Boolean(a.assertionId));
-export const JudgeCalibrationPlanSchema=z.object({schemaVersion:z.literal("judge-calibration-plan-v1"),
+const planFields={
  id,preregistrationSha256:hash,oracleApprovalSha256:hash,registeredAt:z.iso.datetime({offset:true}),
  sourceCommit:commit,scoringRouteFingerprint:id,rubricFingerprint:id,suiteFingerprint:id,
  paperUse:z.literal("diagnostic-only"),applicationScenarioSha256:hash,confirmationWindowMs:z.number().int().positive().max(1800000),maxHeartbeatGapMs:z.number().positive().max(30000),testCases:z.array(TestCaseSchema).min(1).max(100),criteria:z.array(AcceptanceCriterionSchema).min(1).max(32),
- controls:z.array(z.object({id,kind:z.enum(["identical","known-improvement","known-regression"]),
-  minAbsoluteDelta:z.number().int().min(1).max(100),expectations:z.array(z.object({criterionId:id,direction:z.enum(["same","improve","regress"])}).strict()).min(1).max(32),context:PairedJudgeContextSchema,
-  anchors:z.array(anchor).min(2).max(256)}).strict()).min(3).max(96),
+};
+const controlFields={id,kind:z.enum(["identical","known-improvement","known-regression"]),
+ minAbsoluteDelta:z.number().int().min(1).max(100)};
+export const JudgeCalibrationPlanV1Schema=z.object({schemaVersion:z.literal("judge-calibration-plan-v1"),...planFields,
+ controls:z.array(z.object({...controlFields,
+  expectations:z.array(z.object({criterionId:id,direction:z.enum(["same","improve","regress"])}).strict()).min(1).max(32),
+  context:PairedJudgeContextSchema,anchors:z.array(anchor).min(2).max(256),
+ }).strict()).min(3).max(96),
 }).strict().refine(p=>new Set(p.criteria.map(c=>c.id)).size===p.criteria.length)
  .refine(p=>new Set(p.controls.map(c=>c.id)).size===p.controls.length);
+/** Opt-in zero-reference contrast. It cannot reinterpret a v1 oracle or an already observed control. */
+export const JudgeCalibrationPlanV2Schema=z.object({schemaVersion:z.literal("judge-calibration-plan-v2"),...planFields,
+ controls:z.array(z.object({...controlFields,
+  expectations:z.array(z.object({criterionId:id,direction:z.enum(["same","improve","regress","no-improvement"])}).strict()).min(1).max(32),
+  context:PairedJudgeContextSchema,anchors:z.array(anchor).min(2).max(256),
+ }).strict()).min(3).max(96),
+}).strict().refine(p=>new Set(p.criteria.map(c=>c.id)).size===p.criteria.length)
+ .refine(p=>new Set(p.controls.map(c=>c.id)).size===p.controls.length)
+ .superRefine((p,ctx)=>{
+  for(const [i,control] of p.controls.entries())for(const [j,expectation] of control.expectations.entries()){
+   if(expectation.direction!=="no-improvement")continue;
+   const criterion=p.criteria.find(c=>c.id===expectation.criterionId);
+   if(control.kind!=="known-regression"||criterion?.judgeType!=="pairwise"||criterion.protectedConstraint
+    ||criterion.minScore<=0||criterion.category!=="outcome")
+    ctx.addIssue({code:"custom",path:["controls",i,"expectations",j],message:"Zero-reference non-improvement requires a known-regression pairwise outcome criterion with a positive threshold; it cannot replace absolute or protection regression contrasts"});
+  }
+ });
+export const JudgeCalibrationPlanSchema=z.discriminatedUnion("schemaVersion",[JudgeCalibrationPlanV1Schema,JudgeCalibrationPlanV2Schema]);
+/** Immutable canonical evidence still needs the trusted preregistration/independence verifier. */
+export const JudgeCalibrationApprovalEvidenceSchema=z.object({schemaVersion:z.literal("judge-calibration-approval-v1"),
+ kind:z.enum(["preregistration","independent-oracle-approval"]),planSha256:hash,recordedAt:z.iso.datetime({offset:true}),
+}).strict();
 export const JudgeCalibrationObservationSchema=z.object({schemaVersion:z.literal("judge-calibration-observation-v1"),
  controlId:id,firstRequestAt:z.iso.datetime({offset:true}),completedAt:z.iso.datetime({offset:true}),
  receipt:PairedJudgeReceiptSchema}).strict();

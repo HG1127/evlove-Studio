@@ -2,9 +2,9 @@
 import {createHash} from "node:crypto";
 import {readFileSync} from "node:fs";
 import {describe,expect,it} from "vitest";
-import {JudgeCalibrationPlanSchema,JudgeCalibrationObservationSchema,PairedJudgeReceiptSchema,EvolveProjectSchema,
+import {JudgeCalibrationPlanSchema,JudgeCalibrationPlanV1Schema,JudgeCalibrationPlanV2Schema,JudgeCalibrationObservationSchema,PairedJudgeReceiptSchema,EvolveProjectSchema,
  type ConfirmationAdmissionPorts,type PairedJudgeReceipt} from "@evolution/contracts";
-import {assessMeasurementCalibration,inconclusivePairedCriteria,fastHash} from "@evolution/core";
+import {assessMeasurementCalibration,calibrationPlanApprovalText,inconclusivePairedCriteria,fastHash} from "@evolution/core";
 import {pairedJudgeFixture} from "@evolution/testkit";
 import {serverPairedJudgeRequest} from "./server-paired-judge";
 import {checkFullConfirmationAdmission} from "./confirmation-admission";
@@ -45,6 +45,167 @@ function fixture(){
   verifyEvidenceArtifact:async()=>true,readText:async h=>texts.get(h)!,sha256Utf8:async s=>sha(s)};
  return {plan,observations,request,app,ports};
 }
+/** Synthetic contrasts only; no real model or independently approved oracle. */
+function zeroReferenceFixture(){
+ const x=fixture(),raw=structuredClone(x.plan);
+ raw.criteria[0]!.judgeType="pairwise";raw.rubricFingerprint=fastHash(raw.criteria);
+ const plan=JudgeCalibrationPlanV2Schema.parse({...raw,schemaVersion:"judge-calibration-plan-v2",controls:raw.controls.map(c=>({
+  ...c,context:{...c.context,rubricFingerprint:raw.rubricFingerprint},
+  expectations:c.expectations.map(e=>({...e,direction:c.kind==="known-regression"?"no-improvement":e.direction})),
+ }))});
+ const observations=x.observations.map(o=>{
+  const control=plan.controls.find(c=>c.id===o.controlId)!;
+  o.receipt={...o.receipt,...structuredClone(control.context)};
+  for(const s of o.receipt.samples){
+   for(const arm of [s.original,s.controlOriginal]){arm.criteria[0]!.score=0;arm.criteria[0]!.pass=false;arm.safety="FAIL";}
+   s.candidate.criteria[0]!.score=control.kind==="known-improvement"?96:0;
+   s.candidate.criteria[0]!.pass=control.kind==="known-improvement";
+   s.candidate.safety=control.kind==="known-improvement"?"PASS":"FAIL";
+  }
+  return o;
+ });
+ const planSha256=sha(calibrationPlanApprovalText(plan));
+ const evidence=new Map<string,string>();
+ for(const kind of ["preregistration","independent-oracle-approval"] as const){
+  const text=JSON.stringify({schemaVersion:"judge-calibration-approval-v1",kind,planSha256,recordedAt:plan.registeredAt});
+  const hash=sha(text);evidence.set(hash,text);
+  if(kind==="preregistration")plan.preregistrationSha256=hash;else plan.oracleApprovalSha256=hash;
+ }
+ return {plan,observations,evidence,request:{...x.request,rubricFingerprint:plan.rubricFingerprint},
+  ports:{...x.ports,readCalibrationPlan:async()=>plan,readCalibrationObservations:async()=>observations,
+   readText:async(hash:string)=>evidence.get(hash)??x.ports.readText(hash),
+   verifyPreregistration:async(hash:string)=>hash===plan.preregistrationSha256,
+   verifyOracleApproval:async(hash:string)=>hash===plan.oracleApprovalSha256}};
+}
+
+describe("explicit v2 zero-reference contrasts",()=>{
+ it("preserves v1 rejection of all 101 scores against a zero-floor regression reference",()=>{
+  const x=zeroReferenceFixture(),legacy=JudgeCalibrationPlanV1Schema.parse({...x.plan,schemaVersion:"judge-calibration-plan-v1",
+   controls:x.plan.controls.map(c=>({...c,expectations:c.expectations.map(e=>({...e,direction:e.direction==="no-improvement"?"regress":e.direction}))}))});
+  for(let score=0;score<=100;score++){
+   const observations=structuredClone(x.observations);
+   for(const s of observations[2]!.receipt.samples){s.candidate.criteria[0]!.score=score;s.candidate.criteria[0]!.pass=score>=85;}
+   const before=JSON.stringify(observations),r=assessMeasurementCalibration(legacy,observations);
+   expect(r.ready).toBe(false);expect(r.schemaVersion).toBe("measurement-calibration-decision-v1");
+   expect(r.blockers).toContain("Known regression not detected: control-2/GOAL");expect(JSON.stringify(observations)).toBe(before);
+  }
+ });
+ it("admits a registered exact-zero negative plus passing positive contrast without granting authority",async()=>{
+  const x=zeroReferenceFixture(),before=JSON.stringify(x.observations);
+  expect(assessMeasurementCalibration(x.plan,x.observations)).toMatchObject({ready:true,schemaVersion:"measurement-calibration-decision-v2"});
+  expect(await checkFullConfirmationAdmission(x.request,x.ports)).toMatchObject({ready:true,grantsModelBudget:false,grantsNewTrialAuthority:false,technicalAcceptanceEstablished:false});
+  expect(JSON.stringify(x.observations)).toBe(before);
+ });
+ it("rejects new expectations on a v1 oracle and rejects unknown versions",()=>{
+  const x=zeroReferenceFixture();
+  expect(JudgeCalibrationPlanSchema.safeParse({...x.plan,schemaVersion:"judge-calibration-plan-v1"}).success).toBe(false);
+  expect(JudgeCalibrationPlanSchema.safeParse({...x.plan,schemaVersion:"judge-calibration-plan-v3"}).success).toBe(false);
+ });
+ it("canonicalizes object keys while retaining control order and every approved treatment field",()=>{
+  const {plan}=zeroReferenceFixture(),text=calibrationPlanApprovalText(plan);
+  const reordered={...plan,controls:plan.controls.map(c=>({anchors:c.anchors,context:c.context,expectations:c.expectations,minAbsoluteDelta:c.minAbsoluteDelta,kind:c.kind,id:c.id}))};
+  expect(calibrationPlanApprovalText(reordered)).toBe(text);
+  expect(calibrationPlanApprovalText({...plan,preregistrationSha256:"1".repeat(64),oracleApprovalSha256:"2".repeat(64)})).toBe(text);
+  for(const mode of ["order","threshold","expectation","file","code"]){
+   const changed=structuredClone(plan);
+   if(mode==="order")changed.controls.reverse();
+   if(mode==="threshold")changed.criteria[0]!.minScore=84;
+   if(mode==="expectation")changed.controls[2]!.expectations[0]!.direction="regress";
+   if(mode==="file")changed.controls[2]!.context.bindings[0]!.candidateSha256="3".repeat(64);
+   if(mode==="code")changed.sourceCommit="b".repeat(40);
+   expect(calibrationPlanApprovalText(changed),mode).not.toBe(text);
+  }
+ });
+ it("forbids zero contrasts for absolute or protected criteria, zero thresholds, and positive or identical controls",()=>{
+  for(const mode of ["absolute","protected","integrity-category","protected-category","behavior-category","zero-threshold","positive","identical"]){
+   const x=zeroReferenceFixture(),c=x.plan.criteria[0]!;
+   if(mode==="absolute")c.judgeType="llm";
+   if(mode==="protected")c.protectedConstraint=true;
+   if(mode==="integrity-category")c.category="integrity";
+   if(mode==="protected-category")c.category="protected";
+   if(mode==="behavior-category")c.category="behavior";
+   if(mode==="zero-threshold")c.minScore=0;
+   if(mode==="positive")x.plan.controls[2]!.kind="known-improvement";
+   if(mode==="identical")x.plan.controls[2]!.kind="identical";
+   expect(JudgeCalibrationPlanSchema.safeParse(x.plan).success,mode).toBe(false);
+   expect(assessMeasurementCalibration(x.plan,x.observations).ready,mode).toBe(false);
+  }
+ });
+ it("rejects partial benefit, false pass and order-dependent non-improvement without rounding to zero",()=>{
+  for(const [score,pass,oneOrder] of [[15,false,false],[85,true,false],[0,true,false],[15,false,true]] as const){
+   const x=zeroReferenceFixture();
+   for(const [i,s] of x.observations[2]!.receipt.samples.entries())if(!oneOrder||i===1){s.candidate.criteria[0]!.score=score;s.candidate.criteria[0]!.pass=pass;}
+   const before=JSON.stringify(x.observations),r=assessMeasurementCalibration(x.plan,x.observations);
+   expect(r.ready).toBe(false);expect(r.blockers.join()).toContain("exact zero failure");expect(JSON.stringify(x.observations)).toBe(before);
+  }
+ });
+ it("requires an exact zero Original self-reference in every control and order",()=>{
+  for(const control of [0,1,2])for(const order of [0,1] as const){
+   const x=zeroReferenceFixture(),s=x.observations[control]!.receipt.samples[order];
+   s.original.criteria[0]!.score=20;s.controlOriginal=structuredClone(s.original);
+   expect(assessMeasurementCalibration(x.plan,x.observations).blockers.join()).toContain("registered zero reference");
+  }
+ });
+ it("retains copy, threshold, positive contrast and Safety qualification",()=>{
+  for(const mode of ["copy","threshold","positive-fail","positive-zero","safety"]){
+   const x=zeroReferenceFixture(),r=x.observations[1]!.receipt;
+   if(mode==="copy")r.samples[0].controlOriginal.criteria[0]!.score=1;
+   if(mode==="threshold"){r.samples[0].candidate.criteria[0]!.score=84;r.samples[0].candidate.criteria[0]!.pass=false;}
+   if(mode==="positive-fail")for(const s of r.samples)s.candidate.criteria[0]!.pass=false;
+   if(mode==="positive-zero")for(const s of r.samples){s.candidate.criteria[0]!.score=0;s.candidate.criteria[0]!.pass=false;}
+   if(mode==="safety")for(const s of r.samples)s.candidate.safety="FAIL";
+   expect(assessMeasurementCalibration(x.plan,x.observations).ready,mode).toBe(false);
+  }
+ });
+ it("retains ordinary semantic regression contrasts alongside a zero-reference criterion",()=>{
+  const x=zeroReferenceFixture(),absolute={...x.plan.criteria[0]!,id:"ABS",judgeType:"llm" as const};
+  x.plan.criteria.push(absolute);x.plan.testCases[0]!.criterionIds.push("ABS");
+  x.plan.rubricFingerprint=fastHash(x.plan.criteria);x.plan.suiteFingerprint=fastHash(x.plan.testCases);
+  for(const control of x.plan.controls){
+   control.context.criterionIds.push("ABS");control.context.rubricFingerprint=x.plan.rubricFingerprint;control.context.suiteFingerprint=x.plan.suiteFingerprint;
+   control.expectations.push({criterionId:"ABS",direction:control.kind==="known-improvement"?"improve":"same"});
+   control.anchors.push(...control.anchors.filter(a=>a.criterionId==="GOAL").map(a=>({...a,criterionId:"ABS"})));
+   const r=x.observations.find(o=>o.controlId===control.id)!.receipt;Object.assign(r,structuredClone(control.context));
+   for(const s of r.samples){
+    const row=(score:number)=>({criterionId:"ABS",score,pass:score>=85,testCaseIds:["V1"]});
+    s.original.criteria.push(row(90));s.controlOriginal.criteria.push(row(90));s.candidate.criteria.push(row(control.kind==="known-improvement"?96:90));
+   }
+  }
+  expect(JudgeCalibrationPlanSchema.safeParse(x.plan).success).toBe(true);
+  expect(assessMeasurementCalibration(x.plan,x.observations).blockers).toContain("Missing labelled improvement/regression contrast for ABS");
+  x.plan.controls[2]!.expectations.find(e=>e.criterionId==="ABS")!.direction="regress";
+  for(const s of x.observations[2]!.receipt.samples){const row=s.candidate.criteria.find(c=>c.criterionId==="ABS")!;row.score=80;row.pass=false;}
+  expect(assessMeasurementCalibration(x.plan,x.observations).ready).toBe(true);
+ });
+ it("still requires independent preregistration, oracle approval and exact application evidence",async()=>{
+  for(const mode of ["oracle","preregistration","application","route"]){
+   const x=zeroReferenceFixture();
+   if(mode==="oracle")x.ports.verifyOracleApproval=async()=>false;
+   if(mode==="preregistration")x.ports.verifyPreregistration=async()=>false;
+   if(mode==="application")x.ports.verifyEvidenceArtifact=async()=>false;
+   if(mode==="route")x.observations[2]!.receipt.scoringRouteFingerprint="foreign-route";
+   expect((await checkFullConfirmationAdmission(x.request,x.ports)).ready,mode).toBe(false);
+  }
+ });
+ it("binds actual approval bytes, kind, complete plan and registration time rather than reusing an approved hash",async()=>{
+  for(const mode of ["plan","bytes","kind","late","missing","malformed"]){
+   const x=zeroReferenceFixture();
+   if(mode==="plan")x.plan.controls[2]!.minAbsoluteDelta=2;
+   if(mode==="bytes")x.evidence.set(x.plan.oracleApprovalSha256,x.evidence.get(x.plan.oracleApprovalSha256)!+" ");
+   if(mode==="missing")x.evidence.delete(x.plan.oracleApprovalSha256);
+   if(["kind","late","malformed"].includes(mode)){
+    const record=JSON.parse(x.evidence.get(x.plan.oracleApprovalSha256)!);
+    if(mode==="kind")record.kind="preregistration";
+    if(mode==="late")record.recordedAt="2026-10-01T00:00:01Z";
+    const text=mode==="malformed"?"not JSON":JSON.stringify(record);
+    const hash=sha(text);x.plan.oracleApprovalSha256=hash;x.evidence.set(hash,text);
+   }
+   const r=await checkFullConfirmationAdmission(x.request,x.ports);
+   expect(r.ready,mode).toBe(false);expect(r.blockers.join(),mode).toMatch(/Canonical.*(?:approval|evidence)/);
+  }
+ });
+});
+
 describe("fixed calibration and full confirmation admission",()=>{
  it("admits all fixed synthetic contrasts only with separate exact application-load evidence, without granting authority",async()=>{
   const x=fixture(),result=await checkFullConfirmationAdmission(x.request,x.ports);

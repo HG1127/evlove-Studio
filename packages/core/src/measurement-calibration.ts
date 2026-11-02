@@ -2,10 +2,22 @@ import type {JudgeCalibrationObservation,JudgeCalibrationPlan} from "@evolution/
 import {fastHash} from "./stable-hash";
 import {inconclusivePairedCriteria} from "./paired-judge";
 
+/** Exclude only the two receipt references to avoid a circular content hash. Array order stays fixed. */
+export function calibrationPlanApprovalText(plan:JudgeCalibrationPlan){
+ const {preregistrationSha256,oracleApprovalSha256,...content}=plan;void preregistrationSha256;void oracleApprovalSha256;
+ const canonical=(value:unknown):unknown=>Array.isArray(value)?value.map(canonical):value&&typeof value==="object"
+  ?Object.fromEntries(Object.entries(value).sort(([a],[b])=>a<b?-1:a>b?1:0).map(([key,item])=>[key,canonical(item)])):value;
+ return JSON.stringify(canonical(content));
+}
+
 /** Fixed controls qualify a measurement method; they never rescore a Mission or relax its thresholds. */
 export function assessMeasurementCalibration(plan:JudgeCalibrationPlan,observations:JudgeCalibrationObservation[]){
  const blockers:string[]=[];
  const fail=(reason:string)=>blockers.push(reason);
+ const zeroReferenceIds=new Set(plan.schemaVersion==="judge-calibration-plan-v2"?plan.criteria.filter(criterion=>
+  criterion.judgeType==="pairwise"&&!criterion.protectedConstraint&&criterion.minScore>0&&criterion.category==="outcome"
+  &&plan.controls.some(c=>c.kind==="known-regression"&&c.expectations.some(e=>e.criterionId===criterion.id&&e.direction==="no-improvement")))
+  .map(c=>c.id):[]);
  if(observations.length!==plan.controls.length||new Set(observations.map(o=>o.controlId)).size!==observations.length)
   fail("Calibration observations are incomplete or duplicated; no best-of selection");
  if(fastHash(plan.criteria)!==plan.rubricFingerprint||fastHash(plan.testCases)!==plan.suiteFingerprint)fail("Fixed rubric thresholds or paper differ from their fingerprints");
@@ -13,7 +25,7 @@ export function assessMeasurementCalibration(plan:JudgeCalibrationPlan,observati
   if(!plan.controls.some(c=>c.kind==="identical"&&c.context.criterionIds.includes(criterion.id)))fail("Missing fixed identical control for "+criterion.id);
   const directions=plan.controls.flatMap(c=>c.expectations.filter(e=>e.criterionId===criterion.id).map(e=>e.direction));
   const semanticImprovement=(criterion.judgeType==="llm"||criterion.judgeType==="pairwise")&&!criterion.protectedConstraint&&!["integrity","protected"].includes(criterion.category);
-  if(!directions.includes("regress")||(semanticImprovement&&!directions.includes("improve")))fail("Missing labelled improvement/regression contrast for "+criterion.id);
+  if((!directions.includes("regress")&&!zeroReferenceIds.has(criterion.id))||(semanticImprovement&&!directions.includes("improve")))fail("Missing labelled improvement/regression contrast for "+criterion.id);
  }
  for(const control of plan.controls){
   const matches=observations.filter(o=>o.controlId===control.id),observation=matches[0];
@@ -31,9 +43,11 @@ export function assessMeasurementCalibration(plan:JudgeCalibrationPlan,observati
   if(criteria.length!==r.criterionIds.length){fail("Unregistered criterion in "+control.id);continue;}
   if(control.expectations.length!==criteria.length||new Set(control.expectations.map(e=>e.criterionId)).size!==criteria.length
     ||control.expectations.some(e=>!criteria.some(c=>c.id===e.criterionId)))fail("Fixed expectation identities differ: "+control.id);
+  if(control.expectations.some(e=>e.direction==="no-improvement"&&(!zeroReferenceIds.has(e.criterionId)||control.kind!=="known-regression")))
+   fail("Invalid zero-reference non-improvement expectation: "+control.id);
   if(control.kind==="identical"&&control.expectations.some(e=>e.direction!=="same")
-    ||control.kind==="known-improvement"&&(!control.expectations.some(e=>e.direction==="improve")||control.expectations.some(e=>e.direction==="regress"))
-    ||control.kind==="known-regression"&&(!control.expectations.some(e=>e.direction==="regress")||control.expectations.some(e=>e.direction==="improve")))fail("Control label contradicts its fixed expectations: "+control.id);
+    ||control.kind==="known-improvement"&&(!control.expectations.some(e=>e.direction==="improve")||control.expectations.some(e=>e.direction==="regress"||e.direction==="no-improvement"))
+    ||control.kind==="known-regression"&&(!control.expectations.some(e=>e.direction==="regress"||e.direction==="no-improvement"&&zeroReferenceIds.has(e.criterionId))||control.expectations.some(e=>e.direction==="improve")))fail("Control label contradicts its fixed expectations: "+control.id);
   for(const sample of samples)for(const arm of [sample.original,sample.candidate,sample.controlOriginal])for(const row of arm.criteria){
    const expected=plan.testCases.filter(t=>t.criterionIds.includes(row.criterionId)).map(t=>t.id);
    if(!expected.length||row.testCaseIds.length!==expected.length||new Set(row.testCaseIds).size!==row.testCaseIds.length||row.testCaseIds.some(id=>!expected.includes(id)))fail("Control case mapping differs: "+control.id);
@@ -51,6 +65,10 @@ export function assessMeasurementCalibration(plan:JudgeCalibrationPlan,observati
    const a=sample.original.criteria.find(x=>x.criterionId===criterion.id)!;
    const b=sample.candidate.criteria.find(x=>x.criterionId===criterion.id)!;
    const delta=b.score-a.score,direction=control.expectations.find(e=>e.criterionId===criterion.id)?.direction;
+   if(zeroReferenceIds.has(criterion.id)&&(a.score!==0||a.pass))
+    fail("Original self-comparison is not the registered zero reference: "+control.id+"/"+criterion.id);
+   if(direction==="no-improvement"&&(b.score!==0||b.pass))
+    fail("Known non-improvement is not an exact zero failure: "+control.id+"/"+criterion.id);
    if(direction==="same"&&(delta!==0||a.pass!==b.pass||control.kind==="identical"&&sample.original.safety!==sample.candidate.safety))
     fail("Nonzero identical control: "+control.id+"/"+criterion.id);
    if(direction==="improve"&&(delta<control.minAbsoluteDelta||!b.pass||b.score<criterion.minScore||sample.candidate.safety!=="PASS"))
@@ -59,7 +77,7 @@ export function assessMeasurementCalibration(plan:JudgeCalibrationPlan,observati
     fail("Known regression not detected: "+control.id+"/"+criterion.id);
   }
  }
- return {schemaVersion:"measurement-calibration-decision-v1" as const,ready:blockers.length===0,blockers,
+ return {schemaVersion:plan.schemaVersion==="judge-calibration-plan-v2"?"measurement-calibration-decision-v2" as const:"measurement-calibration-decision-v1" as const,ready:blockers.length===0,blockers,
   criterionIds:plan.criteria.map(c=>c.id),controls:plan.controls.map(c=>c.id),
   limitations:["Fixed labelled controls qualify only this exact route, rubric, source and paper; they are not Mission acceptance or business evidence.",
    "No thresholds, old scores, Safety failures or independent-final questions are changed; native facts do not replace semantic anchors."]};

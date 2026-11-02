@@ -1,6 +1,6 @@
-import {ApplicationLifetimeEvidenceSchema,ConfirmationAdmissionRequestSchema,JudgeCalibrationObservationSchema,JudgeCalibrationPlanSchema,
+import {ApplicationLifetimeEvidenceSchema,ConfirmationAdmissionRequestSchema,JudgeCalibrationApprovalEvidenceSchema,JudgeCalibrationObservationSchema,JudgeCalibrationPlanSchema,
  type ConfirmationAdmissionPorts} from "@evolution/contracts";
-import {assessMeasurementCalibration} from "@evolution/core";
+import {assessMeasurementCalibration,calibrationPlanApprovalText} from "@evolution/core";
 
 /** Read-only admission. Never starts a model, repairs a Job, or spends a fresh comparison claim. */
 export async function checkFullConfirmationAdmission(raw:unknown,ports:ConfirmationAdmissionPorts){
@@ -11,6 +11,18 @@ export async function checkFullConfirmationAdmission(raw:unknown,ports:Confirmat
   ||plan.suiteFingerprint!==request.suiteFingerprint||plan.applicationScenarioSha256!==request.applicationScenarioSha256||plan.confirmationWindowMs!==request.plannedWindowMs||plan.maxHeartbeatGapMs!==request.maxHeartbeatGapMs)blockers.push("Calibration does not bind the intended exact code/model/rubric/paper");
  if(!await ports.verifyPreregistration(plan.preregistrationSha256)||!await ports.verifyOracleApproval(plan.oracleApprovalSha256))
   blockers.push("Fixed control preregistration or independent oracle approval is unverified");
+ if(plan.schemaVersion==="judge-calibration-plan-v2"){
+  // Existence of an older approved object cannot authorize a different interpretation.
+  try{
+   const planSha256=await ports.sha256Utf8(calibrationPlanApprovalText(plan));
+   for(const [kind,hash] of [["preregistration",plan.preregistrationSha256],["independent-oracle-approval",plan.oracleApprovalSha256]] as const){
+    const text=await ports.readText(hash),parsed=JudgeCalibrationApprovalEvidenceSchema.safeParse(JSON.parse(text));
+    if(!await ports.verifyEvidenceArtifact(hash)||await ports.sha256Utf8(text)!==hash||!parsed.success
+     ||parsed.data.kind!==kind||parsed.data.planSha256!==planSha256||Date.parse(parsed.data.recordedAt)>Date.parse(plan.registeredAt))
+     blockers.push("Canonical approval does not bind the registered v2 plan: "+kind);
+   }
+  }catch{blockers.push("Canonical v2 plan approval evidence is missing or invalid");}
+ }
  const observations=(await ports.readCalibrationObservations(plan.id)).map(o=>JudgeCalibrationObservationSchema.parse(o));
  for(const control of plan.controls)for(const anchor of control.anchors){
   const text=await ports.readText(anchor.sourceSha256);
