@@ -1,8 +1,8 @@
 import {missionBlobReferences} from "@evolution/core";
-import {MissionRevisionConflictError} from "@evolution/adapters";
-import type {EvolutionJob} from "@evolution/contracts";
+import {MissionReadStreamError,MissionRevisionConflictError} from "@evolution/adapters";
+import type {EvolveProject,EvolutionJob} from "@evolution/contracts";
 import { cacheLocalEvolutionEvent, listPendingLocalEvolutionEvents, markLocalEvolutionEventSynced } from "./event-contract";
-import { getLocalProject, listLocalProjects, saveLocalProject, deleteLocalProject } from "./local-store";
+import { getLocalProject, listLocalProjects, saveLocalProject, deleteLocalProject, directoryRemovedMissionIds } from "./local-store";
 import { cacheRemoteEvolutionJob, localProductionPorts } from "./local-production-adapters";
 import { getProductionRuntime, productionRuntimeMode } from "./production-runtime";
 import { flushPendingArtifactSync, queueExistingLocalArtifactUploads } from "./artifact-blob-store";
@@ -24,6 +24,7 @@ let knownRemoteIds=new Set<string>();
 let missionConflicts=new Set<string>();
 let realtimeStatus="disabled";
 let lastError:string|undefined;
+let lastErrorRetryable=false;
 
 const TERMINAL_JOB_STATUSES=new Set<EvolutionJob["status"]>(["completed","partial","failed","cancelled"]);
 
@@ -50,6 +51,24 @@ function shouldPushLocalJob(local:EvolutionJob,remote?:EvolutionJob){
 function withRemoteProjection(fn:()=>void){
   applyingRemote=true;
   try{fn();}finally{applyingRemote=false;}
+}
+
+/** Cache one complete server receipt without scheduling a write back. */
+export async function cachePointMissionProjection(id:string,remote:EvolveProject|undefined){
+  if(remote&&remote.id!==id)throw new Error("Mission point-read identity mismatch");
+  if(directoryRemovedMissionIds().has(id))return undefined;
+  const current=getLocalProject(id),journal=missionSyncJournal();
+  if(remote){
+    if(!current||remote.updatedAt>=current.updatedAt)withRemoteProjection(()=>saveLocalProject(remote));
+    knownRemoteIds.add(id);
+    updateMissionSyncJournal(value=>({...value,knownRemoteIds:[...new Set([...value.knownRemoteIds,id])]}));
+  }else if(journal.knownRemoteIds.includes(id)){
+    withRemoteProjection(()=>deleteLocalProject(id,{fromRemote:true}));
+    knownRemoteIds.delete(id);
+    updateMissionSyncJournal(value=>({...value,knownRemoteIds:value.knownRemoteIds.filter(value=>value!==id)}));
+  }
+  await flushProjectDatabase();
+  return getLocalProject(id);
 }
 
 async function pushLocalProjection(options?:{
@@ -196,8 +215,9 @@ function scheduleEventPush(){
 
 function setRealtimeStatus(status:string,error?:unknown){
   realtimeStatus=status;
+  lastErrorRetryable=error instanceof MissionReadStreamError&&error.retryable;
   lastError=error===undefined?undefined:error instanceof Error?error.message:String(error);
-  if(typeof window!=="undefined")window.dispatchEvent(new CustomEvent("evolve-production-realtime-status",{detail:{status,lastError}}));
+  if(typeof window!=="undefined")window.dispatchEvent(new CustomEvent("evolve-production-realtime-status",{detail:{status,lastError,lastErrorRetryable}}));
 }
 
 async function applyRemoteJobsAndEvents(jobs:Awaited<ReturnType<typeof localProductionPorts.jobs.list>>,events:Awaited<ReturnType<typeof localProductionPorts.events.list>>){
@@ -383,5 +403,5 @@ export async function stopProductionSync(){
 }
 
 export function productionSyncStatus(){
-  return {mode:productionRuntimeMode(),initialized,remoteMissionCount:knownRemoteIds.size,realtimeStatus,lastError,failureCount:httpPollFailureCount,missionConflictCount:missionConflicts.size};
+  return {mode:productionRuntimeMode(),initialized,remoteMissionCount:knownRemoteIds.size,realtimeStatus,lastError,lastErrorRetryable,failureCount:httpPollFailureCount,missionConflictCount:missionConflicts.size};
 }

@@ -23,6 +23,7 @@ import {probeServerEventPage as probeEventPage,readServerEventRows} from "./even
 import {probeActiveJobPage,readActiveJobRows} from "./active-job-pages";
 import {readRecentParseJobRows} from "./parse-job-pages";
 import {readMissionRowById,readRowsByIdPage} from "./collection-page-read";
+import {readMissionCatalog} from "./mission-catalog-read";
 import {readMissionIndexSnapshot} from "./mission-index-read";
 import { getServerArtifactStore } from "./artifact-runtime";
 import {assertServerControlExecutionActive,serverControlExecutionBinding,ServerControlExecutionStoppedError} from "./server-control-execution";
@@ -236,6 +237,10 @@ export async function bindServerJobWorkflowRun(
   const current=rpcJob(result?.job);
   if(result?.applied===true&&current)return current;
   throw new JobStateConflictError(id,typeof result?.reason==="string"?result.reason:"unknown",current);
+}
+
+export async function getServerMissionCatalog(){
+  return readMissionCatalog(createRestClient().request,getEvolutionWorkspaceId());
 }
 
 export async function getServerMissionIndex(){

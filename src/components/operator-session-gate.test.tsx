@@ -62,3 +62,11 @@ describe("production operator session gate",()=>{
     await act(async()=>root.unmount());
   });
 });
+
+ it("shows recoverable read progress without claiming successful full synchronization",async()=>{
+ mocks.getSession.mockResolvedValue({configured:true,authenticated:true});mocks.syncStatus.mockReturnValue(Object.assign({realtimeStatus:"http-error",lastError:"query timed out"},{lastErrorRetryable:true}));
+ const host=document.createElement("div");document.body.append(host);const root=createRoot(host);
+ await act(async()=>root.render(<OperatorSessionGate><div>工作台内容</div></OperatorSessionGate>));
+ await act(async()=>window.dispatchEvent(new CustomEvent("evolve-mission-read-progress",{detail:{schemaVersion:"mission-read-progress-v1",workspaceId:"w",verified:12,total:57,complete:false}})));
+ expect(host.textContent).toContain("正在自动续读（已核对 12/57）");expect(host.textContent).not.toContain("项目与任务同步正常");expect(host.textContent).not.toContain("项目与任务同步失败");await act(async()=>root.unmount());
+});

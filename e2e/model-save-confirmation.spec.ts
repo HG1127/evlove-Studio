@@ -8,7 +8,7 @@ test("workbench resumes an interrupted project page before publishing task total
   const retries:number[]=[];
   await page.route("**/api/evolution/**",async route=>{
     const url=new URL(route.request().url()),path=url.pathname;
-    if(path.endsWith("/mission-index")){await route.fulfill({status:404,json:{statusMessage:"Not Found"}});return;}
+    if(path.endsWith("/mission-index")||path.endsWith("/mission-catalog")){await route.fulfill({status:404,json:{statusMessage:"Not Found"}});return;}
     if(path.endsWith("/operator-session")){await route.fulfill({json:{configured:true,authenticated:true}});return;}
     if(path.endsWith("/missions")){
       const cursor=url.searchParams.get("cursor"),limit=Number(url.searchParams.get("pageLimit"));
@@ -38,7 +38,7 @@ test("workbench resumes an interrupted project page before publishing task total
 test("workbench keeps task totals unknown while the project service is unavailable",async({page},testInfo)=>{
   await page.route("**/api/evolution/**",async route=>{
     const path=new URL(route.request().url()).pathname;
-    if(path.endsWith("/mission-index")){await route.fulfill({status:404,json:{statusMessage:"Not Found"}});return;}
+    if(path.endsWith("/mission-index")||path.endsWith("/mission-catalog")){await route.fulfill({status:404,json:{statusMessage:"Not Found"}});return;}
     if(path.endsWith("/operator-session"))await route.fulfill({json:{configured:true,authenticated:true}});
     else if(path.endsWith("/missions"))await route.fulfill({status:503,json:{statusMessage:"Server Data Plane 当前不可用",data:{code:"SERVER_DATA_PLANE_UNAVAILABLE",reason:"upstream-unavailable"}}});
     else if(path.endsWith("/events"))await route.fulfill({json:[]});
@@ -66,7 +66,7 @@ test("settings confirms persisted models after reload and detects conflicting re
   const judgeStatus=page.getByText("当前独立验收：",{exact:true}).locator("..");
   await page.route("**/api/evolution/**",async route=>{
     const path=new URL(route.request().url()).pathname;
-    if(path.endsWith("/mission-index")){await route.fulfill({status:404,json:{statusMessage:"Not Found"}});return;}
+    if(path.endsWith("/mission-index")||path.endsWith("/mission-catalog")){await route.fulfill({status:404,json:{statusMessage:"Not Found"}});return;}
     if(path.endsWith("/operator-session"))await route.fulfill({json:{configured:true,authenticated:true}});
     else if(path.endsWith("/events"))await route.fulfill({json:[]});
     else await route.fulfill({json:{items:[]}});
@@ -123,6 +123,7 @@ test("workbench resumes a private full-state cache and polls only the version in
   await page.route("**/api/evolution/**",async route=>{
     const path=new URL(route.request().url()).pathname;
     if(path.endsWith("/operator-session")){await route.fulfill({json:{configured:true,authenticated:true}});return;}
+    if(path.endsWith("/mission-catalog")){await route.fulfill({status:404,json:{}});return;}
     if(path.endsWith("/mission-index")){
       indexReads++;await route.fulfill({json:{schemaVersion:"mission-index-v1",workspaceId:"synthetic-workspace",complete:true,items:projects.map(project=>({missionId:project.id,revision:8}))}});return;
     }
@@ -149,4 +150,35 @@ test("workbench resumes a private full-state cache and polls only the version in
   expect(reads.filter(id=>id==="indexed-a")).toHaveLength(1);
   expect(reads.filter(id=>id==="indexed-b")).toHaveLength(2);
   await page.screenshot({path:testInfo.outputPath("indexed-complete-recovery.png"),fullPage:true});
+});
+
+
+test("directory opens one complete project while another full receipt is held",async({page},testInfo)=>{
+ const projects=[{...demoProject,id:"directory-a",name:"Directory waiting full state"},{...demoProject,id:"directory-b",name:"Directory point opened"}];
+ let unblock=()=>{};const held=new Promise<void>(resolve=>{unblock=resolve;});const writes:string[]=[],reads:string[]=[];
+ await page.route("**/api/evolution/**",async route=>{
+  const request=route.request(),path=new URL(request.url()).pathname;
+  if(!["GET","HEAD"].includes(request.method())){writes.push(path);await route.fulfill({status:403,json:{}});return;}
+  if(path.endsWith("/operator-session")){await route.fulfill({json:{configured:true,authenticated:true}});return;}
+  if(path.endsWith("/mission-catalog")){await route.fulfill({json:{schemaVersion:"mission-catalog-v1",workspaceId:"synthetic-workspace",directoryComplete:true,entries:projects.map(project=>({missionId:project.id,revision:8,title:project.name,updatedAt:project.updatedAt}))}});return;}
+  if(path.endsWith("/mission-index")){await route.fulfill({json:{schemaVersion:"mission-index-v1",workspaceId:"synthetic-workspace",complete:true,items:projects.map(project=>({missionId:project.id,revision:8}))}});return;}
+  if(path.includes("/missions/")){
+   const id=path.endsWith("/read")?path.split("/").at(-2)!:path.split("/").pop()!;reads.push(id);
+   if(id==="directory-a")await held;
+   const project=projects.find(item=>item.id===id)!;
+   await route.fulfill({headers:{"Content-Type":"application/x-ndjson"},body:JSON.stringify({schemaVersion:"mission-read-stream-v1",type:"pending"})+"\n"+JSON.stringify({schemaVersion:"mission-read-stream-v1",type:"complete",envelope:{schemaVersion:"mission-v1",missionId:id,revision:8,payload:project,createdAt:project.updatedAt,updatedAt:project.updatedAt}})+"\n"});return;
+  }
+  if(path.endsWith("/missions"))throw new Error("Directory flow requested a full legacy list");
+  await route.fulfill({json:path.endsWith("/events")?[]:{items:[]}});
+ });
+ try{
+  await page.goto("/#/");
+  await expect(page.getByText("完整状态待核对",{exact:true})).toHaveCount(2);
+  await expect(page.locator(".tabular-nums")).toHaveText(["—","—","—","—"]);
+  await page.screenshot({path:testInfo.outputPath("directory-before-full-state.png"),fullPage:true});
+  await page.getByRole("link").filter({hasText:"Directory point opened"}).click();
+  await expect(page.getByRole("heading",{name:"Directory point opened",exact:true})).toBeVisible();
+  expect(reads).toContain("directory-b");expect(writes).toEqual([]);
+  await page.screenshot({path:testInfo.outputPath("point-project-without-global-wait.png"),fullPage:true});
+ }finally{unblock();}
 });

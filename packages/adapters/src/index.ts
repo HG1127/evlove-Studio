@@ -13,3 +13,5 @@ export * from "./ai-provider-usage";
 export * from "./ai-provider-completion";
 export * from "./paired-jsonl";
 export * from "./html-card-paragraph-evidence";
+export * from "./http-mission-catalog";
+export {MissionReadStreamError} from "./http-mission-read-stream";

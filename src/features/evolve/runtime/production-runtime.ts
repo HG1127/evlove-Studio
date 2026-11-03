@@ -24,6 +24,6 @@ export function getProductionRuntime():ProductionRuntimePorts{
   if(configured)return configured;
   const mode=productionRuntimeMode();
   if(mode==="local")return localProductionPorts;
-  automaticHttpRuntime??=createHttpProductionPorts(serverEnv.EVOLUTION_API_URL?.trim()||"/api/evolution",{missionIndex:true,missionStream:true});
+  automaticHttpRuntime??=createHttpProductionPorts(serverEnv.EVOLUTION_API_URL?.trim()||"/api/evolution",{missionIndex:true,missionStream:true,onMissionReadProgress:progress=>{if(typeof window!=="undefined")window.dispatchEvent(new CustomEvent("evolve-mission-read-progress",{detail:progress}));}});
   return automaticHttpRuntime;
 }

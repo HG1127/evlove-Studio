@@ -5,7 +5,8 @@ import {MemoryRouter} from "react-router-dom";
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
 import {MissionControlDashboard} from "./mission-control-dashboard";
 
-const mocks=vi.hoisted(()=>({sync:vi.fn(()=>({mode:"http",realtimeStatus:"http-error"}))}));
+const mocks=vi.hoisted(()=>({catalog:vi.fn(()=>({})),sync:vi.fn(()=>({mode:"http",realtimeStatus:"http-error"}))}));
+vi.mock("../runtime/use-mission-catalog",()=>({useMissionCatalog:mocks.catalog}));
 vi.mock("../runtime/production-sync",()=>({productionSyncStatus:mocks.sync}));
 vi.mock("../runtime/use-local-projects",()=>({useLocalProjects:()=>[]}));
 vi.mock("../runtime/run-manager",()=>({getLiveRun:vi.fn(),getRunTask:vi.fn(),shouldResumeTask:()=>false,subscribeLiveRuns:()=>()=>{}}));
@@ -14,6 +15,7 @@ vi.mock("./evolution-composer",()=>({EvolutionComposer:()=>null}));
 let host:HTMLDivElement,root:Root;
 beforeEach(()=>{
   (globalThis as {IS_REACT_ACT_ENVIRONMENT?:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
+  mocks.catalog.mockReturnValue({});
   mocks.sync.mockReturnValue({mode:"http",realtimeStatus:"http-error"});
   host=document.createElement("div");document.body.append(host);root=createRoot(host);
 });
@@ -42,4 +44,10 @@ describe("workbench data availability",()=>{
     await render();expect(counts()).toEqual(["0","0","0","0"]);
     expect(host.textContent).not.toContain("任务数量尚未确认");
   });
+});
+
+it("shows a directory card while keeping all workflow totals unknown",async()=>{
+ mocks.catalog.mockReturnValue({snapshot:{schemaVersion:"mission-catalog-v1",workspaceId:"w",directoryComplete:true,entries:[{missionId:"directory-only",revision:1,title:"Restored directory",updatedAt:"2026-11-03"}]}});
+ await render();expect(host.textContent).toContain("Restored directory");expect(host.textContent).toContain("完整状态待核对");expect(counts()).toEqual(["—","—","—","—"]);
+ expect(host.querySelector('a[href="/projects/directory-only"]')).not.toBeNull();
 });

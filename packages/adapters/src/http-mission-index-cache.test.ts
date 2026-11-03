@@ -18,10 +18,12 @@ describe("indexed full Mission synchronization",()=>{
       if(id==="b"&&fail)throw new TypeError("network interrupted");
       return reply(envelope(id,items.find(item=>item.missionId===id)!.revision));
     }));
-    const ports=createHttpProductionPorts("/api/evolution",{missionIndex:true});
+    const progress=vi.fn();
+    const ports=createHttpProductionPorts("/api/evolution",{missionIndex:true,onMissionReadProgress:progress});
     await expect(ports.missions.list()).rejects.toThrow("network interrupted");
+    expect(progress).toHaveBeenLastCalledWith({schemaVersion:"mission-read-progress-v1",workspaceId:"workspace",verified:1,total:2,complete:false});
     expect(reads).toEqual(["a","b"]);fail=false;
-    const complete=await ports.missions.list();expect(complete.map(item=>item.id).sort()).toEqual(["a","b"]);
+    const complete=await ports.missions.list();expect(progress).toHaveBeenLastCalledWith({schemaVersion:"mission-read-progress-v1",workspaceId:"workspace",verified:2,total:2,complete:true});expect(complete.map(item=>item.id).sort()).toEqual(["a","b"]);
     expect(reads).toEqual(["a","b","b"]);
     complete[0].name="caller mutation";
     expect((await ports.missions.list()).some(item=>item.name==="caller mutation")).toBe(false);

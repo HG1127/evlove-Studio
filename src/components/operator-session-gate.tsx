@@ -4,6 +4,8 @@ import {localProductionPorts} from "@/features/evolve/runtime/local-production-a
 import {initializeProductionSync,productionSyncStatus,stopProductionSync} from "@/features/evolve/runtime/production-sync";
 import {getOperatorSession,loginOperator,logoutOperator} from "@/features/evolve/runtime/operator-session-client";
 
+import {useMissionReadProgress} from "@/features/evolve/runtime/use-mission-read-progress";
+
 type GateState="checking"|"login"|"unavailable"|"ready"|"offline";
 type SyncState="connecting"|"connected"|"failed";
 
@@ -15,6 +17,8 @@ export function OperatorSessionGate({children}:{children:ReactNode}){
   const [busy,setBusy]=useState(false);
   const [syncState,setSyncState]=useState<SyncState>("connecting");
   const [syncError,setSyncError]=useState("");
+  const [retryable,setRetryable]=useState(false);
+  const progress=useMissionReadProgress();
 
   useEffect(()=>{
     if(state!=="checking")return;
@@ -35,6 +39,7 @@ export function OperatorSessionGate({children}:{children:ReactNode}){
       const status=productionSyncStatus();
       setSyncState(status.realtimeStatus==="http-polling"?"connected":status.realtimeStatus==="http-error"?"failed":"connecting");
       setSyncError(status.lastError||"");
+      setRetryable(Boolean(status.lastErrorRetryable));
     };
     window.addEventListener("evolve-production-realtime-status",updateSyncState);
     updateSyncState();
@@ -86,8 +91,8 @@ export function OperatorSessionGate({children}:{children:ReactNode}){
   if(state==="ready"||state==="offline")return <>
     {children}
     {state==="ready"&&productionRuntimeMode()!=="local"&&<div role="status" className="fixed bottom-4 right-4 z-50 flex max-w-sm items-center gap-2 rounded-xl border bg-white/95 px-3 py-2 text-xs shadow-lg">
-      <span className={syncState==="connected"?"text-emerald-700":syncState==="failed"?"text-rose-700":"text-slate-600"}>
-        {syncState==="connected"?"项目与任务同步正常":syncState==="failed"?`项目与任务同步失败${syncError?`：${syncError}`:"，正在自动重试"}`:"正在连接项目与任务服务"}
+      <span className={syncState==="connected"?"text-emerald-700":syncState==="failed"?(retryable?"text-amber-800":"text-rose-700"):"text-slate-600"}>
+        {syncState==="connected"?"项目与任务同步正常":syncState==="failed"&&retryable?"完整状态读取暂缓，正在自动续读"+(progress?"（已核对 "+progress.verified+"/"+progress.total+"）":""):syncState==="failed"?`项目与任务同步失败${syncError?`：${syncError}`:"，正在自动重试"}`:"正在核对项目与任务"+(progress?"（"+progress.verified+"/"+progress.total+"）":"")}
       </span>
       {!localDirect&&<button type="button" className="font-medium text-slate-600 underline" onClick={()=>void logout()}>退出</button>}
     </div>}

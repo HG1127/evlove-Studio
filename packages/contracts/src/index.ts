@@ -54,3 +54,4 @@ export * from "./confirmation-evidence-catalog";
 export * from "./paired-jsonl-contract";
 export * from "./html-card-paragraph-evidence-contract";
 export * from "./mission-read-stream-contract";
+export * from "./mission-catalog-contract";

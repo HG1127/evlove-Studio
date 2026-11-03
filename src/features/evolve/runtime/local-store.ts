@@ -6,6 +6,8 @@ import { type EvolveProject, type EvaluationResult } from "../schemas";
 import { materializeChampionOutputs, maybeUpdateSearchChampion } from "./evolution-search";
 import { endRunTask, setAutoGateFlag } from "./run-manager";
 
+const directoryRemovedIds=new Set<string>();
+export function directoryRemovedMissionIds(){return new Set([...directoryRemovedIds,...missionSyncJournal().pendingDeleteIds]);}
 const KEY = "evolve-studio:projects:v2.2";
 const LEGACY_KEYS = ["evolve-studio:projects:v2.1", "evolve-studio:projects:v0.5", "evolve-studio:projects:v0.4", "evolve-studio:projects:v0.3", "evolve-studio:projects:v0.2"];
 /** 历史迁移只做一次的标记：迁过后即使当前存储被删空，也绝不再回读旧版本键。 */
@@ -162,6 +164,7 @@ export function saveLocalProject(project: EvolveProject) {
 }
 
 export function deleteLocalProject(id: string, options?: { fromRemote?: boolean }) {
+  if(typeof window!=="undefined")directoryRemovedIds.add(id);
   const journal=missionSyncJournal();
   if(!options?.fromRemote&&journal.knownRemoteIds.includes(id)){
     updateMissionSyncJournal((current)=>({...current,pendingDeleteIds:[...new Set([...current.pendingDeleteIds,id])]}));

@@ -5,6 +5,7 @@ import {
   MissionEnvelopeSchema,
   missionEnvelope,
   type ProductionRuntimePorts,
+  type MissionReadProgress,
 } from "@evolution/contracts";
 import {z} from "zod";
 import {httpApiErrorDetail} from "./http-error";
@@ -107,7 +108,7 @@ export class MissionRevisionConflictError extends Error{
   }
 }
 
-export function createHttpProductionPorts(apiUrl:string,options:{missionIndex?:boolean;missionStream?:boolean}={}):ProductionRuntimePorts{
+export function createHttpProductionPorts(apiUrl:string,options:{missionIndex?:boolean;missionStream?:boolean;onMissionReadProgress?:(progress:MissionReadProgress)=>void}={}):ProductionRuntimePorts{
   const root=baseUrl(apiUrl);
   const missionRevisions=new Map<string,number>();
   const missionReadHint={limit:10};
@@ -118,7 +119,7 @@ export function createHttpProductionPorts(apiUrl:string,options:{missionIndex?:b
     assertReceiptIdentity(envelope.missionId,id,"Mission get");return envelope;
   };
   const readEnvelope=options.missionStream?createHttpMissionReadStream(root,readStandardEnvelope):readStandardEnvelope;
-  const indexed=options.missionIndex?createHttpMissionIndexCache(root,readEnvelope,()=>missionRevisions.clear()):undefined;
+  const indexed=options.missionIndex?createHttpMissionIndexCache(root,readEnvelope,()=>missionRevisions.clear(),options.onMissionReadProgress):undefined;
   return {
     missions:{
       initialize:async()=>undefined,
