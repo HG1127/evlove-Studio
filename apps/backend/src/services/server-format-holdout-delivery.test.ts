@@ -3,9 +3,10 @@ import {createHash} from "node:crypto";
 import {beforeEach,expect,it,vi} from "vitest";
 import JSZip from "jszip";
 import * as XLSX from "xlsx";
-import {CandidateSchema,TestCaseSchema,type SourceArtifact} from "@evolution/contracts";
+import {ArtifactOutcomeStudySchema,CandidateSchema,TestCaseSchema,type SourceArtifact} from "@evolution/contracts";
 import {materializeAcceptedChampionPackage,finalHoldoutPaperHash,finalHoldoutContractFingerprint} from "@evolution/core";
 import {runServerHoldout,runServerArtifactAcceptance,type ServerHoldoutPorts} from "@evolution/harness";
+import {verifyArtifactOutcomeCustody} from './artifact-outcome-study';
 import {acceptedPackageFixture} from "@evolution/testkit";
 import {parseServerSource} from "./server-source-parser";
 import {materializeServerCandidateArtifacts,verifyServerCandidateFrozenArtifact} from "./server-experiment-artifacts";
@@ -65,6 +66,8 @@ it("executes twelve-format paired Hidden format checks before Gate F and exact-b
     expect(source.parseStatus,source.warnings.join(";")).toBe("ready");sources.push(source);blobs.set("raw-"+item.ext,item.blob);
   }
   p.sourceArtifacts=sources;p.searchChampion=undefined;
+  p.baselineRun.originalReferences=await Promise.all(sources.map(async(source,index)=>({schemaVersion:'original-artifact-reference-v1' as const,missionId:p.id,sourceArtifactId:source.id,blobId:source.storageRef!,sha256:await sha(items[index]!.blob),sizeBytes:items[index]!.blob.size})));
+
   p.acceptanceRubric=sources.map(source=>({id:"FMT-"+source.id,title:"Format "+source.name,requirement:"Reopen the exact stored same-format file",
     source:"system-integrity",weight:1,hardGate:true,judgeType:"integrity",validationMethod:"format-roundtrip",minScore:100,
     evidenceExpected:["independent format parsing"],protectedConstraint:false,artifactIds:[source.id],category:"integrity"}));
@@ -103,4 +106,12 @@ it("executes twelve-format paired Hidden format checks before Gate F and exact-b
     put:async()=>{throw Error("accepted bytes must never be regenerated");},delete:async()=>{throw Error("no deletion");}});
   expect(delivered.receipts).toHaveLength(12);
   for(const receipt of delivered.receipts)expect(await sha(blobs.get(receipt.artifactRef)!)).toBe(receipt.sha256);
+  // Native outcome identity must retain raw Office/archive hashes, not text/patch snapshot hashes.
+  accepted.project.outputArtifacts=delivered.outputArtifacts;
+  const study=ArtifactOutcomeStudySchema.parse({schemaVersion:'artifact-outcome-study-v1',id:'synthetic-twelve-formats',missionId:p.id,candidateId:candidate.id,acceptanceId:accepted.project.artifactAcceptance.id,evidenceFingerprint:accepted.project.artifactAcceptance.evidenceFingerprint,registeredAt:new Date().toISOString(),source:'outcome-telemetry:artifact-study.synthetic-twelve-formats',segment:'synthetic-only',acceptanceMetricKey:'accepted',elapsedMetricKey:'elapsed',costMetricKey:'cost',costUnit:'USD',stableTaskIds:Array.from({length:30},(_,i)=>'stable-'+i),candidateTaskIds:Array.from({length:30},(_,i)=>'candidate-'+i),originalArtifacts:accepted.project.baselineRun.originalReferences!.map(r=>({sourceArtifactId:r.sourceArtifactId,blobId:r.blobId,sha256:r.sha256,sizeBytes:r.sizeBytes})),candidateArtifacts:delivered.receipts.map(r=>({sourceArtifactId:r.sourceArtifactId,blobId:r.artifactRef,sha256:r.sha256,sizeBytes:r.size}))});
+  expect(candidate.artifactSnapshots.some(s=>s.frozenArtifact?.sha256!==s.contentHash)).toBe(true);
+  await expect(verifyArtifactOutcomeCustody(accepted.project,study)).resolves.toBeUndefined();
+  const office=study.candidateArtifacts.find(r=>r.sourceArtifactId==='xlsx')!,bytes=new Uint8Array(await blobs.get(office.blobId)!.arrayBuffer());bytes[0]=bytes[0]!^1;blobs.set(office.blobId,new Blob([bytes]));
+  await expect(verifyArtifactOutcomeCustody(accepted.project,study)).rejects.toThrow('bytes changed');
+
 });
