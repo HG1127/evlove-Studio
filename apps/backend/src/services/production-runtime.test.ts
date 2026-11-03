@@ -70,6 +70,15 @@ describe("server Mission revision CAS",()=>{
     vi.unstubAllGlobals();
   });
 
+  it("fails a malformed upstream JSON page without publishing partial state or SQL content",async()=>{
+    const fetch=vi.fn(async()=>new Response('[{"id":"private-upstream-document-fragment"',{status:200}));
+    vi.stubGlobal("fetch",fetch);
+    let caught:unknown;try{await listServerMissionEnvelopePage();}catch(error){caught=error;}
+    expect(caught).toMatchObject({statusCode:503,data:{code:"SERVER_DATA_PLANE_UNAVAILABLE",reason:"invalid-response"}});
+    expect(JSON.stringify(caught)).not.toContain("private-upstream-document-fragment");
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
   it.each([false,true])("uses the atomic control Job fence for a Mission commit (cancelled at commit: %s)",async cancelled=>{
     const input={missionId:demoProject.id,controlJobId:"control",requestedAt:at};
     const control={...baseJob,id:"control",generation:1,idempotencyKey:"workflow-control:control"};
@@ -152,7 +161,7 @@ describe("server Mission revision CAS",()=>{
     vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
       const url=new URL(String(input));
       paths.push(url.pathname+url.search);
-      expect(url.searchParams.get(url.pathname.endsWith("/rpc/read_evolution_mission_envelope_page")?"p_page_limit":"limit")).toBe(url.pathname.endsWith("/rpc/read_evolution_mission_envelope_page")?"2":"500");
+      expect(url.searchParams.get(url.pathname.endsWith("/rpc/read_evolution_mission_envelope_page")?"p_page_limit":"limit")).toBe(url.pathname.endsWith("/rpc/read_evolution_mission_envelope_page")?"1":"500");
       if(url.pathname.endsWith("/jobs"))expect(url.searchParams.get("order")).toBe("id.asc");
       const cursor=url.searchParams.get(url.pathname.endsWith("/rpc/read_evolution_mission_envelope_page")?"p_after_id":"id");
       if(url.pathname.endsWith("/rpc/read_evolution_mission_envelope_page")){
@@ -183,7 +192,7 @@ describe("server Mission revision CAS",()=>{
   it("serves a bounded cursor page for HTTP Mission and Job readers",async()=>{
     vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
       const url=new URL(String(input));
-      expect(url.searchParams.get(url.pathname.endsWith("/rpc/read_evolution_mission_envelope_page")?"p_page_limit":"limit")).toBe(url.pathname.endsWith("/rpc/read_evolution_mission_envelope_page")?"2":"25");
+      expect(url.searchParams.get(url.pathname.endsWith("/rpc/read_evolution_mission_envelope_page")?"p_page_limit":"limit")).toBe(url.pathname.endsWith("/rpc/read_evolution_mission_envelope_page")?"1":"25");
       if(url.pathname.endsWith("/rpc/read_evolution_mission_envelope_page")){
         expect(url.searchParams.get("p_after_id")).toBe("mission-a");
         return new Response(JSON.stringify([missionRow(2,{...demoProject,id:"mission-b"})]),{status:200});
@@ -203,7 +212,7 @@ describe("server Mission revision CAS",()=>{
     });
   });
 
-  it("reads all full Mission envelopes after PostgREST times out on larger pages",async()=>{
+  it("reads all full Mission envelopes without issuing oversized pages",async()=>{
     const projects=["mission-a","mission-b","mission-c"].map((id,index)=>({...demoProject,id,updatedAt:`2026-09-23T00:0${index}:00.000Z`}));
     const requested:Array<{cursor:string|null;limit:number}>=[];
     vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
@@ -215,16 +224,16 @@ describe("server Mission revision CAS",()=>{
     expect(result.map(item=>item.payload)).toEqual([...projects].reverse().map(project=>missionEnvelope(project,8).payload));
     expect(result.every(item=>item.revision===8)).toBe(true);
     expect(requested).toEqual([
-      {cursor:null,limit:2},{cursor:null,limit:1},
-      {cursor:"mission-a",limit:2},{cursor:"mission-a",limit:1},
-      {cursor:"mission-b",limit:2},{cursor:"mission-b",limit:1},
-      {cursor:"mission-c",limit:2},{cursor:"mission-c",limit:1},
+      {cursor:null,limit:1},
+      {cursor:"mission-a",limit:1},
+      {cursor:"mission-b",limit:1},
+      {cursor:"mission-c",limit:1},
     ]);
   });
 
   it.each([1,10,100,500])("bounds a %s-row Mission read while preserving its entire envelope and continuation",async limit=>{
     vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
-      expect(new URL(String(input)).searchParams.get("p_page_limit")).toBe(String(Math.min(limit,2)));
+      expect(new URL(String(input)).searchParams.get("p_page_limit")).toBe("1");
       return new Response(JSON.stringify([missionRow(8)]),{status:200});
     }));
     const result=await listServerMissionEnvelopePage(undefined,limit);

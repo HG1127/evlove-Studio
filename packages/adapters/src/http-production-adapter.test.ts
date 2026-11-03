@@ -101,7 +101,7 @@ describe("HTTP production adapter",()=>{
     expect(limits).toEqual(["10","5","2","1"]);
   });
 
-  it.each(["credential-rejected","schema-unavailable"])("does not mask permanent %s as recoverable pagination",async reason=>{
+  it.each(["credential-rejected","schema-unavailable","invalid-response"])("does not mask permanent %s as recoverable pagination",async reason=>{
     const fetch=vi.fn(async()=>new Response(JSON.stringify({data:{code:"SERVER_DATA_PLANE_UNAVAILABLE",reason}}),{status:503,headers:{"Content-Type":"application/json"}}));vi.stubGlobal("fetch",fetch);
     await expect(createHttpProductionPorts("/api/evolution").missions.list()).rejects.toThrow("HTTP 503");
     expect(fetch).toHaveBeenCalledOnce();

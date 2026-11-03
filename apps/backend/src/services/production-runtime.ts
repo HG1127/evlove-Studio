@@ -13,7 +13,7 @@ import {
   type ProductionRuntimePorts,
 } from "@evolution/contracts";
 import { getServerSupabaseConfig } from "../server-env";
-import {dataPlaneFetch} from "./data-plane-http";
+import {dataPlaneFetch,readDataPlaneJson} from "./data-plane-http";
 import {supabaseRestAuthHeaders} from "./supabase-rest-auth";
 import { mirrorEvolutionEventToEvidenceLedger } from "./evidence-ledger";
 import {appendServerEvent,probeServerEventReadback,readServerEventById,rowEvent} from "./event-persistence";
@@ -68,8 +68,7 @@ function createRestClient(){
       headers:{...baseHeaders,...(init.headers??{})},
     });
     if(response.status===204)return undefined;
-    const text=await response.text();
-    return text?JSON.parse(text):undefined;
+    return readDataPlaneJson("production-runtime",response);
   }
 
   return {request};

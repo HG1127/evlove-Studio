@@ -6,6 +6,7 @@ describe("public API error detail",()=>{
     expect(httpApiErrorDetail(error)).toBe("后台数据库表或接口尚未就绪，请管理员检查迁移状态。");
     expect(httpApiErrorDetail({...error,data:{...error.data,reason:"credential-rejected"}})).toContain("服务端数据库凭据与权限");
     expect(httpApiErrorDetail({...error,data:{...error.data,reason:"unknown"}})).toBe(error.statusMessage);
+    expect(httpApiErrorDetail({...error,data:{...error.data,reason:"invalid-response"}})).toBe("后台返回的数据不完整，本次同步未完成。");
   });
   it("reads the safe H3 data message before a generic wrapper",()=>{
     expect(httpApiErrorDetail({message:"HTTPError",statusMessage:"Server AI operation failed",data:{message:"模型连接中断，请重试。"}})).toBe("模型连接中断，请重试。");

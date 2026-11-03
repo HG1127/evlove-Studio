@@ -24,8 +24,14 @@ SQL invoker functions read complete rows with a function-local 45-second budget:
 the global/role timeout, write policy, stored content, revisions or public grants.
 Both migrations must be applied before publishing the corresponding backend.
 
-The backend retries a confirmed statement timeout at the same cursor with row
-limits 2 → 1. It stops if one row still fails or any other failure occurs. An
+The backend requests one complete row per Mission page. Real staged reads showed
+that combining two large rows can spend most of a 60-second transport window
+before producing a response; an observed failure also reached the backend JSON
+parser. A direct comparison of that same cursor completed a two-row response in
+36.1 seconds, versus 13.5 and 3.1 seconds for its two separate complete rows.
+This motivates reducing per-request work; it does not establish the root cause
+of every intermittent failure or prove production recovery. A one-row failure
+stops; the backend never repeats an oversized query. An
 exact-ID response must match both the requested ID and the payload identity.
 A successful smaller page advances to its actual last ID. Clients continue until
 an empty page; the Job pagination policy is unchanged.
@@ -36,6 +42,11 @@ transient service failures. It retains earlier complete pages privately until th
 whole list validates, and remembers a working smaller limit for that adapter's
 lifetime. It never retries malformed JSON, contract failures, permanent settings
 errors or writes. A failed full read cannot publish partial task totals.
+
+The runtime decodes only complete upstream JSON. Interrupted bodies become a
+sanitized network failure; malformed received JSON becomes `invalid-response`,
+which does not trigger page reduction or JSON repair. Error responses never
+contain the upstream document fragment from the parser exception.
 
 The workbench treats remote totals as unknown until synchronization succeeds.
 During a connection failure it can show previous cached tasks, clearly labelled,

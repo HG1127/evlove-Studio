@@ -1,8 +1,23 @@
 // @vitest-environment node
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
-import {classifyDataPlaneUpstreamFailure,dataPlaneFetch} from "./data-plane-http";
+import {classifyDataPlaneUpstreamFailure,dataPlaneFetch,readDataPlaneJson} from "./data-plane-http";
 
 afterEach(()=>vi.unstubAllGlobals());
+
+describe("complete external JSON boundary",()=>{
+  it("retains a complete response and rejects a malformed body without exposing document fragments",async()=>{
+    const value=[{id:"canonical",payload:{files:[{content:"full unchanged artifact"}]}}];
+    expect(await readDataPlaneJson("production-runtime",new Response(JSON.stringify(value)))).toEqual(value);
+    const response=new Response('[{"payload":"private document fragment"');
+    let caught:unknown;try{await readDataPlaneJson("production-runtime",response);}catch(error){caught=error;}
+    expect(caught).toMatchObject({statusCode:503,data:{reason:"invalid-response",upstreamStatus:200}});
+    expect(JSON.stringify(caught)).not.toContain("private document fragment");
+  });
+  it("reports an interrupted response stream as unavailable rather than returning partial JSON",async()=>{
+    const body=new ReadableStream({start(controller){controller.enqueue(new TextEncoder().encode('[{"id":'));controller.error(new TypeError("private socket details"));}});
+    await expect(readDataPlaneJson("production-runtime",new Response(body))).rejects.toMatchObject({statusCode:503,data:{reason:"network-error"}});
+  });
+});
 
 describe("Data Plane upstream error semantics",()=>{
   it("classifies infrastructure failures as unavailable",()=>{

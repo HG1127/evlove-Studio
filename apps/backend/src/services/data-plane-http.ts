@@ -18,6 +18,7 @@ export type DataPlaneUpstreamReason=
   |"rate-limited-or-timeout"
   |"upstream-unavailable"
   |"network-error"
+  |"invalid-response"
   |"conflict"
   |"request-rejected";
 
@@ -69,6 +70,17 @@ function safeError(args:{
 
 const READ_RETRY_DELAYS_MS=[200,800];
 const MAX_READ_RETRY_DELAY_MS=2000;
+
+/** Decode complete external JSON without exposing its document fragments in a
+ * SyntaxError. Invalid received data is a hard failure, never repaired/retried. */
+export async function readDataPlaneJson(service:string,response:Response):Promise<unknown>{
+  let text:string;
+  try{text=await response.text();}
+  catch{throw safeError({service,reason:"network-error",upstreamStatus:response.status});}
+  if(!text)return undefined;
+  try{return JSON.parse(text);}
+  catch{throw safeError({service,reason:"invalid-response",upstreamStatus:response.status});}
+}
 
 async function pauseReadRetry(delayMs:number,signal?:AbortSignal|null){
   if(signal?.aborted)return false;

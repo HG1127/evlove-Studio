@@ -6,7 +6,7 @@ const ApiErrorDetailSchema=z.object({
 }).passthrough();
 const DataPlaneFailureSchema=z.object({
   code:z.literal("SERVER_DATA_PLANE_UNAVAILABLE"),
-  reason:z.enum(["credential-rejected","schema-unavailable","rate-limited-or-timeout","upstream-unavailable","network-error"]),
+  reason:z.enum(["credential-rejected","schema-unavailable","rate-limited-or-timeout","upstream-unavailable","network-error","invalid-response"]),
 });
 const dataPlaneMessages={
   "credential-rejected":"后台数据库拒绝访问，请管理员检查服务端数据库凭据与权限。",
@@ -14,6 +14,7 @@ const dataPlaneMessages={
   "rate-limited-or-timeout":"后台数据服务限流或超时，正在自动重试。",
   "upstream-unavailable":"后台数据服务暂不可用，正在自动重试。",
   "network-error":"后端无法连接数据服务，正在自动重试。",
+  "invalid-response":"后台返回的数据不完整，本次同步未完成。",
 } as const;
 
 /** Read only public error fields; never surface stack traces or an internal cause. */
