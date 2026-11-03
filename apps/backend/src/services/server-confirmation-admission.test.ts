@@ -6,6 +6,7 @@ import {ConfirmationEvidenceCatalogSchema,EvolveProjectSchema,EvolutionJobSchema
 import {confirmationMissionScopeText,fastHash} from "@evolution/core";
 import {absoluteCalibrationFixture,bindSyntheticCalibrationApprovals,pairedJudgeFixture,zeroReferenceCalibrationFixture} from "@evolution/testkit";
 import {assertServerConfirmationAdmission} from "./server-confirmation-admission";
+import {getProductionBuildInfo} from "./build-info";
 import {assertClientMissionMutationSafe} from "./mission-mutation-policy";
 import register from "../../server/api/evolution/missions.post";
 import start from "../../server/api/evolution/start.post";
@@ -92,6 +93,18 @@ describe("real full-confirmation admission composition (synthetic evidence only)
       expect(await assertServerConfirmationAdmission(x.project,phase)).toMatchObject({ready:true,grantsModelBudget:false,grantsNewTrialAuthority:false,technicalAcceptanceEstablished:false});
     }
     expect(x.store.get).toHaveBeenCalledWith("plan");expect(x.store.put).not.toHaveBeenCalled();
+  });
+  it("reports and admits the same CLI source identity, rejecting a changed or missing identity",async()=>{
+    const x=synthetic();vi.stubEnv("VERCEL_GIT_COMMIT_SHA","");
+    vi.stubEnv("EVOLUTION_RUNTIME_COMMIT_SHA",x.plan.sourceCommit);
+    expect(getProductionBuildInfo().commitSha).toBe(x.plan.sourceCommit);
+    await expect(assertServerConfirmationAdmission(x.project,"registration")).resolves.toMatchObject({ready:true});
+    vi.stubEnv("EVOLUTION_RUNTIME_COMMIT_SHA","b".repeat(40));
+    await expect(assertServerConfirmationAdmission(x.project,"registration")).rejects.toMatchObject(rejected);
+    vi.stubEnv("EVOLUTION_RUNTIME_COMMIT_SHA","");
+    expect(getProductionBuildInfo().commitSha).toBeUndefined();
+    await expect(assertServerConfirmationAdmission(x.project,"registration")).rejects.toMatchObject(rejected);
+    expect(x.store.put).not.toHaveBeenCalled();expect(mocks.createJob).not.toHaveBeenCalled();
   });
   it("requires a registered zero reference only when explicitly configured, retaining legacy admission",async()=>{
     const x=synthetic("undeclared");

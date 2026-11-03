@@ -30,4 +30,12 @@ describe("production build info",()=>{
     expect(info.vercelEnvironment).toBeUndefined();
     expect(info.checkedAt).toMatch(/Z$/);
   });
+
+  it("reports the explicitly bound source commit for CLI deployments without Git metadata",()=>{
+    const sourceCommit="c".repeat(40);
+    expect(getProductionBuildInfo({VERCEL_GIT_COMMIT_SHA:" ",EVOLUTION_RUNTIME_COMMIT_SHA:` ${sourceCommit} `}).commitSha)
+      .toBe(sourceCommit);
+    expect(getProductionBuildInfo({VERCEL_GIT_COMMIT_SHA:"platform-commit",EVOLUTION_RUNTIME_COMMIT_SHA:sourceCommit}).commitSha)
+      .toBe("platform-commit");
+  });
 });

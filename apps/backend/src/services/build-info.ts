@@ -11,7 +11,8 @@ function envValue(...values:Array<string|undefined>){
 export function getProductionBuildInfo(env:NodeJS.ProcessEnv=process.env):ProductionBuildInfo{
   const vercelEnvironment=envValue(env.VERCEL_ENV);
   return ProductionBuildInfoSchema.parse({
-    commitSha:envValue(env.VERCEL_GIT_COMMIT_SHA),
+    // CLI source archives have no Git metadata; use the same explicit identity as confirmation admission.
+    commitSha:envValue(env.VERCEL_GIT_COMMIT_SHA,env.EVOLUTION_RUNTIME_COMMIT_SHA),
     commitRef:envValue(env.VERCEL_GIT_COMMIT_REF),
     vercelEnvironment:vercelEnvironment==="production"||vercelEnvironment==="preview"||vercelEnvironment==="development"
       ?vercelEnvironment
