@@ -255,7 +255,7 @@ function pushActivity(label: string, ms?: number, projectId?: string) {
   }
 }
 
-export function useProjectRuntime(initialProject: EvolveProject) {
+export function useProjectRuntime(initialProject: EvolveProject, {backgroundChecksReady=true}:{backgroundChecksReady?:boolean}={}) {
   const projectId = initialProject.id;
   const [project, setProjectState] = useState(initialProject);
   const projectRef = useRef(initialProject);
@@ -322,6 +322,8 @@ export function useProjectRuntime(initialProject: EvolveProject) {
   // Avoid serializing large BrowserStep collections for unrelated UI clicks.
   const backgroundEvidenceKey = useMemo(()=>automaticEvidenceKey(project),[project]);
   useEffect(() => {
+    // Opening a point-read project must not seed diagnostic writes before remote Jobs are hydrated.
+    if(!backgroundChecksReady)return;
     let mounted = true;
     const snapshot = projectRef.current;
     void ensureAutomaticEvidence(snapshot).then((result) => {
@@ -334,7 +336,7 @@ export function useProjectRuntime(initialProject: EvolveProject) {
       // Evidence jobs keep their own failed/unavailable state; project work must not be blocked.
     });
     return () => { mounted = false; };
-  }, [backgroundEvidenceKey, commit]);
+  }, [backgroundEvidenceKey, backgroundChecksReady, commit]);
 
   // 所有项目内 AI 调用统一从这里进入。runEvolveAi 会从 payload 中解析 projectAiProfile；
   // 由 Runtime 自动注入当前最新项目配置，避免某个节点构造精简 payload 时漏掉 aiProfile，

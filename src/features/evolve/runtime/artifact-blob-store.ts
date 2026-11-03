@@ -1,4 +1,5 @@
-import { getProductionRuntime, productionRuntimeMode } from "./production-runtime";
+import {rememberRemoteArtifactRead,matchesRemoteArtifactRead} from "@evolution/adapters";
+import { getProductionRuntime, productionRuntimeMode, productionArtifactReadScopes } from "./production-runtime";
 import {
   deleteLocalArtifactBlob,
   getLocalArtifactBlob,
@@ -79,11 +80,12 @@ export async function putArtifactBlobs(entries:Array<{id:string;blob:Blob}>){
 
 export async function getArtifactBlob(id:string,options?:{preferRemote?:boolean}):Promise<Blob|undefined>{
   if(readPending(PENDING_DELETES_KEY).has(id))return undefined;
-  const mode=productionRuntimeMode();
+  const mode=productionRuntimeMode(),scopes=productionArtifactReadScopes();
+  const cacheRemote=async(remote:Blob)=>{await putLocalArtifactBlob(id,remote);await Promise.all(scopes.map(scope=>rememberRemoteArtifactRead(id,remote,scope)));};
   if(options?.preferRemote&&mode!=="local"){
     try{
       const remote=await getProductionRuntime().artifacts.get(id);
-      if(remote){await putLocalArtifactBlob(id,remote).catch(()=>undefined);return remote;}
+      if(remote){await cacheRemote(remote).catch(()=>undefined);return remote;}
     }catch(error){
       console.error("Production artifact read unavailable; using local cache",error);
     }
@@ -92,7 +94,7 @@ export async function getArtifactBlob(id:string,options?:{preferRemote?:boolean}
   if(local)return local;
   if(mode==="local")return undefined;
   const remote=await getProductionRuntime().artifacts.get(id);
-  if(remote)await putLocalArtifactBlob(id,remote).catch(()=>undefined);
+  if(remote)await cacheRemote(remote).catch(()=>undefined);
   return remote;
 }
 
@@ -127,6 +129,8 @@ export async function queueExistingLocalArtifactUploads(ids: string[]) {
       const actual=[...new Uint8Array(digest)].map(value=>value.toString(16).padStart(2,"0")).join("");
       if(actual!==addressed[1])throw new Error(`Frozen Artifact bytes mismatch: ${id}`);
     }
+    // Remote read caches are not new local edits. Compare exact bytes, not only the ID.
+    if((await Promise.all(productionArtifactReadScopes().map(scope=>matchesRemoteArtifactRead(id,blob,scope)))).some(Boolean))continue;
     uploads.add(id);
   }
   writePending(PENDING_UPLOADS_KEY,uploads);

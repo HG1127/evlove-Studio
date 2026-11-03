@@ -9,6 +9,7 @@ import type { EvolveProject, Stage } from "../schemas";
 import type { AiOperation } from "../ai/schemas";
 import { StageProgress } from "./stage-progress";
 import { useProjectRuntime } from "../runtime/use-project-runtime";
+import {useProductionSyncStatus} from "../runtime/use-production-sync-status";
 import { OPERATION_META, resolveProjectOperationConnections } from "../ai/providers/registry";
 import { ProjectAiProfileSelector } from "./project-ai-profile-selector";
 import { AdaptiveStageGuide } from "./adaptive-stage-guide";
@@ -71,7 +72,9 @@ function loadStudioView(projectId: string): StudioView | null {
 
 export function ProjectStudio({ project: initialProject }: { project: EvolveProject }) {
   const [search] = useSearchParams();
-  const runtime = useProjectRuntime(initialProject);
+  const sync=useProductionSyncStatus();
+  const backgroundChecksReady=sync.mode!=="http"||sync.realtimeStatus==="http-polling";
+  const runtime = useProjectRuntime(initialProject,{backgroundChecksReady});
   const htmlServerTarget=useMemo(()=>requiresIsolatedHtmlServerExecution(runtime.project),[runtime.project]);
   const serverControl=useServerMissionControlStatus(runtime.project.id,htmlServerTarget);
   const visibleProgress = runtime.status.busy ? displayProgress(runtime.status) : undefined;
@@ -136,24 +139,24 @@ export function ProjectStudio({ project: initialProject }: { project: EvolveProj
     && /本地评审自动重试已耗尽/.test(project.campaign.stopReason ?? "")
     && !(project.campaign.stopReason ?? "").includes(`[${LOCAL_REVIEW_CONTRACT_VERSION}]`);
   useEffect(() => {
-    if (!staleJudgeFuse || runtime.status.busy || staleJudgeRecoveryTriggeredRef.current || autonomyAttention || (htmlServerTarget&&serverControl.blocked)) return;
+    if (!backgroundChecksReady || !staleJudgeFuse || runtime.status.busy || staleJudgeRecoveryTriggeredRef.current || autonomyAttention || (htmlServerTarget&&serverControl.blocked)) return;
     staleJudgeRecoveryTriggeredRef.current = true;
     setView("flow");
     void runtime.runAutoPilot();
     // One migration resume per mounted project is enough; a new-version failure gets a versioned fuse.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [staleJudgeFuse, runtime.status.busy, autonomyAttention?.request?.id,htmlServerTarget,serverControl.blocked]);
+  }, [backgroundChecksReady, staleJudgeFuse, runtime.status.busy, autonomyAttention?.request?.id,htmlServerTarget,serverControl.blocked]);
   // Projects created before the offline-closure split may already have an accepted artifact but no
   // Lesson / Next Queue. Resume those machine-owned tail steps once on page load; no user click needed.
   const tailDecision = useMemo(()=>deriveAutonomousDecision(project),[project]);
   const offlineClosurePending = !projectHasOnlineReleaseTarget(project) && (tailDecision.action === "distill" || tailDecision.action === "next-queue");
   useEffect(() => {
-    if (!offlineClosurePending || runtime.status.busy || autonomyAttention || offlineClosureRecoveryTriggeredRef.current || (htmlServerTarget&&serverControl.blocked)) return;
+    if (!backgroundChecksReady || !offlineClosurePending || runtime.status.busy || autonomyAttention || offlineClosureRecoveryTriggeredRef.current || (htmlServerTarget&&serverControl.blocked)) return;
     offlineClosureRecoveryTriggeredRef.current = true;
     setView("flow");
     void runtime.runAutoPilot();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [offlineClosurePending, runtime.status.busy, autonomyAttention?.request?.id,htmlServerTarget,serverControl.blocked]);
+  }, [backgroundChecksReady, offlineClosurePending, runtime.status.busy, autonomyAttention?.request?.id,htmlServerTarget,serverControl.blocked]);
   const openAttentionPanel = () => {
     setView("flow");
     window.setTimeout(() => {

@@ -119,3 +119,12 @@ it("refuses a corrupt historical content-addressed frozen file before uploading 
   expect(upload).not.toHaveBeenCalled();
   resetProductionRuntime();window.localStorage.clear();localBlobs.clear();
 });
+
+it("does not upload an authenticated remote read cache when bootstrapping historical bytes",async()=>{
+ window.localStorage.clear();localBlobs.clear();const upload=vi.fn(async()=>undefined),blob=new Blob(["already stored remotely"],{type:"application/json"});
+ configureProductionRuntime(runtime({put:upload,get:async()=>blob,delete:async()=>undefined}),"http");
+ try{await getArtifactBlob("remote-read-before-bootstrap",{preferRemote:true});await queueExistingLocalArtifactUploads(["remote-read-before-bootstrap"]);await flushPendingArtifactSync();expect(upload).not.toHaveBeenCalled();expect(await localBlobs.get("remote-read-before-bootstrap")!.text()).toBe("already stored remotely");}
+ finally{resetProductionRuntime();window.localStorage.clear();localBlobs.clear();}
+});
+
+it("uploads a genuinely edited cached file under the same identity",async()=>{window.localStorage.clear();localBlobs.clear();const upload=vi.fn(async()=>undefined);configureProductionRuntime(runtime({put:upload,get:async()=>new Blob(["remote"]),delete:async()=>undefined}),"http");try{await getArtifactBlob("read-then-local-edit",{preferRemote:true});const changed=new Blob(["local edit"]);localBlobs.set("read-then-local-edit",changed);await queueExistingLocalArtifactUploads(["read-then-local-edit"]);await flushPendingArtifactSync();expect(upload).toHaveBeenCalledWith("read-then-local-edit",changed);}finally{resetProductionRuntime();window.localStorage.clear();localBlobs.clear();}});
