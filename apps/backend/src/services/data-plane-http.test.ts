@@ -99,6 +99,12 @@ describe("bounded read-only Data Plane recovery",()=>{
     expect(await settle(dataPlaneFetch("production-runtime","https://db.test/rest/v1/missions"))).toMatchObject({data:{reason:"schema-unavailable"}});
     expect(fetch).toHaveBeenCalledOnce();
   });
+  it("reports a confirmed statement timeout once so the collection reader can reduce its query",async()=>{
+    const fetch=vi.fn().mockResolvedValue(new Response('{"code":"57014","message":"private SQL details"}',{status:500}));vi.stubGlobal("fetch",fetch);
+    const error=await settle(dataPlaneFetch("production-runtime","https://db.test/rest/v1/missions"));
+    expect(error).toMatchObject({statusCode:503,data:{reason:"rate-limited-or-timeout",upstreamStatus:500,upstreamCode:"57014"}});
+    expect(fetch).toHaveBeenCalledOnce();expect(JSON.stringify(error)).not.toContain("private SQL");
+  });
   it("honors a short Retry-After and stops if the server asks for a longer wait",async()=>{
     const ok=new Response("readback",{status:200});
     const fetch=vi.fn().mockResolvedValueOnce(new Response("wait",{status:429,headers:{"retry-after":"1"}})).mockResolvedValueOnce(ok);vi.stubGlobal("fetch",fetch);

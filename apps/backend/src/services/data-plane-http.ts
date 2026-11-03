@@ -1,4 +1,11 @@
 import {createError} from "nitro/h3";
+import {z} from "zod";
+
+const StatementTimeoutSchema=z.object({code:z.literal("57014")});
+function statementTimeout(status:number,detail:string){
+  if(status!==500)return false;
+  try{return StatementTimeoutSchema.safeParse(JSON.parse(detail)).success;}catch{return false;}
+}
 
 export type DataPlaneUpstreamReason=
   |"credential-rejected"
@@ -17,6 +24,7 @@ function schemaFailure(status:number,detail:string){
 export function classifyDataPlaneUpstreamFailure(status:number,detail=""):DataPlaneUpstreamReason{
   if(status===401||status===403)return "credential-rejected";
   if(schemaFailure(status,detail))return "schema-unavailable";
+  if(statementTimeout(status,detail))return "rate-limited-or-timeout";
   if(status===408||status===425||status===429)return "rate-limited-or-timeout";
   if(status>=500)return "upstream-unavailable";
   if(status===409)return "conflict";
@@ -27,6 +35,7 @@ function safeError(args:{
   service:string;
   upstreamStatus?:number;
   reason:DataPlaneUpstreamReason;
+  upstreamCode?:"57014";
 }){
   const {service,upstreamStatus,reason}=args;
   if(reason==="conflict"){
@@ -46,7 +55,7 @@ function safeError(args:{
   return createError({
     statusCode:503,
     statusMessage:"Server Data Plane 当前不可用",
-    data:{code:"SERVER_DATA_PLANE_UNAVAILABLE",service,reason,upstreamStatus},
+    data:{code:"SERVER_DATA_PLANE_UNAVAILABLE",service,reason,upstreamStatus,...(args.upstreamCode?{upstreamCode:args.upstreamCode}:{})},
   });
 }
 
@@ -88,18 +97,20 @@ export async function dataPlaneFetch(
     if(signal?.aborted)throw safeError({service,reason:"network-error"});
     let response:Response|undefined;
     let reason:DataPlaneUpstreamReason="network-error";
+    let queryTimedOut=false;
     try{response=await fetch(input,init);}
     catch{reason="network-error";}
     if(response?.ok)return response;
     if(response){
       const detail=await response.text().catch(()=>"");
+      queryTimedOut=statementTimeout(response.status,detail);
       reason=classifyDataPlaneUpstreamFailure(response.status,detail);
     }
-    const retryable=reason!=="schema-unavailable"&&(
+    const retryable=!queryTimedOut&&reason!=="schema-unavailable"&&(
       !response||[408,425,429,500,502,503,504].includes(response.status)
     );
     const delay=canRetry&&retryable?readRetryDelay(response,attempt):undefined;
     if(delay!==undefined&&await pauseReadRetry(delay,signal))continue;
-    throw safeError({service,reason,upstreamStatus:response?.status});
+    throw safeError({service,reason,upstreamStatus:response?.status,...(queryTimedOut?{upstreamCode:"57014" as const}:{})});
   }
 }

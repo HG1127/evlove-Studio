@@ -68,7 +68,19 @@ export function resolveEvolutionActor(event:H3Event):EvolutionActor{
     return EvolutionActorSchema.parse({id:"local-dev",role:"admin",workspaceId:config.workspaceId,source:"internal-dev"});
   }
   if(config.mode==="blocked")throw createError({statusCode:503,statusMessage:"Evolution identity/RBAC is not configured"});
-  if(config.mode==="vercel-protected-internal"){
+  const encoded=getHeader(event,"x-evolution-actor")??"";
+  const signature=getHeader(event,"x-evolution-actor-signature")??"";
+  if(!encoded&&!signature){
+    const session=readOperatorSession(event);
+    if(session){
+      if(["POST","PUT","PATCH","DELETE"].includes(getMethod(event)))assertOperatorSameOrigin(event);
+      return session.actor;
+    }
+  }
+  // The temporary perimeter bridge is only a fallback for callers without an
+  // explicit identity. It must not downgrade a valid administrator session or
+  // turn an invalid signed actor assertion into an authenticated request.
+  if(config.mode==="vercel-protected-internal"&&!encoded&&!signature){
     const allowed=protectedDeploymentInternalRequestAllowed({
       host:getHeader(event,"x-forwarded-host")??getHeader(event,"host")??"",
       vercelId:getHeader(event,"x-vercel-id")??"",
@@ -95,16 +107,8 @@ export function resolveEvolutionActor(event:H3Event):EvolutionActor{
       id:"internal-dev",role:"admin",workspaceId:config.workspaceId,source:"internal-dev",
     });
   }
-  const encoded=getHeader(event,"x-evolution-actor")??"";
-  const signature=getHeader(event,"x-evolution-actor-signature")??"";
-  if(!encoded&&!signature){
-    const session=readOperatorSession(event);
-    if(session){
-      if(["POST","PUT","PATCH","DELETE"].includes(getMethod(event)))assertOperatorSameOrigin(event);
-      return session.actor;
-    }
-  }
   if(!encoded||!signature)throw createError({statusCode:401,statusMessage:"Trusted Evolution actor headers are required"});
+  if(!config.identitySecret)throw createError({statusCode:401,statusMessage:"Trusted Evolution identity is not configured"});
   const expected=createHmac("sha256",config.identitySecret!).update(encoded).digest("hex");
   if(!secureEqual(signature,expected))throw createError({statusCode:401,statusMessage:"Invalid Evolution actor signature"});
   const actor=EvolutionActorSchema.parse({...decodeActor(encoded),source:"trusted-header"});

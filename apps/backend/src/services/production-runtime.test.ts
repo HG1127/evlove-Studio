@@ -203,6 +203,24 @@ describe("server Mission revision CAS",()=>{
     });
   });
 
+  it("reads all full Mission envelopes after PostgREST times out on larger pages",async()=>{
+    const projects=["mission-a","mission-b","mission-c"].map((id,index)=>({...demoProject,id,updatedAt:`2026-09-23T00:0${index}:00.000Z`}));
+    const requested:Array<{cursor:string|null;limit:number}>=[];
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
+      const url=new URL(String(input));const cursor=url.searchParams.get("id"),limit=Number(url.searchParams.get("limit"));requested.push({cursor,limit});
+      if(limit>2)return new Response('{"code":"57014","message":"canceling statement due to statement timeout"}',{status:500});
+      return new Response(JSON.stringify(projects.filter(project=>!cursor||project.id>cursor.slice(3)).slice(0,limit).map(project=>missionRow(8,project))),{status:200});
+    }));
+    const result=await listServerMissionEnvelopes();
+    expect(result.map(item=>item.payload)).toEqual([...projects].reverse().map(project=>missionEnvelope(project,8).payload));
+    expect(result.every(item=>item.revision===8)).toBe(true);
+    expect(requested).toEqual([
+      {cursor:null,limit:10},{cursor:null,limit:5},{cursor:null,limit:2},
+      {cursor:"gt.mission-b",limit:10},{cursor:"gt.mission-b",limit:5},{cursor:"gt.mission-b",limit:2},
+      {cursor:"gt.mission-c",limit:10},{cursor:"gt.mission-c",limit:5},{cursor:"gt.mission-c",limit:2},
+    ]);
+  });
+
   it.each([1,10,100,500])("bounds a %s-row Mission read while preserving its entire envelope and continuation",async limit=>{
     vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
       expect(new URL(String(input)).searchParams.get("limit")).toBe(String(Math.min(limit,10)));

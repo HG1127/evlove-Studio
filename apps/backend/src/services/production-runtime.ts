@@ -22,6 +22,7 @@ import {readServerValidationRecord} from "./validation-event-record";
 import {probeServerEventPage as probeEventPage,readServerEventRows} from "./event-pages";
 import {probeActiveJobPage,readActiveJobRows} from "./active-job-pages";
 import {readRecentParseJobRows} from "./parse-job-pages";
+import {readRowsByIdPage} from "./collection-page-read";
 import { getServerArtifactStore } from "./artifact-runtime";
 import {assertServerControlExecutionActive,serverControlExecutionBinding,ServerControlExecutionStoppedError} from "./server-control-execution";
 
@@ -69,28 +70,6 @@ function createRestClient(){
   }
 
   return {request};
-}
-
-async function readRowsByIdPage(
-  request:ReturnType<typeof createRestClient>["request"],
-  table:"missions"|"jobs",
-  filter="",
-  cursor?:string,
-  limit=500,
-){
-  // Preserve every full Mission envelope while avoiding oversized PostgREST
-  // reads, including callers still requesting legacy 100/500-row pages.
-  const pageLimit=table==="missions"?Math.min(limit,10):limit;
-  const path=`${table}?select=*&order=id.asc&limit=${pageLimit}${filter}`
-    +(cursor?`&id=gt.${encodeURIComponent(cursor)}`:"");
-  const page=await request(path);
-  if(!Array.isArray(page))throw new Error(`${table} list response is not an array`);
-  if(page.length===0)return {rows:[] as JsonRecord[],nextCursor:undefined};
-  const last=page[page.length-1] as JsonRecord;
-  if(typeof last?.id!=="string"||!last.id||last.id===cursor){
-    throw new Error(`${table} list cursor is invalid`);
-  }
-  return {rows:page as JsonRecord[],nextCursor:last.id};
 }
 
 async function listAllRowsById(

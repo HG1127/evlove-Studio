@@ -1,5 +1,21 @@
 import {expect,test} from "@playwright/test";
 
+test("workbench keeps task totals unknown while the project service is unavailable",async({page},testInfo)=>{
+  await page.route("**/api/evolution/**",async route=>{
+    const path=new URL(route.request().url()).pathname;
+    if(path.endsWith("/operator-session"))await route.fulfill({json:{configured:true,authenticated:true}});
+    else if(path.endsWith("/missions"))await route.fulfill({status:503,json:{statusMessage:"Server Data Plane 当前不可用",data:{code:"SERVER_DATA_PLANE_UNAVAILABLE",reason:"upstream-unavailable"}}});
+    else if(path.endsWith("/events"))await route.fulfill({json:[]});
+    else await route.fulfill({json:{items:[]}});
+  });
+  await page.goto("/#/");
+  await expect(page.getByText("任务数量尚未确认，连接恢复后会自动更新。",{exact:false})).toBeVisible();
+  await expect(page.locator(".tabular-nums")).toHaveText(["—","—","—","—"]);
+  await expect(page.getByText("目前没有需要你处理的事项。Evolve 会继续自主运行。",{exact:true})).toHaveCount(0);
+  await expect(page.getByText("当前没有运行中的任务。",{exact:true})).toHaveCount(0);
+  await page.screenshot({path:testInfo.outputPath("unavailable-project-service.png"),fullPage:true});
+});
+
 test("settings confirms persisted models after reload and detects conflicting readback",async({page},testInfo)=>{
   const selected={id:"synthetic-connection",providerId:"custom",label:"Synthetic provider",enabled:true,apiKey:"synthetic-only",baseUrl:"https://provider.test/v1",defaultModel:"selected-generator",models:["selected-generator"],createdAt:"2026-11-03T00:00:00Z",updatedAt:"2026-11-03T00:00:00Z"};
   await page.addInitScript(connection=>{

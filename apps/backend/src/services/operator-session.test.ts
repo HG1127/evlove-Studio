@@ -11,7 +11,7 @@ import loginRoute from "../../server/api/evolution/operator-session.post";
 import logoutRoute from "../../server/api/evolution/operator-session.delete";
 
 const keys=["NODE_ENV","EVOLUTION_IDENTITY_HMAC_SECRET","EVOLUTION_OPERATOR_ACCESS_KEY",
-  "EVOLUTION_WORKSPACE_ID","EVOLUTION_ALLOW_PROTECTED_DEPLOYMENT_INTERNAL_AUTH","VERCEL"] as const;
+  "EVOLUTION_WORKSPACE_ID","EVOLUTION_ALLOW_PROTECTED_DEPLOYMENT_INTERNAL_AUTH","VERCEL","VERCEL_URL"] as const;
 const prior=new Map<string,string|undefined>();
 const accessKey="a".repeat(64);
 
@@ -76,6 +76,30 @@ describe("single-operator browser session",()=>{
     expect(operatorSessionStatus(event)).toMatchObject({configured:true,authenticated:true});
     expect(JSON.stringify(operatorSessionStatus(event))).not.toContain(accessKey);
     expect(JSON.stringify(operatorSessionStatus(event))).not.toContain(token);
+  });
+
+  it("keeps an authenticated browser administrator on an exact protected deployment",async()=>{
+    process.env.VERCEL="1";
+    process.env.VERCEL_URL="stage.example.vercel.app";
+    process.env.EVOLUTION_ALLOW_PROTECTED_DEPLOYMENT_INTERNAL_AUTH="true";
+    const token=createOperatorSession(accessKey)!.token;
+    const event=mockEvent(new Request("https://stage.example.vercel.app/api/evolution/ai-judge-connection",{
+      method:"PUT",headers:{cookie:`evolution_operator_session=${token}`,origin:"https://stage.example.vercel.app",
+        host:"stage.example.vercel.app","x-vercel-id":"iad1::fixture","sec-fetch-site":"same-origin"},
+    }));
+    expect(await requireGovernedEvolutionPermission(event,"security.admin")).toMatchObject({role:"admin",source:"browser-session"});
+  });
+
+  it("does not let the perimeter bridge bypass an invalid explicit actor assertion",()=>{
+    process.env.VERCEL="1";
+    process.env.VERCEL_URL="stage.example.vercel.app";
+    process.env.EVOLUTION_ALLOW_PROTECTED_DEPLOYMENT_INTERNAL_AUTH="true";
+    const event=mockEvent(new Request("https://stage.example.vercel.app/api/evolution/missions",{
+      headers:{host:"stage.example.vercel.app","x-vercel-id":"iad1::fixture","x-evolution-actor":"invalid","x-evolution-actor-signature":"invalid"},
+    }));
+    expect(()=>resolveEvolutionActor(event)).toThrow("Invalid Evolution actor signature");
+    delete process.env.EVOLUTION_IDENTITY_HMAC_SECRET;
+    expect(()=>resolveEvolutionActor(event)).toThrow("Trusted Evolution identity is not configured");
   });
 
   it("logs in, sets a protected cookie, and clears it on logout",async()=>{
