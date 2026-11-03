@@ -8,12 +8,15 @@ async function request(path:string,init?:RequestInit){
   const body=await response.json().catch(()=>({})) as {statusMessage?:string;message?:string};
   if(!response.ok){
     if(response.status===401||response.status===403)throw new Error("请先连接后端工作区，再保存或测试后端模型。");
+    if(response.status===404&&path==="ai-judge-connection")throw new Error("当前后端尚不支持独立验收模型，请先更新后端。");
     throw new Error(body.statusMessage??body.message??"后端模型服务暂不可用。");
   }
   return body;
 }
 
-const rolePath=(role:ServerAiConnectionRole)=>"ai-connection"+(ServerAiConnectionRoleSchema.parse(role)==="judge"?"?role=judge":"");
+// A dedicated path fails with 404 on old servers; a query parameter could be
+// silently ignored and overwrite their generation default during rollback.
+const rolePath=(role:ServerAiConnectionRole)=>ServerAiConnectionRoleSchema.parse(role)==="judge"?"ai-judge-connection":"ai-connection";
 
 export async function readServerAiConnection(role:ServerAiConnectionRole="generation"){
   return ServerAiConnectionStatusSchema.parse(await request(rolePath(role)));

@@ -7,11 +7,24 @@ const saved={configured:true,storageConfigured:true,revision:4,message:"saved",c
 const reply=(value:unknown,status=200)=>new Response(JSON.stringify(value),{status});
 afterEach(()=>vi.unstubAllGlobals());
 describe("confirming server model persistence",()=>{
+  it("never overwrites generation when an older backend ignores the judge query",async()=>{
+    let generation={...saved,connection:{...saved.connection,model:"existing-generator"}};
+    const fetch=vi.fn(async(url:string,init:RequestInit={})=>{
+      if(url.startsWith("/api/evolution/ai-connection")){
+        if(init.method==="PUT")generation={...generation,revision:generation.revision+1,connection:{...JSON.parse(String(init.body)),baseUrl:saved.connection.baseUrl}};
+        return reply(generation);
+      }
+      return reply({statusMessage:"Not Found"},404);
+    });vi.stubGlobal("fetch",fetch);
+    await expect(saveServerAiConnection(input,"judge")).rejects.toThrow("尚不支持独立验收模型");
+    expect(generation.connection.model).toBe("existing-generator");
+    expect(fetch.mock.calls.some(call=>call[0].startsWith("/api/evolution/ai-connection")&&call[1]?.method==="PUT")).toBe(false);
+  });
   it("reads the same role without a cache after PUT and returns only the confirmed public status",async()=>{
     const fetch=vi.fn().mockResolvedValueOnce(reply(saved)).mockResolvedValueOnce(reply(saved));vi.stubGlobal("fetch",fetch);
     const result=await saveServerAiConnection(input,"judge");
     expect(result.connection?.model).toBe(input.model);expect(JSON.stringify(result)).not.toContain(input.apiKey);
-    expect(fetch.mock.calls.map(call=>call[0])).toEqual(["/api/evolution/ai-connection?role=judge","/api/evolution/ai-connection?role=judge"]);
+    expect(fetch.mock.calls.map(call=>call[0])).toEqual(["/api/evolution/ai-judge-connection","/api/evolution/ai-judge-connection"]);
     expect(fetch.mock.calls[1]![1]).toMatchObject({cache:"no-store"});
     expect(fetch.mock.calls[1]![1].method).toBeUndefined();
   });

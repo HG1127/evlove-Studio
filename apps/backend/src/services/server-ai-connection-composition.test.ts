@@ -5,6 +5,8 @@ import {ServerAiConnectionPutSchema} from "@evolution/contracts";
 import putRoute from "../../server/api/evolution/ai-connection.put";
 import getRoute from "../../server/api/evolution/ai-connection.get";
 import testRoute from "../../server/api/evolution/ai-connection-test.post";
+import getJudgeRoute from "../../server/api/evolution/ai-judge-connection.get";
+import putJudgeRoute from "../../server/api/evolution/ai-judge-connection.put";
 import {readServerAiConnection,saveServerAiConnection,testServerAiConnection} from "../../../../src/features/evolve/ai/server-connection-client";
 import {runServerAi,serverAiScoringRouteFingerprint} from "./ai-gateway";
 import {resolveServerAiConfig} from "./server-ai-connection";
@@ -35,7 +37,8 @@ function installBoundaries(){
     const address=String(raw);
     if(address.startsWith("/api/evolution/")){
       const event=mockEvent(new Request("https://studio.example.test"+address,init));
-      const handler=address.endsWith("ai-connection-test")?testRoute:init.method==="PUT"?putRoute:getRoute;
+      const pathname=new URL(address,"https://studio.example.test").pathname;
+      const handler=pathname.endsWith("ai-connection-test")?testRoute:pathname.endsWith("ai-judge-connection")?init.method==="PUT"?putJudgeRoute:getJudgeRoute:init.method==="PUT"?putRoute:getRoute;
       try{return new Response(JSON.stringify(await handler(event)),{status:200,headers:{"Content-Type":"application/json"}});}
       catch(error){
         const detail=error as {status?:number;message?:string};
@@ -127,6 +130,25 @@ describe("browser configuration → API → encrypted Vault → backend model co
       method,...(method==="PUT"?{headers:{"Content-Type":"application/json"},body:JSON.stringify(input)}:{}),
     }));
     await expect((method==="PUT"?putRoute:getRoute)(event)).rejects.toMatchObject({status:400});
+    expect(databaseWrites).toBe(0);expect(providerCalls).toHaveLength(0);
+  });
+  it("keeps dedicated judge endpoints bound to judging even when a query asks for generation",async()=>{
+    await saveServerAiConnection(input);
+    const judge={...input,model:"judge-only"};
+    const put=mockEvent(new Request("https://studio.example.test/api/evolution/ai-judge-connection?role=generation",{
+      method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(judge),
+    }));
+    await putJudgeRoute(put);
+    const get=mockEvent(new Request("https://studio.example.test/api/evolution/ai-judge-connection?role=generation"));
+    expect(await getJudgeRoute(get)).toMatchObject({connection:{model:judge.model}});
+    expect((await readServerAiConnection()).connection?.model).toBe(input.model);
+    expect(databaseWrites).toBe(2);expect(providerCalls).toHaveLength(0);
+  });
+  it("rejects malformed dedicated judge settings before encrypted storage",async()=>{
+    const event=mockEvent(new Request("https://studio.example.test/api/evolution/ai-judge-connection",{
+      method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({...input,model:""}),
+    }));
+    await expect(putJudgeRoute(event)).rejects.toMatchObject({status:400});
     expect(databaseWrites).toBe(0);expect(providerCalls).toHaveLength(0);
   });
 

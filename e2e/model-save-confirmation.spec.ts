@@ -9,7 +9,7 @@ test("settings confirms persisted models after reload and detects conflicting re
   const connection={connectionId:selected.id,label:selected.label,baseUrl:selected.baseUrl,model:"previous-generator",protocol:"chat-completions",responseFormat:"json-object"};
   let generation={configured:true,storageConfigured:true,revision:2,message:"saved",connection};
   const judge={...generation,connection:{...connection,model:"independent-reviewer"}};
-  let reads=0,writes=0,conflict=false;
+  let reads=0,writes=0,conflict=false,legacyBackend=false;
   const generationStatus=page.getByText("当前后端默认：",{exact:true}).locator("..");
   const judgeStatus=page.getByText("当前独立验收：",{exact:true}).locator("..");
   await page.route("**/api/evolution/**",async route=>{
@@ -18,8 +18,11 @@ test("settings confirms persisted models after reload and detects conflicting re
     else if(path.endsWith("/events"))await route.fulfill({json:[]});
     else await route.fulfill({json:{items:[]}});
   });
-  await page.route("**/api/evolution/ai-connection*",async route=>{
+  await page.route(/\/api\/evolution\/ai-(?:judge-)?connection(?:\?|$)/,async route=>{
     const request=route.request(),url=new URL(request.url());
+    if(legacyBackend&&url.pathname.endsWith("ai-judge-connection")){
+      await route.fulfill({status:404,json:{statusMessage:"Not Found"}});return;
+    }
     if(request.method()==="PUT"){
       writes++;
       const {apiKey:discardedKey,...settings}=request.postDataJSON();
@@ -30,7 +33,7 @@ test("settings confirms persisted models after reload and detects conflicting re
       await route.fulfill({json:receipt});return;
     }
     reads++;
-    await route.fulfill({json:url.searchParams.get("role")==="judge"?judge:generation});
+    await route.fulfill({json:url.pathname.endsWith("ai-judge-connection")||!legacyBackend&&url.searchParams.get("role")==="judge"?judge:generation});
   });
   await page.goto("/#/settings");
   await expect(generationStatus).toContainText("previous-generator");
@@ -50,4 +53,12 @@ test("settings confirms persisted models after reload and detects conflicting re
   await page.getByRole("button",{name:"重新检查保存状态",exact:true}).click();
   await expect(generationStatus).toContainText("concurrent-change");
   expect(writes).toBe(2);
+  legacyBackend=true;
+  await page.reload();
+  await expect(page.getByText("当前后端尚不支持独立验收模型，请先更新后端。",{exact:true})).toBeVisible();
+  await page.getByRole("button",{name:"保存为独立验收模型",exact:true}).click();
+  await expect(page.getByText("当前后端尚不支持独立验收模型，请先更新后端。",{exact:true})).toBeVisible();
+  await expect(generationStatus).toContainText("concurrent-change");
+  expect(writes).toBe(2);
+  await page.screenshot({path:testInfo.outputPath("unsupported-judge-backend.png"),fullPage:true});
 });

@@ -1,10 +1,16 @@
 # Saved backend model roles
 
-The default `ai-connection` API continues to configure generation. An optional
-`role=judge` query configures scoring and acceptance independently. Both routes
+The default `ai-connection` API continues to configure generation. The dedicated
+`ai-judge-connection` API configures scoring and acceptance independently. Both routes
 retain the existing administrator permission, HTTPS validation and encrypted
 Vault storage. Public status responses contain settings and a revision, never
 the provider key. No database migration is required.
+
+The dedicated judge path returns 404 on older servers instead of letting them
+ignore a role query and overwrite generation. This also protects a write if the
+server rolls back between a settings read and save. New servers retain the
+previous `ai-connection?role=judge` query for client compatibility; new clients
+use the dedicated path and report an unsupported backend without falling back.
 
 Judging covers `evaluate`, `evaluate-paired`, `evaluate-population`,
 `artifact-acceptance`, `release-review` and `visual-judge`. A request-local
