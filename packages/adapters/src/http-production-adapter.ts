@@ -8,6 +8,7 @@ import {
 } from "@evolution/contracts";
 import {z} from "zod";
 import {httpApiErrorDetail} from "./http-error";
+import {createHttpMissionIndexCache} from "./http-mission-index-cache";
 
 function baseUrl(value:string){return value.replace(/\/+$/,"");}
 
@@ -105,26 +106,32 @@ export class MissionRevisionConflictError extends Error{
   }
 }
 
-export function createHttpProductionPorts(apiUrl:string):ProductionRuntimePorts{
+export function createHttpProductionPorts(apiUrl:string,options:{missionIndex?:boolean}={}):ProductionRuntimePorts{
   const root=baseUrl(apiUrl);
   const missionRevisions=new Map<string,number>();
   const missionReadHint={limit:10};
+  const readEnvelope=async(id:string)=>{
+    const res=await fetch(`${root}/missions/${encodeURIComponent(id)}`,{cache:"no-store"});
+    if(res.status===404)return undefined;
+    const envelope=await json(res,MissionHttpEnvelopeSchema.parse,"项目同步");
+    assertReceiptIdentity(envelope.missionId,id,"Mission get");return envelope;
+  };
+  const indexed=options.missionIndex?createHttpMissionIndexCache(root,readEnvelope,()=>missionRevisions.clear()):undefined;
   return {
     missions:{
       initialize:async()=>undefined,
       list:async()=>{
-        const envelopes=await listPages(root,"missions",MissionPageSchema.parse,(item)=>item.missionId,{},missionReadHint);
+        const envelopes=await indexed?.list()??await listPages(root,"missions",MissionPageSchema.parse,(item)=>item.missionId,{},missionReadHint);
         const remoteIds=new Set(envelopes.map((item)=>item.missionId));
         for(const item of envelopes)missionRevisions.set(item.missionId,item.revision);
         for(const id of [...missionRevisions.keys()])if(!remoteIds.has(id))missionRevisions.delete(id);
         return envelopes.sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)).map((item)=>item.payload);
       },
       get:async(id)=>{
-        const res=await fetch(`${root}/missions/${encodeURIComponent(id)}`);
-        if(res.status===404){missionRevisions.delete(id);return undefined;}
-        const envelope=await json(res,(value)=>MissionHttpEnvelopeSchema.parse(value));
-        assertReceiptIdentity(envelope.missionId,id,"Mission get");
+        const envelope=await readEnvelope(id);
+        if(!envelope){missionRevisions.delete(id);indexed?.forget(id);return undefined;}
         missionRevisions.set(id,envelope.revision);
+        indexed?.remember(envelope);
         return envelope.payload;
       },
       save:async(project)=>{
@@ -141,6 +148,7 @@ export function createHttpProductionPorts(apiUrl:string):ProductionRuntimePorts{
         const saved=await json(res,(value)=>MissionHttpEnvelopeSchema.parse(value));
         assertReceiptIdentity(saved.missionId,project.id,"Mission save");
         missionRevisions.set(project.id,saved.revision);
+        indexed?.remember(saved);
       },
       delete:async(id)=>{
         const expectedRevision=missionRevisions.get(id)??0;
@@ -148,7 +156,7 @@ export function createHttpProductionPorts(apiUrl:string):ProductionRuntimePorts{
           method:"DELETE",
           headers:{"If-Match":`"${expectedRevision}"`},
         });
-        if(res.status===404){missionRevisions.delete(id);return;}
+        if(res.status===404){missionRevisions.delete(id);indexed?.forget(id);return;}
         if(res.status===409){
           const error=await httpError(res,"Mission delete failed");
           throw new MissionRevisionConflictError(id,expectedRevision,error.message);
@@ -156,6 +164,7 @@ export function createHttpProductionPorts(apiUrl:string):ProductionRuntimePorts{
         const receipt=await json(res,MissionDeleteReceiptSchema.parse);
         assertReceiptIdentity(receipt.missionId,id,"Mission delete");
         missionRevisions.delete(id);
+        indexed?.forget(id);
       },
       flush:async()=>undefined,
     },

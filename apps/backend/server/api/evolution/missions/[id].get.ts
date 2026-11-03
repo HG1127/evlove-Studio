@@ -1,4 +1,5 @@
 import {createError,defineEventHandler,getRouterParam} from "nitro/h3";
+import {missionJsonResponse} from "../../../../src/services/mission-json-response";
 import {getServerMissionEnvelope} from "../../../../src/services/production-runtime";
 import {requireGovernedEvolutionPermission} from "../../../../src/services/security-policy";
 
@@ -8,5 +9,5 @@ export default defineEventHandler(async(event)=>{
   if(!id)throw createError({statusCode:400,statusMessage:"缺少 Mission id"});
   const envelope=await getServerMissionEnvelope(id);
   if(!envelope)throw createError({statusCode:404,statusMessage:"Mission not found"});
-  return envelope;
+  return missionJsonResponse(envelope);
 });

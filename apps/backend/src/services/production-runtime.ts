@@ -12,7 +12,7 @@ import {
   type MissionEnvelope,
   type ProductionRuntimePorts,
 } from "@evolution/contracts";
-import { getServerSupabaseConfig } from "../server-env";
+import { getEvolutionWorkspaceId,getServerSupabaseConfig } from "../server-env";
 import {dataPlaneFetch,readDataPlaneJson} from "./data-plane-http";
 import {supabaseRestAuthHeaders} from "./supabase-rest-auth";
 import { mirrorEvolutionEventToEvidenceLedger } from "./evidence-ledger";
@@ -23,6 +23,7 @@ import {probeServerEventPage as probeEventPage,readServerEventRows} from "./even
 import {probeActiveJobPage,readActiveJobRows} from "./active-job-pages";
 import {readRecentParseJobRows} from "./parse-job-pages";
 import {readMissionRowById,readRowsByIdPage} from "./collection-page-read";
+import {readMissionIndexSnapshot} from "./mission-index-read";
 import { getServerArtifactStore } from "./artifact-runtime";
 import {assertServerControlExecutionActive,serverControlExecutionBinding,ServerControlExecutionStoppedError} from "./server-control-execution";
 
@@ -235,6 +236,10 @@ export async function bindServerJobWorkflowRun(
   const current=rpcJob(result?.job);
   if(result?.applied===true&&current)return current;
   throw new JobStateConflictError(id,typeof result?.reason==="string"?result.reason:"unknown",current);
+}
+
+export async function getServerMissionIndex(){
+  return readMissionIndexSnapshot(createRestClient().request,getEvolutionWorkspaceId());
 }
 
 export async function listServerMissionEnvelopes(){

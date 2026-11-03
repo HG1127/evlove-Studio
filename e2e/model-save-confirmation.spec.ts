@@ -8,6 +8,7 @@ test("workbench resumes an interrupted project page before publishing task total
   const retries:number[]=[];
   await page.route("**/api/evolution/**",async route=>{
     const url=new URL(route.request().url()),path=url.pathname;
+    if(path.endsWith("/mission-index")){await route.fulfill({status:404,json:{statusMessage:"Not Found"}});return;}
     if(path.endsWith("/operator-session")){await route.fulfill({json:{configured:true,authenticated:true}});return;}
     if(path.endsWith("/missions")){
       const cursor=url.searchParams.get("cursor"),limit=Number(url.searchParams.get("pageLimit"));
@@ -37,6 +38,7 @@ test("workbench resumes an interrupted project page before publishing task total
 test("workbench keeps task totals unknown while the project service is unavailable",async({page},testInfo)=>{
   await page.route("**/api/evolution/**",async route=>{
     const path=new URL(route.request().url()).pathname;
+    if(path.endsWith("/mission-index")){await route.fulfill({status:404,json:{statusMessage:"Not Found"}});return;}
     if(path.endsWith("/operator-session"))await route.fulfill({json:{configured:true,authenticated:true}});
     else if(path.endsWith("/missions"))await route.fulfill({status:503,json:{statusMessage:"Server Data Plane 当前不可用",data:{code:"SERVER_DATA_PLANE_UNAVAILABLE",reason:"upstream-unavailable"}}});
     else if(path.endsWith("/events"))await route.fulfill({json:[]});
@@ -64,6 +66,7 @@ test("settings confirms persisted models after reload and detects conflicting re
   const judgeStatus=page.getByText("当前独立验收：",{exact:true}).locator("..");
   await page.route("**/api/evolution/**",async route=>{
     const path=new URL(route.request().url()).pathname;
+    if(path.endsWith("/mission-index")){await route.fulfill({status:404,json:{statusMessage:"Not Found"}});return;}
     if(path.endsWith("/operator-session"))await route.fulfill({json:{configured:true,authenticated:true}});
     else if(path.endsWith("/events"))await route.fulfill({json:[]});
     else await route.fulfill({json:{items:[]}});
@@ -111,4 +114,38 @@ test("settings confirms persisted models after reload and detects conflicting re
   await expect(generationStatus).toContainText("concurrent-change");
   expect(writes).toBe(2);
   await page.screenshot({path:testInfo.outputPath("unsupported-judge-backend.png"),fullPage:true});
+});
+
+
+test("workbench resumes a private full-state cache and polls only the version index",async({page},testInfo)=>{
+  const projects=[{...demoProject,id:"indexed-a",name:"Indexed first preserved"},{...demoProject,id:"indexed-b",name:"Indexed second recovered"}];
+  const reads:string[]=[];let allowSecond=false,indexReads=0;
+  await page.route("**/api/evolution/**",async route=>{
+    const path=new URL(route.request().url()).pathname;
+    if(path.endsWith("/operator-session")){await route.fulfill({json:{configured:true,authenticated:true}});return;}
+    if(path.endsWith("/mission-index")){
+      indexReads++;await route.fulfill({json:{schemaVersion:"mission-index-v1",workspaceId:"synthetic-workspace",complete:true,items:projects.map(project=>({missionId:project.id,revision:8}))}});return;
+    }
+    if(path.includes("/missions/")){
+      const id=path.split("/").pop()!;reads.push(id);
+      if(id==="indexed-b"&&!allowSecond){await route.abort("connectionreset");return;}
+      const project=projects.find(item=>item.id===id)!;
+      await route.fulfill({json:{schemaVersion:"mission-v1",missionId:id,revision:8,payload:project,createdAt:project.updatedAt,updatedAt:project.updatedAt}});return;
+    }
+    if(path.endsWith("/missions"))throw new Error("Indexed sync unexpectedly requested full legacy collection");
+    await route.fulfill({json:path.endsWith("/events")?[]:{items:[]}});
+  });
+  await page.goto("/#/");
+  await expect.poll(()=>reads.includes("indexed-b")).toBe(true);
+  await expect(page.locator(".tabular-nums")).toHaveText(["—","—","—","—"]);
+  await expect(page.getByText(projects[0].name,{exact:true})).toHaveCount(0);
+  allowSecond=true;
+  await expect(page.getByText("项目与任务同步正常",{exact:true})).toBeVisible();
+  for(const project of projects)await expect(page.getByText(project.name,{exact:true}).first()).toBeVisible();
+  expect(reads.filter(id=>id==="indexed-a")).toHaveLength(1);
+  const afterRecovery=indexReads;
+  await expect.poll(()=>indexReads).toBeGreaterThan(afterRecovery);
+  expect(reads.filter(id=>id==="indexed-a")).toHaveLength(1);
+  expect(reads.filter(id=>id==="indexed-b")).toHaveLength(2);
+  await page.screenshot({path:testInfo.outputPath("indexed-complete-recovery.png"),fullPage:true});
 });

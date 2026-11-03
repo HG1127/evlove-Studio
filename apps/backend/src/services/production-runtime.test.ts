@@ -10,6 +10,7 @@ import {
   createServerJobIdempotentReceipt,
   getServerJobByIdempotencyKey,
   getServerProductionRuntime,
+  getServerMissionIndex,
   listServerJobPage,
   listRecentServerParseJobs,
   listServerActiveJobs,
@@ -68,6 +69,17 @@ describe("server Mission revision CAS",()=>{
     process.env={...originalEnv};
     resetServerProductionRuntime();
     vi.unstubAllGlobals();
+  });
+
+  it("reads the private version index with only identity and revision storage columns",async()=>{
+    process.env.EVOLUTION_WORKSPACE_ID="workspace-index";let calls=0;
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
+      const url=new URL(String(input));expect(url.pathname).toBe("/rest/v1/missions");
+      expect(url.searchParams.get("select")).toBe("id,revision");
+      expect(url.searchParams.get("order")).toBe("id.asc");
+      return new Response(JSON.stringify(++calls===1?[{id:"mission-a",revision:8}]:[]));
+    }));
+    expect(await getServerMissionIndex()).toEqual({schemaVersion:"mission-index-v1",workspaceId:"workspace-index",complete:true,items:[{missionId:"mission-a",revision:8}]});expect(calls).toBe(2);
   });
 
   it("fails a malformed upstream JSON page without publishing partial state or SQL content",async()=>{

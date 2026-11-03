@@ -2,6 +2,7 @@ export * from "./evolve-schemas";
 export * from "./planned-baseline-refresh-contract";
 export * from "./production-goal-evidence";
 export * from "./production-contracts";
+export * from "./mission-index-contract";
 export * from "./job-contract";
 export * from "./event-contract";
 export * from "./production-ports";
