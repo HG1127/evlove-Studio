@@ -8,6 +8,7 @@ import {
 } from "@evolution/contracts";
 import {z} from "zod";
 import {httpApiErrorDetail} from "./http-error";
+import {createHttpMissionReadStream} from "./http-mission-read-stream";
 import {createHttpMissionIndexCache} from "./http-mission-index-cache";
 
 function baseUrl(value:string){return value.replace(/\/+$/,"");}
@@ -106,16 +107,17 @@ export class MissionRevisionConflictError extends Error{
   }
 }
 
-export function createHttpProductionPorts(apiUrl:string,options:{missionIndex?:boolean}={}):ProductionRuntimePorts{
+export function createHttpProductionPorts(apiUrl:string,options:{missionIndex?:boolean;missionStream?:boolean}={}):ProductionRuntimePorts{
   const root=baseUrl(apiUrl);
   const missionRevisions=new Map<string,number>();
   const missionReadHint={limit:10};
-  const readEnvelope=async(id:string)=>{
+  const readStandardEnvelope=async(id:string)=>{
     const res=await fetch(`${root}/missions/${encodeURIComponent(id)}`,{cache:"no-store"});
     if(res.status===404)return undefined;
     const envelope=await json(res,MissionHttpEnvelopeSchema.parse,"项目同步");
     assertReceiptIdentity(envelope.missionId,id,"Mission get");return envelope;
   };
+  const readEnvelope=options.missionStream?createHttpMissionReadStream(root,readStandardEnvelope):readStandardEnvelope;
   const indexed=options.missionIndex?createHttpMissionIndexCache(root,readEnvelope,()=>missionRevisions.clear()):undefined;
   return {
     missions:{

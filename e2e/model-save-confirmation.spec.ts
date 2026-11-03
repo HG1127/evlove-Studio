@@ -127,10 +127,11 @@ test("workbench resumes a private full-state cache and polls only the version in
       indexReads++;await route.fulfill({json:{schemaVersion:"mission-index-v1",workspaceId:"synthetic-workspace",complete:true,items:projects.map(project=>({missionId:project.id,revision:8}))}});return;
     }
     if(path.includes("/missions/")){
-      const id=path.split("/").pop()!;reads.push(id);
+      const id=path.endsWith("/read")?path.split("/").at(-2)!:path.split("/").pop()!;reads.push(id);
       if(id==="indexed-b"&&!allowSecond){await route.abort("connectionreset");return;}
       const project=projects.find(item=>item.id===id)!;
-      await route.fulfill({json:{schemaVersion:"mission-v1",missionId:id,revision:8,payload:project,createdAt:project.updatedAt,updatedAt:project.updatedAt}});return;
+      const envelope={schemaVersion:"mission-v1",missionId:id,revision:8,payload:project,createdAt:project.updatedAt,updatedAt:project.updatedAt};
+      await route.fulfill({headers:{"Content-Type":"application/x-ndjson"},body:JSON.stringify({schemaVersion:"mission-read-stream-v1",type:"pending"})+"\n"+JSON.stringify({schemaVersion:"mission-read-stream-v1",type:"complete",envelope})+"\n"});return;
     }
     if(path.endsWith("/missions"))throw new Error("Indexed sync unexpectedly requested full legacy collection");
     await route.fulfill({json:path.endsWith("/events")?[]:{items:[]}});

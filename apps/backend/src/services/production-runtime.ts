@@ -261,9 +261,9 @@ export async function listServerJobPage(missionId?:string,cursor?:string,limit=1
   return {items:page.rows.map(rowJob),nextCursor:page.nextCursor};
 }
 
-export async function getServerMissionEnvelope(id:string){
+export async function getServerMissionEnvelope(id:string,signal?:AbortSignal){
   const {request}=createRestClient();
-  const row=await readMissionRowById(request,id);
+  const row=await readMissionRowById(signal?(path,init)=>request(path,{...init,signal}):request,id);
   return row?rowMissionEnvelope(row):undefined;
 }
 

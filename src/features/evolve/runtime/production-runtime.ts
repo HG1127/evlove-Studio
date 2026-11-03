@@ -24,6 +24,6 @@ export function getProductionRuntime():ProductionRuntimePorts{
   if(configured)return configured;
   const mode=productionRuntimeMode();
   if(mode==="local")return localProductionPorts;
-  automaticHttpRuntime??=createHttpProductionPorts(serverEnv.EVOLUTION_API_URL?.trim()||"/api/evolution",{missionIndex:true});
+  automaticHttpRuntime??=createHttpProductionPorts(serverEnv.EVOLUTION_API_URL?.trim()||"/api/evolution",{missionIndex:true,missionStream:true});
   return automaticHttpRuntime;
 }

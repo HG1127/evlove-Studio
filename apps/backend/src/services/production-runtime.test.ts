@@ -11,6 +11,7 @@ import {
   getServerJobByIdempotencyKey,
   getServerProductionRuntime,
   getServerMissionIndex,
+  getServerMissionEnvelope,
   listServerJobPage,
   listRecentServerParseJobs,
   listServerActiveJobs,
@@ -69,6 +70,12 @@ describe("server Mission revision CAS",()=>{
     process.env={...originalEnv};
     resetServerProductionRuntime();
     vi.unstubAllGlobals();
+  });
+
+  it("propagates a bounded read cancellation signal to the data service",async()=>{
+    const abort=new AbortController();
+    vi.stubGlobal("fetch",vi.fn(async(_url:RequestInfo|URL,init?:RequestInit)=>{expect(init?.signal).toBe(abort.signal);return new Response("[]");}));
+    expect(await getServerMissionEnvelope("mission/a",abort.signal)).toBeUndefined();
   });
 
   it("reads the private version index with only identity and revision storage columns",async()=>{
