@@ -26,21 +26,46 @@ async function httpError(res:Response,context:string){
 async function expectOk(res:Response,context:string){if(!res.ok)throw await httpError(res,context);}
 async function json<T>(res:Response,parse:(value:unknown)=>T,context="Production API"){await expectOk(res,context);return parse(await res.json());}
 function headers(extra:Record<string,string>={}){return {"Content-Type":"application/json",...extra};}
+const RetryableMissionReadSchema=z.object({data:z.object({
+  code:z.literal("SERVER_DATA_PLANE_UNAVAILABLE"),
+  reason:z.enum(["rate-limited-or-timeout","upstream-unavailable","network-error"]),
+})});
 
 async function listPages<T>(
   root:string,path:string,parse:(value:unknown)=>{items:T[];nextCursor?:string},
   identity:(item:T)=>string,filters:Record<string,string>={},
+  missionReadHint?:{limit:number},
 ){
   const items:T[]=[];
   const seen=new Set<string>();
   const seenItems=new Set<string>();
   let cursor:string|undefined;
+  let pageLimit=missionReadHint?.limit??(path==="missions"?10:100);
+  const reduceMissionPage=()=>{
+    if(path!=="missions"||pageLimit<=1)return false;
+    pageLimit=Math.max(1,Math.floor(pageLimit/2));
+    if(missionReadHint)missionReadHint.limit=Math.min(missionReadHint.limit,pageLimit);
+    return true;
+  };
   for(;;){
     // Mission envelopes contain full artifact/evidence state; bounded pages keep
     // large workspaces below data-service timeouts. Always follow the cursor.
-    const params=new URLSearchParams({...filters,pageLimit:path==="missions"?"10":"100"});
+    const params=new URLSearchParams({...filters,pageLimit:String(pageLimit)});
     if(cursor)params.set("cursor",cursor);
-    const page=await json(await fetch(`${root}/${path}?${params}`),parse,path==="missions"?"项目同步":path==="jobs"?"任务同步":"Production API");
+    let response:Response;
+    try{response=await fetch(`${root}/${path}?${params}`);}
+    catch(error){if(error instanceof TypeError&&reduceMissionPage())continue;throw error;}
+    if(path==="missions"&&response.status===503){
+      const failure=RetryableMissionReadSchema.safeParse(await response.clone().json().catch(()=>undefined));
+      if(failure.success&&reduceMissionPage()){await response.body?.cancel();continue;}
+    }
+    await expectOk(response,path==="missions"?"项目同步":path==="jobs"?"任务同步":"Production API");
+    let payload:unknown;
+    try{payload=await response.json();}
+    catch(error){if(error instanceof TypeError&&reduceMissionPage())continue;throw error;}
+    // Contract errors are authoritative failures, never a reason to reduce the
+    // page or discard a successfully received record.
+    const page=parse(payload);
     for(const item of page.items){
       const id=identity(item);
       if(seenItems.has(id))throw new Error(`Duplicate ${path} page item ${id}`);
@@ -83,11 +108,12 @@ export class MissionRevisionConflictError extends Error{
 export function createHttpProductionPorts(apiUrl:string):ProductionRuntimePorts{
   const root=baseUrl(apiUrl);
   const missionRevisions=new Map<string,number>();
+  const missionReadHint={limit:10};
   return {
     missions:{
       initialize:async()=>undefined,
       list:async()=>{
-        const envelopes=await listPages(root,"missions",MissionPageSchema.parse,(item)=>item.missionId);
+        const envelopes=await listPages(root,"missions",MissionPageSchema.parse,(item)=>item.missionId,{},missionReadHint);
         const remoteIds=new Set(envelopes.map((item)=>item.missionId));
         for(const item of envelopes)missionRevisions.set(item.missionId,item.revision);
         for(const id of [...missionRevisions.keys()])if(!remoteIds.has(id))missionRevisions.delete(id);

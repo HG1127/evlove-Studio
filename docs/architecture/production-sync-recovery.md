@@ -10,11 +10,26 @@ never the upstream SQL message. It does not repeat that same oversized query.
 Other transient read failures retain their existing bounded reconnection policy;
 ambiguous writes are never replayed.
 
-The Mission collection reader retries a confirmed statement timeout at the same
-cursor with smaller row limits: 10 → 5 → 2 → 1. It stops if one row still fails,
-or if any other failure occurs. A successful smaller page retains complete rows
-and advances to its actual last ID. Clients continue until an empty page; the
-Job pagination policy is unchanged.
+Production measurements confirmed that even one complete Mission can exceed the
+inherited eight-second REST query budget. Two migration-managed, service-role-only
+SQL invoker functions read complete rows with a function-local 45-second budget:
+`read_evolution_mission_envelope_page` returns at most two rows, and
+`read_evolution_mission_envelope` returns at most one exact-ID row. Neither changes
+the global/role timeout, write policy, stored content, revisions or public grants.
+Both migrations must be applied before publishing the corresponding backend.
+
+The backend retries a confirmed statement timeout at the same cursor with row
+limits 2 → 1. It stops if one row still fails or any other failure occurs. An
+exact-ID response must match both the requested ID and the payload identity.
+A successful smaller page advances to its actual last ID. Clients continue until
+an empty page; the Job pagination policy is unchanged.
+
+The HTTP adapter also resumes an interrupted Mission page at its original cursor,
+reducing the requested page size 10 → 5 → 2 → 1 for transport errors or validated
+transient service failures. It retains earlier complete pages privately until the
+whole list validates, and remembers a working smaller limit for that adapter's
+lifetime. It never retries malformed JSON, contract failures, permanent settings
+errors or writes. A failed full read cannot publish partial task totals.
 
 The workbench treats remote totals as unknown until synchronization succeeds.
 During a connection failure it can show previous cached tasks, clearly labelled,

@@ -78,6 +78,53 @@ describe("HTTP production adapter",()=>{
     await expect(ports.jobs.cancel("j1")).rejects.toThrow();
   });
 
+  it("resumes a failed Mission page at the same cursor with a smaller batch and keeps complete state",async()=>{
+    const projects=["a","b","c"].map(id=>({...demoProject,id}));
+    const calls:Array<{cursor:string|null;limit:number}>=[];
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
+      const url=new URL(String(input),"http://localhost"),cursor=url.searchParams.get("cursor"),limit=Number(url.searchParams.get("pageLimit"));calls.push({cursor,limit});
+      if(!cursor)return new Response(JSON.stringify({items:[missionEnvelope(projects[0],8)],nextCursor:"a"}));
+      if(cursor==="a"&&limit>2)throw new TypeError("connection reset while receiving page");
+      if(cursor==="a")return new Response(JSON.stringify({items:projects.slice(1).map(project=>missionEnvelope(project,9)),nextCursor:"c"}));
+      return new Response(JSON.stringify({items:[]}));
+    }));
+    const ports=createHttpProductionPorts("/api/evolution");
+    expect(await ports.missions.list()).toEqual(projects.map(project=>missionEnvelope(project,1).payload));
+    expect(calls).toEqual([{cursor:null,limit:10},{cursor:"a",limit:10},{cursor:"a",limit:5},{cursor:"a",limit:2},{cursor:"c",limit:2}]);
+    calls.length=0;await ports.missions.list();expect(calls[0]?.limit).toBe(2);
+  });
+
+  it("bounds transport recovery at one row instead of restarting the collection indefinitely",async()=>{
+    const limits:string[]=[];
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{limits.push(new URL(String(input),"http://localhost").searchParams.get("pageLimit")!);throw new TypeError("connection reset");}));
+    await expect(createHttpProductionPorts("/api/evolution").missions.list()).rejects.toThrow("connection reset");
+    expect(limits).toEqual(["10","5","2","1"]);
+  });
+
+  it.each(["credential-rejected","schema-unavailable"])("does not mask permanent %s as recoverable pagination",async reason=>{
+    const fetch=vi.fn(async()=>new Response(JSON.stringify({data:{code:"SERVER_DATA_PLANE_UNAVAILABLE",reason}}),{status:503,headers:{"Content-Type":"application/json"}}));vi.stubGlobal("fetch",fetch);
+    await expect(createHttpProductionPorts("/api/evolution").missions.list()).rejects.toThrow("HTTP 503");
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it("recovers a transient unavailable read without dropping the complete envelope",async()=>{
+    const fetch=vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({data:{code:"SERVER_DATA_PLANE_UNAVAILABLE",reason:"rate-limited-or-timeout"}}),{status:503}))
+      .mockResolvedValueOnce(new Response(JSON.stringify({items:[missionEnvelope(demoProject,4)]})));vi.stubGlobal("fetch",fetch);
+    expect(await createHttpProductionPorts("/api/evolution").missions.list()).toEqual([missionEnvelope(demoProject,4).payload]);
+    expect(fetch.mock.calls.map(call=>new URL(String(call[0]),"http://localhost").searchParams.get("pageLimit"))).toEqual(["10","5"]);
+  });
+
+  it("rejects a malformed successful page without trying a smaller query",async()=>{
+    const fetch=vi.fn(async()=>new Response(JSON.stringify({items:[{}]})));vi.stubGlobal("fetch",fetch);
+    await expect(createHttpProductionPorts("/api/evolution").missions.list()).rejects.toThrow();expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it("retries a lost response body without treating it as an empty page",async()=>{
+    const interrupted=new Response(new ReadableStream({start(controller){controller.error(new TypeError("body connection terminated"));}}));
+    const fetch=vi.fn().mockResolvedValueOnce(interrupted).mockResolvedValueOnce(new Response(JSON.stringify({items:[missionEnvelope(demoProject,5)]})));vi.stubGlobal("fetch",fetch);
+    expect(await createHttpProductionPorts("/api/evolution").missions.list()).toEqual([missionEnvelope(demoProject,5).payload]);expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
   it("tracks Mission revision across list/save/delete and sends If-Match on delete",async()=>{
     const remoteProject={...demoProject,id:"mission-cas",name:"Remote",updatedAt:"2026-09-20T10:00:00.000Z"};
     const localProject={...remoteProject,name:"Local edit",updatedAt:"2026-09-20T10:01:00.000Z"};

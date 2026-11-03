@@ -2,18 +2,30 @@ import {z} from "zod";
 
 type RestRead=(path:string,init?:RequestInit)=>Promise<unknown>;
 const RowsSchema=z.array(z.object({id:z.string().min(1)}).passthrough());
+const SingleRowSchema=RowsSchema.max(1);
 const StatementTimeoutFailureSchema=z.object({
   statusCode:z.literal(503),
   data:z.object({code:z.literal("SERVER_DATA_PLANE_UNAVAILABLE"),service:z.literal("production-runtime"),upstreamStatus:z.literal(500),upstreamCode:z.literal("57014")}),
 });
 
+export async function readMissionRowById(request:RestRead,id:string){
+  const params=new URLSearchParams({p_mission_id:id});
+  const rows=SingleRowSchema.parse(await request(`rpc/read_evolution_mission_envelope?${params}`));
+  const row=rows[0];
+  if(row&&row.id!==id)throw new Error("Mission read identity mismatch");
+  return row;
+}
+
 /** Read complete rows; a confirmed query timeout reduces work without changing
  * the input cursor, row payload, or continuation identity. Never replay writes. */
 export async function readRowsByIdPage(request:RestRead,table:"missions"|"jobs",filter="",cursor?:string,limit=500){
-  let pageLimit=table==="missions"?Math.min(limit,10):limit;
+  if(table==="missions"&&filter)throw new Error("Mission page filters are not supported");
+  let pageLimit=table==="missions"?Math.min(limit,2):limit;
   for(;;){
-    const path=`${table}?select=*&order=id.asc&limit=${pageLimit}${filter}`
-      +(cursor?`&id=gt.${encodeURIComponent(cursor)}`:"");
+    const params=new URLSearchParams({p_page_limit:String(pageLimit)});
+    if(cursor)params.set("p_after_id",cursor);
+    const path=table==="missions"?`rpc/read_evolution_mission_envelope_page?${params}`
+      :`${table}?select=*&order=id.asc&limit=${pageLimit}${filter}`+(cursor?`&id=gt.${encodeURIComponent(cursor)}`:"");
     let value:unknown;
     try{value=await request(path);}
     catch(error){

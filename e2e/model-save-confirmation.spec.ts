@@ -1,4 +1,38 @@
 import {expect,test} from "@playwright/test";
+import {demoProject} from "../src/features/evolve/data/mock-project";
+
+test("workbench resumes an interrupted project page before publishing task totals",async({page},testInfo)=>{
+  const projects=[{...demoProject,id:"transport-a",name:"Transport first preserved"},{...demoProject,id:"transport-b",name:"Transport second recovered"}];
+  const envelope=(project:typeof demoProject)=>({schemaVersion:"mission-v1",missionId:project.id,revision:8,payload:project,createdAt:project.updatedAt,updatedAt:project.updatedAt});
+  let unblock=()=>{};const held=new Promise<void>(resolve=>{unblock=resolve;});
+  const retries:number[]=[];
+  await page.route("**/api/evolution/**",async route=>{
+    const url=new URL(route.request().url()),path=url.pathname;
+    if(path.endsWith("/operator-session")){await route.fulfill({json:{configured:true,authenticated:true}});return;}
+    if(path.endsWith("/missions")){
+      const cursor=url.searchParams.get("cursor"),limit=Number(url.searchParams.get("pageLimit"));
+      if(!cursor){await route.fulfill({json:{items:[envelope(projects[0])],nextCursor:"transport-a"}});return;}
+      if(cursor==="transport-a"){
+        retries.push(limit);
+        if(limit===10)await held;
+        if(limit>2){await route.abort("connectionreset");return;}
+        await route.fulfill({json:{items:[envelope(projects[1])],nextCursor:"transport-b"}});return;
+      }
+      await route.fulfill({json:{items:[]}});return;
+    }
+    if(path.endsWith("/events"))await route.fulfill({json:[]});else await route.fulfill({json:{items:[]}});
+  });
+  try{
+    await page.goto("/#/");
+    await expect(page.locator(".tabular-nums")).toHaveText(["—","—","—","—"]);
+    await expect(page.getByText(projects[0].name,{exact:true})).toHaveCount(0);
+  }finally{unblock();}
+  await expect(page.getByText("项目与任务同步正常",{exact:true})).toBeVisible();
+  await expect(page.getByText(projects[0].name,{exact:true}).first()).toBeVisible();
+  await expect(page.getByText(projects[1].name,{exact:true}).first()).toBeVisible();
+  expect(retries.slice(0,3)).toEqual([10,5,2]);
+  await page.screenshot({path:testInfo.outputPath("recovered-project-read.png"),fullPage:true});
+});
 
 test("workbench keeps task totals unknown while the project service is unavailable",async({page},testInfo)=>{
   await page.route("**/api/evolution/**",async route=>{

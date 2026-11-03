@@ -152,12 +152,12 @@ describe("server Mission revision CAS",()=>{
     vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
       const url=new URL(String(input));
       paths.push(url.pathname+url.search);
-      expect(url.searchParams.get("limit")).toBe(url.pathname.endsWith("/missions")?"10":"500");
-      expect(url.searchParams.get("order")).toBe("id.asc");
-      const cursor=url.searchParams.get("id");
-      if(url.pathname.endsWith("/missions")){
-        const rows=cursor==="gt.mission-a"?[missionRow(2,missionB)]
-          :cursor==="gt.mission-b"?[]:[missionRow(1,missionA)];
+      expect(url.searchParams.get(url.pathname.endsWith("/rpc/read_evolution_mission_envelope_page")?"p_page_limit":"limit")).toBe(url.pathname.endsWith("/rpc/read_evolution_mission_envelope_page")?"2":"500");
+      if(url.pathname.endsWith("/jobs"))expect(url.searchParams.get("order")).toBe("id.asc");
+      const cursor=url.searchParams.get(url.pathname.endsWith("/rpc/read_evolution_mission_envelope_page")?"p_after_id":"id");
+      if(url.pathname.endsWith("/rpc/read_evolution_mission_envelope_page")){
+        const rows=cursor==="mission-a"?[missionRow(2,missionB)]
+          :cursor==="mission-b"?[]:[missionRow(1,missionA)];
         return new Response(JSON.stringify(rows),{status:200});
       }
       if(url.pathname.endsWith("/jobs")){
@@ -177,15 +177,15 @@ describe("server Mission revision CAS",()=>{
     expect((await runtime.jobs.list("mission/a")).map((item)=>item.id))
       .toEqual(["job-b","job-a"]);
     expect(paths).toHaveLength(9);
-    expect(paths.filter((path)=>path.includes("id=gt."))).toHaveLength(6);
+    expect(paths.filter((path)=>path.includes("id=gt.")||path.includes("p_after_id="))).toHaveLength(6);
   });
 
   it("serves a bounded cursor page for HTTP Mission and Job readers",async()=>{
     vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
       const url=new URL(String(input));
-      expect(url.searchParams.get("limit")).toBe(url.pathname.endsWith("/missions")?"10":"25");
-      if(url.pathname.endsWith("/missions")){
-        expect(url.searchParams.get("id")).toBe("gt.mission-a");
+      expect(url.searchParams.get(url.pathname.endsWith("/rpc/read_evolution_mission_envelope_page")?"p_page_limit":"limit")).toBe(url.pathname.endsWith("/rpc/read_evolution_mission_envelope_page")?"2":"25");
+      if(url.pathname.endsWith("/rpc/read_evolution_mission_envelope_page")){
+        expect(url.searchParams.get("p_after_id")).toBe("mission-a");
         return new Response(JSON.stringify([missionRow(2,{...demoProject,id:"mission-b"})]),{status:200});
       }
       expect(url.pathname.endsWith("/jobs")).toBe(true);
@@ -207,23 +207,24 @@ describe("server Mission revision CAS",()=>{
     const projects=["mission-a","mission-b","mission-c"].map((id,index)=>({...demoProject,id,updatedAt:`2026-09-23T00:0${index}:00.000Z`}));
     const requested:Array<{cursor:string|null;limit:number}>=[];
     vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
-      const url=new URL(String(input));const cursor=url.searchParams.get("id"),limit=Number(url.searchParams.get("limit"));requested.push({cursor,limit});
-      if(limit>2)return new Response('{"code":"57014","message":"canceling statement due to statement timeout"}',{status:500});
-      return new Response(JSON.stringify(projects.filter(project=>!cursor||project.id>cursor.slice(3)).slice(0,limit).map(project=>missionRow(8,project))),{status:200});
+      const url=new URL(String(input));expect(url.pathname).toBe("/rest/v1/rpc/read_evolution_mission_envelope_page");const cursor=url.searchParams.get("p_after_id"),limit=Number(url.searchParams.get("p_page_limit"));requested.push({cursor,limit});
+      if(limit>1)return new Response('{"code":"57014","message":"canceling statement due to statement timeout"}',{status:500});
+      return new Response(JSON.stringify(projects.filter(project=>!cursor||project.id>cursor).slice(0,limit).map(project=>missionRow(8,project))),{status:200});
     }));
     const result=await listServerMissionEnvelopes();
     expect(result.map(item=>item.payload)).toEqual([...projects].reverse().map(project=>missionEnvelope(project,8).payload));
     expect(result.every(item=>item.revision===8)).toBe(true);
     expect(requested).toEqual([
-      {cursor:null,limit:10},{cursor:null,limit:5},{cursor:null,limit:2},
-      {cursor:"gt.mission-b",limit:10},{cursor:"gt.mission-b",limit:5},{cursor:"gt.mission-b",limit:2},
-      {cursor:"gt.mission-c",limit:10},{cursor:"gt.mission-c",limit:5},{cursor:"gt.mission-c",limit:2},
+      {cursor:null,limit:2},{cursor:null,limit:1},
+      {cursor:"mission-a",limit:2},{cursor:"mission-a",limit:1},
+      {cursor:"mission-b",limit:2},{cursor:"mission-b",limit:1},
+      {cursor:"mission-c",limit:2},{cursor:"mission-c",limit:1},
     ]);
   });
 
   it.each([1,10,100,500])("bounds a %s-row Mission read while preserving its entire envelope and continuation",async limit=>{
     vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
-      expect(new URL(String(input)).searchParams.get("limit")).toBe(String(Math.min(limit,10)));
+      expect(new URL(String(input)).searchParams.get("p_page_limit")).toBe(String(Math.min(limit,2)));
       return new Response(JSON.stringify([missionRow(8)]),{status:200});
     }));
     const result=await listServerMissionEnvelopePage(undefined,limit);
@@ -238,8 +239,8 @@ describe("server Mission revision CAS",()=>{
     let currentRevision=3;
     vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
       const url=String(input);
-      if(url.includes("/rest/v1/missions?select=*&order=id.asc")){
-        return new Response(JSON.stringify(url.includes("&id=gt.")?[]:[missionRow(currentRevision)]),{status:200});
+      if(url.includes("/rest/v1/rpc/read_evolution_mission_envelope_page?")){
+        return new Response(JSON.stringify(url.includes("p_after_id=")?[]:[missionRow(currentRevision)]),{status:200});
       }
       if(url.endsWith("/rest/v1/rpc/compare_and_swap_mission")){
         const body=JSON.parse(String(init?.body??"{}")) as Record<string,unknown>;
@@ -272,13 +273,37 @@ describe("server Mission revision CAS",()=>{
     expect(expectedDeletes).toEqual([5]);
   });
 
+  it("reopens the exact complete Mission and keeps its revision for the next fenced write",async()=>{
+    let expectedRevision:number|undefined;
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
+      const url=new URL(String(input));
+      if(url.pathname.endsWith("/rpc/read_evolution_mission_envelope")){
+        expect(url.searchParams.get("p_mission_id")).toBe(demoProject.id);
+        return new Response(JSON.stringify([missionRow(12)]));
+      }
+      if(url.pathname.endsWith("/rpc/compare_and_swap_mission")){
+        expectedRevision=JSON.parse(String(init?.body)).p_expected_revision;
+        return new Response(JSON.stringify([{applied:true,current_revision:13,mission:missionRow(13)}]));
+      }
+      throw new Error("Unexpected test route");
+    }));
+    const runtime=getServerProductionRuntime();
+    expect(await runtime.missions.get(demoProject.id)).toEqual(missionEnvelope(demoProject,12).payload);
+    await runtime.missions.save(demoProject);expect(expectedRevision).toBe(12);
+  });
+
+  it("rejects a stored envelope whose payload belongs to another Mission",async()=>{
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify([{...missionRow(12),payload:{...demoProject,id:"another-mission"}}]))));
+    await expect(getServerProductionRuntime().missions.get(demoProject.id)).rejects.toThrow("Mission envelope identity mismatch");
+  });
+
   it("isolates revision context between concurrent server runtimes",async()=>{
     let currentRevision=5;
     const attempted:number[]=[];
     vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
       const url=String(input);
-      if(url.includes("/rest/v1/missions?select=*&order=id.asc")){
-        return new Response(JSON.stringify(url.includes("&id=gt.")?[]:[missionRow(5)]),{status:200});
+      if(url.includes("/rest/v1/rpc/read_evolution_mission_envelope_page?")){
+        return new Response(JSON.stringify(url.includes("p_after_id=")?[]:[missionRow(5)]),{status:200});
       }
       if(url.endsWith("/rest/v1/rpc/compare_and_swap_mission")){
         const body=JSON.parse(String(init?.body??"{}")) as Record<string,unknown>;
@@ -415,8 +440,8 @@ describe("server Mission revision CAS",()=>{
   it("rejects a stale server worker instead of overwriting the current Mission",async()=>{
     vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
       const url=String(input);
-      if(url.includes("/rest/v1/missions?select=*&order=id.asc")){
-        return new Response(JSON.stringify(url.includes("&id=gt.")?[]:[missionRow(6)]),{status:200});
+      if(url.includes("/rest/v1/rpc/read_evolution_mission_envelope_page?")){
+        return new Response(JSON.stringify(url.includes("p_after_id=")?[]:[missionRow(6)]),{status:200});
       }
       if(url.endsWith("/rest/v1/rpc/compare_and_swap_mission")){
         const body=JSON.parse(String(init?.body??"{}")) as Record<string,unknown>;

@@ -22,15 +22,18 @@ import {readServerValidationRecord} from "./validation-event-record";
 import {probeServerEventPage as probeEventPage,readServerEventRows} from "./event-pages";
 import {probeActiveJobPage,readActiveJobRows} from "./active-job-pages";
 import {readRecentParseJobRows} from "./parse-job-pages";
-import {readRowsByIdPage} from "./collection-page-read";
+import {readMissionRowById,readRowsByIdPage} from "./collection-page-read";
 import { getServerArtifactStore } from "./artifact-runtime";
 import {assertServerControlExecutionActive,serverControlExecutionBinding,ServerControlExecutionStoppedError} from "./server-control-execution";
 
 type JsonRecord=Record<string,unknown>;
 export type ServerControlRuntime=ProductionRuntimePorts;
+const IdentifiedMissionEnvelopeSchema=MissionEnvelopeSchema.refine(
+  envelope=>envelope.payload.id===envelope.missionId,"Mission envelope identity mismatch",
+);
 
 function rowMissionEnvelope(row:JsonRecord):MissionEnvelope{
-  return MissionEnvelopeSchema.parse({
+  return IdentifiedMissionEnvelopeSchema.parse({
     schemaVersion:row.schema_version,
     missionId:row.id,
     revision:Number(row.revision??0),
@@ -256,8 +259,8 @@ export async function listServerJobPage(missionId?:string,cursor?:string,limit=1
 
 export async function getServerMissionEnvelope(id:string){
   const {request}=createRestClient();
-  const rows=await request("missions?id=eq."+encodeURIComponent(id)+"&select=*&limit=1") as JsonRecord[];
-  return rows?.[0]?rowMissionEnvelope(rows[0]):undefined;
+  const row=await readMissionRowById(request,id);
+  return row?rowMissionEnvelope(row):undefined;
 }
 
 export async function getServerValidationRecord(id:string){
@@ -468,9 +471,9 @@ export function getServerProductionRuntime():ServerControlRuntime{
         return envelopes.map((envelope)=>envelope.payload);
       },
       get:async(id)=>{
-        const rows=await request("missions?id=eq."+encodeURIComponent(id)+"&select=*&limit=1") as JsonRecord[];
-        if(!rows?.[0]){missionRevisions.delete(id);return undefined;}
-        const envelope=rowMissionEnvelope(rows[0]);
+        const row=await readMissionRowById(request,id);
+        if(!row){missionRevisions.delete(id);return undefined;}
+        const envelope=rowMissionEnvelope(row);
         missionRevisions.set(id,envelope.revision);
         return envelope.payload;
       },
