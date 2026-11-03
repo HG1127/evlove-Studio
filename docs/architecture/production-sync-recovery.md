@@ -10,6 +10,12 @@ never the upstream SQL message. It does not repeat that same oversized query.
 Other transient read failures retain their existing bounded reconnection policy;
 ambiguous writes are never replayed.
 
+PostgREST's structured HTTP 503 / `PGRST002` means its schema cache could not be
+loaded. It uses the existing bounded read reconnection policy, including abort
+and Retry-After handling. Text mentioning "schema cache" alone does not enable
+retries, and missing table/function codes retain their permanent classification.
+Persistent cache failures remain unavailable and cannot satisfy release checks.
+
 Production measurements confirmed that even one complete Mission can exceed the
 inherited eight-second REST query budget. Two migration-managed, service-role-only
 SQL invoker functions read complete rows with a function-local 45-second budget:

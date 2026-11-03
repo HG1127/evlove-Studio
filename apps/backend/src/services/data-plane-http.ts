@@ -2,6 +2,11 @@ import {createError} from "nitro/h3";
 import {z} from "zod";
 
 const StatementTimeoutSchema=z.object({code:z.literal("57014")});
+const CacheBuildingSchema=z.object({code:z.literal("PGRST002")});
+function cacheBuilding(status:number,detail:string){
+  if(status!==503)return false;
+  try{return CacheBuildingSchema.safeParse(JSON.parse(detail)).success;}catch{return false;}
+}
 function statementTimeout(status:number,detail:string){
   if(status!==500)return false;
   try{return StatementTimeoutSchema.safeParse(JSON.parse(detail)).success;}catch{return false;}
@@ -23,6 +28,9 @@ function schemaFailure(status:number,detail:string){
 
 export function classifyDataPlaneUpstreamFailure(status:number,detail=""):DataPlaneUpstreamReason{
   if(status===401||status===403)return "credential-rejected";
+  // PostgREST rejects reads while rebuilding its cache. This connection-level
+  // code is distinct from a missing table/function; only bounded reads retry.
+  if(cacheBuilding(status,detail))return "upstream-unavailable";
   if(schemaFailure(status,detail))return "schema-unavailable";
   if(statementTimeout(status,detail))return "rate-limited-or-timeout";
   if(status===408||status===425||status===429)return "rate-limited-or-timeout";

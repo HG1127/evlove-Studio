@@ -12,6 +12,7 @@ describe("Data Plane upstream error semantics",()=>{
     expect(classifyDataPlaneUpstreamFailure(400,'{"code":"PGRST202"}')).toBe("schema-unavailable");
     expect(classifyDataPlaneUpstreamFailure(429)).toBe("rate-limited-or-timeout");
     expect(classifyDataPlaneUpstreamFailure(503)).toBe("upstream-unavailable");
+    expect(classifyDataPlaneUpstreamFailure(503,'{"code":"PGRST002","message":"Could not query the database for the schema cache"}')).toBe("upstream-unavailable");
   });
 
   it("preserves conflict separately and treats unexpected client rejection as gateway error",()=>{
@@ -96,6 +97,36 @@ describe("bounded read-only Data Plane recovery",()=>{
   });
   it("does not retry a schema failure disguised as HTTP 500",async()=>{
     const fetch=vi.fn().mockResolvedValue(new Response('{"code":"42P01","message":"relation missing"}',{status:500}));vi.stubGlobal("fetch",fetch);
+    expect(await settle(dataPlaneFetch("production-runtime","https://db.test/rest/v1/missions"))).toMatchObject({data:{reason:"schema-unavailable"}});
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+  it("reconnects a cache-building read at the same URL without mistaking it for a missing schema",async()=>{
+    const ok=new Response("full canonical readback",{status:200});
+    const fetch=vi.fn().mockResolvedValueOnce(new Response('{"code":"PGRST002","message":"Could not query the database for the schema cache"}',{status:503})).mockResolvedValueOnce(ok);
+    vi.stubGlobal("fetch",fetch);
+    expect(await settle(dataPlaneFetch("production-runtime","https://db.test/rest/v1/rpc/read_evolution_mission_envelope_page?p_after_id=M1&p_page_limit=2"))).toBe(ok);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch.mock.calls[1]).toEqual(fetch.mock.calls[0]);
+  });
+  it("bounds repeated cache-building failures and does not expose upstream details",async()=>{
+    const fetch=vi.fn().mockImplementation(async()=>new Response('{"code":"PGRST002","message":"private catalog details: schema cache"}',{status:503}));
+    vi.stubGlobal("fetch",fetch);
+    const error=await settle(dataPlaneFetch("production-runtime","https://db.test/rest/v1/missions"));
+    expect(error).toMatchObject({statusCode:503,data:{reason:"upstream-unavailable"}});
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(JSON.stringify(error)).not.toContain("private catalog");
+  });
+  it("never replays a write when the schema cache is unavailable",async()=>{
+    const fetch=vi.fn().mockImplementation(async()=>new Response('{"code":"PGRST002","message":"schema cache"}',{status:503}));
+    vi.stubGlobal("fetch",fetch);
+    expect(await settle(dataPlaneFetch("production-runtime","https://db.test/rest/v1/rpc/write",{method:"POST",body:"{}"}))).toMatchObject({statusCode:503});
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+  it.each([
+    '{"code":"PGRST202","message":"function absent from schema cache"}',
+    '{"message":"PGRST002 schema cache"}',
+  ])("does not infer a retryable cache code from unrelated or unstructured details",async(detail)=>{
+    const fetch=vi.fn().mockImplementation(async()=>new Response(detail,{status:503}));vi.stubGlobal("fetch",fetch);
     expect(await settle(dataPlaneFetch("production-runtime","https://db.test/rest/v1/missions"))).toMatchObject({data:{reason:"schema-unavailable"}});
     expect(fetch).toHaveBeenCalledOnce();
   });
