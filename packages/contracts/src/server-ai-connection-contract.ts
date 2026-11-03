@@ -1,5 +1,9 @@
 import {z} from "zod";
 
+export const ServerAiConnectionRoleSchema=z.enum(["generation","judge"]);
+export type ServerAiConnectionRole=z.infer<typeof ServerAiConnectionRoleSchema>;
+export const ServerAiConnectionQuerySchema=z.object({role:ServerAiConnectionRoleSchema.default("generation")});
+
 export const ServerAiBaseUrlSchema=z.string().trim().min(1).max(2048).url().superRefine((value,ctx)=>{
   let url:URL;
   try{url=new URL(value);}catch{return;}

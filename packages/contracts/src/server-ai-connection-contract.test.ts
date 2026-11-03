@@ -1,8 +1,13 @@
 import {describe,expect,it} from "vitest";
-import {ServerAiConnectionPutSchema,ServerAiConnectionSettingsSchema,ServerAiConnectionStatusSchema} from "./server-ai-connection-contract";
+import {ServerAiConnectionPutSchema,ServerAiConnectionSettingsSchema,ServerAiConnectionStatusSchema,ServerAiConnectionQuerySchema} from "./server-ai-connection-contract";
 
 const input={connectionId:"mine",label:"任意接口",baseUrl:"https://model.example.test/v1",model:"my-model-id",apiKey:"private"};
 describe("custom server model connection boundary",()=>{
+  it("preserves the default generation route and validates the optional judge role",()=>{
+    expect(ServerAiConnectionQuerySchema.parse({})).toEqual({role:"generation"});
+    expect(ServerAiConnectionQuerySchema.parse({role:"judge"})).toEqual({role:"judge"});
+    for(const role of ["other",["judge","generation"],null])expect(ServerAiConnectionQuerySchema.safeParse({role}).success).toBe(false);
+  });
   it("allows arbitrary provider model IDs and defaults to common OpenAI-compatible chat JSON",()=>{
     expect(ServerAiConnectionPutSchema.parse(input)).toMatchObject({
       model:"my-model-id",protocol:"chat-completions",responseFormat:"json-object",

@@ -54,11 +54,11 @@ describe("production operator session gate",()=>{
     const host=document.createElement("div");document.body.append(host);
     const root=createRoot(host);
     await act(async()=>root.render(<OperatorSessionGate><div>工作台内容</div></OperatorSessionGate>));
-    expect(host.textContent).toContain("后端同步正常");
+    expect(host.textContent).toContain("项目与任务同步正常");
     expect(mocks.initialize).toHaveBeenCalledOnce();
     mocks.syncStatus.mockReturnValue({realtimeStatus:"http-error",lastError:"HTTP 503"});
     await act(async()=>window.dispatchEvent(new Event("evolve-production-realtime-status")));
-    expect(host.textContent).toContain("后端同步失败：HTTP 503");
+    expect(host.textContent).toContain("项目与任务同步失败：HTTP 503");
     await act(async()=>root.unmount());
   });
 });

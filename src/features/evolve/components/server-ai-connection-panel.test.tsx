@@ -36,7 +36,7 @@ describe("custom model for backend tasks",()=>{
     await act(async()=>button("保存为后端默认模型").click());
     expect(client.save).toHaveBeenCalledWith(expect.objectContaining({
       apiKey:"private",baseUrl:selected.baseUrl,model:"anything-user-chooses",
-    }));
+    }),"generation");
     expect(host.textContent).not.toContain("private");
     expect(host.textContent).toContain("当前后端默认：");
   });
@@ -84,5 +84,34 @@ describe("custom model for backend tasks",()=>{
     await render();
     expect(host.querySelector('[role="status"]')?.textContent).toBe("请先连接后端工作区");
     expect(selected.apiKey).toBe("private");
+  });
+  it("always offers a read-only refresh and replaces stale saved metadata",async()=>{
+    await render();
+    client.read.mockResolvedValueOnce({configured:true,storageConfigured:true,revision:6,message:"saved",connection:{model:"new-model",label:"Saved"}});
+    await act(async()=>button("重新检查保存状态").click());
+    expect(host.textContent).toContain("Saved · new-model");expect(host.textContent).toContain("后端保存版本：6");
+    expect(client.save).not.toHaveBeenCalled();
+  });
+  it("does not keep claiming the previous saved model after an unconfirmed save",async()=>{
+    client.read.mockResolvedValueOnce({configured:true,storageConfigured:true,message:"saved",connection:{model:"old",label:"Old"}});
+    await render();client.save.mockRejectedValueOnce(new Error("保存请求已提交，但回读未确认"));
+    await act(async()=>button("保存为后端默认模型").click());
+    expect(host.textContent).toContain("回读未确认");expect(host.textContent).not.toContain("当前后端默认：");
+  });
+  it("does not let a slow initial read overwrite a newer confirmed save",async()=>{
+    let finishRead!:(value:unknown)=>void;
+    client.read.mockImplementationOnce(()=>new Promise(resolve=>{finishRead=resolve;}));
+    await render();await act(async()=>button("保存为后端默认模型").click());
+    await act(async()=>finishRead({configured:true,storageConfigured:true,message:"old",connection:{model:"stale-model",label:"Stale"}}));
+    expect(host.textContent).not.toContain("stale-model");expect(host.textContent).toContain(selected.defaultModel);
+  });
+  it("saves a judge in its own role and distinguishes liveness from qualification",async()=>{
+    await act(async()=>root.render(<ServerAiConnectionPanel selected={selected} role="judge"/>));
+    expect(client.read).toHaveBeenCalledWith("judge");
+    await act(async()=>button("保存为独立验收模型").click());
+    expect(client.save).toHaveBeenCalledWith(expect.objectContaining({model:selected.defaultModel}),"judge");
+    await act(async()=>button("测试验收模型连接").click());
+    expect(host.textContent).toContain("仍需独立校准");
+    expect(host.querySelector('[aria-label="验收模型接口协议"]')).not.toBeNull();
   });
 });

@@ -6,7 +6,7 @@ import putRoute from "../../server/api/evolution/ai-connection.put";
 import getRoute from "../../server/api/evolution/ai-connection.get";
 import testRoute from "../../server/api/evolution/ai-connection-test.post";
 import {readServerAiConnection,saveServerAiConnection,testServerAiConnection} from "../../../../src/features/evolve/ai/server-connection-client";
-import {runServerAi} from "./ai-gateway";
+import {runServerAi,serverAiScoringRouteFingerprint} from "./ai-gateway";
 import {resolveServerAiConfig} from "./server-ai-connection";
 import {encryptVaultValue} from "./server-vault";
 import {resetServerAiRuntimeProbeCache} from "./server-ai-health";
@@ -90,7 +90,7 @@ describe("browser configuration → API → encrypted Vault → backend model co
     expect(providerCalls).toHaveLength(1);
     expect(providerCalls[0]!.body.model).toBe(input.model);
     expect(providerCalls[0]!.init.headers).toMatchObject({Authorization:"Bearer "+input.apiKey});
-    expect(governance.permission.mock.calls.map(call=>call[1])).toEqual(["security.admin","data.read"]);
+    expect(governance.permission.mock.calls.map(call=>call[1])).toEqual(["security.admin","data.read","data.read"]);
   });
 
   it("probes an unsaved draft without user files or changing the persisted default",async()=>{
@@ -102,6 +102,32 @@ describe("browser configuration → API → encrypted Vault → backend model co
     expect(JSON.parse(messages.find(item=>item.role==="user")!.content).artifacts).toEqual([]);
     expect((await resolveServerAiConfig())?.model).toBe(input.model);
     expect((await readServerAiConnection()).connection?.model).toBe(input.model);
+  });
+  it("saves both roles through their APIs and routes scoring identity and inference to the judge",async()=>{
+    await saveServerAiConnection(input);
+    const judge={...input,connectionId:"judge-connection",model:"separate-judge",apiKey:"private-judge-key"};
+    await saveServerAiConnection(judge,"judge");
+    expect(rows.size).toBe(2);expect(databaseWrites).toBe(2);
+    expect(JSON.stringify([...rows.values()])).not.toContain(judge.apiKey);
+    expect((await readServerAiConnection()).connection?.model).toBe(input.model);
+    expect((await readServerAiConnection("judge")).connection?.model).toBe(judge.model);
+    const before=await serverAiScoringRouteFingerprint();
+    await runServerAi("understand",{command:"Synthetic",artifacts:[]});
+    providerContent=JSON.stringify({scores:{usability:90,aesthetics:90,responsiveness:90,interaction:90},summary:"Synthetic",findings:["Synthetic observation"]});
+    await runServerAi("visual-judge",{});
+    expect(providerCalls.map(call=>call.body.model)).toEqual([input.model,judge.model]);
+    expect(providerCalls[1]!.init.headers).toMatchObject({Authorization:"Bearer "+judge.apiKey});
+    await saveServerAiConnection({...input,model:"generator-changed"});
+    expect(await serverAiScoringRouteFingerprint()).toBe(before);
+    await saveServerAiConnection({...judge,model:"judge-changed"},"judge");
+    expect(await serverAiScoringRouteFingerprint()).not.toBe(before);
+  });
+  it.each(["GET","PUT"])("rejects an invalid role before storage or model work (%s)",async method=>{
+    const event=mockEvent(new Request("https://studio.example.test/api/evolution/ai-connection?role=invalid",{
+      method,...(method==="PUT"?{headers:{"Content-Type":"application/json"},body:JSON.stringify(input)}:{}),
+    }));
+    await expect((method==="PUT"?putRoute:getRoute)(event)).rejects.toMatchObject({status:400});
+    expect(databaseWrites).toBe(0);expect(providerCalls).toHaveLength(0);
   });
 
   it("passes a draft probe with a MiniMax-style reasoning envelope without persisting the draft",async()=>{

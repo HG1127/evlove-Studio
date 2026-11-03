@@ -12,7 +12,7 @@ vi.mock("./server-vault",()=>({
 }));
 import {
   getServerAiConnectionStatus,resolveServerAiConfig,saveServerAiConnection,
-  withExplicitServerAiConnection,withServerAiConnection,
+  withExplicitServerAiConnection,withServerAiConnection,resolveServerAiOperationConfig,
 } from "./server-ai-connection";
 
 const input={
@@ -34,6 +34,39 @@ afterEach(()=>{
 });
 
 describe("user-selected backend AI connection",()=>{
+  it("stores the judge separately without overwriting generation or exposing its key",async()=>{
+    const result=await saveServerAiConnection({...input,model:"judge-model"},{id:"admin",role:"admin"},"judge");
+    expect(result.connection?.model).toBe("judge-model");
+    expect(vault.put.mock.calls[0]![0]).toMatchObject({id:"server-ai-judge-connection-v1",scopes:["ai:judge-connection"]});
+    expect(JSON.stringify(result)).not.toContain(input.apiKey);
+  });
+  it("pins generation and judge independently for nested work and resolves a new judge only after that work",async()=>{
+    process.env.EVOLUTION_AI_REASONING_EFFORT="medium";process.env.EVOLUTION_AI_JUDGE_REASONING_EFFORT="high";
+    vault.metadata.mockImplementation(async(id:string)=>id==="server-ai-judge-connection-v1"?{version:1}:undefined);
+    let judge="judge-one";
+    vault.resolve.mockImplementation(async(id:string)=>JSON.stringify({...input,model:id==="server-ai-judge-connection-v1"?judge:"generator",version:"server-ai-connection-v1"}));
+    await withServerAiConnection(async()=>{
+      judge="judge-two";
+      expect(await resolveServerAiOperationConfig("plan")).toMatchObject({model:"generator",reasoningEffort:"medium"});
+      await withServerAiConnection(async()=>expect(await resolveServerAiOperationConfig("evaluate-paired")).toMatchObject({model:"judge-one",reasoningEffort:"high"}));
+    });
+    expect(await resolveServerAiOperationConfig("evaluate")).toMatchObject({model:"judge-two",reasoningEffort:"high"});
+  });
+  it("stops for an unavailable configured judge and never substitutes generation",async()=>{
+    vault.metadata.mockResolvedValue({version:1});
+    vault.resolve.mockImplementation(async(id:string)=>{
+      if(id==="server-ai-judge-connection-v1")throw new Error("judge offline");
+      return JSON.stringify({...input,version:"server-ai-connection-v1"});
+    });
+    await expect(resolveServerAiOperationConfig("evaluate")).rejects.toThrow("judge offline");
+    await expect(withServerAiConnection(async()=>"must not run")).rejects.toThrow("judge offline");
+    expect(await resolveServerAiOperationConfig("plan")).toMatchObject({model:input.model});
+  });
+  it("keeps explicit draft probes isolated from the saved judge",async()=>{
+    vault.metadata.mockResolvedValue({version:1});
+    await withExplicitServerAiConnection(input,async()=>expect(await resolveServerAiOperationConfig("evaluate")).toMatchObject({model:input.model}));
+    expect(vault.resolve).not.toHaveBeenCalled();expect(vault.metadata).not.toHaveBeenCalled();
+  });
   it("pins a Vault connection's separate judge effort alongside its generation effort",async()=>{
     process.env.EVOLUTION_AI_REASONING_EFFORT="medium";process.env.EVOLUTION_AI_JUDGE_REASONING_EFFORT="high";
     vault.resolve.mockResolvedValue(JSON.stringify({...input,version:"server-ai-connection-v1"}));

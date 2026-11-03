@@ -24,7 +24,7 @@ async function httpError(res:Response,context:string){
   return new Error(`${context} HTTP ${res.status}${detail?`: ${detail}`:""}`);
 }
 async function expectOk(res:Response,context:string){if(!res.ok)throw await httpError(res,context);}
-async function json<T>(res:Response,parse:(value:unknown)=>T){await expectOk(res,"Production API");return parse(await res.json());}
+async function json<T>(res:Response,parse:(value:unknown)=>T,context="Production API"){await expectOk(res,context);return parse(await res.json());}
 function headers(extra:Record<string,string>={}){return {"Content-Type":"application/json",...extra};}
 
 async function listPages<T>(
@@ -36,9 +36,11 @@ async function listPages<T>(
   const seenItems=new Set<string>();
   let cursor:string|undefined;
   for(;;){
-    const params=new URLSearchParams({...filters,pageLimit:"100"});
+    // Mission envelopes contain full artifact/evidence state; bounded pages keep
+    // large workspaces below data-service timeouts. Always follow the cursor.
+    const params=new URLSearchParams({...filters,pageLimit:path==="missions"?"10":"100"});
     if(cursor)params.set("cursor",cursor);
-    const page=await json(await fetch(`${root}/${path}?${params}`),parse);
+    const page=await json(await fetch(`${root}/${path}?${params}`),parse,path==="missions"?"项目同步":path==="jobs"?"任务同步":"Production API");
     for(const item of page.items){
       const id=identity(item);
       if(seenItems.has(id))throw new Error(`Duplicate ${path} page item ${id}`);

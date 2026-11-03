@@ -63,20 +63,18 @@ import {
 } from "@evolution/contracts";
 import { SERVER_SEMANTIC_CONTEXT_VERSION,SERVER_MEASURED_REVIEW_VERSION,SERVER_PAIRED_INPUT_VERSION } from "@evolution/harness";
 import type { ServerAiConfig } from "../server-env";
-import {resolveServerAiConfig} from "./server-ai-connection";
+import {resolveServerAiOperationConfig} from "./server-ai-connection";
 import {fetchServerAiProviderUsage,measureServerAiSdkUsage} from "./server-ai-usage";
 import {serverAiPlanningInstruction} from "./server-plan-contract";
 import {serverAiPairedContract} from "./server-paired-ai-contract";
-import {serverAiConfigForOperation} from "./server-ai-role-config";
 import {SERVER_PAIRED_GENERATION_SCHEMA_VERSION} from "./server-paired-json-schema";
 import {PLAN_JSON_CORRECTION_INSTRUCTION,serverPlanJsonCorrectionPayload} from "./server-plan-json-correction";
 
 export type ServerAiOperation=AiOperation;
 /** Public scoring-route identity; API keys and timeout settings are deliberately excluded. */
 export async function serverAiScoringRouteFingerprint(): Promise<string | undefined> {
-  const saved = await resolveServerAiConfig();
-  if (!saved) return undefined;
-  const config=serverAiConfigForOperation(saved,"evaluate");
+  const config = await resolveServerAiOperationConfig("evaluate");
+  if (!config) return undefined;
   const route = config.mode === "openai-compatible"
     ? [config.mode, config.baseUrl, config.model, ...(config.protocol || config.responseFormat ? [config.protocol,config.responseFormat] : []),...(config.reasoningEffort?[{reasoningEffort:config.reasoningEffort}]:[])]
     : [config.mode, config.model];
@@ -313,14 +311,13 @@ async function structured<T>(operation:AiOperation,payload:unknown,schema:Contra
   const jsonl=serverAiPairedJsonlEnabled(operation);
   const lineOutput=jsonl?serverPairedJsonlOutput(payload,schema.parser,schema.instruction):undefined;
   const originalPayload=operation==="plan"&&payload!==null&&typeof payload==="object"?JSON.parse(JSON.stringify(payload)) as unknown:payload;
-  const saved=await resolveServerAiConfig();
-  if(!saved){
+  const config=await resolveServerAiOperationConfig(operation);
+  if(!config){
     throw Object.assign(
       new Error("Server AI 未配置：请在设置中保存后端模型，或配置模型服务的 API Key、Base URL 和 Model。"),
       {code:"SERVER_AI_UNAVAILABLE"},
     );
   }
-  const config=serverAiConfigForOperation(saved,operation);
   if(jsonl&&(config.mode!=="openai-compatible"||!config.protocol))throw Error("Paired JSONL requires an explicit direct protocol; fallback is forbidden");
   const images=parseServerAiImages(media);
   if(config.mode==="vercel-gateway"){

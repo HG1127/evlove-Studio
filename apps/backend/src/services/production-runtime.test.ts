@@ -152,7 +152,7 @@ describe("server Mission revision CAS",()=>{
     vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
       const url=new URL(String(input));
       paths.push(url.pathname+url.search);
-      expect(url.searchParams.get("limit")).toBe("500");
+      expect(url.searchParams.get("limit")).toBe(url.pathname.endsWith("/missions")?"10":"500");
       expect(url.searchParams.get("order")).toBe("id.asc");
       const cursor=url.searchParams.get("id");
       if(url.pathname.endsWith("/missions")){
@@ -183,7 +183,7 @@ describe("server Mission revision CAS",()=>{
   it("serves a bounded cursor page for HTTP Mission and Job readers",async()=>{
     vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
       const url=new URL(String(input));
-      expect(url.searchParams.get("limit")).toBe("25");
+      expect(url.searchParams.get("limit")).toBe(url.pathname.endsWith("/missions")?"10":"25");
       if(url.pathname.endsWith("/missions")){
         expect(url.searchParams.get("id")).toBe("gt.mission-a");
         return new Response(JSON.stringify([missionRow(2,{...demoProject,id:"mission-b"})]),{status:200});
@@ -201,6 +201,17 @@ describe("server Mission revision CAS",()=>{
     expect(await listServerJobPage("mission/a","job-a",25)).toMatchObject({
       items:[{id:"job-b"}],nextCursor:"job-b",
     });
+  });
+
+  it.each([1,10,100,500])("bounds a %s-row Mission read while preserving its entire envelope and continuation",async limit=>{
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
+      expect(new URL(String(input)).searchParams.get("limit")).toBe(String(Math.min(limit,10)));
+      return new Response(JSON.stringify([missionRow(8)]),{status:200});
+    }));
+    const result=await listServerMissionEnvelopePage(undefined,limit);
+    expect(result.items[0]?.payload).toEqual(missionEnvelope(demoProject,8).payload);
+    expect(result.items[0]?.revision).toBe(8);
+    expect(result.nextCursor).toBe(demoProject.id);
   });
 
   it("carries the revision read by a worker through sequential CAS writes and delete",async()=>{

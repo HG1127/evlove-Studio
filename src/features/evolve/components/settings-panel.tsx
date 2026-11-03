@@ -715,6 +715,7 @@ export function SettingsPanel() {
     </>)}
 
     {activeTab === "connections" && <ServerAiConnectionPanel selected={selected}/>}
+    {activeTab === "connections" && <ServerAiConnectionPanel selected={selected} role="judge"/>}
 
     {activeTab === "routing" && (
         <Card>

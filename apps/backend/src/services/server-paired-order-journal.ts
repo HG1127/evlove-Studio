@@ -3,8 +3,7 @@ import {inspectPairedOrderObservation} from "@evolution/harness";
 import {createEvolutionEvent,PairedOrderObservationSchema,type AiUsageScope,type EvolutionEvent,
  type PairedJudgeRequest,type PairedOrderJournalPort,type AiUsageRoute,type PairedOrderObservation} from "@evolution/contracts";
 import {currentServerAiUsageScope,serverAiUsageRoute} from "./server-ai-usage";
-import {resolveServerAiConfig} from "./server-ai-connection";
-import {serverAiConfigForOperation} from "./server-ai-role-config";
+import {resolveServerAiOperationConfig} from "./server-ai-connection";
 import {pairedJudgePhysicalScopeSha256} from "./server-paired-judge-claim";
 
 type Ports={scope:AiUsageScope|undefined;physicalRoutes():Promise<AiUsageRoute[]>;list(missionId:string,limit:number):Promise<EvolutionEvent[]>;append(event:EvolutionEvent):Promise<void>;now?():string};
@@ -68,7 +67,7 @@ export function createServerPairedOrderJournal(ports:Ports):PairedOrderJournalPo
 }
 async function productionJournal(){
  const {getServerProductionRuntime}=await import("./production-runtime"),runtime=getServerProductionRuntime();
- const saved=await resolveServerAiConfig(),config=saved?serverAiConfigForOperation(saved,"evaluate-paired"):undefined;
+ const config=await resolveServerAiOperationConfig("evaluate-paired");
  const routes=config?.mode==="openai-compatible"?(config.protocol?[config.protocol]:["responses","chat-completions"] as const).map(p=>serverAiUsageRoute(config,p,"evaluate-paired")):[];
  return createServerPairedOrderJournal({scope:currentServerAiUsageScope(),physicalRoutes:async()=>routes,list:(missionId,limit)=>runtime.events.list(missionId,limit),append:event=>runtime.events.append(event)});
 }

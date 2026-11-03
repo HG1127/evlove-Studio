@@ -44,7 +44,7 @@ describe("HTTP production adapter",()=>{
     vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
       const url=new URL(String(input),"http://localhost");
       calls.push(url.pathname+url.search);
-      expect(url.searchParams.get("pageLimit")).toBe("100");
+      expect(url.searchParams.get("pageLimit")).toBe(url.pathname.endsWith("/missions")?"10":"100");
       const cursor=url.searchParams.get("cursor");
       if(url.pathname.endsWith("/missions")){
         const page=cursor==="mission-a"?{items:[missionEnvelope(later,2)],nextCursor:"mission-b"}
@@ -87,7 +87,7 @@ describe("HTTP production adapter",()=>{
     let deleteIfMatch:string|null=null;
     vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
       const url=String(input);const method=init?.method??"GET";
-      if(url.includes("/missions?pageLimit=100")&&method==="GET"){
+      if(url.includes("/missions?pageLimit=10")&&method==="GET"){
         return new Response(JSON.stringify({items:[remoteEnvelope]}),{status:200,headers:{"Content-Type":"application/json"}});
       }
       if(url.endsWith("/missions/mission-cas")&&method==="PUT"){
@@ -115,7 +115,7 @@ describe("HTTP production adapter",()=>{
     const bodies:number[]=[];
     vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
       const url=String(input);const method=init?.method??"GET";
-      if(url.includes("/missions?pageLimit=100")&&method==="GET"){
+      if(url.includes("/missions?pageLimit=10")&&method==="GET"){
         return new Response(JSON.stringify({items:[envelope]}),{status:200,headers:{"Content-Type":"application/json"}});
       }
       if(url.endsWith("/missions/mission-conflict")&&method==="PUT"){
@@ -144,8 +144,15 @@ describe("HTTP production adapter",()=>{
     }),{status:401,headers:{"Content-Type":"application/json"}})));
     const ports=createHttpProductionPorts("/api/evolution");
     await expect(ports.missions.list()).rejects.toThrow(
-      "Production API HTTP 401: Trusted Evolution actor headers are required",
+      "项目同步 HTTP 401: Trusted Evolution actor headers are required",
     );
+  });
+
+  it("identifies the failing collection and safely explains a data-plane 503",async()=>{
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({statusMessage:"Server Data Plane 当前不可用",data:{code:"SERVER_DATA_PLANE_UNAVAILABLE",reason:"credential-rejected"}}),{status:503,headers:{"Content-Type":"application/json"}})));
+    const ports=createHttpProductionPorts("/api/evolution");
+    await expect(ports.missions.list()).rejects.toThrow("项目同步 HTTP 503: 后台数据库拒绝访问");
+    await expect(ports.jobs.list()).rejects.toThrow("任务同步 HTTP 503: 后台数据库拒绝访问");
   });
 
   it("uses append-only event and binary artifact routes",async()=>{
