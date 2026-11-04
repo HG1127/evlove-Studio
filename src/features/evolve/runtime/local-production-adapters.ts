@@ -13,6 +13,8 @@ function readGeneric():EvolutionJob[]{
   if(typeof window==="undefined")return[];
   try{return EvolutionJobSchema.array().parse(JSON.parse(window.localStorage.getItem(GENERIC_JOB_KEY)??"[]"));}catch{return[];}
 }
+/** Read-only validated receipt projection; does not schedule writes or claim liveness. */
+export function cachedEvolutionJobs():EvolutionJob[]{return readGeneric();}
 function writeGeneric(items:EvolutionJob[]){if(typeof window!=="undefined")window.localStorage.setItem(GENERIC_JOB_KEY,JSON.stringify(items));}
 function latestById(groups:EvolutionJob[][]){
   const byId=new Map<string,EvolutionJob>();

@@ -1,6 +1,8 @@
 import type { EvolveProject } from "../schemas";
 import { deriveAttentionRequest, deriveAutonomousDecision } from "./autonomous-orchestrator";
 import { isMissionUserAccepted } from "./mission-review-store";
+import {missionExecutionStatus} from "@evolution/core";
+import type {EvolutionJob} from "@evolution/contracts";
 
 export type MissionUserState = "attention" | "running" | "review" | "completed" | "scheduled" | "paused" | "waiting";
 
@@ -12,8 +14,13 @@ export type MissionState = {
   stage: EvolveProject["stage"];
 };
 
-export function deriveMissionState(project: EvolveProject, runtime?: { running?: boolean; interrupted?: boolean }): MissionState {
-  if (runtime?.running || project.campaign.status === "running") {
+export function deriveMissionState(project: EvolveProject, runtime?: { running?: boolean; interrupted?: boolean; startedAt?:string; jobs?:readonly EvolutionJob[] }): MissionState {
+  const execution=missionExecutionStatus({missionId:project.id,updatedAt:project.updatedAt,campaignStatus:project.campaign.status,...runtime});
+  if(execution==="cancelled"||execution==="failed"||execution==="partial"){
+    return {state:"paused",label:execution==="cancelled"?"本次运行已取消":"本次运行已停止",
+      detail:project.campaign.stopReason||"后台任务记录已结束，成果与断点仍保留，可核对后从断点继续。",actionLabel:"查看断点",stage:project.stage};
+  }
+  if (execution==="running") {
     return { state: "running", label: "正在自动进化", detail: "Evolve 正在后台推进当前任务，无需人工操作。", actionLabel: "查看实时进度", stage: project.stage };
   }
 
@@ -22,7 +29,7 @@ export function deriveMissionState(project: EvolveProject, runtime?: { running?:
     return { state: "attention", label: "需要你处理", detail: attention.title || attention.reason, actionLabel: "处理问题", stage: attention.stage };
   }
 
-  if (runtime?.interrupted) {
+  if (execution==="interrupted") {
     return { state: "paused", label: "等待恢复", detail: "上次运行被刷新或页面关闭打断，打开任务后会从断点继续。", actionLabel: "恢复任务", stage: project.stage };
   }
 
@@ -44,6 +51,10 @@ export function deriveMissionState(project: EvolveProject, runtime?: { running?:
 
   if (project.campaign.status === "paused") {
     return { state: "paused", label: "已暂停", detail: project.campaign.stopReason || "任务已暂停，可从当前断点继续。", actionLabel: "继续任务", stage: project.stage };
+  }
+
+  if(execution==="unverified"||execution==="stopped"||execution==="waiting"){
+    return {state:"waiting",label:"运行状态待核对",detail:"任务记录已保存，当前没有已核实的运行进度。打开任务核对后台状态与断点。",actionLabel:"核对状态",stage:project.stage};
   }
 
   return { state: "waiting", label: "等待系统继续", detail: decision.reason || "任务已保存，系统将从当前状态继续。", actionLabel: "打开任务", stage: decision.stage };

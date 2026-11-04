@@ -4,24 +4,39 @@ import {createRoot,type Root} from "react-dom/client";
 import {MemoryRouter} from "react-router-dom";
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
 import {MissionControlDashboard} from "./mission-control-dashboard";
+import {pairedJudgeFixture} from "@evolution/testkit";
+import {EvolutionJobSchema,type EvolveProject} from "@evolution/contracts";
+import {cacheRemoteEvolutionJob} from "../runtime/local-production-adapters";
 
-const mocks=vi.hoisted(()=>({catalog:vi.fn(()=>({})),sync:vi.fn(()=>({mode:"http",realtimeStatus:"http-error"}))}));
+const mocks=vi.hoisted(()=>({projects:vi.fn<()=>EvolveProject[]>(()=>[]),catalog:vi.fn(()=>({})),sync:vi.fn(()=>({mode:"http",realtimeStatus:"http-error"}))}));
 vi.mock("../runtime/use-mission-catalog",()=>({useMissionCatalog:mocks.catalog}));
 vi.mock("../runtime/production-sync",()=>({productionSyncStatus:mocks.sync}));
-vi.mock("../runtime/use-local-projects",()=>({useLocalProjects:()=>[]}));
+vi.mock("../runtime/use-local-projects",()=>({useLocalProjects:()=>mocks.projects()}));
 vi.mock("../runtime/run-manager",()=>({getLiveRun:vi.fn(),getRunTask:vi.fn(),shouldResumeTask:()=>false,subscribeLiveRuns:()=>()=>{}}));
-vi.mock("../runtime/mission-review-store",()=>({MISSION_REVIEW_CHANGED_EVENT:"review-changed-fixture"}));
+vi.mock("../runtime/mission-review-store",()=>({MISSION_REVIEW_CHANGED_EVENT:"review-changed-fixture",isMissionUserAccepted:()=>false}));
 vi.mock("./evolution-composer",()=>({EvolutionComposer:()=>null}));
 let host:HTMLDivElement,root:Root;
 beforeEach(()=>{
   (globalThis as {IS_REACT_ACT_ENVIRONMENT?:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
   mocks.catalog.mockReturnValue({});
   mocks.sync.mockReturnValue({mode:"http",realtimeStatus:"http-error"});
+  mocks.projects.mockReturnValue([]);window.localStorage.clear();
   host=document.createElement("div");document.body.append(host);root=createRoot(host);
 });
 afterEach(async()=>{await act(async()=>root.unmount());host.remove();});
 const render=()=>act(async()=>root.render(<MemoryRouter><MissionControlDashboard/></MemoryRouter>));
 const counts=()=>[...host.querySelectorAll(".tabular-nums")].map(item=>item.textContent);
+
+it("updates a stale running card from the validated Job cache and never counts a cancelled receipt as running",async()=>{
+ const project=pairedJudgeFixture().project;project.campaign.status="running";project.updatedAt="2026-10-30T02:11:11Z";
+ mocks.projects.mockReturnValue([project]);mocks.sync.mockReturnValue({mode:"http",realtimeStatus:"http-polling"});
+ await render();expect(counts()[1]).toBe("0");
+ await act(async()=>{cacheRemoteEvolutionJob(EvolutionJobSchema.parse({schemaVersion:"job-v1",id:"control-cancelled",missionId:project.id,
+  type:"campaign",status:"cancelled",label:"Control",idempotencyKey:`workflow-control:${project.id}:old`,generation:1,attempts:1,priority:70,
+  createdAt:"2026-10-30T02:08:04Z",updatedAt:"2026-10-30T02:30:36Z"}));});
+ expect(counts()[1]).toBe("0");expect(host.textContent).toContain("本次运行已取消");
+ expect(host.textContent).not.toContain("无需人工操作");expect(project.campaign.status).toBe("running");
+});
 describe("workbench data availability",()=>{
   it("never reports zero tasks or unattended operation when synchronization failed",async()=>{
     await render();
