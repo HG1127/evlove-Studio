@@ -36,12 +36,13 @@ export function AttentionRequestPanel({
     if(serverStartBlocked)return;
     window.setTimeout(() => void runtime.resumeAutonomousEvolution(), 0);
   };
-  const retryCampaign = (blockedMessage: string) => {
+  const retryCampaign = (blockedMessage: string,renewResourceWindow=false) => {
     if(serverStartBlocked)return;
     setError(undefined);
     setRetrying(true);
     window.setTimeout(() => {
-      void runtime.resumeAutonomousEvolution().then((resumed) => {
+      const resume=renewResourceWindow?runtime.resumeAutonomousEvolution({renewResourceWindow:true}):runtime.resumeAutonomousEvolution();
+      void resume.then((resumed) => {
         if (!resumed) setError(blockedMessage);
       }).catch((cause: unknown) => {
         setError(cause instanceof Error ? cause.message : "重试失败，请检查运行状态后再试。");
@@ -150,5 +151,12 @@ export function AttentionRequestPanel({
     return <section id="evolve-attention-request" tabIndex={-1} className="space-y-3 outline-none"><div className="rounded-2xl border border-amber-200 bg-amber-50/60 px-4 py-3"><div className="font-semibold text-amber-950">{localOnly ? "当前成果还有系统检查未完成" : "当前成果还需补充对应验证证据"}</div><p className="mt-1 text-sm leading-6 text-amber-900/75">{request.reason}</p></div>{criteria.length?<Suspense fallback={<div role="status" className="rounded-xl border bg-white p-4 text-sm text-slate-500">正在加载证据核验…</div>}><PendingEvidencePanel runtime={runtime} criteria={criteria}/></Suspense>:<div className="rounded-2xl border bg-white p-4"><p className="text-sm leading-6 text-slate-600">当前需要连接真实 Runner 或对应外部验证能力。配置完成后点击继续，系统会复用当前候选而不是重新生成。</p><div className="mt-3 flex flex-wrap gap-2"><a href="#/settings" className="inline-flex h-9 items-center rounded-xl border bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"><Settings2 className="mr-2 size-4"/>验证能力设置</a><Button variant="secondary" disabled={retryDisabled} onClick={revalidateAndContinue}>配置完成，重新验证并继续</Button></div></div>}</section>;
   }
 
-  return <section id="evolve-attention-request" tabIndex={-1} className="rounded-3xl border border-amber-200 bg-white p-5 outline-none soft-shadow sm:p-6"><h3 className="font-bold text-slate-950">自动进化到达安全边界</h3><p className="mt-2 text-sm leading-6 text-slate-600">{request.reason}</p><p className="mt-1 text-xs text-slate-400">这不是成果完成。调整轮数、预算或时间边界后再继续；系统不会把“跑到上限”冒充成功。</p>{serverStartBlocked&&<p role="status" className="mt-2 text-xs font-medium text-amber-800">后端旧 Job / Workflow 状态尚待核验，暂不允许重试。可先打开技术运行记录；此操作不会启动新任务。</p>}{error&&<p role="alert" className="mt-3 text-xs text-rose-700">{error}</p>}<div className="mt-4 flex flex-wrap gap-2"><Button onClick={onOpenAdvanced}><Settings2 className="size-4"/>调整高级边界</Button><Button variant="secondary" disabled={retryDisabled} onClick={() => retryCampaign("当前设置仍无法启动新一轮，请调整高级边界后重试。")}>{retrying ? "正在重试…" : "按当前设置重试"}</Button></div></section>;
+  return <section id="evolve-attention-request" tabIndex={-1} className="rounded-3xl border border-amber-200 bg-white p-5 outline-none soft-shadow sm:p-6">
+    <h3 className="font-bold text-slate-950">自动进化到达安全边界</h3>
+    <p className="mt-2 text-sm leading-6 text-slate-600">{request.reason}</p>
+    <p className="mt-1 text-xs text-slate-400">可调整轮数、预算或时间边界后继续。手动重试可按当前设置重新开启已用完的时间和耐心窗口；费用、总轮数与安全门槛继续生效。</p>
+    {serverStartBlocked&&<p role="status" className="mt-2 text-xs font-medium text-amber-800">后端旧 Job / Workflow 状态尚待核验，暂不允许重试。可先打开技术运行记录；此操作不会启动新任务。</p>}
+    {error&&<p role="alert" className="mt-3 text-xs text-rose-700">{error}</p>}
+    <div className="mt-4 flex flex-wrap gap-2"><Button onClick={onOpenAdvanced}><Settings2 className="size-4"/>调整高级边界</Button><Button variant="secondary" disabled={retryDisabled} onClick={() => retryCampaign("当前设置仍无法启动新一轮，请调整高级边界后重试。",request.type==="limit")}>{retrying ? "正在重试…" : "按当前设置重试"}</Button></div>
+  </section>;
 }

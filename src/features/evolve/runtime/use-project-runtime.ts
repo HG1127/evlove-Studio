@@ -1,7 +1,7 @@
 import {candidateMetricDeltas,selectProjectPlanningLessons,productionGoalReadiness,lessonDistillationSource} from "@evolution/core";
 import {parseStoredEvolveProject} from "@evolution/adapters";
 import {checkpointCandidateBuild} from "@evolution/core";
-import { campaignObservesLiveTarget, campaignRootBaselineForMeasurement, materializeAcceptedCandidatePackage, campaignScoringInputBlocker, campaignScoringInputFingerprint, applyProductionLearningGovernance, applyReleaseResultToProject, beginReleaseCycle, completeAutonomousMission, experimentNeedsEvidenceRepair, buildExperimentGapAdvicePayload, buildGapAdvicePayload, fallbackExperimentAdvice, integrateDistilledLesson, mergeGovernedNextQueue, nextDurableReleaseAction, prepareCampaignRetry, productionOutcomeFreshness, productionOutcomeTrend, projectHasStableHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, projectUsesConnectorRelease, projectUsesHttpRelease, projectUsesVercelRelease, transitionReleaseTarget } from "@evolution/core";
+import { campaignObservesLiveTarget, campaignRootBaselineForMeasurement, materializeAcceptedCandidatePackage, campaignScoringInputBlocker, campaignScoringInputFingerprint, applyProductionLearningGovernance, applyReleaseResultToProject, beginReleaseCycle, completeAutonomousMission, experimentNeedsEvidenceRepair, buildExperimentGapAdvicePayload, buildGapAdvicePayload, fallbackExperimentAdvice, integrateDistilledLesson, mergeGovernedNextQueue, nextDurableReleaseAction, prepareCampaignResume, productionOutcomeFreshness, productionOutcomeTrend, projectHasStableHealthyProductionOutcome, projectHasLiveReleaseDecision, projectHasOnlineReleaseTarget, projectUsesConnectorRelease, projectUsesHttpRelease, projectUsesVercelRelease, transitionReleaseTarget } from "@evolution/core";
 import { deliveryReadiness } from "./delivery-readiness";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -2438,7 +2438,7 @@ export function useProjectRuntime(initialProject: EvolveProject, {backgroundChec
    * Attention/stopReason that caused the pause. Starting AutoPilot without settling that state just
    * re-enters wait-human immediately and looks like a dead button.
    */
-  const resumeAutonomousEvolution = useCallback(async () => {
+  const resumeAutonomousEvolution = useCallback(async (options?:{renewResourceWindow?:true}) => {
     if (status.busy) return false;
     const current = projectRef.current;
     if (productionRuntimeMode()==="local" && isLocalBaselineJudgePause(current) && !getAiProviderStatus("evaluate", { aiProfile: current.aiProfile }).live) {
@@ -2449,7 +2449,15 @@ export function useProjectRuntime(initialProject: EvolveProject, {backgroundChec
       pushActivity(`基线重测未启动 · ${message}`, undefined, projectId);
       return false;
     }
-    const harnessPlan = evolutionHarness.plan(current);
+    const resumedAt=now();
+    const intent=options?.renewResourceWindow===true?"retry-resource-boundary":"continue";
+    const prepared=prepareCampaignResume(current,intent,new Date(resumedAt));
+    if(prepared.reason){
+      setStatus({busy:false,message:`当前设置仍会触发安全边界：${prepared.reason}。请调整高级边界后继续。`});
+      pushActivity(`继续自主进化被安全边界阻塞：${prepared.reason}`,undefined,projectId);
+      return false;
+    }
+    const harnessPlan = evolutionHarness.plan(prepared.project);
     const decision = harnessPlan.decision;
     if (harnessPlan.policy.mode === "blocked") {
       setStage(decision.stage);
@@ -2464,16 +2472,9 @@ export function useProjectRuntime(initialProject: EvolveProject, {backgroundChec
       return false;
     }
 
-    const resumedAt = now();
-    const retried = prepareCampaignRetry(current, new Date(resumedAt));
-    const remainingBoundary = campaignPreflightStopReason(retried);
-    if (remainingBoundary && decision.attention?.type === "limit") {
-      setStatus({ busy: false, message: `当前设置仍会触发安全边界：${remainingBoundary}。请调整高级边界后继续。` });
-      pushActivity(`继续自主进化被安全边界阻塞：${remainingBoundary}`, undefined, projectId);
-      return false;
-    }
     commit((state) => {
-      return reconcileAttentionRequest(prepareCampaignRetry(state, new Date(resumedAt)));
+      const next=prepareCampaignResume(state,intent,new Date(resumedAt));
+      return next.reason?state:reconcileAttentionRequest(next.project);
     });
     setStatus({ busy: false, message: "已解除可恢复暂停，正在从当前断点继续自主进化…" });
     pushActivity(`恢复自主进化 · ${resumedAt}`, undefined, projectId);

@@ -68,9 +68,26 @@ export function campaignLimitStopReason(project:EvolveProject):string|undefined{
   const campaign = project.campaign;
   const criteria = campaign.stopCriteria;
   if (criteria.stopWhenAcceptanceMet && campaignGoalSatisfied(project)) return "当前进化要求已全部通过：独立验证与成果完整性验收完成";
+  const roundStop=campaignRoundStopReason(project);
+  if(roundStop)return roundStop;
+  if (criteria.targetScore !== undefined && campaignGoalSatisfied(project) && (project.searchChampion?.score ?? 0) >= criteria.targetScore) return `Search Champion 已达到目标综合分 ${criteria.targetScore}`;
+  const executionStop=campaignExecutionStopReason(project);
+  if(executionStop)return executionStop;
+  if (criteria.stopWhenMetricTargetsMet && campaignMetricTargetStatus(project).satisfied) return "Search Champion 已满足当前 Evolve Contract 的全部可计算指标目标";
+  return undefined;
+}
+
+function campaignRoundStopReason(project:EvolveProject):string|undefined{
+  const {campaign}=project;
+  const criteria=campaign.stopCriteria;
   if (campaign.currentRound >= criteria.maxRounds) return `已达到设定的最大进化轮数 ${criteria.maxRounds}`;
   if (campaign.noImprovementRounds >= criteria.patienceRounds) return `连续 ${campaign.noImprovementRounds} 轮没有达到最小提升 ${criteria.minImprovement}`;
-  if (criteria.targetScore !== undefined && campaignGoalSatisfied(project) && (project.searchChampion?.score ?? 0) >= criteria.targetScore) return `Search Champion 已达到目标综合分 ${criteria.targetScore}`;
+  return undefined;
+}
+
+function campaignExecutionStopReason(project:EvolveProject):string|undefined{
+  const {campaign}=project;
+  const criteria=campaign.stopCriteria;
   if (criteria.maxEstimatedCost !== undefined && campaign.estimatedCost >= criteria.maxEstimatedCost) return `预计成本已达到预算上限 ${criteria.maxEstimatedCost}`;
   if (criteria.maxWallMinutes !== undefined && campaign.startedAt) {
     const elapsedMinutes = (Date.now() - new Date(campaign.startedAt).getTime()) / 60_000;
@@ -78,7 +95,6 @@ export function campaignLimitStopReason(project:EvolveProject):string|undefined{
   }
   if (criteria.stopOnSafetyFailure && (project.validationRun.evaluation?.safety === "FAIL"
     || project.experimentRun.candidateResults.some((result) => result.experimentStage === "finalist" && result.evaluation.safety === "FAIL"))) return "检测到 Safety Hard Gate 失败";
-  if (criteria.stopWhenMetricTargetsMet && campaignMetricTargetStatus(project).satisfied) return "Search Champion 已满足当前 Evolve Contract 的全部可计算指标目标";
   return undefined;
 }
 
@@ -120,4 +136,16 @@ export function prepareCampaignRetry(project: EvolveProject, at: Date = new Date
       completedAt: campaign.status === "completed" ? campaign.completedAt : undefined,
     },
   };
+}
+
+/** Only an explicit resource retry may renew exhausted time/patience. Automatic continuation keeps both bounds. */
+export function prepareCampaignResume(project:EvolveProject,intent:"continue"|"retry-resource-boundary"="continue",at:Date=new Date()){
+  const retry=prepareCampaignRetry(project,at);
+  const prepared=intent==="retry-resource-boundary"?retry:{
+    ...retry,campaign:{...retry.campaign,startedAt:project.campaign.startedAt,noImprovementRounds:project.campaign.noImprovementRounds},
+  };
+  // Evidence gaps and completion conditions belong to the planner, which may
+  // legitimately choose revalidation or packaging instead of another search.
+  const reason=campaignRoundStopReason(prepared)??campaignExecutionStopReason(prepared)??projectedCostStopReason(prepared);
+  return reason?{project,reason}:{project:prepared,reason:undefined};
 }

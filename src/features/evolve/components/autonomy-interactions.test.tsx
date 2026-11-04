@@ -135,6 +135,7 @@ describe("autonomous interaction routing", () => {
     await act(async () => button!.click());
     expect(resume).toHaveBeenCalledTimes(1);
     expect(runAutoPilot).not.toHaveBeenCalled();
+    expect(resume).toHaveBeenCalledWith();
     await act(async () => root.unmount());
     host.remove();
   });
@@ -185,6 +186,8 @@ describe("autonomous interaction routing", () => {
     });
     expect(resume).toHaveBeenCalledTimes(1);
     expect(host.querySelector('[role="alert"]')?.textContent).toContain("调整高级边界");
+    expect(resume).toHaveBeenCalledWith({renewResourceWindow:true});
+    expect(host.textContent).toContain("费用、总轮数与安全门槛继续生效");
     await act(async () => root.unmount());
     host.remove();
   });
