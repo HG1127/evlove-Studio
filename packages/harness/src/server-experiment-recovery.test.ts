@@ -130,7 +130,7 @@ describe("server Experiment recovery after independent assessment outage", () =>
     expect(ports.buildCandidate).toHaveBeenCalledTimes(1);
     expect(ports.executeExternalBatch).toHaveBeenCalledTimes(2);
   });
-  it.each(["command", "goal", "patch", "source", "rubric"])("invalidates construction recovery after %s input changes", async (change) => {
+  it.each(["command", "goal", "patch", "source", "rubric"])("pauses frozen construction after %s input changes without rebuilding its identity", async (change) => {
     const { project, ports } = setup();
     ports.judge.mockRejectedValueOnce(new Error("timeout"));
     const first = await runServerExperiment(project, ports, { now: () => at });
@@ -139,9 +139,15 @@ describe("server Experiment recovery after independent assessment outage", () =>
     if (change === "patch") first.project.candidates[0]!.change += " changed";
     if (change === "source") first.project.sourceArtifacts[0]!.textContent += " changed";
     if (change === "rubric") first.project.acceptanceRubric[0]!.requirement += " changed";
-    await runServerExperiment(first.project, ports, { now: () => "2026-10-09T02:01:00.000Z" });
-    expect(ports.buildCandidate).toHaveBeenCalledTimes(2);
-    expect(ports.executeExternalBatch).toHaveBeenCalledTimes(2);
+    const second = await runServerExperiment(first.project, ports, { now: () => "2026-10-09T02:01:00.000Z" });
+    expect(second.control).toBe("stop");
+    expect(second.reason).toContain("构造输入或检查点不匹配");
+    expect(second.project.candidates[0]!.artifactSnapshots).toEqual(first.project.candidates[0]!.artifactSnapshots);
+    expect(second.project.candidates[0]!.artifactBuildStatus).toBe("ready");
+    expect(second.experiment.executionCheckpoints).toEqual(first.experiment.executionCheckpoints);
+    expect(ports.buildCandidate).toHaveBeenCalledTimes(1);
+    expect(ports.executeExternalBatch).toHaveBeenCalledTimes(1);
+    expect(ports.judge).toHaveBeenCalledTimes(1);
   });
   it.each(["content", "blob", "size", "snapshot", "missing"])("stops after frozen %s drift without generating replacement bytes", async (change) => {
     const { project, ports } = setup();
@@ -241,15 +247,55 @@ describe("server Experiment recovery after independent assessment outage", () =>
     expect(ports.executeExternalBatch).toHaveBeenCalledTimes(2);
     expect(ports.judge).toHaveBeenCalledTimes(4);
   });
-  it("reads legacy experiments without treating them as reusable measurements", async () => {
+  it("preserves legacy frozen Candidates with missing journals instead of replacing their bytes", async () => {
     const { project, ports } = setup();
     ports.judge.mockRejectedValueOnce(new Error("timeout"));
     const first = await runServerExperiment(project, ports, { now: () => at });
     delete first.project.experimentRun.executionCheckpoints;
     first.project.experimentRun = ExperimentRunSchema.parse(first.project.experimentRun);
-    await runServerExperiment(first.project, ports, { now: () => "2026-10-09T02:01:00.000Z" });
-    expect(ports.buildCandidate).toHaveBeenCalledTimes(2);
-    expect(ports.executeExternalBatch).toHaveBeenCalledTimes(2);
+    const second = await runServerExperiment(first.project, ports, { now: () => "2026-10-09T02:01:00.000Z" });
+    expect(second.control).toBe("stop");
+    expect(second.reason).toContain("缺少唯一构造检查点");
+    expect(second.project.candidates[0]!.artifactSnapshots).toEqual(first.project.candidates[0]!.artifactSnapshots);
+    expect(ports.buildCandidate).toHaveBeenCalledTimes(1);
+    expect(ports.executeExternalBatch).toHaveBeenCalledTimes(1);
+    expect(ports.judge).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["duplicate", "invalid", "reader", "fingerprint"])("stops at an unusable frozen %s boundary", async (kind) => {
+    const { project, ports } = setup();
+    ports.judge.mockRejectedValueOnce(new Error("timeout"));
+    const first = await runServerExperiment(project, ports, { now: () => at });
+    if (kind === "duplicate") first.project.experimentRun.executionCheckpoints!.push(structuredClone(first.experiment.executionCheckpoints![0]!));
+    if (kind === "invalid") first.project.experimentRun.executionCheckpoints![0]!.buildInputFingerprint = "invalid";
+    const recoveryPorts = { ...ports,
+      ...(kind === "reader" ? { verifyFrozenArtifact: undefined } : {}),
+      ...(kind === "fingerprint" ? { fingerprint: undefined } : {}),
+    };
+    const second = await runServerExperiment(first.project, recoveryPorts, { now: () => "2026-10-09T02:01:00.000Z" });
+    expect(second.control).toBe("stop");
+    expect(second.project.candidates[0]!.artifactBuildStatus).toBe("ready");
+    expect(second.project.candidates[0]!.artifactSnapshots).toEqual(first.project.candidates[0]!.artifactSnapshots);
+    expect(ports.buildCandidate).toHaveBeenCalledTimes(1);
+    expect(ports.executeExternalBatch).toHaveBeenCalledTimes(1);
+    expect(ports.judge).toHaveBeenCalledTimes(1);
+  });
+
+  it("continues the same frozen construction after an accidental input change is corrected", async () => {
+    const { project, ports } = setup();
+    ports.judge.mockRejectedValueOnce(new Error("timeout"));
+    const first = await runServerExperiment(project, ports, { now: () => at });
+    const originalGoal = first.project.goal;
+    first.project.goal += " accidental change";
+    const blocked = await runServerExperiment(first.project, ports, { now: () => "2026-10-09T02:01:00.000Z" });
+    blocked.project.goal = originalGoal;
+    const resumed = await runServerExperiment(blocked.project, ports, { now: () => "2026-10-09T02:02:00.000Z" });
+    expect(resumed.readyForHoldout).toBe(true);
+    expect(resumed.project.id).toBe(project.id);
+    expect(resumed.project.candidates[0]!.artifactSnapshots).toEqual(first.project.candidates[0]!.artifactSnapshots);
+    expect(ports.buildCandidate).toHaveBeenCalledTimes(1);
+    expect(ports.executeExternalBatch).toHaveBeenCalledTimes(1);
+    expect(ports.judge).toHaveBeenCalledTimes(2);
   });
 
   it.each(["missing", "duplicate-selection", "duplicate-candidate"])("rejects %s selection before any build or execution", async (kind) => {
@@ -285,9 +331,12 @@ describe("server Experiment recovery after independent assessment outage", () =>
     const first = await runServerExperiment(project, ports, { now: () => at });
     first.project.campaign.checkpoint!.round = 2;
     first.project.experimentRun.id = "experiment-r2-server";
-    await runServerExperiment(first.project, ports, { now: () => "2026-10-09T02:01:00.000Z" });
-    expect(ports.buildCandidate).toHaveBeenCalledTimes(2);
-    expect(ports.executeExternalBatch).toHaveBeenCalledTimes(2);
+    const second = await runServerExperiment(first.project, ports, { now: () => "2026-10-09T02:01:00.000Z" });
+    expect(second.control).toBe("stop");
+    expect(second.readyForHoldout).toBe(false);
+    expect(ports.buildCandidate).toHaveBeenCalledTimes(1);
+    expect(ports.executeExternalBatch).toHaveBeenCalledTimes(1);
+    expect(ports.judge).toHaveBeenCalledTimes(1);
   });
 
 });

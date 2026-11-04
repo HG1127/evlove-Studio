@@ -91,11 +91,23 @@ export async function restoreServerExperimentCandidate(project: EvolveProject, c
     }
     return candidate;
   }
-  if (!pending(project, round) || !ports.verifyFrozenArtifact) return undefined;
+  if (!pending(project, round)) return undefined;
   const matches = project.experimentRun.executionCheckpoints?.filter(c => c.candidateId === candidate.id) ?? [];
-  if (matches.length !== 1) return undefined;
+  // A pending Candidate which was never constructed may still use its Builder.
+  // Once construction exists, a broken journal is a recovery stop, never a
+  // request to generate different bytes under the same Candidate identity.
+  if (!matches.length && candidate.artifactBuildStatus !== "ready"
+    && !candidate.artifactSnapshots.some(snapshot => snapshot.frozenArtifact)) return undefined;
+  if (!ports.verifyFrozenArtifact) {
+    throw new ServerExperimentFrozenRecoveryError("已冻结 Candidate 缺少实际文件回读能力；禁止重新生成替代文件。");
+  }
+  if (matches.length !== 1) {
+    throw new ServerExperimentFrozenRecoveryError("已冻结 Candidate 缺少唯一构造检查点；请修复原记录，禁止重新生成替代文件。");
+  }
   const parsed = ExperimentCandidateCheckpointSchema.safeParse(matches[0]);
-  if (!parsed.success || parsed.data.buildInputFingerprint !== await digest(ports, buildInputs(project, candidate))) return undefined;
+  if (!parsed.success || parsed.data.buildInputFingerprint !== await digest(ports, buildInputs(project, candidate))) {
+    throw new ServerExperimentFrozenRecoveryError("已冻结 Candidate 的构造输入或检查点不匹配；请核对原断点或显式创建新修订，禁止原地重新生成文件。");
+  }
   if (!hasCompleteServerExperimentFrozenSet(project, candidate) || parsed.data.artifactFingerprint !== await digest(ports, candidate.artifactSnapshots)) {
     throw new ServerExperimentFrozenRecoveryError("已执行 Candidate 的冻结记录发生变化；不能在评审重试中重新生成另一份文件。");
   }
