@@ -30,11 +30,14 @@ export function structuredAiFinalText(text: string, transport: "json" | "jsonl" 
     while (/^<think>/i.test(final)) {
       const end = /<\/think>/i.exec(final);
       if (!end) throw Object.assign(new Error("模型推理尚未结束，未返回完整结果。"), { code: "AI_OUTPUT_INCOMPLETE" });
-      final = final.slice(end.index + end[0].length).replace(/^\s+/, "");
+      final = final.slice(end.index + end[0].length).replace(/^[ \t\r\n]+/, "");
       hadReasoning = true;
     }
     if (hadReasoning && !final.trim()) {
       throw Object.assign(new Error("模型只返回了推理内容，没有最终结果。"), { code: "AI_OUTPUT_MISSING_FINAL" });
+    }
+    if (final.startsWith("\uFEFF")) {
+      throw Object.assign(new Error("Paired JSONL transport is invalid"), { code: "AI_OUTPUT_INVALID_JSONL" });
     }
     return final;
   }

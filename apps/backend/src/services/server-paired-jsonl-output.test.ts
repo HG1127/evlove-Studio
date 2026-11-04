@@ -51,6 +51,8 @@ it.each([
  ['<think>complete</think>\n```json\n'+text+'\n```',"AI_OUTPUT_INVALID_JSONL"],
  ['<think>complete</think>\n'+text+'\n\n',"AI_OUTPUT_INVALID_JSONL"],
  ['\uFEFF<think>complete</think>\n'+text,"AI_OUTPUT_INVALID_JSONL"],
+ ['<think>complete</think>\n\uFEFF'+text,"AI_OUTPUT_INVALID_JSONL"],
+ ['<think>complete</think>\n\u00A0'+text,"AI_OUTPUT_INVALID_JSONL"],
 ])("retains strict final rejection for wrapped output %#",async(content,code)=>{
  const fetch=vi.fn(async()=>new Response(JSON.stringify({choices:[{message:{content},finish_reason:"stop"}]}),{status:200}));vi.stubGlobal("fetch",fetch);
  await expect(scoped(()=>withExplicitServerAiConnection(input,()=>runServerAi("evaluate-paired",payload)))).rejects.toMatchObject({code});

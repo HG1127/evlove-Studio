@@ -5,7 +5,7 @@ import {serverPairedOutcomeReferenceCriterionIds} from "./server-paired-ai-contr
 import {serverAiPairedOutcomeReferenceMode} from "./server-ai-output-policy";
 
 export const SERVER_PAIRED_JSONL_GENERATION_VERSION="paired-jsonl-generation-v2-explicit-records";
-export const SERVER_PAIRED_JSONL_FINAL_TEXT_VERSION="paired-jsonl-final-text-v1";
+export const SERVER_PAIRED_JSONL_FINAL_TEXT_VERSION="paired-jsonl-final-text-v2-ascii-separators";
 
 /** Explicit generation protocol; never recover an earlier invalid JSON-object reply. */
 export function serverPairedJsonlOutput<T>(payload:unknown,parser:ZodType<T>,instruction:string){
