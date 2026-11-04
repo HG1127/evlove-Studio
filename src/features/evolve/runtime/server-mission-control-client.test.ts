@@ -1,5 +1,5 @@
 import {afterEach,describe,expect,it,vi} from "vitest";
-import {EvolutionJobSchema,missionEnvelope,type EvolveProject} from "@evolution/contracts";
+import {EvolutionJobSchema,missionEnvelope,type EvolveProject,type EvolutionWorkflowStatusResponse} from "@evolution/contracts";
 import {demoProject} from "../data/mock-project";
 import {inspectServerMissionControl} from "./server-mission-control-client";
 
@@ -21,7 +21,7 @@ function job(status:"queued"|"running"|"waiting"|"completed"|"failed",runId?:str
     createdAt:now,updatedAt:now,
   });
 }
-function server(jobs:ReturnType<typeof job>[],workflow?:{exists:boolean;status?:string}){
+function server(jobs:ReturnType<typeof job>[],workflow?:{exists:boolean;status?:string},workflowReadError?:EvolutionWorkflowStatusResponse["workflowReadError"]){
   const requests:string[]=[];
   const fetcher=vi.fn(async(input:RequestInfo|URL)=>{
     const url=String(input);
@@ -34,7 +34,7 @@ function server(jobs:ReturnType<typeof job>[],workflow?:{exists:boolean;status?:
     }
     if(url.startsWith("/api/evolution/status?")){
       return new Response(JSON.stringify({
-        workflow,job:jobs[0],events:[],
+        workflow,workflowReadError,job:jobs[0],events:[],
       }),{status:200});
     }
     throw new Error("Unexpected request "+url);
@@ -87,6 +87,16 @@ describe("read-only authenticated Mission status must precede HTML start control
     expect((await inspectServerMissionControl(id)).state).toBe("active");
     server([job("completed")]);
     expect((await inspectServerMissionControl(id)).state).toBe("needs-review");
+  });
+  it.each(["unavailable","timeout"] as const)("keeps a terminal Job and unknown Workflow separate after %s",async error=>{
+    server([job("failed","wrun-unavailable")],undefined,error);
+    const observed=await inspectServerMissionControl(id);
+    expect(observed).toMatchObject({state:"needs-review",latestJob:{status:"failed"},workflowStatus:"unavailable"});
+    expect(observed.reason).toContain("暂时无法核验");
+  });
+  it("does not treat an omitted Workflow observation as a missing Run",async()=>{
+    server([job("failed","wrun-unknown")]);
+    expect(await inspectServerMissionControl(id)).toMatchObject({state:"needs-review",workflowStatus:"unavailable"});
   });
   it("cancels both parallel Mission/Job reads when the route is refreshed or unmounted",async()=>{
     const controller=new AbortController();

@@ -62,7 +62,9 @@ export async function inspectServerMissionControl(missionId:string,signal?:Abort
       const result=EvolutionWorkflowStatusResponseSchema.parse(
         await getJson("/api/evolution/status?"+query.toString(),signal));
       if(result.job&&result.job.missionId!==missionId)throw new Error("Job Mission 身份不匹配");
-      workflowStatus=result.workflow?.exists?result.workflow.status:"missing";
+      workflowUncertain=Boolean(result.workflowReadError)||!result.workflow
+        ||result.workflow.exists&&!result.workflow.status;
+      if(!workflowUncertain)workflowStatus=result.workflow!.exists?result.workflow!.status:"missing";
     }catch(error){
       if(signal?.aborted)throw error;
       workflowUncertain=true;

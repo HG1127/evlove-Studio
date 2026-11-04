@@ -64,6 +64,8 @@ export type EvolutionWorkflowStatusQuery=z.infer<typeof EvolutionWorkflowStatusQ
 
 export const EvolutionWorkflowStatusResponseSchema=z.object({
   workflow:z.object({exists:z.boolean(),status:z.string().min(1).optional()}).optional(),
+  /** A failed read cannot attest that a Run is missing or terminal. */
+  workflowReadError:z.enum(["unavailable","timeout"]).optional(),
   job:EvolutionJobSchema.optional(),
   events:z.array(EvolutionEventSchema),
 });

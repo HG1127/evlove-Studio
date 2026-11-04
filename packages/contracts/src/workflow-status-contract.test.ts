@@ -24,4 +24,10 @@ describe("durable Workflow status contract",()=>{
       .toBe(false);
     expect(EvolutionWorkflowStatusResponseSchema.safeParse({events:{}}).success).toBe(false);
   });
+  it("represents an unavailable external Run read without claiming it is missing",()=>{
+    const result=EvolutionWorkflowStatusResponseSchema.parse({workflowReadError:"unavailable",events:[]});
+    expect(result.workflow).toBeUndefined();
+    expect(result.workflowReadError).toBe("unavailable");
+    expect(EvolutionWorkflowStatusResponseSchema.safeParse({workflowReadError:"provider secret",events:[]}).success).toBe(false);
+  });
 });
