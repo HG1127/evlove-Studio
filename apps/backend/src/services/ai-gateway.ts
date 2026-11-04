@@ -69,6 +69,7 @@ import {serverAiPlanningInstruction} from "./server-plan-contract";
 import {serverAiPairedContract} from "./server-paired-ai-contract";
 import {SERVER_PAIRED_GENERATION_SCHEMA_VERSION} from "./server-paired-json-schema";
 import {PLAN_JSON_CORRECTION_INSTRUCTION,serverPlanJsonCorrectionPayload} from "./server-plan-json-correction";
+import {serverAiOutputTokenLimit,serverAiPairedOutputBudgetIdentity} from "./server-ai-output-budget";
 
 export type ServerAiOperation=AiOperation;
 /** Public scoring-route identity; API keys and timeout settings are deliberately excluded. */
@@ -79,9 +80,11 @@ export async function serverAiScoringRouteFingerprint(): Promise<string | undefi
     ? [config.mode, config.baseUrl, config.model, ...(config.protocol || config.responseFormat ? [config.protocol,config.responseFormat] : []),...(config.reasoningEffort?[{reasoningEffort:config.reasoningEffort}]:[])]
     : [config.mode, config.model];
   const outcomeReference=serverAiPairedOutcomeReferenceMode();
+  const pairedOutputBudget=serverAiPairedOutputBudgetIdentity(config);
   return createHash("sha256").update(JSON.stringify({ route, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION,measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION,pairedGenerationSchemaVersion:SERVER_PAIRED_GENERATION_SCHEMA_VERSION,pairedInputVersion:SERVER_PAIRED_INPUT_VERSION,
     ...(outcomeReference?{pairedOutcomeReference:outcomeReference,pairedOutcomeReferenceVersion:SERVER_PAIRED_OUTCOME_REFERENCE_VERSION,pairedCriterionEvidencePolicy:PAIRED_CRITERION_EVIDENCE_POLICY}:{}),
-    ...(serverAiPairedJsonlEnabled()?{pairedOutputTransport:PAIRED_JSONL_PROTOCOL,pairedOutputGenerationVersion:SERVER_PAIRED_JSONL_GENERATION_VERSION,pairedOutputFinalTextVersion:SERVER_PAIRED_JSONL_FINAL_TEXT_VERSION}:{}) })).digest("hex");
+    ...(serverAiPairedJsonlEnabled()?{pairedOutputTransport:PAIRED_JSONL_PROTOCOL,pairedOutputGenerationVersion:SERVER_PAIRED_JSONL_GENERATION_VERSION,pairedOutputFinalTextVersion:SERVER_PAIRED_JSONL_FINAL_TEXT_VERSION}:{}),
+    ...(pairedOutputBudget?{pairedOutputBudget}:{}) })).digest("hex");
 }
 
 type StructuredSchema={name:string;schema:Record<string,unknown>};
@@ -203,6 +206,7 @@ async function callVercelGateway<T>(args:{
   payload:unknown;
   images:ParsedImage[];
 }){
+  const maxOutputTokens=serverAiOutputTokenLimit(args.operation,args.config,10_000);
   const {Output,generateText,gateway}=await loadVercelAiSdk();
   const generated=await measureServerAiSdkUsage(args.config,args.operation,()=>generateText({
     model:gateway(args.config.model),
@@ -220,7 +224,7 @@ async function callVercelGateway<T>(args:{
       schema:args.contract.parser,
       name:args.contract.schema.name,
     }),
-    maxOutputTokens:10_000,
+    maxOutputTokens,
     abortSignal:serverControlExecutionSignal(),
     timeout:args.config.timeoutMs,
   }));
@@ -258,7 +262,7 @@ async function callResponses<T>(args:DirectArgs<T>){
           ...args.images.map((image)=>({type:"input_image",image_url:image.dataUrl})),
         ]},
       ],
-      max_output_tokens:10000,
+      max_output_tokens:serverAiOutputTokenLimit(args.operation,args.config,10_000),
       ...(args.config.reasoningEffort?{reasoning:{effort:args.config.reasoningEffort}}:{}),
       ...(!args.lineOutput&&directFormat(args.config,args.contract)?{text:{format:directFormat(args.config,args.contract)}}:{}),
     }),
@@ -285,7 +289,7 @@ async function callChat<T>(args:DirectArgs<T>){
     headers:{Authorization:"Bearer "+args.config.apiKey,"Content-Type":"application/json"},
     body:JSON.stringify({
       model:args.config.model,
-      ...(isEvaluation?{max_tokens:8192}:args.operation==="evaluate-paired"?{max_tokens:16384}:{}),
+      ...(isEvaluation?{max_tokens:8192}:args.operation==="evaluate-paired"?{max_tokens:serverAiOutputTokenLimit(args.operation,args.config,16_384)}:{}),
       ...(args.config.reasoningEffort?{reasoning_effort:args.config.reasoningEffort}:{}),
       messages:[
         {role:"system",content:args.lineOutput?.system??directSystem(args.config,args.contract,args.repairFields,args.planDraftIncluded)},

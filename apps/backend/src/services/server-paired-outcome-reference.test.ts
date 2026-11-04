@@ -9,7 +9,7 @@ import {withExplicitServerAiConnection} from "./server-ai-connection";
 import {serverAiPairedContract} from "./server-paired-ai-contract";
 import {runServerPairedEvidenceJudge} from "./server-paired-evidence-judge";
 import {SERVER_PAIRED_GENERATION_SCHEMA_VERSION} from "./server-paired-json-schema";
-import {SERVER_PAIRED_JSONL_GENERATION_VERSION} from "./server-paired-jsonl-output";
+import {SERVER_PAIRED_JSONL_GENERATION_VERSION,SERVER_PAIRED_JSONL_FINAL_TEXT_VERSION} from "./server-paired-jsonl-output";
 import {serverAiPairedOutcomeReferenceMode,SERVER_PAIRED_OUTCOME_REFERENCE_VERSION} from "./server-ai-output-policy";
 
 const connection={connectionId:"fixture",label:"Fixture",apiKey:"test-only",baseUrl:"https://fixture.invalid/v1",model:"fixture",protocol:"chat-completions" as const,responseFormat:"json-schema" as const};
@@ -49,7 +49,7 @@ describe("server-configured paired relative outcome reference",()=>{
    const expected=createHash("sha256").update(JSON.stringify({route,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION,
     pairedGenerationSchemaVersion:SERVER_PAIRED_GENERATION_SCHEMA_VERSION,pairedInputVersion:SERVER_PAIRED_INPUT_VERSION,
     pairedOutcomeReference:"zero-v1",pairedOutcomeReferenceVersion:SERVER_PAIRED_OUTCOME_REFERENCE_VERSION,pairedCriterionEvidencePolicy:PAIRED_CRITERION_EVIDENCE_POLICY,
-    pairedOutputTransport:PAIRED_JSONL_PROTOCOL,pairedOutputGenerationVersion:SERVER_PAIRED_JSONL_GENERATION_VERSION})).digest("hex");
+    pairedOutputTransport:PAIRED_JSONL_PROTOCOL,pairedOutputGenerationVersion:SERVER_PAIRED_JSONL_GENERATION_VERSION,pairedOutputFinalTextVersion:SERVER_PAIRED_JSONL_FINAL_TEXT_VERSION})).digest("hex");
    expect(await serverAiScoringRouteFingerprint()).toBe(expected);expect(expected).not.toBe(legacy);
    vi.stubEnv("EVOLUTION_AI_PAIRED_OUTCOME_REFERENCE","");expect(await serverAiScoringRouteFingerprint()).toBe(legacy);
   });
