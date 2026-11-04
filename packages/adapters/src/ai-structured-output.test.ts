@@ -1,9 +1,17 @@
 import {describe,expect,it} from "vitest";
-import {parseStructuredAiOutput} from "./ai-structured-output";
+import {parseStructuredAiOutput,structuredAiFinalText} from "./ai-structured-output";
 
 const result={summary:'保留 <think>{example}</think> 和 ``` 原文',items:[{id:"A",ok:true}]};
 const json=JSON.stringify(result);
 describe("structured AI final output",()=>{
+  it("preserves exact JSONL final bytes and literal thinking tags within records",()=>{
+    const final='{"evidence":"literal <think>source</think>"}\n{"score":0}\n';
+    expect(structuredAiFinalText(final,"jsonl")).toBe(final);
+    expect(structuredAiFinalText('<think>private</think>\n\n'+final,"jsonl")).toBe(final);
+    expect(structuredAiFinalText('<THINK>first</THINK>\n<think>second</think>\n'+final,"jsonl")).toBe(final);
+    expect(structuredAiFinalText('```json\n'+final+'```',"jsonl")).toBe('```json\n'+final+'```');
+    expect(()=>structuredAiFinalText('<think>'+"x".repeat(4_000_001),"jsonl")).toThrow(expect.objectContaining({code:"AI_OUTPUT_INVALID_JSONL"}));
+  });
   it.each([
     json,
     `\ufeff  ${json}  `,

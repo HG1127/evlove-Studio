@@ -18,7 +18,26 @@ function syntaxFeedback(body:string,cause:unknown):string{
 }
 
 /** Extract final transport text without reasoning; this does not parse or validate its JSON. */
-export function structuredAiFinalText(text: string): string {
+export function structuredAiFinalText(text: string, transport: "json" | "jsonl" = "json"): string {
+  if (transport === "jsonl") {
+    // Keep the strict line grammar, BOM and whole-response bound. Only a complete
+    // leading provider reasoning envelope is outside the final record stream.
+    if (text.length > 4_000_000 || text.startsWith("\uFEFF")) {
+      throw Object.assign(new Error("Paired JSONL transport is invalid"), { code: "AI_OUTPUT_INVALID_JSONL" });
+    }
+    let final = text;
+    let hadReasoning = false;
+    while (/^<think>/i.test(final)) {
+      const end = /<\/think>/i.exec(final);
+      if (!end) throw Object.assign(new Error("模型推理尚未结束，未返回完整结果。"), { code: "AI_OUTPUT_INCOMPLETE" });
+      final = final.slice(end.index + end[0].length).replace(/^\s+/, "");
+      hadReasoning = true;
+    }
+    if (hadReasoning && !final.trim()) {
+      throw Object.assign(new Error("模型只返回了推理内容，没有最终结果。"), { code: "AI_OUTPUT_MISSING_FINAL" });
+    }
+    return final;
+  }
   let body = text.trim();
   let hadReasoning = false;
   while (/^<think>/i.test(body)) {

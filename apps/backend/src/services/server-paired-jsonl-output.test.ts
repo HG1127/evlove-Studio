@@ -35,7 +35,27 @@ for(const protocol of ["chat-completions","responses"] as const){
   const result=await scoped(()=>withExplicitServerAiConnection({...input,protocol},()=>runServerAi("evaluate-paired",payload)));
   expect(result.versions.map(v=>v.result)).toEqual([1,2,3].map(()=>({...summary,criteria:[row]})));expect(fetch).toHaveBeenCalledTimes(1);
  });
+ it("separates a complete leading reasoning envelope from "+protocol+" JSONL without another request",async()=>{
+  const final='<think>PRIVATE_REASONING with {"kind":"invented"}</think>\n\n'+text;
+  const fetch=vi.fn(async()=>new Response(JSON.stringify(protocol==="responses"?{status:"completed",output_text:final}
+   :{choices:[{message:{content:final},finish_reason:"stop"}]}),{status:200}));vi.stubGlobal("fetch",fetch);
+  const result=await scoped(()=>withExplicitServerAiConnection({...input,protocol},()=>runServerAi("evaluate-paired",payload)));
+  expect(result.versions.map(v=>v.result)).toEqual([1,2,3].map(()=>({...summary,criteria:[row]})));
+  expect(JSON.stringify(result)).not.toContain("PRIVATE_REASONING");expect(fetch).toHaveBeenCalledTimes(1);
+ });
 }
+it.each([
+ ['<think>unfinished',"AI_OUTPUT_INCOMPLETE"],
+ ['<think>only reasoning</think>',"AI_OUTPUT_MISSING_FINAL"],
+ ['<think>complete</think>\n'+text.slice(0,-1),"AI_OUTPUT_INVALID_JSONL"],
+ ['<think>complete</think>\n```json\n'+text+'\n```',"AI_OUTPUT_INVALID_JSONL"],
+ ['<think>complete</think>\n'+text+'\n\n',"AI_OUTPUT_INVALID_JSONL"],
+ ['\uFEFF<think>complete</think>\n'+text,"AI_OUTPUT_INVALID_JSONL"],
+])("retains strict final rejection for wrapped output %#",async(content,code)=>{
+ const fetch=vi.fn(async()=>new Response(JSON.stringify({choices:[{message:{content},finish_reason:"stop"}]}),{status:200}));vi.stubGlobal("fetch",fetch);
+ await expect(scoped(()=>withExplicitServerAiConnection(input,()=>runServerAi("evaluate-paired",payload)))).rejects.toMatchObject({code});
+ expect(fetch).toHaveBeenCalledTimes(1);
+});
 it("never retries malformed JSONL or falls back to a valid object reply",async()=>{
  const fetch=vi.fn(async()=>new Response(JSON.stringify({choices:[{message:{content:text.slice(0,-1)}}]}),{status:200}));vi.stubGlobal("fetch",fetch);
  await expect(scoped(()=>withExplicitServerAiConnection(input,()=>runServerAi("evaluate-paired",payload)))).rejects.toMatchObject({code:"AI_OUTPUT_INVALID_JSONL"});expect(fetch).toHaveBeenCalledTimes(1);
