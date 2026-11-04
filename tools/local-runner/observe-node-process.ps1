@@ -5,6 +5,9 @@ param(
  [ValidateRange(0,60)][int]$CleanupGraceSeconds=0,
  [ValidateRange(0,60)][int]$DiagnosticStartupAllowanceSeconds=0,
  [string[]]$EnvironmentFiles=@(),
+ [string[]]$EntryPointArguments=@(),
+ [switch]$UseEnvironmentProxy,
+ [switch]$RequireProcessObservation,
  [string]$ControlBindingPath
 )
 $ErrorActionPreference='Stop'
@@ -39,12 +42,26 @@ $info.RedirectStandardError=$true
 $info.Environment['EVOLUTION_EXECUTION_DEADLINE_UTC']=$deadline.ToUniversalTime().ToString('o')
 $info.Environment['EVOLUTION_PROCESS_CLEANUP_DEADLINE_UTC']=$cleanupDeadline.ToUniversalTime().ToString('o')
 $info.ArgumentList.Add('--max-old-space-size=768')
+if($UseEnvironmentProxy){$info.ArgumentList.Add('--use-env-proxy')}
+if($RequireProcessObservation){
+ $preflightUri=([Uri](Join-Path $PSScriptRoot 'process-supervision-preflight.mjs')).AbsoluteUri
+ $info.ArgumentList.Add('--import='+$preflightUri)
+}
 foreach($v in $environmentPaths){$info.ArgumentList.Add('--env-file='+$v)}
 $info.ArgumentList.Add($entry)
+foreach($v in $EntryPointArguments){$info.ArgumentList.Add($v)}
 $child=[Diagnostics.Process]::new();$child.StartInfo=$info
 $stdout=[IO.FileStream]::new((Join-Path $evidence 'stdout.log'),[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read,1,$true)
 $stderr=[IO.FileStream]::new((Join-Path $evidence 'stderr.log'),[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read,1,$true)
 $started=$false;$terminalWritten=$false;$deadlineStop=$false;$executionDeadlineReached=$false
+$supervisorStartTicks=([Diagnostics.Process]::GetCurrentProcess().StartTime.ToUniversalTime().Ticks).ToString([Globalization.CultureInfo]::InvariantCulture)
+$processStartTicks=$null
+if($RequireProcessObservation){
+ $info.Environment['EVOLUTION_OBSERVED_PROCESS_EVIDENCE']=$evidence
+ $info.Environment['EVOLUTION_OBSERVED_ENTRYPOINT_SHA256']=(Get-FileHash -LiteralPath $entry -Algorithm SHA256).Hash.ToLowerInvariant()
+ $info.Environment['EVOLUTION_OBSERVED_SUPERVISOR_PID']=$PID.ToString([Globalization.CultureInfo]::InvariantCulture)
+ $info.Environment['EVOLUTION_OBSERVED_SUPERVISOR_START_TICKS']=$supervisorStartTicks
+}
 $controlModule=Join-Path $PSScriptRoot 'control-session.mjs'
 if($ControlBindingPath){
  $controlBinding=Workspace-Path $ControlBindingPath
@@ -58,9 +75,12 @@ function Record-CancelIntent([string]$reason){
  }
 }
 function Record([hashtable]$record){
+ $record.schemaVersion='local-node-process-event-v1'
  $record.at=[DateTimeOffset]::UtcNow.ToString('o')
  $record.supervisorPid=$PID
  $record.pid=$child.Id
+ $record.processStartTicks=$processStartTicks
+ $record.supervisorStartTicks=$supervisorStartTicks
  $record.deadlineUtc=$deadline.ToUniversalTime().ToString('o')
  $record.cleanupDeadlineUtc=$cleanupDeadline.ToUniversalTime().ToString('o')
  $record.cleanupGraceSeconds=$CleanupGraceSeconds
@@ -70,6 +90,7 @@ function Record([hashtable]$record){
 try{
  if([DateTimeOffset]::UtcNow -ge $deadline){throw 'Deadline expired before process start'}
  if(!$child.Start()){throw 'Owned process did not start'};$started=$true
+ $processStartTicks=$child.StartTime.ToUniversalTime().Ticks.ToString([Globalization.CultureInfo]::InvariantCulture)
  $outCopy=$child.StandardOutput.BaseStream.CopyToAsync($stdout)
  $errCopy=$child.StandardError.BaseStream.CopyToAsync($stderr)
  Record @{kind='started';entrypointSha256=(Get-FileHash -LiteralPath $entry -Algorithm SHA256).Hash.ToLowerInvariant();automaticRestart=$false}

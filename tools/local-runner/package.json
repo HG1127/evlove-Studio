@@ -9,7 +9,8 @@
       "import": "./index.mjs",
       "require": "./index.mjs"
     },
-    "./control-session": "./control-session.mjs"
+    "./control-session": "./control-session.mjs",
+    "./process-observation": "./process-observation.mjs"
   },
   "dependencies": {
     "playwright": "1.63.0",
