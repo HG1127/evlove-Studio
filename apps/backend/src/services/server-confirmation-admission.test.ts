@@ -2,7 +2,7 @@
 import {createHash} from "node:crypto";
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
 import {mockEvent} from "nitro/h3";
-import {ConfirmationEvidenceCatalogSchema,EvolveProjectSchema,EvolutionJobSchema,missionEnvelope,type ArtifactStorePort} from "@evolution/contracts";
+import {ConfirmationEvidenceCatalogSchema,ConfirmationAdmissionRequestV3Schema,JudgeCalibrationPlanV4Schema,EvolveProjectSchema,EvolutionJobSchema,missionEnvelope,type ArtifactStorePort} from "@evolution/contracts";
 import {confirmationMissionScopeText,fastHash} from "@evolution/core";
 import {absoluteCalibrationFixture,bindSyntheticCalibrationApprovals,pairedJudgeFixture,zeroReferenceCalibrationFixture} from "@evolution/testkit";
 import {assertServerConfirmationAdmission} from "./server-confirmation-admission";
@@ -80,9 +80,38 @@ function event(path:string,body:unknown){return mockEvent(new Request("http://lo
   method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}));}
 const rejected={status:422,data:{code:"CONFIRMATION_ADMISSION_REQUIRED"}};
 
+/** Explicit synthetic V4 upgrade; old V3 fixtures and their semantics remain unchanged. */
+function v4Catalog(x:ReturnType<typeof synthetic>,sourceArtifactCount=1){
+  const plan=JudgeCalibrationPlanV4Schema.parse({...x.plan,schemaVersion:"judge-calibration-plan-v4",sourceArtifactCount,preservationCriterionIds:[]});
+  bindSyntheticCalibrationApprovals(plan,x.texts);
+  x.catalog.plan=x.add("plan-v4-"+sourceArtifactCount,JSON.stringify(plan));
+  x.catalog.request=ConfirmationAdmissionRequestV3Schema.parse({...x.request,schemaVersion:"confirmation-admission-request-v3",
+    requiredCalibrationVersion:"judge-calibration-plan-v4",sourceArtifactCount});
+  x.catalog.preregistrationSha256=plan.preregistrationSha256;x.catalog.oracleApprovalSha256=plan.oracleApprovalSha256;
+  for(const [hash,text]of x.texts)if(!x.catalog.artifacts.some(a=>a.sha256===hash))x.catalog.artifacts.push(x.add("v4-text-"+hash,text));
+  x.catalog.missionScopeSha256=sha(confirmationMissionScopeText(x.project));x.pin();return x;
+}
+
 describe("real full-confirmation admission composition (synthetic evidence only)",()=>{
   beforeEach(()=>{vi.stubEnv("EVOLUTION_CONFIRMATION_TRUST","");vi.stubEnv("EVOLUTION_AI_PAIRED_OUTCOME_REFERENCE","");for(const m of Object.values(mocks))m.mockReset();});
   afterEach(()=>vi.unstubAllEnvs());
+  it("runs V4 through actual stored-byte admission for both registration and execution",async()=>{
+    const x=v4Catalog(synthetic());
+    for(const phase of ["registration","execution"] as const){
+      expect(await assertServerConfirmationAdmission(x.project,phase)).toMatchObject({schemaVersion:"full-confirmation-admission-v3",ready:true,
+        grantsModelBudget:false,grantsNewTrialAuthority:false,technicalAcceptanceEstablished:false});
+    }
+    expect(x.store.put).not.toHaveBeenCalled();
+  });
+  it("checks V4 source count against the real Mission, including reference artifacts",async()=>{
+    const x=synthetic(),text="Synthetic reference document",id="reference-source",stored=x.add(id,text,x.project.id);
+    x.project.sourceArtifacts.push({...x.project.sourceArtifacts[0]!,id,role:"reference",storageRef:id,textContent:text,size:Buffer.byteLength(text)});
+    x.catalog.sources.push({sourceArtifactId:id,...stored,sizeBytes:Buffer.byteLength(text)});
+    v4Catalog(x,1);
+    await expect(assertServerConfirmationAdmission(x.project,"registration")).rejects.toMatchObject(rejected);
+    v4Catalog(x,2);
+    expect(await assertServerConfirmationAdmission(x.project,"registration")).toMatchObject({ready:true});
+  });
   it("permits ordinary historical Missions without claiming full-confirmation qualification or reading evidence",async()=>{
     await expect(assertServerConfirmationAdmission(pairedJudgeFixture().project,"registration")).resolves.toBeUndefined();
     expect(mocks.store).not.toHaveBeenCalled();expect(mocks.route).not.toHaveBeenCalled();

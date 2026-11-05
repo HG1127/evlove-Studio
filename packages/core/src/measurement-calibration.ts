@@ -1,6 +1,7 @@
 import type {JudgeCalibrationObservation,JudgeCalibrationPlan} from "@evolution/contracts";
 import {fastHash} from "./stable-hash";
 import {inconclusivePairedCriteria,zeroOutcomeReferenceCriterionIds} from "./paired-judge";
+import {isOriginalPreservationComparisonCriterion} from "./baseline-original-reference";
 
 /** V2/V3 registration, rather than metadata alone, activates the existing zero reference. */
 export function registeredZeroReferenceCriterionIds(plan:JudgeCalibrationPlan){
@@ -22,15 +23,21 @@ export function assessMeasurementCalibration(plan:JudgeCalibrationPlan,observati
  const blockers:string[]=[];
  const fail=(reason:string)=>blockers.push(reason);
  const zeroReferenceIds=new Set(registeredZeroReferenceCriterionIds(plan));
+ const preservationIds=new Set(plan.schemaVersion==="judge-calibration-plan-v4"?plan.preservationCriterionIds:[]);
  if(observations.length!==plan.controls.length||new Set(observations.map(o=>o.controlId)).size!==observations.length)
   fail("Calibration observations are incomplete or duplicated; no best-of selection");
  if(fastHash(plan.criteria)!==plan.rubricFingerprint||fastHash(plan.testCases)!==plan.suiteFingerprint)fail("Fixed rubric thresholds or paper differ from their fingerprints");
  for(const criterion of plan.criteria){
   if(!plan.controls.some(c=>c.kind==="identical"&&c.context.criterionIds.includes(criterion.id)))fail("Missing fixed identical control for "+criterion.id);
   const directions=plan.controls.flatMap(c=>c.expectations.filter(e=>e.criterionId===criterion.id).map(e=>e.direction));
-  const semanticImprovement=(criterion.judgeType==="llm"||criterion.judgeType==="pairwise")&&!criterion.protectedConstraint&&!["integrity","protected"].includes(criterion.category);
+  const eligiblePreservation=plan.schemaVersion==="judge-calibration-plan-v4"&&criterion.category==="artifact-specific"
+   &&criterion.source==="source-understanding"&&criterion.validationMethod==="cross-artifact"
+   &&isOriginalPreservationComparisonCriterion(criterion,plan.sourceArtifactCount);
+  if(preservationIds.has(criterion.id)&&!eligiblePreservation)fail("Ineligible preservation comparison: "+criterion.id);
+  const preservation=preservationIds.has(criterion.id)&&eligiblePreservation;
+  const semanticImprovement=!preservation&&(criterion.judgeType==="llm"||criterion.judgeType==="pairwise")&&!criterion.protectedConstraint&&!["integrity","protected"].includes(criterion.category);
   if((!directions.includes("regress")&&!zeroReferenceIds.has(criterion.id))||(semanticImprovement&&!directions.includes("improve")))fail("Missing labelled improvement/regression contrast for "+criterion.id);
-  if(plan.schemaVersion==="judge-calibration-plan-v3"){
+  if(plan.schemaVersion==="judge-calibration-plan-v3"||plan.schemaVersion==="judge-calibration-plan-v4"){
    const labels=plan.controls.flatMap(c=>c.expectations.filter(e=>e.criterionId===criterion.id).flatMap(e=>[e.originalPass,e.candidatePass]));
    if(!labels.includes(true)||!labels.includes(false))fail("Missing labelled pass/fail threshold contrasts for "+criterion.id);
   }
@@ -67,7 +74,7 @@ export function assessMeasurementCalibration(plan:JudgeCalibrationPlan,observati
     fail("Missing source-text anchor for "+control.id+"/"+criterion.id+"/"+arm);
   }
   if(inconclusivePairedCriteria(r,criteria).length)fail("Unqualified control threshold/direction/copy measurement: "+control.id);
-  if(evidenceStatusPolicy&&samples.some(s=>[s.original,s.candidate,s.controlOriginal].some(a=>a.safety==="REVIEW")))
+  if((evidenceStatusPolicy||plan.schemaVersion==="judge-calibration-plan-v4")&&samples.some(s=>[s.original,s.candidate,s.controlOriginal].some(a=>a.safety==="REVIEW")))
    fail("Unknown control Safety cannot qualify an explicit evidence measurement: "+control.id);
   if(criteria.some(c=>zeroReferenceIds.has(c.id))&&samples.some(s=>[s.original,s.candidate,s.controlOriginal].some(a=>a.safety==="REVIEW")))
    fail("Unknown zero-reference evidence cannot qualify a control: "+control.id);
@@ -77,7 +84,7 @@ export function assessMeasurementCalibration(plan:JudgeCalibrationPlan,observati
    const a=sample.original.criteria.find(x=>x.criterionId===criterion.id)!;
    const b=sample.candidate.criteria.find(x=>x.criterionId===criterion.id)!;
    const delta=b.score-a.score,direction=control.expectations.find(e=>e.criterionId===criterion.id)?.direction;
-   if(plan.schemaVersion==="judge-calibration-plan-v3"){
+   if(plan.schemaVersion==="judge-calibration-plan-v3"||plan.schemaVersion==="judge-calibration-plan-v4"){
     const oracle=control.expectations.find(e=>e.criterionId===criterion.id);
     if(!oracle||!("originalPass" in oracle)||!("candidatePass" in oracle))fail("Missing absolute threshold oracle: "+control.id+"/"+criterion.id);
     else for(const [arm,row,expected] of [["original",a,oracle.originalPass],["candidate",b,oracle.candidatePass]] as const){
@@ -97,7 +104,7 @@ export function assessMeasurementCalibration(plan:JudgeCalibrationPlan,observati
     fail("Known regression not detected: "+control.id+"/"+criterion.id);
   }
  }
- return {schemaVersion:plan.schemaVersion==="judge-calibration-plan-v3"?"measurement-calibration-decision-v3" as const:plan.schemaVersion==="judge-calibration-plan-v2"?"measurement-calibration-decision-v2" as const:"measurement-calibration-decision-v1" as const,ready:blockers.length===0,blockers,
+ return {schemaVersion:plan.schemaVersion==="judge-calibration-plan-v4"?"measurement-calibration-decision-v4" as const:plan.schemaVersion==="judge-calibration-plan-v3"?"measurement-calibration-decision-v3" as const:plan.schemaVersion==="judge-calibration-plan-v2"?"measurement-calibration-decision-v2" as const:"measurement-calibration-decision-v1" as const,ready:blockers.length===0,blockers,
   criterionIds:plan.criteria.map(c=>c.id),controls:plan.controls.map(c=>c.id),
   limitations:["Fixed labelled controls qualify only this exact route, rubric, source and paper; they are not Mission acceptance or business evidence.",
    "No thresholds, old scores, Safety failures or independent-final questions are changed; native facts do not replace semantic anchors."]};

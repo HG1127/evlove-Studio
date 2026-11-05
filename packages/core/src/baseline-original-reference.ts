@@ -1,4 +1,12 @@
-import {OriginalArtifactReferenceProofSchema,type EvolveProject} from "@evolution/contracts";
+import {OriginalArtifactReferenceProofSchema,type AcceptanceCriterion,type EvolveProject} from "@evolution/contracts";
+
+/** Shared preservation semantics; a comparison method alone does not make a quality-gain goal. */
+export function isOriginalPreservationComparisonCriterion(criterion:AcceptanceCriterion,sourceArtifactCount:number):boolean{
+  const preservation=criterion.protectedConstraint&&criterion.source==="protected-item";
+  const singleArtifactComparison=sourceArtifactCount===1&&criterion.source==="source-understanding"
+    &&criterion.validationMethod==="cross-artifact";
+  return criterion.hardGate&&criterion.judgeType==="pairwise"&&(preservation||singleArtifactComparison);
+}
 
 /** A Baseline of the unchanged Original locks the reference; Candidate acceptance remains separate. */
 export function originalBaselineReferenceCriteria(project:EvolveProject,raw:unknown[]):string[]{
@@ -9,10 +17,7 @@ export function originalBaselineReferenceCriteria(project:EvolveProject,raw:unkn
   const targets=project.sourceArtifacts.filter(source=>source.role==="target");
   if(new Set(targets.map(s=>s.id)).size!==targets.length)return [];
   return project.acceptanceRubric.filter(criterion=>{
-    const preservation=criterion.protectedConstraint&&criterion.source==="protected-item";
-    const singleArtifactComparison=project.sourceArtifacts.length===1&&criterion.source==="source-understanding"
-      &&criterion.validationMethod==="cross-artifact";
-    if(!criterion.hardGate||criterion.judgeType!=="pairwise"||(!preservation&&!singleArtifactComparison))return false;
+    if(!isOriginalPreservationComparisonCriterion(criterion,project.sourceArtifacts.length))return false;
     const ids=new Set(criterion.artifactIds);
     const scope=targets.filter(source=>!ids.size||ids.has(source.id));
     if(!scope.length||(ids.size&&scope.length!==ids.size))return false;

@@ -59,7 +59,19 @@ export const JudgeCalibrationPlanV3Schema=z.object({schemaVersion:z.literal("jud
     ctx.addIssue({code:"custom",path,message:"Absolute oracle labels contradict the registered direction"});
   }
  });
-export const JudgeCalibrationPlanSchema=z.discriminatedUnion("schemaVersion",[JudgeCalibrationPlanV1Schema,JudgeCalibrationPlanV2Schema,JudgeCalibrationPlanV3Schema]);
+/** Opt-in preservation-aware coverage. V3 absolute labels and all score gates remain unchanged. */
+export const JudgeCalibrationPlanV4Schema=z.object({...JudgeCalibrationPlanV3Schema.shape,
+ schemaVersion:z.literal("judge-calibration-plan-v4"),sourceArtifactCount:z.number().int().min(1).max(64),
+ preservationCriterionIds:z.array(id).max(32).refine(values=>new Set(values).size===values.length,"Duplicate preservation criterion"),
+}).strict().superRefine((p,ctx)=>{
+ const {sourceArtifactCount,preservationCriterionIds,...legacy}=p;
+ const checked=JudgeCalibrationPlanV3Schema.safeParse({...legacy,schemaVersion:"judge-calibration-plan-v3"});
+ if(!checked.success)for(const issue of checked.error.issues)ctx.addIssue({code:"custom",path:issue.path,message:issue.message});
+ const boundIds=new Set(p.controls.flatMap(c=>c.context.bindings.map(b=>b.sourceArtifactId)));
+ if(sourceArtifactCount<boundIds.size)ctx.addIssue({code:"custom",path:["sourceArtifactCount"],message:"Source count cannot omit bound artifacts"});
+ if(preservationCriterionIds.some(id=>!p.criteria.some(c=>c.id===id)))ctx.addIssue({code:"custom",path:["preservationCriterionIds"],message:"Unknown preservation criterion"});
+});
+export const JudgeCalibrationPlanSchema=z.discriminatedUnion("schemaVersion",[JudgeCalibrationPlanV1Schema,JudgeCalibrationPlanV2Schema,JudgeCalibrationPlanV3Schema,JudgeCalibrationPlanV4Schema]);
 /** Immutable canonical evidence still needs the trusted preregistration/independence verifier. */
 export const JudgeCalibrationApprovalEvidenceSchema=z.object({schemaVersion:z.literal("judge-calibration-approval-v1"),
  kind:z.enum(["preregistration","independent-oracle-approval"]),planSha256:hash,recordedAt:z.iso.datetime({offset:true}),
@@ -81,7 +93,9 @@ const admissionFields={
 export const ConfirmationAdmissionRequestV1Schema=z.object({schemaVersion:z.literal("confirmation-admission-request-v1"),...admissionFields}).strict();
 export const ConfirmationAdmissionRequestV2Schema=z.object({schemaVersion:z.literal("confirmation-admission-request-v2"),...admissionFields,
  requiredCalibrationVersion:z.literal("judge-calibration-plan-v3")}).strict();
-export const ConfirmationAdmissionRequestSchema=z.discriminatedUnion("schemaVersion",[ConfirmationAdmissionRequestV1Schema,ConfirmationAdmissionRequestV2Schema]);
+export const ConfirmationAdmissionRequestV3Schema=z.object({schemaVersion:z.literal("confirmation-admission-request-v3"),...admissionFields,
+ requiredCalibrationVersion:z.literal("judge-calibration-plan-v4"),sourceArtifactCount:z.number().int().min(1).max(64)}).strict();
+export const ConfirmationAdmissionRequestSchema=z.discriminatedUnion("schemaVersion",[ConfirmationAdmissionRequestV1Schema,ConfirmationAdmissionRequestV2Schema,ConfirmationAdmissionRequestV3Schema]);
 export type JudgeCalibrationPlan=z.infer<typeof JudgeCalibrationPlanSchema>;
 export type JudgeCalibrationObservation=z.infer<typeof JudgeCalibrationObservationSchema>;
 export type ConfirmationAdmissionRequest=z.infer<typeof ConfirmationAdmissionRequestSchema>;

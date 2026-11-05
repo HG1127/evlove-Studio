@@ -1,5 +1,5 @@
 import {z} from "zod";
-import {ConfirmationAdmissionRequestV2Schema} from "./confirmation-admission-contract";
+import {ConfirmationAdmissionRequestV2Schema,ConfirmationAdmissionRequestV3Schema} from "./confirmation-admission-contract";
 
 const id=z.string().min(1).max(200),hash=z.string().regex(/^[a-f0-9]{64}$/);
 const artifact=z.object({artifactId:id,sha256:hash}).strict();
@@ -7,7 +7,7 @@ const artifact=z.object({artifactId:id,sha256:hash}).strict();
 export const ConfirmationEvidenceCatalogSchema=z.object({
   schemaVersion:z.literal("confirmation-evidence-catalog-v1"),
   workspaceId:id,missionId:id,missionScopeSha256:hash,
-  request:ConfirmationAdmissionRequestV2Schema,
+  request:z.discriminatedUnion("schemaVersion",[ConfirmationAdmissionRequestV2Schema,ConfirmationAdmissionRequestV3Schema]),
   plan:artifact,observations:z.array(artifact).min(3).max(96),
   artifacts:z.array(artifact).min(1).max(512),
   sources:z.array(z.object({sourceArtifactId:id,...artifact.shape,sizeBytes:z.number().int().nonnegative()}).strict()).min(1).max(64),

@@ -6,8 +6,12 @@ import {assessMeasurementCalibration,calibrationPlanApprovalText} from "@evoluti
 export async function checkFullConfirmationAdmission(raw:unknown,ports:ConfirmationAdmissionPorts){
  const request=ConfirmationAdmissionRequestSchema.parse(raw),blockers:string[]=[];
  const plan=JudgeCalibrationPlanSchema.parse(await ports.readCalibrationPlan(request.calibrationPlanId));
- if(request.schemaVersion!=="confirmation-admission-request-v2"||plan.schemaVersion!=="judge-calibration-plan-v3")
-  blockers.push("Current full confirmation requires a v2 request and independently labelled v3 absolute threshold calibration; legacy directional readiness is insufficient");
+ const matchingVersion=request.schemaVersion==="confirmation-admission-request-v2"&&plan.schemaVersion==="judge-calibration-plan-v3"
+  ||request.schemaVersion==="confirmation-admission-request-v3"&&plan.schemaVersion==="judge-calibration-plan-v4";
+ if(!matchingVersion)
+  blockers.push("Full confirmation requires matching v2/V3 or v3/V4 independently labelled absolute calibration protocols; legacy directional readiness is insufficient");
+ if(request.schemaVersion==="confirmation-admission-request-v3"&&plan.schemaVersion==="judge-calibration-plan-v4"
+  &&request.sourceArtifactCount!==plan.sourceArtifactCount)blockers.push("Calibration source cardinality differs from the intended Mission");
  if(plan.id!==request.calibrationPlanId||plan.sourceCommit!==request.sourceCommit
   ||plan.scoringRouteFingerprint!==request.scoringRouteFingerprint||plan.rubricFingerprint!==request.rubricFingerprint
   ||plan.suiteFingerprint!==request.suiteFingerprint||plan.applicationScenarioSha256!==request.applicationScenarioSha256||plan.confirmationWindowMs!==request.plannedWindowMs||plan.maxHeartbeatGapMs!==request.maxHeartbeatGapMs)blockers.push("Calibration does not bind the intended exact code/model/rubric/paper");
@@ -43,7 +47,7 @@ export async function checkFullConfirmationAdmission(raw:unknown,ports:Confirmat
     ||!await ports.verifyEvidenceArtifact(p.eventsSha256)||!await ports.verifyEvidenceArtifact(p.faultInjectionEvidenceSha256))
    blockers.push("Exact application lifetime/fault/health/output evidence is unqualified");
  }
- return {schemaVersion:"full-confirmation-admission-v2" as const,ready:blockers.length===0,blockers,
+ return {schemaVersion:request.schemaVersion==="confirmation-admission-request-v3"?"full-confirmation-admission-v3" as const:"full-confirmation-admission-v2" as const,ready:blockers.length===0,blockers,
   sourceCommit:request.sourceCommit,scoringRouteFingerprint:request.scoringRouteFingerprint,calibrationPlanId:plan.id,
   applicationEvidenceSha256:request.applicationEvidenceSha256,
   grantsNewTrialAuthority:false,grantsModelBudget:false,technicalAcceptanceEstablished:false};

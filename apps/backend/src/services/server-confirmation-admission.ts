@@ -1,7 +1,7 @@
 import {createHash} from "node:crypto";
 import {createError} from "nitro/h3";
 import {ArtifactMetadataSchema,ConfirmationEvidenceCatalogSchema,ConfirmationServerTrustSchema,PAIRED_CRITERION_EVIDENCE_POLICY,
-  JudgeCalibrationPlanV3Schema,JudgeCalibrationObservationSchema,type ArtifactStorePort,type EvolveProject} from "@evolution/contracts";
+  JudgeCalibrationPlanSchema,JudgeCalibrationObservationSchema,type ArtifactStorePort,type EvolveProject} from "@evolution/contracts";
 import {confirmationMissionScopeText,fastHash,registeredZeroReferenceCriterionIds,zeroOutcomeReferenceCriterionIds} from "@evolution/core";
 import {checkFullConfirmationAdmission} from "@evolution/harness";
 import {getEvolutionWorkspaceId} from "../server-env";
@@ -73,7 +73,13 @@ export async function assertServerConfirmationAdmission(mission:EvolveProject,ph
         if(bytes.byteLength!==binding.sizeBytes||metadata.missionId!==mission.id)throw Error("Stored source custody differs");
       }
     }
-    const plan=JudgeCalibrationPlanV3Schema.parse(JSON.parse(decode(await read(catalog.plan))));
+    const plan=JudgeCalibrationPlanSchema.parse(JSON.parse(decode(await read(catalog.plan))));
+    if(!(request.schemaVersion==="confirmation-admission-request-v2"&&plan.schemaVersion==="judge-calibration-plan-v3"
+      ||request.schemaVersion==="confirmation-admission-request-v3"&&plan.schemaVersion==="judge-calibration-plan-v4"))
+      throw Error("Confirmation request and calibration versions differ");
+    if(plan.schemaVersion==="judge-calibration-plan-v4"&&request.schemaVersion==="confirmation-admission-request-v3"
+      &&(plan.sourceArtifactCount!==mission.sourceArtifacts.length||request.sourceArtifactCount!==mission.sourceArtifacts.length))
+      throw Error("Calibration source cardinality differs from the actual Mission");
     const outcomeReferencePolicy=serverAiPairedOutcomeReferenceMode();
     if(outcomeReferencePolicy){
       const eligible=zeroOutcomeReferenceCriterionIds(plan.criteria),registered=registeredZeroReferenceCriterionIds(plan);
