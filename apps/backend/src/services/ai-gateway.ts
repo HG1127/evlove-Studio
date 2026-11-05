@@ -6,6 +6,7 @@ import {serverAiBuildContract} from "./server-ai-build-contract";
 import {serverAiFormatCorrectionAllowed,serverAiPairedJsonlEnabled,serverAiPairedOutcomeReferenceMode,SERVER_PAIRED_OUTCOME_REFERENCE_VERSION,serverAiPairedSafetyPolicy,SERVER_PAIRED_SAFETY_POLICY_VERSION} from "./server-ai-output-policy";
 import {serverPairedJsonlOutput,SERVER_PAIRED_JSONL_GENERATION_VERSION,SERVER_PAIRED_JSONL_FINAL_TEXT_VERSION} from "./server-paired-jsonl-output";
 import {ServerControlExecutionStoppedError,serverControlExecutionSignal} from "./server-control-execution";
+import {serverAiRequestPolicy} from "./server-ai-request-timeout";
 import {
   AiOperationSchema,
   LessonDistillationContextSchema,
@@ -209,6 +210,7 @@ async function callVercelGateway<T>(args:{
   contract:Contract<T>;
   payload:unknown;
   images:ParsedImage[];
+  boundedPaired:boolean;
 }){
   const maxOutputTokens=serverAiOutputTokenLimit(args.operation,args.config,10_000);
   const {Output,generateText,gateway}=await loadVercelAiSdk();
@@ -231,6 +233,7 @@ async function callVercelGateway<T>(args:{
     maxOutputTokens,
     abortSignal:serverControlExecutionSignal(),
     timeout:args.config.timeoutMs,
+    ...(args.boundedPaired?{maxRetries:0}:{}),
   }));
   return args.contract.parser.parse(generated.output);
 }
@@ -249,7 +252,7 @@ function directFormat<T>(config:Extract<ServerAiConfig,{mode:"openai-compatible"
   return {type:"json_schema" as const,name:contract.schema.name,strict:true,schema:contract.schema.schema};
 }
 
-type DirectArgs<T>={operation:AiOperation;config:Extract<ServerAiConfig,{mode:"openai-compatible"}>;contract:Contract<T>;payload:unknown;images:ParsedImage[];repairFields?:string[];planDraftIncluded?:boolean;onInvalidJson?:(text:string)=>void;lineOutput?:{system:string;parse:(text:string)=>T}};
+type DirectArgs<T>={operation:AiOperation;config:Extract<ServerAiConfig,{mode:"openai-compatible"}>;contract:Contract<T>;payload:unknown;images:ParsedImage[];boundedPaired:boolean;repairFields?:string[];planDraftIncluded?:boolean;onInvalidJson?:(text:string)=>void;lineOutput?:{system:string;parse:(text:string)=>T}};
 async function callResponses<T>(args:DirectArgs<T>){
   const request=await fetchServerAiProviderUsage(args.config,"responses",args.operation,args.config.baseUrl+"/responses",{
     method:"POST",
@@ -270,7 +273,7 @@ async function callResponses<T>(args:DirectArgs<T>){
       ...(args.config.reasoningEffort?{reasoning:{effort:args.config.reasoningEffort}}:{}),
       ...(!args.lineOutput&&directFormat(args.config,args.contract)?{text:{format:directFormat(args.config,args.contract)}}:{}),
     }),
-  });
+  },args.boundedPaired?{networkFailureRetry:"definitely-unsent-only"}:undefined);
   const response=request.response;
   const json=await request.readJson() as ResponsesJson;
   if(!response.ok){
@@ -308,7 +311,7 @@ async function callChat<T>(args:DirectArgs<T>){
           :{type:"json_schema",json_schema:{name:args.contract.schema.name,strict:true,schema:args.contract.schema.schema}},
       }),
     }),
-  });
+  },args.boundedPaired?{networkFailureRetry:"definitely-unsent-only"}:undefined);
   const response=request.response;
   const json=await request.readJson() as ChatJson;
   if(!response.ok)throw Object.assign(new Error(json.error?.message||("Server AI Chat HTTP "+response.status)),{httpStatus:response.status});
@@ -319,22 +322,24 @@ async function structured<T>(operation:AiOperation,payload:unknown,schema:Contra
   const jsonl=serverAiPairedJsonlEnabled(operation);
   const lineOutput=jsonl?serverPairedJsonlOutput(payload,schema.parser,schema.instruction):undefined;
   const originalPayload=operation==="plan"&&payload!==null&&typeof payload==="object"?JSON.parse(JSON.stringify(payload)) as unknown:payload;
-  const config=await resolveServerAiOperationConfig(operation);
-  if(!config){
+  const resolvedConfig=await resolveServerAiOperationConfig(operation);
+  if(!resolvedConfig){
     throw Object.assign(
       new Error("Server AI 未配置：请在设置中保存后端模型，或配置模型服务的 API Key、Base URL 和 Model。"),
       {code:"SERVER_AI_UNAVAILABLE"},
     );
   }
+  const requestPolicy=serverAiRequestPolicy(operation,resolvedConfig);
+  const config={...resolvedConfig,timeoutMs:requestPolicy.timeoutMs};
   if(jsonl&&(config.mode!=="openai-compatible"||!config.protocol))throw Error("Paired JSONL requires an explicit direct protocol; fallback is forbidden");
   const images=parseServerAiImages(media);
   if(config.mode==="vercel-gateway"){
-    return callVercelGateway({operation,config,contract:schema,payload,images});
+    return callVercelGateway({operation,config,contract:schema,payload,images,boundedPaired:requestPolicy.boundedPaired});
   }
   let failedPlanFinal:string|undefined;
   const invoke=async(repairFields?:string[])=>{
     const correction=operation==="plan"&&repairFields?serverPlanJsonCorrectionPayload(originalPayload,failedPlanFinal,config.apiKey):{payload:originalPayload,draftIncluded:false};
-    const args={operation,config,contract:schema,payload:correction.payload,images,repairFields,planDraftIncluded:correction.draftIncluded,lineOutput,
+    const args={operation,config,contract:schema,payload:correction.payload,images,repairFields,planDraftIncluded:correction.draftIncluded,lineOutput,boundedPaired:requestPolicy.boundedPaired,
       onInvalidJson:operation==="plan"?(text:string)=>{failedPlanFinal=text;}:undefined};
     if(config.protocol==="chat-completions")return callChat(args);
     if(config.protocol==="responses")return callResponses(args);

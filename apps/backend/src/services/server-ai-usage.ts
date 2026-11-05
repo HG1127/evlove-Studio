@@ -1,6 +1,6 @@
 import {AsyncLocalStorage} from "node:async_hooks";
 import {createHash,randomUUID} from "node:crypto";
-import {aiProviderTransportFailure,fetchAiProvider,observeAiProviderUsage,observeAiProviderCompletion} from "@evolution/adapters";
+import {aiProviderTransportFailure,fetchAiProvider,observeAiProviderUsage,observeAiProviderCompletion,type AiProviderRetryPolicy} from "@evolution/adapters";
 import {AiProviderUsageObservationSchema,AiUsageLedgerRecordSchema,AiUsageRequestStartedSchema,AiUsageScopeSchema,createEvolutionEvent,
   type AiOperation,type AiProviderUsageObservation,type AiUsageLedgerRecord,type AiUsageLedgerWriter,type AiUsageProtocol,type AiUsageRequestStarted,type AiUsageRoute,type AiUsageScope} from "@evolution/contracts";
 import type {ServerAiConfig} from "../server-env";
@@ -58,7 +58,7 @@ async function finish(call:ActiveCall,raw:unknown,outcome:AiProviderUsageObserva
 }
 
 /** Each physical connection retry gets its own durable start/result pair. */
-export async function fetchServerAiProviderUsage(config:ServerAiConfig,protocol:Exclude<AiUsageProtocol,"ai-sdk">,operation:AiOperation,url:string,init:RequestInit){
+export async function fetchServerAiProviderUsage(config:ServerAiConfig,protocol:Exclude<AiUsageProtocol,"ai-sdk">,operation:AiOperation,url:string,init:RequestInit,retryPolicy?:AiProviderRetryPolicy){
   assertServerAiResponseProvenanceReady(currentServerAiUsageScope(),init.body);
   let call:ActiveCall;
   const response=await fetchAiProvider(url,{...init,signal:serverControlExecutionSignal(init.signal)},{
@@ -69,7 +69,7 @@ export async function fetchServerAiProviderUsage(config:ServerAiConfig,protocol:
     },
     failedAttempt:async(_attempt,reason)=>finish(call,undefined,"transport-error",{transportReason:reason??"unknown"}),
     retryableResponse:async(_attempt,response,raw)=>finish(call,raw,"response",{httpStatus:response.status}),
-  });
+  },retryPolicy);
   let recorded=false;
   const observe=async(raw:unknown)=>{
     if(recorded)return;recorded=true;

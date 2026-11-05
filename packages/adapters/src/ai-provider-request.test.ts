@@ -5,6 +5,24 @@ import {aiProviderTransportFailure,fetchAiProvider} from "./ai-provider-request"
 const networkError=()=>new TypeError("fetch failed",{cause:{code:"ECONNRESET"}});
 afterEach(()=>vi.unstubAllGlobals());
 describe("bounded provider connection recovery",()=>{
+  it.each(["ECONNRESET","UND_ERR_SOCKET","ENOTFOUND"])("does not replay an unknown %s under the opt-in unsent-only policy",async code=>{
+    const error=new TypeError("fetch failed",{cause:{code}}),fetch=vi.fn().mockRejectedValue(error);vi.stubGlobal("fetch",fetch);
+    await expect(fetchAiProvider("https://fixture.invalid",{method:"POST"},undefined,{networkFailureRetry:"definitely-unsent-only"})).rejects.toBe(error);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it.each([["ENOTFOUND","getaddrinfo"],["EAI_AGAIN","getaddrinfo"],["ECONNREFUSED","connect"]])("reconnects once for definitely unsent %s/%s",async(code,syscall)=>{
+    const error=new TypeError("fetch failed",{cause:{code,syscall}}),reply=new Response("ok"),fetch=vi.fn().mockRejectedValueOnce(error).mockResolvedValueOnce(reply);vi.stubGlobal("fetch",fetch);
+    expect(await fetchAiProvider("https://fixture.invalid",{method:"POST"},undefined,{networkFailureRetry:"definitely-unsent-only"})).toBe(reply);expect(fetch).toHaveBeenCalledTimes(2);
+  });
+  it("keeps one shared reconnect for an unsent failure followed by capacity",async()=>{
+    const error=new TypeError("fetch failed",{cause:{code:"ECONNREFUSED",syscall:"connect"}}),busy=new Response(JSON.stringify({error:{message:"Selected model is at capacity."}}),{status:503});
+    const fetch=vi.fn().mockRejectedValueOnce(error).mockResolvedValueOnce(busy);vi.stubGlobal("fetch",fetch);
+    expect(await fetchAiProvider("https://fixture.invalid",{method:"POST"},undefined,{networkFailureRetry:"definitely-unsent-only"})).toBe(busy);expect(fetch).toHaveBeenCalledTimes(2);
+  });
+  it("still recovers once from explicit capacity with the strict policy",async()=>{
+    const busy=new Response(JSON.stringify({error:{message:"Selected model is at capacity."}}),{status:503}),reply=new Response("ok"),fetch=vi.fn().mockResolvedValueOnce(busy).mockResolvedValueOnce(reply);vi.stubGlobal("fetch",fetch);
+    expect(await fetchAiProvider("https://fixture.invalid",{method:"POST"},undefined,{networkFailureRetry:"definitely-unsent-only"})).toBe(reply);expect(fetch).toHaveBeenCalledTimes(2);
+  });
   it("retries a reset once with the same request and deadline",async()=>{
     const reply=new Response("ok");
     const fetchMock=vi.fn().mockRejectedValueOnce(networkError()).mockResolvedValueOnce(reply);

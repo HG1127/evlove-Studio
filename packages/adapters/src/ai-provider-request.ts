@@ -41,7 +41,20 @@ function reconnectDelay(signal?:AbortSignal|null){
     signal?.addEventListener("abort",abort,{once:true});
   });
 }
-export async function fetchAiProvider(url:string,init:RequestInit,observer?:AiProviderAttemptObserver):Promise<Response>{
+export type AiProviderRetryPolicy={networkFailureRetry?:"definitely-unsent-only"};
+const retryPolicySchema=z.object({networkFailureRetry:z.literal("definitely-unsent-only").optional()}).strict();
+function definitelyUnsent(error:unknown){
+  let current=error;
+  for(let depth=0;depth<6&&current&&typeof current==="object";depth++){
+    const detail=current as {code?:string;syscall?:string;cause?:unknown};
+    if((detail.syscall==="getaddrinfo"&&["ENOTFOUND","EAI_AGAIN"].includes(detail.code??""))
+      ||(detail.syscall==="connect"&&detail.code==="ECONNREFUSED"))return true;
+    current=detail.cause;
+  }
+  return false;
+}
+export async function fetchAiProvider(url:string,init:RequestInit,observer?:AiProviderAttemptObserver,rawPolicy:AiProviderRetryPolicy={}):Promise<Response>{
+  const policy=retryPolicySchema.parse(rawPolicy);
   for(let attempt=0;;attempt++){
     await observer?.beforeAttempt(attempt+1);
     let response:Response;
@@ -49,6 +62,7 @@ export async function fetchAiProvider(url:string,init:RequestInit,observer?:AiPr
     catch(error){
       await observer?.failedAttempt(attempt+1,aiProviderTransportFailure(error));
       if(attempt!==0||init.signal?.aborted||aiProviderTransportFailure(error)!=="provider-network-error")throw error;
+      if(policy.networkFailureRetry==="definitely-unsent-only"&&!definitelyUnsent(error))throw error;
       continue;
     }
     const rejected=attempt===0&&!init.signal?.aborted?await capacityRejection(response):undefined;
