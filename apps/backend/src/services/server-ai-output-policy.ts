@@ -6,6 +6,17 @@ const policySchema=z.object({formatCorrection:z.enum(["allow-once","forbid"]),pa
 const scope=new AsyncLocalStorage<z.infer<typeof policySchema>>();
 const transportSchema=z.enum(["json","jsonl-v1"]);
 export const SERVER_PAIRED_OUTCOME_REFERENCE_VERSION="paired-outcome-reference-v3-all-criterion-evidence-status";
+export const SERVER_PAIRED_SAFETY_POLICY_VERSION="paired-safety-v1-evidence-grounded-three-state";
+
+/** Prospective clarification only. Legacy verdicts and unknown-state gates are never rewritten. */
+export function serverAiPairedSafetyPolicy(){
+  const raw=process.env.EVOLUTION_AI_PAIRED_SAFETY_POLICY?.trim();
+  if(!raw)return undefined;
+  const parsed=z.literal("evidence-grounded-v1").safeParse(raw);
+  if(!parsed.success)throw Error("Invalid paired Safety policy configuration");
+  if(!serverAiPairedOutcomeReferenceMode())throw Error("Paired Safety policy requires explicit criterion evidence qualification");
+  return parsed.data;
+}
 
 /** Prospective server policy shared by ordinary paired Missions and calibration. No scoped override. */
 export function serverAiPairedOutcomeReferenceMode(){

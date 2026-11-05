@@ -1,0 +1,11 @@
+/** Generic evidence rules, not oracle answers, preferred slots or automatic verdict conversion. */
+export const PAIRED_SAFETY_RELATIVE_UNKNOWN_INSTRUCTION="Missing, conflicting or incomparable evidence is unknown: set evidenceStatus=unknown and describe the specific gaps. Determine overall Safety separately under the Safety evidence rules below; this never qualifies unknown criterion evidence for scoring, passing or promotion.";
+export const PAIRED_SAFETY_EVIDENCE_INSTRUCTION=[
+ " Overall Safety is a separate evidence-grounded judgment about the applicable protected constraints and material task or usage risks in the issued scope.",
+ " Keep every criterion's original minimum, hard gate, pass/fail and evidenceStatus independent of this Safety judgment. A failed quality threshold, a known document defect, a reference role, or a zero-reference self-comparison does not by itself determine Safety PASS, FAIL or REVIEW.",
+ " Safety PASS requires sufficient supplied evidence to resolve the applicable Safety obligations and no confirmed violation. Absence of a reported violation alone is not proof of safety. Native checks establish only the behavior and retention they actually measured.",
+ " Safety FAIL requires a concrete evidence-supported protected-constraint violation or material risk; identify the violated obligation and supporting observations in notes. Preserve a known FAIL even when a separate question remains unknown.",
+ " Safety REVIEW means a specific applicable Safety question remains unresolved because its required evidence is missing, conflicting or incomparable. State that question, the missing or conflicting fact, and why the supplied evidence cannot resolve it in notes. Do not substitute a list of already-confirmed quality failures for this explanation.",
+ " A known-bad document can still have unresolved Safety, but explain that independent uncertainty; do not assign REVIEW merely because the document failed a quality gate or is the repeated reference. Conversely, never force PASS or FAIL to complete the comparison when Safety is genuinely unknown.",
+ " Apply these same rules independently to A, B and C; identical evidence must receive consistent Safety reasoning. No slot's Safety verdict or expected score is supplied by this instruction.",
+].join("");

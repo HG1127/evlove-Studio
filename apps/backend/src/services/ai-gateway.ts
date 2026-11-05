@@ -3,7 +3,7 @@ import { aiProviderTransportFailure,parseStructuredAiOutput } from "@evolution/a
 import { createHash } from "node:crypto";
 import {serverAiRepairContract} from "./server-ai-repair-contract";
 import {serverAiBuildContract} from "./server-ai-build-contract";
-import {serverAiFormatCorrectionAllowed,serverAiPairedJsonlEnabled,serverAiPairedOutcomeReferenceMode,SERVER_PAIRED_OUTCOME_REFERENCE_VERSION} from "./server-ai-output-policy";
+import {serverAiFormatCorrectionAllowed,serverAiPairedJsonlEnabled,serverAiPairedOutcomeReferenceMode,SERVER_PAIRED_OUTCOME_REFERENCE_VERSION,serverAiPairedSafetyPolicy,SERVER_PAIRED_SAFETY_POLICY_VERSION} from "./server-ai-output-policy";
 import {serverPairedJsonlOutput,SERVER_PAIRED_JSONL_GENERATION_VERSION,SERVER_PAIRED_JSONL_FINAL_TEXT_VERSION} from "./server-paired-jsonl-output";
 import {ServerControlExecutionStoppedError,serverControlExecutionSignal} from "./server-control-execution";
 import {
@@ -67,6 +67,7 @@ import {resolveServerAiOperationConfig} from "./server-ai-connection";
 import {fetchServerAiProviderUsage,measureServerAiSdkUsage} from "./server-ai-usage";
 import {serverAiPlanningInstruction} from "./server-plan-contract";
 import {serverAiPairedContract} from "./server-paired-ai-contract";
+import {PAIRED_SAFETY_EVIDENCE_INSTRUCTION,PAIRED_SAFETY_RELATIVE_UNKNOWN_INSTRUCTION} from "./server-paired-safety-instruction";
 import {SERVER_PAIRED_GENERATION_SCHEMA_VERSION} from "./server-paired-json-schema";
 import {PLAN_JSON_CORRECTION_INSTRUCTION,serverPlanJsonCorrectionPayload} from "./server-plan-json-correction";
 import {serverAiOutputTokenLimit,serverAiPairedOutputBudgetIdentity} from "./server-ai-output-budget";
@@ -81,10 +82,13 @@ export async function serverAiScoringRouteFingerprint(): Promise<string | undefi
     : [config.mode, config.model];
   const outcomeReference=serverAiPairedOutcomeReferenceMode();
   const pairedOutputBudget=serverAiPairedOutputBudgetIdentity(config);
+  const pairedSafetyPolicy=serverAiPairedSafetyPolicy();
   return createHash("sha256").update(JSON.stringify({ route, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION,measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION,pairedGenerationSchemaVersion:SERVER_PAIRED_GENERATION_SCHEMA_VERSION,pairedInputVersion:SERVER_PAIRED_INPUT_VERSION,
     ...(outcomeReference?{pairedOutcomeReference:outcomeReference,pairedOutcomeReferenceVersion:SERVER_PAIRED_OUTCOME_REFERENCE_VERSION,pairedCriterionEvidencePolicy:PAIRED_CRITERION_EVIDENCE_POLICY}:{}),
     ...(serverAiPairedJsonlEnabled()?{pairedOutputTransport:PAIRED_JSONL_PROTOCOL,pairedOutputGenerationVersion:SERVER_PAIRED_JSONL_GENERATION_VERSION,pairedOutputFinalTextVersion:SERVER_PAIRED_JSONL_FINAL_TEXT_VERSION}:{}),
-    ...(pairedOutputBudget?{pairedOutputBudget}:{}) })).digest("hex");
+    ...(pairedOutputBudget?{pairedOutputBudget}:{}),
+    ...(pairedSafetyPolicy?{pairedSafetyPolicy,pairedSafetyPolicyVersion:SERVER_PAIRED_SAFETY_POLICY_VERSION,
+      pairedSafetyInstructionSha256:createHash("sha256").update(JSON.stringify([PAIRED_SAFETY_EVIDENCE_INSTRUCTION,PAIRED_SAFETY_RELATIVE_UNKNOWN_INSTRUCTION])).digest("hex")}:{}) })).digest("hex");
 }
 
 type StructuredSchema={name:string;schema:Record<string,unknown>};
