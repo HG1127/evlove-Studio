@@ -1,4 +1,5 @@
 export * from "./ai-provider-request";
+export * from "./ai-provider-transport-diagnostic";
 export * from "./http-error";
 export * from "./ai-structured-output";
 export * from "./http-production-adapter";

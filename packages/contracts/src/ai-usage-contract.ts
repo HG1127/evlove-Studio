@@ -55,7 +55,36 @@ export const AiProviderUsageObservationV1Schema=z.object({
 export const AiProviderUsageObservationV2Schema=AiProviderUsageObservationV1Schema.extend({
   schemaVersion:z.literal("ai-provider-usage-v2"),completion:AiProviderCompletionSchema.nullable(),
 });
-export const AiProviderUsageObservationSchema=z.discriminatedUnion("schemaVersion",[AiProviderUsageObservationV1Schema,AiProviderUsageObservationV2Schema]);
+/** Finite diagnostic facts only: never provider messages, URLs, headers, bodies or stacks. */
+export const AiProviderTransportDiagnosticSchema=z.object({
+  schemaVersion:z.literal("ai-provider-transport-diagnostic-v1"),
+  phase:z.enum(["request","response-body","sdk-generation"]),
+  origin:z.enum(["request-signal","execution-signal","native-connect","native-headers","native-body","transport-timeout","network","unknown"]),
+  codes:z.array(z.enum(["ETIMEDOUT","UND_ERR_CONNECT_TIMEOUT","UND_ERR_HEADERS_TIMEOUT","UND_ERR_BODY_TIMEOUT",
+    "ECONNRESET","ECONNREFUSED","ENOTFOUND","EAI_AGAIN","EHOSTUNREACH","ENETUNREACH","UND_ERR_SOCKET",
+    "SERVER_AI_PROVIDER_TIMEOUT","SERVER_AI_PROVIDER_NETWORK_ERROR","SERVER_CONTROL_EXECUTION_STOPPED"])).max(6),
+  matchedSignal:z.enum(["request","execution","both"]).optional(),
+  configuredTimeoutMs:z.number().int().positive().max(86_400_000).optional(),
+}).strict().superRefine((value,ctx)=>{
+  const required={"native-connect":"UND_ERR_CONNECT_TIMEOUT","native-headers":"UND_ERR_HEADERS_TIMEOUT","native-body":"UND_ERR_BODY_TIMEOUT"} as const;
+  if(value.origin in required&&!value.codes.includes(required[value.origin as keyof typeof required]))ctx.addIssue({code:"custom",path:["origin"],message:"Native attribution needs its observed timeout code"});
+  if(value.origin==="request-signal"&&value.matchedSignal!=="request"||value.origin==="execution-signal"&&value.matchedSignal!=="execution")
+    ctx.addIssue({code:"custom",path:["matchedSignal"],message:"Signal attribution requires an exact matched reason"});
+  const sources:string[]=Object.entries(required).filter(([,code])=>value.codes.includes(code)).map(([origin])=>origin);
+  if(value.matchedSignal==="request"||value.matchedSignal==="both")sources.push("request-signal");
+  if(value.matchedSignal==="execution"||value.matchedSignal==="both")sources.push("execution-signal");
+  if(value.origin!=="unknown"&&(sources.length>1||sources.length===1&&sources[0]!==value.origin))
+    ctx.addIssue({code:"custom",path:["origin"],message:"Competing or contradictory observed sources must remain unknown"});
+});
+export type AiProviderTransportDiagnostic=z.infer<typeof AiProviderTransportDiagnosticSchema>;
+export const AiProviderUsageObservationV3Schema=AiProviderUsageObservationV2Schema.extend({
+  schemaVersion:z.literal("ai-provider-usage-v3"),transportDiagnostic:AiProviderTransportDiagnosticSchema.optional(),
+}).superRefine((value,ctx)=>{
+  if(value.transportDiagnostic&&value.outcome==="response")ctx.addIssue({code:"custom",path:["transportDiagnostic"],message:"A response cannot claim a transport failure diagnostic"});
+  if(value.transportDiagnostic&&value.outcome!=="response"&&((value.outcome==="sdk-error")!==(value.transportDiagnostic.phase==="sdk-generation")))
+    ctx.addIssue({code:"custom",path:["transportDiagnostic","phase"],message:"Failure phase must match its transport kind"});
+});
+export const AiProviderUsageObservationSchema=z.discriminatedUnion("schemaVersion",[AiProviderUsageObservationV1Schema,AiProviderUsageObservationV2Schema,AiProviderUsageObservationV3Schema]);
 export type AiProviderUsageObservation=z.infer<typeof AiProviderUsageObservationSchema>;
 export const AiUsageLedgerRecordSchema=z.discriminatedUnion("kind",[
   z.object({kind:z.literal("request-start"),request:AiUsageRequestStartedSchema}).strict(),

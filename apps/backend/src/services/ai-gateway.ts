@@ -1,5 +1,5 @@
 import type { ZodType } from "zod";
-import { aiProviderTransportFailure,parseStructuredAiOutput } from "@evolution/adapters";
+import { aiProviderTransportFailure,aiProviderTransportDiagnostic,parseStructuredAiOutput } from "@evolution/adapters";
 import { createHash } from "node:crypto";
 import {serverAiRepairContract} from "./server-ai-repair-contract";
 import {serverAiBuildContract} from "./server-ai-build-contract";
@@ -7,6 +7,7 @@ import {serverAiFormatCorrectionAllowed,serverAiPairedJsonlEnabled,serverAiPaire
 import {serverPairedJsonlOutput,SERVER_PAIRED_JSONL_GENERATION_VERSION,SERVER_PAIRED_JSONL_FINAL_TEXT_VERSION} from "./server-paired-jsonl-output";
 import {ServerControlExecutionStoppedError,serverControlExecutionSignal} from "./server-control-execution";
 import {serverAiRequestPolicy} from "./server-ai-request-timeout";
+import {currentServerAiTransportDiagnostic,withServerAiTransportDiagnosticScope} from "./server-ai-transport-diagnostic";
 import {nativeAiDeadlineOptions,type NativeAiFetchInit} from "@evolution/adapters/native-ai-deadline";
 import {
   AiOperationSchema,
@@ -378,7 +379,9 @@ async function structured<T>(operation:AiOperation,payload:unknown,schema:Contra
     const message=(transportFailure?serverAiUnavailableMessage(transportFailure):(original.message??String(error))).replaceAll(config.apiKey,"[REDACTED]");
     const code=transportFailure==="provider-timeout"?"SERVER_AI_PROVIDER_TIMEOUT"
       :transportFailure==="provider-network-error"?"SERVER_AI_PROVIDER_NETWORK_ERROR":original.code;
-    throw Object.assign(new Error(message),{httpStatus:original.httpStatus,code});
+    throw Object.assign(new Error(message),{httpStatus:original.httpStatus,code,...(transportFailure?{transportDiagnostic:currentServerAiTransportDiagnostic(error)??aiProviderTransportDiagnostic(error,{
+      phase:"request",configuredTimeoutMs:config.timeoutMs,failureReason:transportFailure,
+    })}:{})});
   }
 }
 
@@ -411,7 +414,7 @@ export function runServerAi(operation:AiOperation,payload:unknown,media?:ServerA
 export function runServerAi(operation:ServerAiOperation,payload:unknown,media?:ServerAiMedia){
   AiOperationSchema.parse(operation);
   if(operation==="distill")payload=LessonDistillationContextSchema.parse(payload);
-  return structured(operation,payload,contract(operation,payload),media);
+  return withServerAiTransportDiagnosticScope(()=>structured(operation,payload,contract(operation,payload),media));
 }
 
 function serverAiErrorChain(error:unknown){

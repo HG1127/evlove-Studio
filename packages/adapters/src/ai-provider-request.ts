@@ -19,7 +19,7 @@ export function aiProviderTransportFailure(error:unknown):"provider-network-erro
 /** Retry one connection failure or explicit capacity rejection within the original deadline. */
 export type AiProviderAttemptObserver={
   beforeAttempt(attempt:number):Promise<void>;
-  failedAttempt(attempt:number,reason:ReturnType<typeof aiProviderTransportFailure>):Promise<void>;
+  failedAttempt(attempt:number,reason:ReturnType<typeof aiProviderTransportFailure>,error?:unknown):Promise<void>;
   retryableResponse?(attempt:number,response:Response,raw:unknown):Promise<void>;
 };
 const capacityError=z.object({error:z.object({message:z.string().min(1).max(2000)}).passthrough()}).passthrough();
@@ -60,7 +60,7 @@ export async function fetchAiProvider(url:string,init:RequestInit,observer?:AiPr
     let response:Response;
     try{response=await fetch(url,init);}
     catch(error){
-      await observer?.failedAttempt(attempt+1,aiProviderTransportFailure(error));
+      await observer?.failedAttempt(attempt+1,aiProviderTransportFailure(error),error);
       if(attempt!==0||init.signal?.aborted||aiProviderTransportFailure(error)!=="provider-network-error")throw error;
       if(policy.networkFailureRetry==="definitely-unsent-only"&&!definitelyUnsent(error))throw error;
       continue;

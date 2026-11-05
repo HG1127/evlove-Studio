@@ -43,4 +43,15 @@ describe("authoritative usage event readback",()=>{
     const decoded=decodeServerAiUsageEvents(events,true);
     expect(decoded.invalidEventIds).toEqual([end.id]);expect(decoded.usageEvidenceComplete).toBe(false);
   });
+  it("round-trips finite v3 failure diagnostics and detects later attribution tampering",()=>{
+    const events=fixture(null),end=events[1]!,record=AiUsageLedgerRecordSchema.parse(end.payload.record);
+    if(record.kind!=="request-result")throw Error("fixture");
+    const next=AiProviderUsageObservationSchema.parse({...record.observation,schemaVersion:"ai-provider-usage-v3",outcome:"transport-error",transportReason:"provider-timeout",
+      transportDiagnostic:{schemaVersion:"ai-provider-transport-diagnostic-v1",phase:"response-body",origin:"native-body",codes:["UND_ERR_BODY_TIMEOUT"],configuredTimeoutMs:600000}});
+    const upgraded={kind:"request-result" as const,observation:next};end.payload.record=upgraded;end.payload.recordSha256=createHash("sha256").update(JSON.stringify(upgraded)).digest("hex");
+    expect(decodeServerAiUsageEvents(events,true)).toMatchObject({invalidEventIds:[],usageEvidenceComplete:true,monetaryEvidenceComplete:false});
+    if(next.schemaVersion!=="ai-provider-usage-v3"||!next.transportDiagnostic)throw Error("fixture");
+    next.transportDiagnostic.origin="unknown";
+    expect(decodeServerAiUsageEvents(events,true)).toMatchObject({invalidEventIds:[end.id],usageEvidenceComplete:false});
+  });
 });

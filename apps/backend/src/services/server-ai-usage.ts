@@ -1,12 +1,13 @@
 import {AsyncLocalStorage} from "node:async_hooks";
 import {createHash,randomUUID} from "node:crypto";
-import {aiProviderTransportFailure,fetchAiProvider,observeAiProviderUsage,observeAiProviderCompletion,type AiProviderRetryPolicy} from "@evolution/adapters";
+import {aiProviderTransportFailure,aiProviderTransportDiagnostic,fetchAiProvider,observeAiProviderUsage,observeAiProviderCompletion,type AiProviderRetryPolicy} from "@evolution/adapters";
 import {AiProviderUsageObservationSchema,AiUsageLedgerRecordSchema,AiUsageRequestStartedSchema,AiUsageScopeSchema,createEvolutionEvent,
-  type AiOperation,type AiProviderUsageObservation,type AiUsageLedgerRecord,type AiUsageLedgerWriter,type AiUsageProtocol,type AiUsageRequestStarted,type AiUsageRoute,type AiUsageScope} from "@evolution/contracts";
+  type AiOperation,type AiProviderUsageObservation,type AiProviderTransportDiagnostic,type AiUsageLedgerRecord,type AiUsageLedgerWriter,type AiUsageProtocol,type AiUsageRequestStarted,type AiUsageRoute,type AiUsageScope} from "@evolution/contracts";
 import type {ServerAiConfig} from "../server-env";
 import {assertServerControlExecutionActive,serverControlExecutionSignal} from "./server-control-execution";
 import {assertServerAiResponseProvenanceReady,observeServerAiResponseProvenance} from "./server-ai-response-provenance";
 import {nativeAiDeadlineOptions,type NativeAiFetchInit} from "@evolution/adapters/native-ai-deadline";
+import {recordServerAiTransportDiagnostic} from "./server-ai-transport-diagnostic";
 
 const active=new AsyncLocalStorage<{scope:AiUsageScope;write:AiUsageLedgerWriter}>();
 export const currentServerAiUsageScope=()=>{const scope=active.getStore()?.scope;return scope?{...scope}:undefined;};
@@ -45,9 +46,9 @@ async function start(details:AiUsageRoute,attempt:number,granularity:AiUsageRequ
 }
 type ActiveCall=Awaited<ReturnType<typeof start>>;
 
-async function finish(call:ActiveCall,raw:unknown,outcome:AiProviderUsageObservation["outcome"],extra?:{httpStatus?:number;transportReason?:AiProviderUsageObservation["transportReason"]}){
+async function finish(call:ActiveCall,raw:unknown,outcome:AiProviderUsageObservation["outcome"],extra?:{httpStatus?:number;transportReason?:AiProviderUsageObservation["transportReason"];transportDiagnostic?:AiProviderTransportDiagnostic}){
   if(!call)return;
-  const observation=AiProviderUsageObservationSchema.parse({schemaVersion:"ai-provider-usage-v2",request:call.request,
+  const observation=AiProviderUsageObservationSchema.parse({schemaVersion:"ai-provider-usage-v3",request:call.request,
     completedAt:new Date().toISOString(),elapsedMs:Math.max(0,performance.now()-call.clock),outcome,...extra,
     ...observeAiProviderUsage(raw,call.request.route.protocol),completion:observeAiProviderCompletion(raw,call.request.route.protocol),billing:{status:"unavailable"}});
   try{await call.write({kind:"request-result",observation});}
@@ -63,13 +64,16 @@ export async function fetchServerAiProviderUsage(config:ServerAiConfig,protocol:
   assertServerAiResponseProvenanceReady(currentServerAiUsageScope(),init.body);
   const native=nativeDeadlineMs===undefined?undefined:await nativeAiDeadlineOptions(nativeDeadlineMs,(init as NativeAiFetchInit).dispatcher);
   let call:ActiveCall;
-  const response=await fetchAiProvider(url,{...init,...native,signal:serverControlExecutionSignal(init.signal)},{
+  const signal=serverControlExecutionSignal(init.signal);
+  const diagnostic=(error:unknown,phase:"request"|"response-body",reason=aiProviderTransportFailure(error))=>recordServerAiTransportDiagnostic(error,aiProviderTransportDiagnostic(error,{phase,
+    configuredTimeoutMs:config.timeoutMs,requestSignal:init.signal,executionSignal:signal,failureReason:reason}));
+  const response=await fetchAiProvider(url,{...init,...native,signal},{
     beforeAttempt:async attempt=>{
       await assertServerControlExecutionActive();
       call=await start(serverAiUsageRoute(config,protocol,operation),attempt,"physical-http-attempt");
       await assertServerControlExecutionActive();
     },
-    failedAttempt:async(_attempt,reason)=>finish(call,undefined,"transport-error",{transportReason:reason??"unknown"}),
+    failedAttempt:async(_attempt,reason,error)=>finish(call,undefined,"transport-error",{transportReason:reason??"unknown",transportDiagnostic:diagnostic(error,"request",reason)}),
     retryableResponse:async(_attempt,response,raw)=>finish(call,raw,"response",{httpStatus:response.status}),
   },retryPolicy);
   let recorded=false;
@@ -83,7 +87,7 @@ export async function fetchServerAiProviderUsage(config:ServerAiConfig,protocol:
     try{text=await response.text();}
     catch(error){
       if(!recorded){recorded=true;await finish(call,undefined,"transport-error",{
-        httpStatus:response.status,transportReason:aiProviderTransportFailure(error)??"unknown",
+        httpStatus:response.status,transportReason:aiProviderTransportFailure(error)??"unknown",transportDiagnostic:diagnostic(error,"response-body"),
       });}
       throw error;
     }
@@ -120,6 +124,8 @@ export async function measureServerAiSdkUsage<T>(config:ServerAiConfig,operation
     await assertServerControlExecutionActive();
     return result;
   }catch(error){
-    if(!recorded)await finish(call,{usage:object(error).usage,finishReason:object(error).finishReason},"sdk-error");throw error;
+    if(!recorded)await finish(call,{usage:object(error).usage,finishReason:object(error).finishReason},"sdk-error",{
+      transportReason:aiProviderTransportFailure(error)??"unknown",transportDiagnostic:recordServerAiTransportDiagnostic(error,aiProviderTransportDiagnostic(error,{phase:"sdk-generation",configuredTimeoutMs:config.timeoutMs,failureReason:aiProviderTransportFailure(error)})),
+    });throw error;
   }
 }
