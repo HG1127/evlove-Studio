@@ -7,19 +7,24 @@ import {serverAiRequestTimeoutMs} from "./server-ai-request-timeout";
 import {serverAiTimeoutMs} from "../server-env";
 import {abortServerControlExecutions,withServerControlExecution} from "./server-control-execution";
 import {withServerAiOutputPolicy} from "./server-ai-output-policy";
+import {nativeAiDeadlineOptions} from "@evolution/adapters/native-ai-deadline";
 
-const sdk=vi.hoisted(()=>({generateText:vi.fn()}));
-vi.mock("ai",()=>({generateText:sdk.generateText,gateway:(model:string)=>model,Output:{object:(schema:unknown)=>schema}}));
+const sdk=vi.hoisted(()=>({generateText:vi.fn(),createGateway:vi.fn()}));
+vi.mock("ai",()=>({generateText:sdk.generateText,gateway:(model:string)=>model,createGateway:sdk.createGateway,Output:{object:(schema:unknown)=>schema}}));
+const nativeDispatcherKey=Symbol.for("undici.globalDispatcher.1");let priorDispatcher:unknown,hadDispatcher=false;
 const connection={connectionId:"synthetic-timeout",label:"Synthetic",apiKey:"synthetic-only",baseUrl:"https://fixture.invalid/v1",model:"fixture",protocol:"chat-completions" as const,responseFormat:"prompt-json" as const};
 const config={mode:"openai-compatible" as const,...connection,timeoutMs:300_000};
 const payload={evidence:"SYNTHETIC ONLY"};
 const result={accuracy:90,evidence:90,riskCoverage:90,completeness:90,safety:"PASS",notes:[],failures:[],cases:[],criteria:[]};
 const reply={schemaVersion:"paired-evaluation-v1",requestFingerprint:"synthetic-only",versions:["A","B","C"].map(slot=>({slot,result}))};
-beforeEach(()=>{
+beforeEach(async()=>{
+ hadDispatcher=Object.hasOwn(globalThis,nativeDispatcherKey);priorDispatcher=Reflect.get(globalThis,nativeDispatcherKey);Reflect.set(globalThis,nativeDispatcherKey,{dispatch(){return true;}});
+ sdk.createGateway.mockImplementation(()=>(model:string)=>model);
+ await nativeAiDeadlineOptions(600000);
  vi.stubEnv("EVOLUTION_AI_TIMEOUT_MS","900000");vi.stubEnv("EVOLUTION_AI_PAIRED_REQUEST_TIMEOUT_MS","");
  vi.stubEnv("EVOLUTION_AI_PAIRED_TRANSPORT","");vi.stubEnv("EVOLUTION_AI_PAIRED_OUTCOME_REFERENCE","");vi.stubEnv("EVOLUTION_AI_PAIRED_SAFETY_POLICY","");
 });
-afterEach(()=>{vi.restoreAllMocks();vi.useRealTimers();vi.unstubAllEnvs();vi.unstubAllGlobals();sdk.generateText.mockReset();});
+afterEach(()=>{if(hadDispatcher)Reflect.set(globalThis,nativeDispatcherKey,priorDispatcher);else Reflect.deleteProperty(globalThis,nativeDispatcherKey);vi.restoreAllMocks();vi.useRealTimers();vi.unstubAllEnvs();vi.unstubAllGlobals();sdk.generateText.mockReset();sdk.createGateway.mockReset();});
 
 function virtualTimeout(){
  vi.useFakeTimers();

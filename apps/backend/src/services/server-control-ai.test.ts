@@ -45,6 +45,12 @@ describe("Workflow control AI boundary", () => {
     mocks.ai.mockRejectedValue(failure);
     await expect(runServerControlAi("understand", {})).rejects.toBe(failure);
   });
+  it.each(["AI_NATIVE_DISPATCHER_UNAVAILABLE","AI_NATIVE_DISPATCHER_CHANGED","AI_NATIVE_DEADLINE_INVALID"])("keeps %s out of candidate/output failure classification",async code=>{
+    mocks.ai.mockRejectedValue(Object.assign(new Error("private runtime detail"),{code}));
+    const error=await runServerControlAi("evaluate-paired",{}).catch(caught=>caught);
+    expect(error).toBeInstanceOf(ServerControlAiUnavailableError);expect(error).not.toBeInstanceOf(FatalError);expect(error.reasonCode).toBe("native-deadline-unavailable");
+    expect(error.message).not.toContain("private runtime detail");expect(mocks.ai).toHaveBeenCalledTimes(1);expect(mocks.probe).not.toHaveBeenCalled();
+  });
   it.each(["AI_OUTPUT_SCHEMA_MISMATCH","AI_OUTPUT_INVALID_JSON","AI_OUTPUT_INCOMPLETE","AI_OUTPUT_MISSING_FINAL"])("stops exhausted planning output without a new SDK generation: %s",async code=>{
     mocks.ai.mockRejectedValue(Object.assign(new Error("private model response"),{code}));
     const error=await runServerControlAi("plan",{original:"fixed Original",candidateCount:1}).catch(caught=>caught);

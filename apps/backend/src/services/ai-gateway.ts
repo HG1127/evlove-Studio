@@ -7,6 +7,7 @@ import {serverAiFormatCorrectionAllowed,serverAiPairedJsonlEnabled,serverAiPaire
 import {serverPairedJsonlOutput,SERVER_PAIRED_JSONL_GENERATION_VERSION,SERVER_PAIRED_JSONL_FINAL_TEXT_VERSION} from "./server-paired-jsonl-output";
 import {ServerControlExecutionStoppedError,serverControlExecutionSignal} from "./server-control-execution";
 import {serverAiRequestPolicy} from "./server-ai-request-timeout";
+import {nativeAiDeadlineOptions,type NativeAiFetchInit} from "@evolution/adapters/native-ai-deadline";
 import {
   AiOperationSchema,
   LessonDistillationContextSchema,
@@ -213,9 +214,16 @@ async function callVercelGateway<T>(args:{
   boundedPaired:boolean;
 }){
   const maxOutputTokens=serverAiOutputTokenLimit(args.operation,args.config,10_000);
-  const {Output,generateText,gateway}=await loadVercelAiSdk();
+  const extended=args.boundedPaired&&args.config.timeoutMs>300_000;
+  const native=extended?await nativeAiDeadlineOptions(args.config.timeoutMs):undefined;
+  const sdk=await loadVercelAiSdk(),{Output,generateText,gateway}=sdk;
+  const model=native?sdk.createGateway({fetch:async(input,init)=>{
+    const explicit=(init as NativeAiFetchInit|undefined)?.dispatcher;
+    const options=explicit!==undefined?await nativeAiDeadlineOptions(args.config.timeoutMs,explicit):native;
+    return globalThis.fetch(input,{...init,...options});
+  }})(args.config.model):gateway(args.config.model);
   const generated=await measureServerAiSdkUsage(args.config,args.operation,()=>generateText({
-    model:gateway(args.config.model),
+    model,
     system:SYSTEM+"\n\nTask: "+args.contract.instruction,
     messages:[{
       role:"user" as const,
@@ -273,7 +281,7 @@ async function callResponses<T>(args:DirectArgs<T>){
       ...(args.config.reasoningEffort?{reasoning:{effort:args.config.reasoningEffort}}:{}),
       ...(!args.lineOutput&&directFormat(args.config,args.contract)?{text:{format:directFormat(args.config,args.contract)}}:{}),
     }),
-  },args.boundedPaired?{networkFailureRetry:"definitely-unsent-only"}:undefined);
+  },args.boundedPaired?{networkFailureRetry:"definitely-unsent-only"}:undefined,args.boundedPaired&&args.config.timeoutMs>300_000?args.config.timeoutMs:undefined);
   const response=request.response;
   const json=await request.readJson() as ResponsesJson;
   if(!response.ok){
@@ -311,7 +319,7 @@ async function callChat<T>(args:DirectArgs<T>){
           :{type:"json_schema",json_schema:{name:args.contract.schema.name,strict:true,schema:args.contract.schema.schema}},
       }),
     }),
-  },args.boundedPaired?{networkFailureRetry:"definitely-unsent-only"}:undefined);
+  },args.boundedPaired?{networkFailureRetry:"definitely-unsent-only"}:undefined,args.boundedPaired&&args.config.timeoutMs>300_000?args.config.timeoutMs:undefined);
   const response=request.response;
   const json=await request.readJson() as ChatJson;
   if(!response.ok)throw Object.assign(new Error(json.error?.message||("Server AI Chat HTTP "+response.status)),{httpStatus:response.status});
@@ -420,6 +428,7 @@ export function serverAiUnavailableReason(error:unknown):string|undefined{
   const chain=serverAiErrorChain(error);
   for(const item of chain){
     if((item as {code?:string}).code==="SERVER_AI_UNAVAILABLE")return "not-configured";
+    if(["AI_NATIVE_DISPATCHER_UNAVAILABLE","AI_NATIVE_DISPATCHER_CHANGED","AI_NATIVE_DEADLINE_INVALID"].includes((item as {code?:string}).code??""))return "native-deadline-unavailable";
   }
   const text=chain.map((item)=>item instanceof Error?item.message:String(item)).join(" | ").toLowerCase();
   if(/customer_verification_required|valid credit card|add-credit-card|credit card on file/.test(text))return "customer-verification-required";
@@ -434,6 +443,7 @@ export function serverAiUnavailableReason(error:unknown):string|undefined{
 }
 
 export function serverAiUnavailableMessage(reasonCode:string){
+  if(reasonCode==="native-deadline-unavailable")return "当前运行环境不支持已配置的模型等待时限，已停止后续请求并保留当前任务。请检查服务端网络运行配置。";
   if(reasonCode==="provider-network-error")return "后端暂时无法连接模型服务，已保留当前任务。请重试，或检查网络、接口地址和代理设置。";
   if(reasonCode==="provider-timeout")return "模型服务未在等待时间内返回完整结果，已保留当前任务。请缩小任务范围或切换模型后重试。";
   if(reasonCode==="customer-verification-required")return "Vercel AI Gateway 已配置，但团队尚未完成信用卡/账户验证；请改用真实 BYOK，或之后完成 Vercel AI Gateway 计费验证。";

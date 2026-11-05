@@ -6,6 +6,7 @@ import {AiProviderUsageObservationSchema,AiUsageLedgerRecordSchema,AiUsageReques
 import type {ServerAiConfig} from "../server-env";
 import {assertServerControlExecutionActive,serverControlExecutionSignal} from "./server-control-execution";
 import {assertServerAiResponseProvenanceReady,observeServerAiResponseProvenance} from "./server-ai-response-provenance";
+import {nativeAiDeadlineOptions,type NativeAiFetchInit} from "@evolution/adapters/native-ai-deadline";
 
 const active=new AsyncLocalStorage<{scope:AiUsageScope;write:AiUsageLedgerWriter}>();
 export const currentServerAiUsageScope=()=>{const scope=active.getStore()?.scope;return scope?{...scope}:undefined;};
@@ -58,10 +59,11 @@ async function finish(call:ActiveCall,raw:unknown,outcome:AiProviderUsageObserva
 }
 
 /** Each physical connection retry gets its own durable start/result pair. */
-export async function fetchServerAiProviderUsage(config:ServerAiConfig,protocol:Exclude<AiUsageProtocol,"ai-sdk">,operation:AiOperation,url:string,init:RequestInit,retryPolicy?:AiProviderRetryPolicy){
+export async function fetchServerAiProviderUsage(config:ServerAiConfig,protocol:Exclude<AiUsageProtocol,"ai-sdk">,operation:AiOperation,url:string,init:RequestInit,retryPolicy?:AiProviderRetryPolicy,nativeDeadlineMs?:number){
   assertServerAiResponseProvenanceReady(currentServerAiUsageScope(),init.body);
+  const native=nativeDeadlineMs===undefined?undefined:await nativeAiDeadlineOptions(nativeDeadlineMs,(init as NativeAiFetchInit).dispatcher);
   let call:ActiveCall;
-  const response=await fetchAiProvider(url,{...init,signal:serverControlExecutionSignal(init.signal)},{
+  const response=await fetchAiProvider(url,{...init,...native,signal:serverControlExecutionSignal(init.signal)},{
     beforeAttempt:async attempt=>{
       await assertServerControlExecutionActive();
       call=await start(serverAiUsageRoute(config,protocol,operation),attempt,"physical-http-attempt");

@@ -12,6 +12,7 @@ export default defineConfig({
       "@evolution/adapters/html-native-profile": path.resolve(__dirname, "./packages/adapters/src/native-html/profile.ts"),
       "@evolution/adapters/html-native-local": path.resolve(__dirname, "./packages/adapters/src/html-native-local.ts"),
       "@evolution/adapters/outcome-telemetry": path.resolve(__dirname, "./packages/adapters/src/outcome-telemetry.ts"),
+      "@evolution/adapters/native-ai-deadline": path.resolve(__dirname, "./packages/adapters/src/native-ai-deadline.ts"),
       "@evolution/adapters": path.resolve(__dirname, "./packages/adapters/src/index.ts"),
       "@evolution/ui": path.resolve(__dirname, "./packages/ui/src/index.ts"),
       "@evolution/testkit": path.resolve(__dirname, "./packages/testkit/src/index.ts"),
