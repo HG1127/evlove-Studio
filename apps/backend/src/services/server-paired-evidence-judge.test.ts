@@ -1,5 +1,6 @@
 // @vitest-environment node
 import {describe,expect,it,vi} from "vitest";
+import {FatalError} from "workflow";
 import {EvaluateAiResultSchema,PairedEvaluationAiResultSchema,type PairedEvaluationAiResult} from "@evolution/contracts";
 import {candidateWinnerDecision,candidateEvidencePendingDecision,userGoalProgress,validationDecision,finalHoldoutContractFingerprint,experimentEvaluationScore} from "@evolution/core";
 import {serverPairedJudgeRequest,settleServerPairedJudgment,runServerExperiment,runServerHoldout} from "@evolution/harness";
@@ -26,6 +27,34 @@ async function assess(pairs?:Array<[number,number]>,change?:(reply:PairedEvaluat
 }
 
 describe("two-order paired comparison",()=>{
+  it("stops an unexplained high-score rejection after one call without rewriting or retrying it",async()=>{
+    const x=fixture();let captured:PairedEvaluationAiResult|undefined;
+    const port=model(undefined,reply=>{
+      Object.assign(reply.versions.find(v=>v.slot==="B")!.result.criteria[0]!,{score:96,pass:false,evidenceStatus:"sufficient",gaps:[]});
+      captured=structuredClone(reply);
+    });
+    const claim=vi.fn(async()=>{});
+    const result=runServerPairedEvidenceJudge(x.request,{...port,claim});
+    await expect(result).rejects.toMatchObject({
+      code:"AI_CRITERION_VERDICT_INCONSISTENT",issues:[{slot:"B",criterionId:"GOAL",score:96,minScore:x.request.criteria[0]!.minScore}],
+    });
+    await expect(result).rejects.toBeInstanceOf(FatalError);
+    expect(FatalError.is(await result.catch(error=>error))).toBe(true);
+    expect(port.invoke).toHaveBeenCalledOnce();expect(claim).toHaveBeenCalledOnce();
+    expect(captured!.versions.find(v=>v.slot==="B")!.result.criteria[0]).toMatchObject({score:96,pass:false,gaps:[]});
+  });
+  it("keeps an explained high-score rejection as negative data without any verdict retry",async()=>{
+    const x=await assess(undefined,(reply,index)=>Object.assign(reply.versions.find(v=>v.slot===(index===0?"B":"A"))!.result.criteria[0]!,
+      {score:96,pass:false,evidenceStatus:"sufficient",gaps:["V1 did not demonstrate the required recovery action"]}));
+    expect(x.port.invoke).toHaveBeenCalledTimes(2);expect(x.raw.criteria[0]).toMatchObject({score:96,pass:false});
+  });
+  it("preserves a known Safety failure when a criterion has a high-score negative verdict",async()=>{
+    const x=await assess(undefined,(reply,index)=>{
+      const candidate=reply.versions.find(v=>v.slot===(index===0?"B":"A"))!.result;
+      candidate.safety="FAIL";Object.assign(candidate.criteria[0]!,{score:96,pass:false,evidenceStatus:"sufficient",gaps:[]});
+    });
+    expect(x.port.invoke).toHaveBeenCalledTimes(2);expect(x.raw.safety).toBe("FAIL");expect(x.raw.criteria[0]!.pass).toBe(false);
+  });
   it("settles a valid zero-score Safety failure and blocks Winner without an adverse-verdict retry",async()=>{
     const x=await assess([[90,80],[90,80]],(reply,index)=>{
       const negative=reply.versions.find(v=>v.slot===(index===0?"B":"A"))!.result;

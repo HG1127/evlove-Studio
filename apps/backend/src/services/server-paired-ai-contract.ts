@@ -63,5 +63,6 @@ export function serverAiPairedContract(payload:unknown){
         ctx.addIssue({code:"custom",path:["versions",index,"result","criteria",i],message:"Use only evidenceStatus under the explicitly enabled criterion evidence policy; legacy relative-only fields are archival data"});
     }));
   });
-  return {schema,parser,instruction:instruction+referenceInstruction+(safetyPolicy?PAIRED_SAFETY_EVIDENCE_INSTRUCTION:"")};
+  const passInstruction=" A criterion score and its pass flag are both authoritative requirements; neither replaces the other. Evaluate pass only against that issued criterion, its unchanged minimum and its own evidence. Do not import whole-Mission release, deployment or business-outcome gates into a criterion verdict unless that issued criterion explicitly requires them. When Safety is PASS, criterion evidence is sufficient and its score meets the issued minimum, a pass=false verdict must identify a specific still-unmet issued requirement in that row's gaps, tied to the issued evidence/cases. Do not output a high score, affirmative evidence, empty gaps and an unexplained rejection. If the criterion-specific requirement is met, report the corresponding positive verdict; if evidence is missing, retain unknown evidence and the specific gaps rather than inventing a pass or failure. Known Safety FAIL and all original minima remain unchanged.";
+  return {schema,parser,instruction:instruction+referenceInstruction+passInstruction+(safetyPolicy?PAIRED_SAFETY_EVIDENCE_INSTRUCTION:"")};
 }

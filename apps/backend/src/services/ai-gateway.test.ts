@@ -64,6 +64,9 @@ describe("server AI scoring route identity",()=> {
     expect(await serverAiScoringRouteFingerprint()).not.toBe(contextOnly);
     expect(await serverAiScoringRouteFingerprint()).not.toBe(previousSchemaRoute);
     expect(await serverAiScoringRouteFingerprint()).not.toBe(mutableMetricsRoute);
+    const unexplainedRejectionRoute=createHash("sha256").update(JSON.stringify({route,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,
+      measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION,pairedGenerationSchemaVersion:"issued-paired-generation-schema-v2-valid-zero",pairedInputVersion:SERVER_PAIRED_INPUT_VERSION})).digest("hex");
+    expect(await serverAiScoringRouteFingerprint()).not.toBe(unexplainedRejectionRoute);
     const oldZeroRejectingRoute=createHash("sha256").update(JSON.stringify({route,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION,pairedGenerationSchemaVersion:"issued-paired-generation-schema-v1"})).digest("hex");
     expect(await serverAiScoringRouteFingerprint()).not.toBe(oldZeroRejectingRoute);
   });

@@ -41,6 +41,24 @@ function fixture(relativeStatus?:"unknown"|"sufficient"|"missing"){
  return {...x,request,events,storage,invoke,claim,make,record};
 }
 describe("durable per-order recovery under the original occupied claim",()=>{
+ it("preserves an unexplained rejection and blocks another provider request for its incomplete comparison",async()=>{
+  const x=fixture();
+  const invoke=vi.fn(async(raw:unknown):Promise<PairedEvaluationAiResult>=>{
+   const p=raw as {requestFingerprint:string},original=pairedJudgeRawEvaluation(90),candidate=pairedJudgeRawEvaluation(96);
+   Object.assign(candidate.criteria[0]!,{pass:false,evidenceStatus:"sufficient",gaps:[]});
+   return x.record(raw,{schemaVersion:"paired-evaluation-v1",requestFingerprint:p.requestFingerprint,
+    versions:[{slot:"A",result:original},{slot:"B",result:candidate},{slot:"C",result:structuredClone(original)}]});
+  });
+  const ports={...x.make(),invoke};
+  await expect(runServerPairedEvidenceJudge(x.request,ports)).rejects.toMatchObject({code:"AI_CRITERION_VERDICT_INCONSISTENT"});
+  expect(invoke).toHaveBeenCalledOnce();
+  const observations=[...x.events.values()].filter(e=>e.source==="server-paired-order-journal");
+  expect(observations).toHaveLength(1);
+  const saved=observations[0]!.payload.observation as PairedOrderObservation;
+  expect(saved.response.versions.find(v=>v.slot==="B")!.result.criteria[0]).toMatchObject({score:96,pass:false,gaps:[]});
+  await expect(runServerPairedEvidenceJudge(x.request,ports)).rejects.toThrow();
+  expect(invoke).toHaveBeenCalledOnce();
+ });
  it.each(["unknown","missing","sufficient"] as const)("retains relative %s alongside FAIL through hash-bound journal recovery without another request",async status=>{
   vi.stubEnv("EVOLUTION_AI_PAIRED_OUTCOME_REFERENCE","zero-v1");const x=fixture(status);
   const first=await runServerPairedEvidenceJudge(x.request,x.make()),recovered=await runServerPairedEvidenceJudge(x.request,x.make());

@@ -1,7 +1,7 @@
 import {pairedEvaluationJsonSchema} from "@evolution/contracts";
 
 type Binding={criterionId:string;testCaseIds:string[]};
-export const SERVER_PAIRED_GENERATION_SCHEMA_VERSION="issued-paired-generation-schema-v2-valid-zero";
+export const SERVER_PAIRED_GENERATION_SCHEMA_VERSION="issued-paired-generation-schema-v3-pass-rationale";
 
 /** Project the already validated issued scope into generation guidance, without altering any reply. */
 export function serverIssuedPairedJsonSchema(requestFingerprint:string,bindings:Binding[],caseIds:string[],explicitEvidence=false){
