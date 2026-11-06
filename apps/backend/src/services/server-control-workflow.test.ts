@@ -166,6 +166,20 @@ function fullPausedMission(){
   return {...base,id:input.missionId,stage:"diagnosis" as const,attentionRequests:[wait.decision.attention!],campaign:{...base.campaign,status:"paused" as const,stopReason:wait.decision.reason}};
 }
 describe("new durable run resumes the actual stored AI wait",()=>{
+  it("counts the forced recovery probe under its actual Mission and control Job",async()=>{
+    const records:AiUsageLedgerRecord[]=[];mocks.get.mockResolvedValue(fullPausedMission());
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({usage:{prompt_tokens:2,completion_tokens:3,total_tokens:5}}))));
+    mocks.probe.mockImplementation(async()=>{
+      const measured=await fetchServerAiProviderUsage({mode:"openai-compatible",baseUrl:"https://provider.test/v1",apiKey:"private",model:"model",timeoutMs:1000},
+        "chat-completions","understand","https://provider.test/v1/chat/completions",{});
+      await measured.observe(await measured.response.json());return {ready:true,status:"ready"};
+    });
+    try{await withServerAiUsageScope({phase:"outer-test"},()=>planMissionStep(input,0),async record=>{records.push(record);});}
+    finally{vi.unstubAllGlobals();}
+    expect(records).toHaveLength(2);
+    for(const record of records)expect((record.kind==="request-start"?record.request:record.observation.request).scope)
+      .toEqual({missionId:input.missionId,jobId:input.controlJobId,phase:"workflow-ai-recovery",stepKey:"recovery-0"});
+  });
   it("retains a capability request rather than changing it to budget/limit while the model is down",async()=>{
     const stored=fullPausedMission();mocks.get.mockResolvedValue(stored);
     const next=await planMissionStep(input,0);

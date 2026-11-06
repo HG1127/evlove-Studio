@@ -10,7 +10,7 @@ export * from "./server-baseline";
 export * from "./server-experiment";
 export * from "./server-visible-repair";
 // Public deterministic Candidate test runner used by the Server composition root.
-export {executeServerExperimentCandidate} from "./server-experiment-runner";
+export {executeServerExperimentCandidate,serverExperimentJudgeScope} from "./server-experiment-runner";
 export * from "./server-current-artifact-runner";
 export * from "./server-holdout";
 export * from "./server-frozen-validation-checkpoint";

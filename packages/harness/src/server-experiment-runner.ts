@@ -239,16 +239,7 @@ export async function executeServerExperimentCandidate(
   return normalizeLocallyVerifiableCandidateRuns(project, candidate, testCases, runs);
 }
 
-export async function judgeServerExperimentCandidate(
-  project: EvolveProject,
-  candidate: Candidate,
-  runs: TargetRunResult[],
-  ports: ServerExperimentExecutionPorts,
-  testCases: TestCase[] = project.evalSuite,
-  mode = "server-candidate",
-  comparisonRuns: TargetRunResult[] = project.baselineRun.runs,
-) {
-  assertServerHtmlNativePaymentAvailable([...runs,...comparisonRuns]);
+export function serverExperimentJudgeScope(project:EvolveProject,testCases:TestCase[],runs:TargetRunResult[]){
   const judgeCriteria = criteriaRequiringJudge(project.acceptanceRubric, testCases, runs);
   const judgeIds = new Set(judgeCriteria.map((criterion) => criterion.id));
   const evaluableRunIds = new Set(runs
@@ -260,6 +251,20 @@ export async function judgeServerExperimentCandidate(
   const judgeCaseIds = new Set(judgeCases.map((testCase) => testCase.id));
   const effectiveCriteria = judgeCriteria.filter((criterion) =>
     judgeCases.some((testCase) => testCase.criterionIds.includes(criterion.id)));
+  return {judgeCases,judgeCaseIds,effectiveCriteria};
+}
+
+export async function judgeServerExperimentCandidate(
+  project: EvolveProject,
+  candidate: Candidate,
+  runs: TargetRunResult[],
+  ports: ServerExperimentExecutionPorts,
+  testCases: TestCase[] = project.evalSuite,
+  mode = "server-candidate",
+  comparisonRuns: TargetRunResult[] = project.baselineRun.runs,
+) {
+  assertServerHtmlNativePaymentAvailable([...runs,...comparisonRuns]);
+  const {judgeCases,judgeCaseIds,effectiveCriteria}=serverExperimentJudgeScope(project,testCases,runs);
   if (!judgeCases.length || !effectiveCriteria.length) return deterministicOnlyEvaluation(project, testCases, runs);
   if(project.experimentPolicy?.judgeComparison==="paired-two-order-v1"){
     const request=serverPairedJudgeRequest(project,candidate,testCases,effectiveCriteria,runs,comparisonRuns,mode==="server-candidate"?"visible":"holdout");

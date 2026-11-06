@@ -12,9 +12,10 @@ import {fastHash} from "@evolution/core";
 import {serverPairedJudgeRequest,settleServerPairedJudgment} from "@evolution/harness";
 import {pairedJudgeFixture,pairedJudgeRawEvaluation} from "@evolution/testkit";
 import {runServerPairedEvidenceJudge} from "./server-paired-evidence-judge";
-import {claimPairedJudgeAttempt} from "./server-paired-judge-claim";
+import {claimPairedJudgeAttempt,pairedJudgePhysicalScopeSha256} from "./server-paired-judge-claim";
 import {createServerPairedOrderJournal} from "./server-paired-order-journal";
-function fixture(relativeStatus?:"unknown"|"sufficient"|"missing"){
+import {pairedAdmissionDigest,pairedReassessmentScopeSha256} from "./server-paired-reassessment";
+function fixture(relativeStatus?:"unknown"|"sufficient"|"missing",expectedClaims=1){
  const x=pairedJudgeFixture();if(relativeStatus)x.project.acceptanceRubric[0]!.judgeType="pairwise";
  const request=serverPairedJudgeRequest(x.project,x.candidate,x.project.evalSuite,x.project.acceptanceRubric,x.candidateRuns,x.originalRuns,"visible");
  const events=new Map<string,EvolutionEvent>(),scope={missionId:x.project.id,jobId:"same-control-job",phase:"experiment"};
@@ -25,7 +26,7 @@ function fixture(relativeStatus?:"unknown"|"sufficient"|"missing"){
   return response;
  };
  const invoke=vi.fn(async(raw:unknown):Promise<PairedEvaluationAiResult>=>{
-  expect([...events.values()].filter(e=>e.source==="server-paired-evidence-judge")).toHaveLength(1);
+  expect([...events.values()].filter(e=>e.source==="server-paired-evidence-judge")).toHaveLength(expectedClaims);
   const p=raw as {requestFingerprint:string},order=Number(p.requestFingerprint.slice(-1));
   const original=pairedJudgeRawEvaluation(90),candidate=pairedJudgeRawEvaluation(80);
   candidate.safety="FAIL";
@@ -41,6 +42,20 @@ function fixture(relativeStatus?:"unknown"|"sufficient"|"missing"){
  return {...x,request,events,storage,invoke,claim,make,record};
 }
 describe("durable per-order recovery under the original occupied claim",()=>{
+ it("keeps legacy and admitted target journals separate and recovers the new complete pair without scoring again",async()=>{
+  const x=fixture(undefined,2),physical=pairedJudgePhysicalScopeSha256(x.request);
+  await claimPairedJudgeAttempt(x.request,x.storage);
+  const physicalRoute=(await x.storage.physicalRoutes())[0]!;
+  const admission={missionId:x.project.id,physicalScopeSha256:physical,runtimeCommit:"a".repeat(40),priorClaimId:"evt-paired-judge-claim-"+physical,priorClaimPayloadSha256:"b".repeat(64),priorJobId:"old-job",
+   priorFailureEventId:"old-failure",priorFailurePayloadSha256:"c".repeat(64),priorPhysicalRoute:{...physicalRoute,model:"old-evaluator",routeFingerprint:"d".repeat(64)},targetScoringRouteFingerprint:"e".repeat(64),targetPhysicalRoute:physicalRoute,
+   qualificationOutcomeSha256:"1".repeat(64),qualificationAuditSha256:"2".repeat(64),authorizationSha256:"3".repeat(64),reason:"qualified-evaluator-replacement-after-schema-failure" as const,expiresAt:new Date(Date.parse(x.at)+60000).toISOString()};
+  const identity={physicalScopeSha256:physical,scopeSha256:pairedReassessmentScopeSha256(physical,admission.targetScoringRouteFingerprint),admissionSha256:pairedAdmissionDigest(admission),admission};
+  const ports=()=>({...x.make(createServerPairedOrderJournal({...x.storage,attemptIdentity:async()=>identity})),claim:async()=>claimPairedJudgeAttempt(x.request,x.storage,identity)});
+  const first=await runServerPairedEvidenceJudge(x.request,ports()),second=await runServerPairedEvidenceJudge(x.request,ports());expect(second).toEqual(first);expect(x.invoke).toHaveBeenCalledTimes(2);
+  expect([...x.events.keys()].filter(id=>id.startsWith("evt-paired-order-completed-"+physical))).toHaveLength(0);
+  expect([...x.events.keys()].filter(id=>id.startsWith("evt-paired-order-completed-"+identity.scopeSha256))).toHaveLength(2);
+  expect(x.events.has("evt-paired-judge-claim-"+physical)).toBe(true);
+ });
  it("preserves an unexplained rejection and blocks another provider request for its incomplete comparison",async()=>{
   const x=fixture();
   const invoke=vi.fn(async(raw:unknown):Promise<PairedEvaluationAiResult>=>{

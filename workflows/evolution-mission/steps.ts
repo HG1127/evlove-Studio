@@ -442,7 +442,9 @@ async function planActiveMission(input:EvolutionWorkflowRunInput,iteration:numbe
       || !["queued","running","waiting"].includes(currentJob.status)){
       throw new FatalError("控制 Job 不再活动；未恢复模型等待状态。");
     }
-    const recovered=await restoreServerControlAiWait(mission);
+    const recoveryMission=mission;
+    const recovered=await withServerAiUsageScope({missionId:input.missionId,jobId:input.controlJobId,
+      phase:"workflow-ai-recovery",stepKey:`recovery-${iteration}`},()=>restoreServerControlAiWait(recoveryMission));
     if(recovered!==mission){
       await runtime.missions.save(recovered);
       mission=recovered;

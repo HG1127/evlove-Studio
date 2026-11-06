@@ -5,6 +5,7 @@ import {mockEvent} from "nitro/h3";
 const mocks=vi.hoisted(()=>({
   missionGet:vi.fn(),
   preflight:vi.fn(),
+  assessmentPreflight:vi.fn(),
   createJob:vi.fn(),
   lookup:vi.fn(),
   activeJobs:vi.fn(),
@@ -17,6 +18,7 @@ vi.mock("@evolution/harness",async(importOriginal)=>({
   serverExperimentRecoveryWait:recovery.serverWait,
 }));
 vi.mock("./html-browser-preflight",()=>({assertServerHtmlBrowserExecutionReady:mocks.preflight}));
+vi.mock("./server-paired-judge-claim",()=>({assertServerPairedCandidateAssessmentReady:mocks.assessmentPreflight}));
 vi.mock("./security-policy",()=>({requireGovernedEvolutionPermission:mocks.permission}));
 vi.mock("./production-runtime",()=>({
   getServerProductionRuntime:()=>({missions:{get:mocks.missionGet}}),
@@ -55,6 +57,7 @@ const mission=(extension:string)=>({
   }],
   targetConnection:{adapter:"artifact",connectionId:"audit-source",status:"connected",label:"HTML Artifact Runtime"},
   campaign:{status:"idle",schedule:{enabled:false}},
+  experimentPolicy:{},
 });
 function post(idempotencyKey?:string){
   return mockEvent(new Request("http://localhost/api/evolution/start",{
@@ -72,9 +75,16 @@ beforeEach(()=>{
   sandboxProbe.browser.mockReset();
   mocks.permission.mockResolvedValue(undefined);
   mocks.activeJobs.mockResolvedValue([]);
+  mocks.assessmentPreflight.mockResolvedValue(undefined);
 });
 
 describe("Workflow start executes real HTML preflight BEFORE durable Job creation",()=>{
+  it("blocks an occupied assessment before browser probes, Job creation or Workflow start",async()=>{
+    mocks.missionGet.mockResolvedValue(mission("html"));
+    mocks.assessmentPreflight.mockRejectedValue(Object.assign(new Error("assessment occupied"),{code:"PAIRED_JUDGE_ATTEMPT_NOT_OWNED"}));
+    await expect(startRoute(post("new-key"))).rejects.toMatchObject({code:"PAIRED_JUDGE_ATTEMPT_NOT_OWNED"});
+    expect(mocks.preflight).not.toHaveBeenCalled();expect(mocks.createJob).not.toHaveBeenCalled();expect(mocks.start).not.toHaveBeenCalled();
+  });
   it("fails closed on missing Vercel Browser authorization, without creating or starting a Job",async()=>{
     mocks.missionGet.mockResolvedValue(mission("html"));
     mocks.preflight.mockRejectedValue(Object.assign(new Error("Sandbox not authorized"),{

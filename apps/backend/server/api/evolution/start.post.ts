@@ -25,6 +25,7 @@ import {requireGovernedEvolutionPermission} from "../../../src/services/security
 import {cancelWorkflowRunById,workflowRunIdForJob} from "../../../src/services/workflow-run-control";
 import {assertServerHtmlBrowserExecutionReady} from "../../../src/services/html-browser-preflight";
 import {assertServerConfirmationAdmission} from "../../../src/services/server-confirmation-admission";
+import {assertServerPairedCandidateAssessmentReady} from "../../../src/services/server-paired-judge-claim";
 
 async function cleanupStartedRun(runId:string){
   try{return {ok:true as const,result:await cancelWorkflowRunById(runId)};}
@@ -143,6 +144,7 @@ export default defineEventHandler(async(event)=>{
   // Check before a new Job receipt or billable AI Workflow is created. A
   // compiled adapter or local Chromium smoke cannot substitute this proof.
   await assertServerConfirmationAdmission(mission,"execution");
+  if(executableHtmlTarget)await assertServerPairedCandidateAssessmentReady(mission);
   await assertServerHtmlBrowserExecutionReady(mission);
 
   const controlJobId=`workflow-control-${randomUUID()}`;
