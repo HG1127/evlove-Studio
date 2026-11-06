@@ -33,7 +33,7 @@ describe("explicit qualified evaluator reassessment",()=>{
     const x=fixture();expect(await resolvePairedAttemptIdentity(x.request,{...x.options,rawTrust:undefined})).toEqual({physicalScopeSha256:x.physical,scopeSha256:x.physical});expect(x.options.readJob).not.toHaveBeenCalled();
   });
   it("uses the actual effective judging scope and target-only bindings during preflight",()=>{
-    const x=fixture();x.project.experimentPolicy.judgeComparison="paired-two-order-v1";
+    const x=fixture();x.project.stage="experiment";x.project.experimentPolicy.judgeComparison="paired-two-order-v1";
     x.project.acceptanceRubric.push({...x.project.acceptanceRubric[0]!,id:"unissued-deterministic",judgeType:"structural"});
     const snapshot=x.candidate.artifactSnapshots[0]!,source=x.project.sourceArtifacts[0]!;
     x.project.sourceArtifacts.push({...source,id:"reference-only",role:"reference"});
@@ -43,6 +43,7 @@ describe("explicit qualified evaluator reassessment",()=>{
     const scope=serverExperimentJudgeScope(x.project,x.project.evalSuite,x.candidateRuns),actual=serverPairedJudgeRequest(x.project,x.candidate,x.project.evalSuite,scope.effectiveCriteria,x.candidateRuns,x.originalRuns,"visible"),preflight=serverPairedCandidateAssessmentRequests(x.project)[0]!;
     expect(pairedJudgePhysicalScopeSha256(preflight)).toBe(pairedJudgePhysicalScopeSha256(actual));
     expect(preflight.criteria.some(c=>c.id==="unissued-deterministic")).toBe(false);expect(preflight.context.bindings.some(b=>b.sourceArtifactId==="reference-only")).toBe(false);
+    x.project.stage="validation";expect(serverPairedCandidateAssessmentRequests(x.project)).toEqual([]);x.project.stage="experiment";
     x.project.experimentRun.executionCheckpoints=[];expect(serverPairedCandidateAssessmentRequests(x.project)).toEqual([]);
   });
   it("admits only the exact completed-invalid prior attempt and different qualified evaluator",async()=>{

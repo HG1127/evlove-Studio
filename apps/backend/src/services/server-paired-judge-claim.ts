@@ -62,7 +62,7 @@ export async function resolveServerPairedAttemptIdentity(request:PhysicalScopeIn
 }
 
 export function serverPairedCandidateAssessmentRequests(project:EvolveProject){
-  if(project.experimentPolicy.judgeComparison!==PAIRED_JUDGE_POLICY)return [];
+  if(project.stage!=="experiment"||project.experimentPolicy.judgeComparison!==PAIRED_JUDGE_POLICY)return [];
   const selected=project.candidates.filter(candidate=>project.selectedCandidateIds.includes(candidate.id));
   return selected.flatMap(candidate=>{
     const runs=project.experimentRun.executionCheckpoints?.find(checkpoint=>checkpoint.candidateId===candidate.id)?.execution?.runs;
