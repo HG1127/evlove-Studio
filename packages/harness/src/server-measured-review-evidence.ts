@@ -1,12 +1,13 @@
-import {DOCUMENT_TEXT_OBSERVATION_MAX_CHARS,type TargetRunResult} from "@evolution/contracts";
+import {DOCUMENT_TEXT_OBSERVATION_MAX_CHARS,type TargetRunResult,type PairedQuotationObservationSchema} from "@evolution/contracts";
+import type {z} from "zod";
 import {inspectMeasuredNativeRun,measuredNativeObservations,type MeasuredNativeBinding} from "./server-measured-native-review";
 
-export const SERVER_MEASURED_REVIEW_VERSION = "server-measured-document-review-v7-bound-paragraph-changes";
+export const SERVER_MEASURED_REVIEW_VERSION = "server-measured-document-review-v8-bound-quotation-range";
 export const SERVER_NATIVE_REVIEW_INSTRUCTION="Read nativeObservations as measured physical facts bound to their own source, hashes and testCaseIds. Excluding raw scripts/styles does not erase observed interactions, script/style signatures or computed-style comparisons. Computed styles cover their recorded navigation state, not every possible active, hover or focus state; legacy observations without that receipt do not establish a matched navigation state. Unmatched V2 focus is pending comparable-style evidence, not proof of changed CSS; independently measured functional or code loss remains a failure. A profile pass is not a semantic, pixel-visual or overall Criterion pass; it does not replace another test's explicit assertions. Missing, omitted or out-of-scope evidence remains unknown.";
 
 /** Reuse only existing document observations. No Artifact/Source reads or raw HTML reconstruction. */
 export function measuredDocumentObservations(runs: TargetRunResult[], budget = DOCUMENT_TEXT_OBSERVATION_MAX_CHARS,bindings?:readonly MeasuredNativeBinding[]) {
-  const observations: Array<{testCaseId:string;artifactHash?:string;output:string}> = [];
+  const observations: Array<{testCaseId:string;artifactHash?:string;output:string;quotationSource?:z.infer<typeof PairedQuotationObservationSchema>["quotationSource"]}> = [];
   const omittedTestCaseIds: string[] = [];
   const seen = new Set<string>();
   let remaining = budget;
@@ -15,13 +16,15 @@ export function measuredDocumentObservations(runs: TargetRunResult[], budget = D
     const native=inspectMeasuredNativeRun(run,bindings);
     if(run.nativeHtmlProof&&!native?.complete)continue;
     if(native?.complete){
-      const key=`rendered:${native.document.artifactSha256}:${native.document.textFingerprint}`;
+      const key=`rendered:${native.proof.sourceArtifactId}:${native.document.artifactSha256}:${native.document.textFingerprint}`;
       if(seen.has(key))continue;
       seen.add(key);
       const output="COMPLETE RENDERED DOCUMENT OBSERVATION\n"+native.document.text
         +"\n\nMEASURED PARAGRAPH FACTS (observations, no automatic quality verdict):\n"+JSON.stringify(native.document.paragraphs);
       if(output.length>remaining){omittedTestCaseIds.push(run.testCaseId);continue;}
-      observations.push({testCaseId:run.testCaseId,artifactHash:run.artifactHash,output});
+      observations.push({testCaseId:run.testCaseId,artifactHash:run.artifactHash,output,
+        quotationSource:{sourceArtifactId:native.proof.sourceArtifactId,sha256:native.document.artifactSha256,
+          start:"COMPLETE RENDERED DOCUMENT OBSERVATION\n".length,length:native.document.text.length,complete:true}});
       remaining-=output.length;
       continue;
     }

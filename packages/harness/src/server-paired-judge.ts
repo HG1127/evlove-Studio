@@ -45,7 +45,7 @@ export function serverPairedJudgeRequest(project:EvolveProject,candidate:Candida
 
 export function settleServerPairedJudgment(project:EvolveProject,suite:TestCase[],runs:TargetRunResult[],originalRuns:TargetRunResult[],request:ReturnType<typeof serverPairedJudgeRequest>,ai:ServerEvidenceJudgeResult){
   const paired=ai.pairedComparison,receipt=PairedJudgeReceiptSchema.parse(paired?.receipt);
-  const {samples:_,limitations:__,scoringRouteFingerprint:___,outcomeReferencePolicy:____,evidenceStatusPolicy:_____,...context}=receipt;void _;void __;void ___;void ____;void _____;
+  const {samples:_,limitations:__,scoringRouteFingerprint:___,outcomeReferencePolicy:____,evidenceStatusPolicy:_____,sourceQuotationPolicy:______,...context}=receipt;void _;void __;void ___;void ____;void _____;void ______;
   if(!paired||JSON.stringify(context)!==JSON.stringify(request.context))throw Error("Paired runtime receipt does not match the issued request");
   const settle=(arm:TargetRunResult[],value:typeof paired.original)=>qualifyPairedEvaluation({...settleAiEvaluation({criteria:project.acceptanceRubric,testCases:suite,runs:arm,ai:value,
     notes:["paired-two-order-v1: both versions judged together twice with swapped order; each criterion retains its least-favorable observed pair. No thresholds or physical runs changed."]}),measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION},receipt,project.acceptanceRubric);

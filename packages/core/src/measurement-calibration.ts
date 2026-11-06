@@ -45,7 +45,7 @@ export function assessMeasurementCalibration(plan:JudgeCalibrationPlan,observati
  for(const control of plan.controls){
   const matches=observations.filter(o=>o.controlId===control.id),observation=matches[0];
   if(matches.length!==1||!observation){fail("Missing unique control "+control.id);continue;}
-  const r=observation.receipt,{samples,limitations,scoringRouteFingerprint,outcomeReferencePolicy,evidenceStatusPolicy,...context}=r;void limitations;void outcomeReferencePolicy;
+  const r=observation.receipt,{samples,limitations,scoringRouteFingerprint,outcomeReferencePolicy,evidenceStatusPolicy,sourceQuotationPolicy,...context}=r;void limitations;void outcomeReferencePolicy;void sourceQuotationPolicy;
   if(fastHash(context)!==fastHash(control.context)||scoringRouteFingerprint!==plan.scoringRouteFingerprint
    ||r.rubricFingerprint!==plan.rubricFingerprint||r.suiteFingerprint!==plan.suiteFingerprint){
    fail("Control identity/model/file/paper binding differs: "+control.id);continue;

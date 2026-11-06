@@ -2,7 +2,8 @@ import {z} from "zod";
 import {AcceptanceCriterionSchema,PAIRED_CRITERION_EVIDENCE_POLICY,PairedJudgeMetricDefinitionSchema,PairedEvaluationAiResultSchema,pairedEvaluationJsonSchema} from "@evolution/contracts";
 import {zeroOutcomeReferenceCriterionIds} from "@evolution/core";
 import {serverIssuedPairedJsonSchema} from "./server-paired-json-schema";
-import {serverAiPairedOutcomeReferenceMode,serverAiPairedSafetyPolicy} from "./server-ai-output-policy";
+import {serverAiPairedOutcomeReferenceMode,serverAiPairedSafetyPolicy,serverAiPairedSourceQuotationPolicy} from "./server-ai-output-policy";
+import {PAIRED_SOURCE_QUOTATION_INSTRUCTION} from "./server-paired-source-instruction";
 import {PAIRED_SAFETY_EVIDENCE_INSTRUCTION,PAIRED_SAFETY_RELATIVE_UNKNOWN_INSTRUCTION} from "./server-paired-safety-instruction";
 
 const id=z.string().min(1),unique=(ids:string[])=>new Set(ids).size===ids.length;
@@ -28,6 +29,7 @@ export function serverPairedOutcomeReferenceCriterionIds(payload:unknown){
 export function serverAiPairedContract(payload:unknown){
   const referenceMode=serverAiPairedOutcomeReferenceMode();
   const safetyPolicy=serverAiPairedSafetyPolicy();
+  const sourceQuotationPolicy=serverAiPairedSourceQuotationPolicy();
   const referenceIds=referenceMode?serverPairedOutcomeReferenceCriterionIds(payload):[];
   let referenceInstruction=referenceMode?" Criterion evidence qualification policy "+PAIRED_CRITERION_EVIDENCE_POLICY+" applies to EVERY issued criterion in EVERY slot, including absolute, structural and protected criteria. Include evidenceStatus=sufficient only when the supplied evidence supports that particular conclusion (including a confirmed failure or regression); sufficient does not mean passing or safe. Missing, conflicting or incomparable proof requires evidenceStatus=unknown and specific gaps. This per-criterion unknown can coexist with a different known Safety FAIL; never erase that FAIL or treat a numeric placeholder as a verified failure. Missing evidenceStatus is unqualified, not proof of failure or success. Keep all original requirements, minima and protected constraints unchanged.":"";
   if(payload&&typeof payload==="object"&&"metrics" in payload)PairedJudgeMetricDefinitionSchema.array().max(100).parse(payload.metrics);
@@ -58,11 +60,14 @@ export function serverAiPairedContract(payload:unknown){
     });
   }else if(referenceMode)throw Error("Paired outcome reference requires an issued versioned request");
   parser=parser.superRefine((value,ctx)=>{
+    if(!sourceQuotationPolicy)value.versions.forEach((v,index)=>{
+      if(v.result.sourceQuotations!==undefined)ctx.addIssue({code:"custom",path:["versions",index,"result","sourceQuotations"],message:"Source quotations require their explicit generation policy"});
+    });
     value.versions.forEach((v,index)=>v.result.criteria.forEach((row,i)=>{
       if(row.relativeEvidenceStatus!==undefined||row.evidenceStatus!==undefined&&!referenceMode)
         ctx.addIssue({code:"custom",path:["versions",index,"result","criteria",i],message:"Use only evidenceStatus under the explicitly enabled criterion evidence policy; legacy relative-only fields are archival data"});
     }));
   });
   const passInstruction=" A criterion score and its pass flag are both authoritative requirements; neither replaces the other. Evaluate pass only against that issued criterion, its unchanged minimum and its own evidence. Do not import whole-Mission release, deployment or business-outcome gates into a criterion verdict unless that issued criterion explicitly requires them. When Safety is PASS, criterion evidence is sufficient and its score meets the issued minimum, a pass=false verdict must identify a specific still-unmet issued requirement in that row's gaps, tied to the issued evidence/cases. Do not output a high score, affirmative evidence, empty gaps and an unexplained rejection. If the criterion-specific requirement is met, report the corresponding positive verdict; if evidence is missing, retain unknown evidence and the specific gaps rather than inventing a pass or failure. Known Safety FAIL and all original minima remain unchanged.";
-  return {schema,parser,instruction:instruction+referenceInstruction+passInstruction+(safetyPolicy?PAIRED_SAFETY_EVIDENCE_INSTRUCTION:"")};
+  return {schema,parser,instruction:instruction+referenceInstruction+passInstruction+(safetyPolicy?PAIRED_SAFETY_EVIDENCE_INSTRUCTION:"")+(sourceQuotationPolicy?PAIRED_SOURCE_QUOTATION_INSTRUCTION:"")};
 }

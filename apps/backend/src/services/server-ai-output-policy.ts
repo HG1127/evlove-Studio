@@ -1,12 +1,22 @@
 import {AsyncLocalStorage} from "node:async_hooks";
 import {z} from "zod";
-import {PAIRED_OUTCOME_REFERENCE_POLICY,type AiOperation} from "@evolution/contracts";
+import {PAIRED_OUTCOME_REFERENCE_POLICY,PAIRED_SOURCE_QUOTATION_POLICY,type AiOperation} from "@evolution/contracts";
 
 const policySchema=z.object({formatCorrection:z.enum(["allow-once","forbid"]),pairedTransport:z.literal("jsonl-v1").optional()}).strict();
 const scope=new AsyncLocalStorage<z.infer<typeof policySchema>>();
 const transportSchema=z.enum(["json","jsonl-v1"]);
 export const SERVER_PAIRED_OUTCOME_REFERENCE_VERSION="paired-outcome-reference-v3-all-criterion-evidence-status";
 export const SERVER_PAIRED_SAFETY_POLICY_VERSION="paired-safety-v1-evidence-grounded-three-state";
+export const SERVER_PAIRED_SOURCE_QUOTATION_VERSION="paired-source-quotation-v1-complete-range-notes";
+
+/** A separate prospective protocol; no archived prose is reinterpreted as a structured claim. */
+export function serverAiPairedSourceQuotationPolicy(){
+  const raw=process.env.EVOLUTION_AI_PAIRED_SOURCE_QUOTATIONS?.trim();
+  if(!raw)return undefined;
+  if(raw!==PAIRED_SOURCE_QUOTATION_POLICY)throw Error("Invalid paired source quotation policy");
+  if(!serverAiPairedSafetyPolicy()||!serverAiPairedJsonlEnabled())throw Error("Source quotations require explicit paired Safety, criterion evidence and JSONL policies");
+  return PAIRED_SOURCE_QUOTATION_POLICY;
+}
 
 /** Prospective clarification only. Legacy verdicts and unknown-state gates are never rewritten. */
 export function serverAiPairedSafetyPolicy(){

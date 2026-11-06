@@ -1,8 +1,8 @@
 import {z,type ZodType} from "zod";
-import {PAIRED_JSONL_PROTOCOL,PAIRED_CRITERION_EVIDENCE_POLICY,PairedJsonlRecordSchema,PairedJsonlEvidenceRecordSchema,PairedJsonlScopeSchema} from "@evolution/contracts";
+import {PAIRED_JSONL_PROTOCOL,PAIRED_CRITERION_EVIDENCE_POLICY,PairedJsonlRecordSchema,PairedJsonlEvidenceRecordSchema,PairedJsonlQuotationGenerationRecordSchema,PairedJsonlScopeSchema} from "@evolution/contracts";
 import {parsePairedJsonl,structuredAiFinalText} from "@evolution/adapters";
 import {serverPairedOutcomeReferenceCriterionIds} from "./server-paired-ai-contract";
-import {serverAiPairedOutcomeReferenceMode} from "./server-ai-output-policy";
+import {serverAiPairedOutcomeReferenceMode,serverAiPairedSourceQuotationPolicy} from "./server-ai-output-policy";
 
 export const SERVER_PAIRED_JSONL_GENERATION_VERSION="paired-jsonl-generation-v2-explicit-records";
 export const SERVER_PAIRED_JSONL_FINAL_TEXT_VERSION="paired-jsonl-final-text-v2-ascii-separators";
@@ -11,11 +11,12 @@ export const SERVER_PAIRED_JSONL_FINAL_TEXT_VERSION="paired-jsonl-final-text-v2-
 export function serverPairedJsonlOutput<T>(payload:unknown,parser:ZodType<T>,instruction:string){
  const issued=z.object({requestFingerprint:z.string(),issuedCriterionCaseBindings:z.unknown()}).parse(payload);
  const relativeCriterionIds=serverPairedOutcomeReferenceCriterionIds(payload);
+ const sourceQuotationPolicy=serverAiPairedSourceQuotationPolicy();
  const scope=PairedJsonlScopeSchema.parse({requestFingerprint:issued.requestFingerprint,bindings:issued.issuedCriterionCaseBindings,
-  ...(relativeCriterionIds.length?{relativeCriterionIds}:{}),...(serverAiPairedOutcomeReferenceMode()?{evidenceStatusPolicy:PAIRED_CRITERION_EVIDENCE_POLICY}:{})});
+  ...(relativeCriterionIds.length?{relativeCriterionIds}:{}),...(serverAiPairedOutcomeReferenceMode()?{evidenceStatusPolicy:PAIRED_CRITERION_EVIDENCE_POLICY}:{}),...(sourceQuotationPolicy?{sourceQuotationPolicy}:{})});
  const header={kind:"header",protocol:PAIRED_JSONL_PROTOCOL,requestFingerprint:scope.requestFingerprint};
  const end={kind:"end",requestFingerprint:scope.requestFingerprint,criterionRecords:scope.bindings.length*3};
- const recordSchema=z.toJSONSchema(scope.evidenceStatusPolicy?PairedJsonlEvidenceRecordSchema:PairedJsonlRecordSchema);
+ const recordSchema=z.toJSONSchema(sourceQuotationPolicy?PairedJsonlQuotationGenerationRecordSchema:scope.evidenceStatusPolicy?PairedJsonlEvidenceRecordSchema:PairedJsonlRecordSchema);
  // Only omit the grammar document's metadata, never a property from a model response.
  delete recordSchema.$schema;
  return {

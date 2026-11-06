@@ -1,4 +1,5 @@
 import { z } from "zod";
+import {PairedAggregatedSourceQuotationsSchema} from "./paired-source-quotation-contract";
 import {PairedJudgeContextSchema,PairedJudgeFileObservationSchema,PairedRelativeEvidenceStatusSchema,CriterionEvidenceStatusSchema,type PairedJudgeReceipt} from "./paired-judge-contract";
 import {
   AcceptanceCriterionSchema,
@@ -314,6 +315,7 @@ const EvaluationWithIdentitiesSchema = z.object({
   completeness: z.coerce.number(),
   safety: z.preprocess(value => typeof value === "string" ? value.toUpperCase() : value, z.enum(["PASS", "REVIEW", "FAIL"])),
   notes: z.array(z.string()).default([]),
+  sourceQuotations:PairedAggregatedSourceQuotationsSchema.optional(),
   failures: z.array(z.string()).default([]),
   // 逐题分数：让「差距来自哪道题、差多少、为什么」可回答。optional 兼容旧模型。
   cases: z.array(z.object({
@@ -367,6 +369,7 @@ export const PairedEvaluationAiResultSchema=z.object({
 }).strict().superRefine((value,ctx)=>{
   if(new Set(value.versions.map(v=>v.slot)).size!==3)ctx.addIssue({code:"custom",path:["versions"],message:"All three unique slots are required"});
   for(const [i,version] of value.versions.entries()){
+    if((version.result.sourceQuotations?.length??0)>96)ctx.addIssue({code:"custom",path:["versions",i,"result","sourceQuotations"],message:"One paired order permits at most 96 source quotations; aggregation is a separate runtime boundary"});
     const numbers=[version.result.accuracy,version.result.evidence,version.result.riskCoverage,version.result.completeness,...version.result.criteria.map(c=>c.score)];
     if(numbers.some(n=>!Number.isInteger(n)||n<0||n>100))ctx.addIssue({code:"custom",path:["versions",i],message:"Paired scores must be integer 0-100 percentages; no fraction normalization"});
   }

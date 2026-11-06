@@ -1,4 +1,5 @@
 import {z} from "zod";
+import {PAIRED_SOURCE_QUOTATION_POLICY} from "./paired-source-quotation-contract";
 
 export const PAIRED_JUDGE_POLICY="paired-two-order-v1" as const;
 export const PAIRED_JUDGE_FILE_METADATA_POLICY="bound-file-reference-v1" as const;
@@ -53,6 +54,7 @@ export const PairedJudgeReceiptSchema=PairedJudgeContextSchema.extend({
   // Runtime-owned opt-in. Absent on legacy observations; never inferred from scores or model prose.
   outcomeReferencePolicy:z.literal(PAIRED_OUTCOME_REFERENCE_POLICY).optional(),
   evidenceStatusPolicy:z.literal(PAIRED_CRITERION_EVIDENCE_POLICY).optional(),
+  sourceQuotationPolicy:z.literal(PAIRED_SOURCE_QUOTATION_POLICY).optional(),
   samples:z.tuple([
     z.object({order:z.literal("original-first"),resultSha256:hash,original:summary,candidate:summary,controlOriginal:summary}).strict(),
     z.object({order:z.literal("candidate-first"),resultSha256:hash,original:summary,candidate:summary,controlOriginal:summary}).strict(),

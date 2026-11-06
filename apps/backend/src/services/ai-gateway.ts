@@ -3,7 +3,8 @@ import { aiProviderTransportFailure,aiProviderTransportDiagnostic,parseStructure
 import { createHash } from "node:crypto";
 import {serverAiRepairContract} from "./server-ai-repair-contract";
 import {serverAiBuildContract} from "./server-ai-build-contract";
-import {serverAiFormatCorrectionAllowed,serverAiPairedJsonlEnabled,serverAiPairedOutcomeReferenceMode,SERVER_PAIRED_OUTCOME_REFERENCE_VERSION,serverAiPairedSafetyPolicy,SERVER_PAIRED_SAFETY_POLICY_VERSION} from "./server-ai-output-policy";
+import {serverAiFormatCorrectionAllowed,serverAiPairedJsonlEnabled,serverAiPairedOutcomeReferenceMode,SERVER_PAIRED_OUTCOME_REFERENCE_VERSION,serverAiPairedSafetyPolicy,SERVER_PAIRED_SAFETY_POLICY_VERSION,serverAiPairedSourceQuotationPolicy,SERVER_PAIRED_SOURCE_QUOTATION_VERSION} from "./server-ai-output-policy";
+import {PAIRED_SOURCE_QUOTATION_INSTRUCTION} from "./server-paired-source-instruction";
 import {serverPairedJsonlOutput,SERVER_PAIRED_JSONL_GENERATION_VERSION,SERVER_PAIRED_JSONL_FINAL_TEXT_VERSION} from "./server-paired-jsonl-output";
 import {ServerControlExecutionStoppedError,serverControlExecutionSignal} from "./server-control-execution";
 import {serverAiRequestPolicy} from "./server-ai-request-timeout";
@@ -86,10 +87,13 @@ export async function serverAiScoringRouteFingerprint(): Promise<string | undefi
   const outcomeReference=serverAiPairedOutcomeReferenceMode();
   const pairedOutputBudget=serverAiPairedOutputBudgetIdentity(config);
   const pairedSafetyPolicy=serverAiPairedSafetyPolicy();
+  const sourceQuotationPolicy=serverAiPairedSourceQuotationPolicy();
   return createHash("sha256").update(JSON.stringify({ route, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION,measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION,pairedGenerationSchemaVersion:SERVER_PAIRED_GENERATION_SCHEMA_VERSION,pairedInputVersion:SERVER_PAIRED_INPUT_VERSION,
     ...(outcomeReference?{pairedOutcomeReference:outcomeReference,pairedOutcomeReferenceVersion:SERVER_PAIRED_OUTCOME_REFERENCE_VERSION,pairedCriterionEvidencePolicy:PAIRED_CRITERION_EVIDENCE_POLICY}:{}),
     ...(serverAiPairedJsonlEnabled()?{pairedOutputTransport:PAIRED_JSONL_PROTOCOL,pairedOutputGenerationVersion:SERVER_PAIRED_JSONL_GENERATION_VERSION,pairedOutputFinalTextVersion:SERVER_PAIRED_JSONL_FINAL_TEXT_VERSION}:{}),
     ...(pairedOutputBudget?{pairedOutputBudget}:{}),
+    ...(sourceQuotationPolicy?{sourceQuotationPolicy,sourceQuotationVersion:SERVER_PAIRED_SOURCE_QUOTATION_VERSION,
+      sourceQuotationInstructionSha256:createHash("sha256").update(PAIRED_SOURCE_QUOTATION_INSTRUCTION).digest("hex")} :{}),
     ...(pairedSafetyPolicy?{pairedSafetyPolicy,pairedSafetyPolicyVersion:SERVER_PAIRED_SAFETY_POLICY_VERSION,
       pairedSafetyInstructionSha256:createHash("sha256").update(JSON.stringify([PAIRED_SAFETY_EVIDENCE_INSTRUCTION,PAIRED_SAFETY_RELATIVE_UNKNOWN_INSTRUCTION])).digest("hex")}:{}) })).digest("hex");
 }
@@ -366,7 +370,7 @@ async function structured<T>(operation:AiOperation,payload:unknown,schema:Contra
       // Provider auth, billing, network and arbitrary execution failures do not get retried.
       // Neither attempt bypasses JSON parsing or the versioned Zod task contract.
       const code=(error as {code?:string}).code;
-      if(!serverAiFormatCorrectionAllowed())throw error;
+      if(!serverAiFormatCorrectionAllowed()||operation==="evaluate-paired"&&serverAiPairedSourceQuotationPolicy())throw error;
       if(!["AI_OUTPUT_SCHEMA_MISMATCH","AI_OUTPUT_INVALID_JSON","AI_OUTPUT_INCOMPLETE","AI_OUTPUT_MISSING_FINAL"].includes(code??""))throw error;
       const invalid=error as {fields?:string[];validationIssues?:string[]};
       const failedFields=invalid.validationIssues?.length?invalid.validationIssues:invalid.fields;

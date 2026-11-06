@@ -1,0 +1,13 @@
+# Source-bound Safety quotations
+
+The optional `EVOLUTION_AI_PAIRED_SOURCE_QUOTATIONS=measured-source-quotations-v1` protocol verifies literal quotations supporting paired Safety notes. It requires the existing explicit Safety, criterion-evidence and JSONL policies. It does not supply expected scores or Safety answers.
+
+The Harness records a source ID, physical SHA and UTF-16 body range only after validating a complete native document observation. The range excludes the wrapper and appended paragraph facts. The backend requires one complete observed document per issued physical binding; it does not upgrade old, partial or omitted observations. Source identity participates in deduplication, including separate files with identical bytes.
+
+Each summary has typed `sourceQuotations`, associated with zero-based Safety `noteIndex` values. Every model Safety note needs a literal quote occurring in that note. `present` must match that slot's observed body. `absent` must be absent from the complete subject body and present in its explicitly bound comparison body. Slot mapping follows the actual order; repeated Original observations have the same physical identity. Unicode NFC and whitespace normalization preserve punctuation, case and negation.
+
+The response is preserved through JSONL, the result contract and the per-order journal before semantic support is checked. Unsupported or missing support raises a fatal unqualified-assessment error. It never changes a verdict or spends another model request. Recovery revalidates the saved observation; an incomplete occupied comparison cannot be restarted. Supported FAIL and genuine REVIEW remain adverse/unresolved evidence.
+
+This verifies the declared literal relationship, not the inference, note polarity, unannotated prose, exhaustive Safety coverage, absence of equivalent meanings or all possible completion paths. Independent Safety references remain necessary. A concrete material task risk requires an applicable issued operation and same-source evidence proving its mandatory controls cannot be jointly satisfied; low quality scores or missing phrases alone do not prove that risk. Unissued production compliance requirements must not be invented.
+
+Legacy records remain readable without default claims or altered stored identity. New measured inputs carry review version v8, so **new scoring routes and inputs change even when the quotation option is unset**; old qualification cannot be reused as evidence for the new route. The opt-in policy and instruction hash additionally bind the scoring route, and receipts record the active quotation policy. No production setting is enabled by this change.

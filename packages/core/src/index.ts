@@ -95,3 +95,4 @@ export * from "./html-card-paragraph-diff";
 export * from "./mission-directory-projection";
 export * from "./mission-execution-state";
 export * from "./criterion-verdict-consistency";
+export * from "./paired-source-quotations";

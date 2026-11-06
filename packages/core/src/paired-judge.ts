@@ -27,6 +27,7 @@ export function conservativePairedJudgments(samples:readonly[{original:EvaluateA
   if(!ids.length||new Set(ids).size!==ids.length||samples.some(s=>[s.original,s.candidate].some(arm=>!same(arm.criteria.map(c=>c.criterionId),ids))))throw Error("Paired criterion identities differ");
   const output=(arm:"original"|"candidate"):EvaluateAiResult=>{
     const value={...samples[0][arm],notes:[...samples[0][arm].notes,...samples[1][arm].notes,"paired-two-order-v1: per-criterion least-favorable observed pair; two samples are not a confidence interval"],
+      ...(samples.every(s=>s[arm].sourceQuotations!==undefined)?{sourceQuotations:[...samples[0][arm].sourceQuotations!,...samples[1][arm].sourceQuotations!.map(q=>({...q,noteIndex:q.noteIndex+samples[0][arm].notes.length}))]}:{}),
       failures:[...new Set(samples.flatMap(s=>s[arm].failures))],safety:worstSafety(samples[0][arm].safety,samples[1][arm].safety),cases:[]};
     for(const key of dimensions){const index=samples[1].candidate[key]-samples[1].original[key]<samples[0].candidate[key]-samples[0].original[key]?1:0;value[key]=legacyScore(samples[index][arm][key]);}
     value.criteria=ids.map(id=>{
