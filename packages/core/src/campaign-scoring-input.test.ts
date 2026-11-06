@@ -84,12 +84,16 @@ describe("Campaign scoring input identity", () => {
     const p=project();p.sourceArtifacts=[{...p.sourceArtifacts[0]!,extension:"html",artifactKind:"document",mimeType:"text/html",inputMode:"upload",textContent:"<html></html>"}];
     const criterion=AcceptanceCriterionSchema.parse({id:"PROTECT-ALL",title:"Protection",requirement:"Preserve interactions",source:"user-command",weight:1,minScore:95,hardGate:true,validationMethod:"executable-test",artifactIds:["source"]});
     p.acceptanceRubric=[criterion];p.evalSuite=[TestCaseSchema.parse({id:"fixed-html",title:"Fixed HTML",input:"Inspect the recorded file",expected:["Preserved"],criterionIds:[criterion.id],executionMode:mode})];p.hiddenEvalSuite=[];
-    const before=campaignScoringInputFingerprint(p);expect(campaignObservesLiveTarget(p)).toBe(false);
+    const before=campaignScoringInputFingerprint(p);expect(campaignObservesLiveTarget(p)).toBe(true);
     expect(campaignLiveObservationFresh(p,"2026-09-28T00:00:00.000Z",Date.parse("2026-10-28T00:00:00.000Z"))).toBe(true);
     expect(campaignScoringInputFingerprint({...p,sourceArtifacts:[{...p.sourceArtifacts[0]!,textContent:"<html>changed</html>"}]})).not.toBe(before);
     expect(campaignObservesLiveTarget({...p,targetConnection:{...p.targetConnection,adapter:"http"}})).toBe(true);
     expect(campaignObservesLiveTarget({...p,evalSuite:[...p.evalSuite,TestCaseSchema.parse({id:"other-live",title:"Live",input:"Remote state",expected:["Current"],executionMode:"external-runner"})]})).toBe(true);
     expect(campaignObservesLiveTarget({...p,sourceArtifacts:[{...p.sourceArtifacts[0]!,role:"reference"}]})).toBe(true);
+    for(const mutable of [{...p,targetConnection:{...p.targetConnection,adapter:"http" as const}},
+      {...p,evalSuite:[...p.evalSuite,TestCaseSchema.parse({id:"other-live",title:"Live",input:"Remote state",expected:["Current"],executionMode:"external-runner"})]},
+      {...p,sourceArtifacts:[{...p.sourceArtifacts[0]!,role:"reference" as const}]}])
+      expect(campaignLiveObservationFresh(mutable,"2026-09-28T00:00:00.000Z",Date.parse("2026-10-28T00:00:00.000Z"))).toBe(false);
   });
   it("pauses old scored rounds but allows an unscored first round", () => {
     const original = project();

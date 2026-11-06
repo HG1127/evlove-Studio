@@ -59,16 +59,17 @@ export function campaignScoringInputFingerprint(project: EvolveProject): string 
 export function campaignObservesLiveTarget(project: EvolveProject): boolean {
   return project.targetConnection.adapter === "http"
     || (project.targetConnection.adapter === "connector" && !project.targetConnection.connectorSnapshot)
-    || [...project.evalSuite, ...project.hiddenEvalSuite].some((testCase) =>
-      (testCase.executionMode === "external-runner" || testCase.executionMode === "visual-review")
-      // A sandboxed observation of fixed uploaded bytes is not a mutable remote Target.
-      &&!htmlNativeCaseSource(project,testCase));
+    || [...project.evalSuite, ...project.hiddenEvalSuite].some((testCase) => testCase.executionMode === "external-runner" || testCase.executionMode === "visual-review");
 }
 export const LIVE_TARGET_OBSERVATION_MAX_AGE_MS = 10 * 60_000;
 
 /** A same-round live observation is reusable only while its completed receipt is recent. */
 export function campaignLiveObservationFresh(project: EvolveProject, completedAt: string | undefined, nowMs: number): boolean {
   if (!campaignObservesLiveTarget(project)) return true;
+  // Freshness-only exception: fixed uploaded bytes retain all Champion and same-paper comparison gates.
+  if(project.targetConnection.adapter==="artifact"&&[...project.evalSuite,...project.hiddenEvalSuite]
+    .filter(test=>test.executionMode==="external-runner"||test.executionMode==="visual-review")
+    .every(test=>Boolean(htmlNativeCaseSource(project,test))))return true;
   const observedAt = Date.parse(completedAt ?? "");
   return Number.isFinite(observedAt) && nowMs >= observedAt && nowMs - observedAt < LIVE_TARGET_OBSERVATION_MAX_AGE_MS;
 }
