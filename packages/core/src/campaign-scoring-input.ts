@@ -1,6 +1,7 @@
 import type { EvaluationResult, EvolveProject } from "@evolution/contracts";
 import { fastHash } from "./stable-hash";
 import { originalUserGoalCriteria, USER_GOAL_SCOPE_POLICY } from "./user-goal-scope";
+import {htmlNativeCaseSource} from "./html-native-evidence";
 
 /** Score comparability depends on the user contract and original Target, never on the evolving Champion. */
 export function campaignScoringInputFingerprint(project: EvolveProject): string {
@@ -58,7 +59,10 @@ export function campaignScoringInputFingerprint(project: EvolveProject): string 
 export function campaignObservesLiveTarget(project: EvolveProject): boolean {
   return project.targetConnection.adapter === "http"
     || (project.targetConnection.adapter === "connector" && !project.targetConnection.connectorSnapshot)
-    || [...project.evalSuite, ...project.hiddenEvalSuite].some((testCase) => testCase.executionMode === "external-runner" || testCase.executionMode === "visual-review");
+    || [...project.evalSuite, ...project.hiddenEvalSuite].some((testCase) =>
+      (testCase.executionMode === "external-runner" || testCase.executionMode === "visual-review")
+      // A sandboxed observation of fixed uploaded bytes is not a mutable remote Target.
+      &&!htmlNativeCaseSource(project,testCase));
 }
 export const LIVE_TARGET_OBSERVATION_MAX_AGE_MS = 10 * 60_000;
 
