@@ -1,7 +1,7 @@
 // @vitest-environment node
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
 import {randomUUID} from "node:crypto";
-import {PAIRED_SOURCE_QUOTATION_POLICY,PAIRED_SOURCE_QUOTATION_TEMPLATE_POLICY,PAIRED_JSONL_TEMPLATE_PROTOCOL,PairedOrderObservationSchema,type PairedEvaluationAiResult,type PairedOrderObservation} from "@evolution/contracts";
+import {PAIRED_SOURCE_QUOTATION_POLICY,PAIRED_SOURCE_QUOTATION_TEMPLATE_POLICY,PAIRED_SOURCE_FRAGMENT_POLICY,PAIRED_JSONL_TEMPLATE_PROTOCOL,PAIRED_JSONL_SELECTION_PROTOCOL,PairedSourceFragmentModelInputSchema,PairedOrderObservationSchema,type PairedEvaluationAiResult,type PairedSelectionEvaluationAiResult,type PairedOrderObservation} from "@evolution/contracts";
 import {fastHash} from "@evolution/core";
 import {serverPairedJudgeRequest,pairedQuotationDocuments} from "@evolution/harness";
 import {pairedJudgeFixture,pairedJudgeRawEvaluation} from "@evolution/testkit";
@@ -43,7 +43,46 @@ function setup(change?:(response:PairedEvaluationAiResult)=>void){
  const ports={invoke,claim,routeFingerprint:async()=>"fixed-model-route",journal:{read:async()=>saved,save:async(o:PairedOrderObservation)=>{saved.push(PairedOrderObservationSchema.parse(o));}}};
  return {request,ports,saved,binding};
 }
+function selectionSetup(change?:(response:PairedSelectionEvaluationAiResult)=>void){
+ vi.stubEnv("EVOLUTION_AI_PAIRED_QUOTATION_TEMPLATE",PAIRED_SOURCE_QUOTATION_TEMPLATE_POLICY);vi.stubEnv("EVOLUTION_AI_PAIRED_SOURCE_FRAGMENTS",PAIRED_SOURCE_FRAGMENT_POLICY);
+ const x=setup(),invoke=vi.fn(async(raw:unknown):Promise<PairedSelectionEvaluationAiResult>=>{
+  const input=PairedSourceFragmentModelInputSchema.parse(raw);
+  const response:PairedSelectionEvaluationAiResult={schemaVersion:"paired-selection-evaluation-v1",requestFingerprint:input.requestFingerprint,versions:input.versions.map(v=>{
+   const ref=v.observations.documents.bodyObservationViews[0]!.bodyReference,doc=input.sourceFragments.documents.find(d=>d.sourceArtifactId===ref.sourceArtifactId&&d.sha256===ref.sha256)!;
+   const result=pairedJudgeRawEvaluation(doc.sha256===x.binding.originalSha256?90:97);
+   return {slot:v.slot,result:{...result,sourceQuotations:undefined,notes:["Mandatory control [[q:0]]"],sourceSelections:[{noteIndex:0,relation:"present",spanId:doc.fragments[0]!.id}]}};
+  })};change?.(response);
+  await observeServerAiResponseProvenance({schemaVersion:"ai-usage-request-v1",callId:randomUUID(),scope:{missionId:x.request.context.missionId,jobId:"synthetic-job",phase:"experiment"},route:{operation:"evaluate-paired",model:"synthetic",protocol:"chat-completions",routeFingerprint:"f".repeat(64)},attempt:1,granularity:"physical-http-attempt",startedAt:new Date().toISOString()},JSON.stringify({messages:[{role:"user",content:JSON.stringify(input)}]}),JSON.stringify(response),200);
+  return response;
+ });
+ return {...x,ports:{...x.ports,invoke}};
+}
 describe("prospective source quotation enforcement",()=>{
+ it("journals raw selections and manifest before deriving quotes, and exactly replays without another request",async()=>{
+  const x=selectionSetup(),value=await runServerPairedEvidenceJudge(x.request,x.ports);
+  expect(x.saved).toHaveLength(2);expect(x.saved.every(o=>o.schemaVersion==="paired-order-observation-v3-source-selections"&&o.response.schemaVersion==="paired-selection-evaluation-v1")).toBe(true);
+  expect(x.saved[0]!.response.versions[0]!.result.sourceQuotations).toBeUndefined();expect(value.sourceQuotations![0]!.quote).toBe("Updated measured body");
+  expect(value.pairedComparison!.receipt.samples[0]!.sourceQuotationRendering!.sourceSelection!.manifestSha256).toMatch(/^[a-f0-9]{64}$/);
+  expect(await runServerPairedEvidenceJudge(x.request,x.ports)).toEqual(value);expect(x.ports.invoke).toHaveBeenCalledTimes(2);
+  const stored=x.saved[0]!;if(stored.schemaVersion!=="paired-order-observation-v3-source-selections")throw Error("Wrong test raw version");stored.sourceFragmentManifestSha256="c".repeat(64);
+  await expect(runServerPairedEvidenceJudge(x.request,x.ports)).rejects.toThrow("manifest");expect(x.ports.invoke).toHaveBeenCalledTimes(2);
+ });
+ it("preserves an invented selection before stopping without completing the second order",async()=>{
+  const x=selectionSetup(value=>{value.versions[1]!.result.sourceSelections[0]!.spanId="q"+"f".repeat(24);});
+  await expect(runServerPairedEvidenceJudge(x.request,x.ports)).rejects.toMatchObject({code:"AI_SOURCE_QUOTATION_UNSUPPORTED",issues:expect.arrayContaining([{code:"unknown-span",noteIndex:0,slot:"B"}])});
+  expect(x.saved).toHaveLength(1);expect(x.ports.invoke).toHaveBeenCalledOnce();
+  await expect(runServerPairedEvidenceJudge(x.request,x.ports)).rejects.toThrow();expect(x.ports.invoke).toHaveBeenCalledOnce();
+ });
+ it.each(["FAIL","REVIEW"] as const)("keeps the raw %s verdict after span resolution",async safety=>{
+  const x=selectionSetup(value=>{for(const v of value.versions)v.result.safety=safety;});expect((await runServerPairedEvidenceJudge(x.request,x.ports)).safety).toBe(safety);
+ });
+ it("requires its own header and raw-selection grammar; literal quotes cannot substitute for selections",async()=>{
+  const x=selectionSetup();await runServerPairedEvidenceJudge(x.request,x.ports);
+  const payload=x.ports.invoke.mock.calls[0]![0],c=serverAiPairedContract(payload),output=serverPairedJsonlOutput(payload,c.parser,c.instruction),raw=x.saved[0]!.response;
+  const records=[{kind:"header",protocol:PAIRED_JSONL_SELECTION_PROTOCOL,requestFingerprint:raw.requestFingerprint},...raw.versions.flatMap(v=>{const {criteria,...summary}=v.result;return [{kind:"summary",slot:v.slot,value:summary},...criteria.map(row=>({kind:"criterion",slot:v.slot,value:row}))];}),{kind:"end",requestFingerprint:raw.requestFingerprint,criterionRecords:3}];
+  expect(output.parse(records.map(r=>JSON.stringify(r)).join("\n"))).toEqual(raw);expect(output.system).toContain("sourceSelections");
+  Object.assign(records[0]!,{protocol:PAIRED_JSONL_TEMPLATE_PROTOCOL});expect(()=>output.parse(records.map(r=>JSON.stringify(r)).join("\n"))).toThrow();
+ });
  it.each([PAIRED_SOURCE_QUOTATION_TEMPLATE_POLICY,"invalid"])("refuses an incomplete template configuration before any gateway request (%s)",async policy=>{
   const x=setup();await runServerPairedEvidenceJudge(x.request,x.ports);const payload=x.ports.invoke.mock.calls[0]![0];
   vi.stubEnv("EVOLUTION_AI_PAIRED_QUOTATION_TEMPLATE",policy);vi.stubEnv("EVOLUTION_AI_PAIRED_SOURCE_QUOTATIONS","");vi.stubEnv("EVOLUTION_AI_PAIRED_TRANSPORT","json");

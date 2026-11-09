@@ -40,3 +40,4 @@ export * from "./paired-order-recovery";
 export * from "./confirmation-admission";
 export * from "./measured-card-paragraph-changes";
 export * from "./paired-quotation-documents";
+export * from "./paired-source-fragment-input";

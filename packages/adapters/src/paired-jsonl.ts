@@ -1,14 +1,14 @@
-import {PairedEvaluationAiResultSchema,PairedJsonlRecordSchema,PairedJsonlReferenceRecordSchema,PairedJsonlEvidenceRecordSchema,PairedJsonlQuotationRecordSchema,PairedJsonlQuotationTemplateRecordSchema,PairedJsonlScopeSchema,type PairedEvaluationAiResult} from "@evolution/contracts";
+import {PairedEvaluationAiResultSchema,PairedSelectionEvaluationAiResultSchema,PairedJsonlRecordSchema,PairedJsonlReferenceRecordSchema,PairedJsonlEvidenceRecordSchema,PairedJsonlQuotationRecordSchema,PairedJsonlQuotationTemplateRecordSchema,PairedJsonlSelectionRecordSchema,PairedJsonlScopeSchema,type PairedJudgeRawResponse} from "@evolution/contracts";
 
 /** Strict whole-response parse. No repairs, inferred rows, filtering, or partial acceptance. */
-export function parsePairedJsonl(text:string,rawScope:unknown):PairedEvaluationAiResult{
+export function parsePairedJsonl(text:string,rawScope:unknown):PairedJudgeRawResponse{
  const scope=PairedJsonlScopeSchema.parse(rawScope);
  const invalid=()=>Object.assign(new Error("Paired JSONL output is invalid or differs from its issued scope"),{code:"AI_OUTPUT_INVALID_JSONL"});
  try{
   if(text.length>4_000_000||text.startsWith("\uFEFF"))throw invalid();
   const lines=text.split(/\r?\n/);if(lines.at(-1)==="")lines.pop();
   if(lines.length>101||lines.some(line=>!line.trim()))throw invalid();
-  const recordSchema=scope.sourceQuotationTemplatePolicy?PairedJsonlQuotationTemplateRecordSchema:scope.sourceQuotationPolicy?PairedJsonlQuotationRecordSchema:scope.evidenceStatusPolicy?PairedJsonlEvidenceRecordSchema:scope.relativeCriterionIds?PairedJsonlReferenceRecordSchema:PairedJsonlRecordSchema;
+  const recordSchema=scope.sourceFragmentPolicy?PairedJsonlSelectionRecordSchema:scope.sourceQuotationTemplatePolicy?PairedJsonlQuotationTemplateRecordSchema:scope.sourceQuotationPolicy?PairedJsonlQuotationRecordSchema:scope.evidenceStatusPolicy?PairedJsonlEvidenceRecordSchema:scope.relativeCriterionIds?PairedJsonlReferenceRecordSchema:PairedJsonlRecordSchema;
   const records=lines.map(line=>recordSchema.parse(JSON.parse(line))),header=records[0],end=records.at(-1);
   if(header?.kind!=="header"||end?.kind!=="end"||header.requestFingerprint!==scope.requestFingerprint||end.requestFingerprint!==scope.requestFingerprint
    ||records.filter(r=>r.kind==="header").length!==1||records.filter(r=>r.kind==="end").length!==1)throw invalid();
@@ -24,6 +24,6 @@ export function parsePairedJsonl(text:string,rawScope:unknown):PairedEvaluationA
    }
    return {slot:s.slot,result:{...s.value,criteria}};
   });
-  return PairedEvaluationAiResultSchema.parse({schemaVersion:"paired-evaluation-v1",requestFingerprint:scope.requestFingerprint,versions});
+  return scope.sourceFragmentPolicy?PairedSelectionEvaluationAiResultSchema.parse({schemaVersion:"paired-selection-evaluation-v1",requestFingerprint:scope.requestFingerprint,versions}):PairedEvaluationAiResultSchema.parse({schemaVersion:"paired-evaluation-v1",requestFingerprint:scope.requestFingerprint,versions});
  }catch{throw invalid();}
 }

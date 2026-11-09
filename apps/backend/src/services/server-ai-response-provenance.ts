@@ -10,7 +10,7 @@ function pairedFingerprint(body:string){
     const user=Array.isArray(messages)?messages.findLast(m=>m.role==="user"):undefined;
     const text=typeof user?.content==="string"?user.content:Array.isArray(user?.content)?user.content.filter((p:{type:string;text?:string})=>["text","input_text"].includes(p.type)).map((p:{text?:string})=>p.text??"").join(""):undefined;
     const payload=typeof text==="string"?JSON.parse(text):undefined;
-    return payload?.schemaVersion==="paired-judge-input-v1"&&typeof payload.requestFingerprint==="string"?payload.requestFingerprint:undefined;
+    return ["paired-judge-input-v1","paired-judge-input-v2-source-fragments"].includes(payload?.schemaVersion)&&typeof payload.requestFingerprint==="string"?payload.requestFingerprint:undefined;
   }catch{return undefined;}
 }
 

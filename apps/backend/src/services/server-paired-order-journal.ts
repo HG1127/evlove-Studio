@@ -1,5 +1,6 @@
 import {createHash} from "node:crypto";
-import {inspectPairedOrderObservation} from "@evolution/harness";
+import {inspectPairedOrderObservation,pairedQuotationDocuments} from "@evolution/harness";
+import {buildPairedSourceFragments} from "@evolution/core";
 import {createEvolutionEvent,PairedOrderObservationSchema,type AiUsageScope,type EvolutionEvent,
  type PairedJudgeRequest,type PairedOrderJournalPort,type AiUsageRoute,type PairedOrderObservation} from "@evolution/contracts";
 import {currentServerAiUsageScope,serverAiUsageRoute} from "./server-ai-usage";
@@ -16,6 +17,11 @@ function trusted(request:PairedJudgeRequest,ports:Ports){
  if(!s?.missionId||!s.jobId||s.missionId!==c.missionId||s.candidateId&&s.candidateId!==c.candidateId)
   throw Error("Paired order journal requires trusted matching Mission/Job scope");
  return s;
+}
+function sourceFragmentManifest(request:PairedJudgeRequest){
+ const documents=(["original","candidate"] as const).flatMap(arm=>pairedQuotationDocuments(request.versions[arm].documents,
+  request.context.bindings.map(b=>({sourceArtifactId:b.sourceArtifactId,sha256:arm==="original"?b.originalSha256:b.candidateSha256}))));
+ return buildPairedSourceFragments(documents,text=>createHash("sha256").update(text).digest("hex")).sha256;
 }
 export function createServerPairedOrderJournal(ports:Ports):PairedOrderJournalPort{
  let request:PairedJudgeRequest|undefined,route:string|undefined;
@@ -41,9 +47,10 @@ export function createServerPairedOrderJournal(ports:Ports):PairedOrderJournalPo
     throw Error("Persisted paired orders do not bind the original occupied claim");
    return stored.map(event=>{
     if(event.source!==source||event.type!=="ActionCompleted"||event.jobId!==ports.scope!.jobId
-      ||event.missionId!==issued.context.missionId||event.payload.measurementKind!=="paired-order-observation-v2")
+      ||event.missionId!==issued.context.missionId||!["paired-order-observation-v2","paired-order-observation-v3-source-selections"].includes(String(event.payload.measurementKind)))
      throw Error("Paired order Event identity differs");
     const observation=PairedOrderObservationSchema.parse(event.payload.observation);
+    if(event.payload.measurementKind!==observation.schemaVersion)throw Error("Paired raw observation version differs");
     checkPhysical(observation);
     if(event.id!==id(scopeSha,observation.order))throw Error("Paired order Event index differs");
     return observation;
@@ -51,14 +58,15 @@ export function createServerPairedOrderJournal(ports:Ports):PairedOrderJournalPo
   },
   async save(raw){
    if(!request||!route||!identity)throw Error("Read canonical paired journal before saving");
-   const scope=trusted(request,ports),observation=inspectPairedOrderObservation(raw,request,route,value=>createHash("sha256").update(JSON.stringify(value)).digest("hex"));
+   const manifest=raw.schemaVersion==="paired-order-observation-v3-source-selections"?sourceFragmentManifest(request):undefined;
+   const scope=trusted(request,ports),observation=inspectPairedOrderObservation(raw,request,route,value=>createHash("sha256").update(JSON.stringify(value)).digest("hex"),manifest);
    checkPhysical(observation);
    const scopeSha=identity.scopeSha256;
    const before=await ports.list(scope.missionId!,1000),claim=before.find(row=>row.id==="evt-paired-judge-claim-"+scopeSha);
    if(before.length>=1000||!claim||claim.source!=="server-paired-evidence-judge"||claim.type!=="ActionPlanned"||claim.jobId!==scope.jobId||claim.missionId!==scope.missionId||claim.payload.inputFingerprint!==request.context.inputFingerprint)throw Error("Paired order needs its original occupied claim");
    const event=createEvolutionEvent({id:id(scopeSha,observation.order),missionId:scope.missionId,jobId:scope.jobId,
     type:"ActionCompleted",source,at:ports.now?.()??new Date().toISOString(),
-    payload:{measurementKind:"paired-order-observation-v2",observation}});
+    payload:{measurementKind:observation.schemaVersion,observation}});
    // Unknown append stays unknown. Canonical replay may discover a committed result later; it never resends the model.
    await ports.append(event);
    const rows=await ports.list(scope.missionId!,1000);

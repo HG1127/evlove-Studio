@@ -1,14 +1,16 @@
 import {z} from "zod";
-import {AcceptanceCriterionSchema,PAIRED_CRITERION_EVIDENCE_POLICY,PairedJudgeMetricDefinitionSchema,PairedEvaluationAiResultSchema,pairedEvaluationJsonSchema} from "@evolution/contracts";
+import {AcceptanceCriterionSchema,PAIRED_CRITERION_EVIDENCE_POLICY,PairedJudgeMetricDefinitionSchema,PairedEvaluationAiResultSchema,PairedSelectionEvaluationAiResultSchema,pairedEvaluationJsonSchema,type PairedJudgeRawResponse} from "@evolution/contracts";
+import {restorePairedSourceFragmentModelInput} from "@evolution/harness";
+import {createHash} from "node:crypto";
 import {zeroOutcomeReferenceCriterionIds} from "@evolution/core";
 import {serverIssuedPairedJsonSchema} from "./server-paired-json-schema";
-import {serverAiPairedOutcomeReferenceMode,serverAiPairedSafetyPolicy,serverAiPairedSourceQuotationPolicy,serverAiPairedQuotationTemplatePolicy} from "./server-ai-output-policy";
-import {PAIRED_SOURCE_QUOTATION_INSTRUCTION,PAIRED_SOURCE_QUOTATION_TEMPLATE_INSTRUCTION} from "./server-paired-source-instruction";
+import {serverAiPairedOutcomeReferenceMode,serverAiPairedSafetyPolicy,serverAiPairedSourceQuotationPolicy,serverAiPairedQuotationTemplatePolicy,serverAiPairedSourceFragmentPolicy} from "./server-ai-output-policy";
+import {PAIRED_SOURCE_QUOTATION_INSTRUCTION,PAIRED_SOURCE_QUOTATION_TEMPLATE_INSTRUCTION,PAIRED_SOURCE_SELECTION_INSTRUCTION} from "./server-paired-source-instruction";
 import {PAIRED_SAFETY_EVIDENCE_INSTRUCTION,PAIRED_SAFETY_RELATIVE_UNKNOWN_INSTRUCTION} from "./server-paired-safety-instruction";
 
 const id=z.string().min(1),unique=(ids:string[])=>new Set(ids).size===ids.length;
 const issued=z.object({
-  schemaVersion:z.literal("paired-judge-input-v1"),requestFingerprint:id,
+  schemaVersion:z.enum(["paired-judge-input-v1","paired-judge-input-v2-source-fragments"]),requestFingerprint:id,
   issuedCriterionCaseBindings:z.array(z.object({criterionId:id,testCaseIds:z.array(id).min(1)}).strict()).min(1).max(32),
   acceptanceRubric:z.array(z.object({id}).passthrough()).min(1).max(32),
   testCases:z.array(z.object({id,criterionIds:z.array(id).min(1)}).passthrough()).min(1).max(100),
@@ -28,13 +30,16 @@ export function serverPairedOutcomeReferenceCriterionIds(payload:unknown){
 /** Only inadmissible identifiers enter the existing single format correction; valid verdicts remain data. */
 export function serverAiPairedContract(payload:unknown){
   const templatePolicy=serverAiPairedQuotationTemplatePolicy();
+  const fragmentPolicy=serverAiPairedSourceFragmentPolicy();
+  if(fragmentPolicy)restorePairedSourceFragmentModelInput(payload,text=>createHash("sha256").update(text).digest("hex"));
+  else if(payload&&typeof payload==="object"&&"schemaVersion" in payload&&payload.schemaVersion==="paired-judge-input-v2-source-fragments")throw Error("Source fragment input requires its explicit selection policy");
   const referenceMode=serverAiPairedOutcomeReferenceMode();
   const safetyPolicy=serverAiPairedSafetyPolicy();
   const sourceQuotationPolicy=serverAiPairedSourceQuotationPolicy();
   const referenceIds=referenceMode?serverPairedOutcomeReferenceCriterionIds(payload):[];
   let referenceInstruction=referenceMode?" Criterion evidence qualification policy "+PAIRED_CRITERION_EVIDENCE_POLICY+" applies to EVERY issued criterion in EVERY slot, including absolute, structural and protected criteria. Include evidenceStatus=sufficient only when the supplied evidence supports that particular conclusion (including a confirmed failure or regression); sufficient does not mean passing or safe. Missing, conflicting or incomparable proof requires evidenceStatus=unknown and specific gaps. This per-criterion unknown can coexist with a different known Safety FAIL; never erase that FAIL or treat a numeric placeholder as a verified failure. Missing evidenceStatus is unqualified, not proof of failure or success. Keep all original requirements, minima and protected constraints unchanged.":"";
   if(payload&&typeof payload==="object"&&"metrics" in payload)PairedJudgeMetricDefinitionSchema.array().max(100).parse(payload.metrics);
-  let parser=PairedEvaluationAiResultSchema;
+  let parser:z.ZodType<PairedJudgeRawResponse>=fragmentPolicy?PairedSelectionEvaluationAiResultSchema:PairedEvaluationAiResultSchema;
   let schema:{name:string;schema:Record<string,unknown>}=pairedEvaluationJsonSchema;
   if(payload&&typeof payload==="object"&&("schemaVersion" in payload||"issuedCriterionCaseBindings" in payload)){
     const p=issued.parse(payload),criterionIds=p.acceptanceRubric.map(c=>c.id),caseIds=p.testCases.map(t=>t.id);
@@ -50,7 +55,7 @@ export function serverAiPairedContract(payload:unknown){
       throw Error("Issued paired criterion/case bindings differ from the request contract");
     const expected=new Map(p.issuedCriterionCaseBindings.map(b=>[b.criterionId,b.testCaseIds]));
     schema=serverIssuedPairedJsonSchema(p.requestFingerprint,p.issuedCriterionCaseBindings,caseIds,Boolean(referenceMode));
-    parser=PairedEvaluationAiResultSchema.superRefine((value,ctx)=>{
+    parser=parser.superRefine((value,ctx)=>{
       if(value.requestFingerprint!==p.requestFingerprint)ctx.addIssue({code:"custom",path:["requestFingerprint"],message:`Echo the issued requestFingerprint exactly: ${p.requestFingerprint}`});
       value.versions.forEach((v,index)=>{
         const path=["versions",index,"result"];
@@ -70,5 +75,5 @@ export function serverAiPairedContract(payload:unknown){
     }));
   });
   const passInstruction=" A criterion score and its pass flag are both authoritative requirements; neither replaces the other. Evaluate pass only against that issued criterion, its unchanged minimum and its own evidence. Do not import whole-Mission release, deployment or business-outcome gates into a criterion verdict unless that issued criterion explicitly requires them. When Safety is PASS, criterion evidence is sufficient and its score meets the issued minimum, a pass=false verdict must identify a specific still-unmet issued requirement in that row's gaps, tied to the issued evidence/cases. Do not output a high score, affirmative evidence, empty gaps and an unexplained rejection. If the criterion-specific requirement is met, report the corresponding positive verdict; if evidence is missing, retain unknown evidence and the specific gaps rather than inventing a pass or failure. Known Safety FAIL and all original minima remain unchanged.";
-  return {schema,parser,instruction:instruction+referenceInstruction+passInstruction+(safetyPolicy?PAIRED_SAFETY_EVIDENCE_INSTRUCTION:"")+(sourceQuotationPolicy?(templatePolicy?PAIRED_SOURCE_QUOTATION_TEMPLATE_INSTRUCTION:PAIRED_SOURCE_QUOTATION_INSTRUCTION):"")};
+  return {schema,parser,instruction:instruction+referenceInstruction+passInstruction+(safetyPolicy?PAIRED_SAFETY_EVIDENCE_INSTRUCTION:"")+(sourceQuotationPolicy?(fragmentPolicy?PAIRED_SOURCE_SELECTION_INSTRUCTION:templatePolicy?PAIRED_SOURCE_QUOTATION_TEMPLATE_INSTRUCTION:PAIRED_SOURCE_QUOTATION_INSTRUCTION):"")};
 }

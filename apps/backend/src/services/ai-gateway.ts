@@ -4,8 +4,8 @@ import { createHash } from "node:crypto";
 import {serverAiRepairContract} from "./server-ai-repair-contract";
 import {serverAiBuildContract} from "./server-ai-build-contract";
 import {serverAiFormatCorrectionAllowed,serverAiPairedJsonlEnabled,serverAiPairedOutcomeReferenceMode,SERVER_PAIRED_OUTCOME_REFERENCE_VERSION,serverAiPairedSafetyPolicy,SERVER_PAIRED_SAFETY_POLICY_VERSION,serverAiPairedSourceQuotationPolicy,SERVER_PAIRED_SOURCE_QUOTATION_VERSION} from "./server-ai-output-policy";
-import {PAIRED_SOURCE_QUOTATION_INSTRUCTION,PAIRED_SOURCE_QUOTATION_TEMPLATE_INSTRUCTION} from "./server-paired-source-instruction";
-import {serverAiPairedQuotationTemplatePolicy} from "./server-ai-output-policy";
+import {PAIRED_SOURCE_QUOTATION_INSTRUCTION,PAIRED_SOURCE_QUOTATION_TEMPLATE_INSTRUCTION,PAIRED_SOURCE_SELECTION_INSTRUCTION} from "./server-paired-source-instruction";
+import {serverAiPairedQuotationTemplatePolicy,serverAiPairedSourceFragmentPolicy} from "./server-ai-output-policy";
 import {serverPairedJsonlOutput,SERVER_PAIRED_JSONL_GENERATION_VERSION,SERVER_PAIRED_JSONL_FINAL_TEXT_VERSION} from "./server-paired-jsonl-output";
 import {ServerControlExecutionStoppedError,serverControlExecutionSignal} from "./server-control-execution";
 import {serverAiRequestPolicy} from "./server-ai-request-timeout";
@@ -16,6 +16,7 @@ import {
   LessonDistillationContextSchema,
   PAIRED_JSONL_PROTOCOL,
   PAIRED_JSONL_TEMPLATE_PROTOCOL,
+  PAIRED_JSONL_SELECTION_PROTOCOL,
   PAIRED_SOURCE_QUOTATION_RENDERER_VERSION,
   PAIRED_CRITERION_EVIDENCE_POLICY,
   ArtifactAcceptanceAiResultSchema,
@@ -50,7 +51,7 @@ import {
   type DiagnosisAiResult,
   type EvalSuiteAiResult,
   type EvaluateAiResult,
-  type PairedEvaluationAiResult,
+  type PairedJudgeRawResponse,
   type ExecuteArtifactAiResult,
   type ExecuteArtifactBatchAiResult,
   type GapAdviceAiResult,
@@ -92,10 +93,12 @@ export async function serverAiScoringRouteFingerprint(): Promise<string | undefi
   const pairedSafetyPolicy=serverAiPairedSafetyPolicy();
   const sourceQuotationPolicy=serverAiPairedSourceQuotationPolicy();
   const quotationTemplatePolicy=serverAiPairedQuotationTemplatePolicy();
+  const sourceFragmentPolicy=serverAiPairedSourceFragmentPolicy();
   return createHash("sha256").update(JSON.stringify({ route, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION,measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION,pairedGenerationSchemaVersion:SERVER_PAIRED_GENERATION_SCHEMA_VERSION,pairedInputVersion:SERVER_PAIRED_INPUT_VERSION,
     ...(outcomeReference?{pairedOutcomeReference:outcomeReference,pairedOutcomeReferenceVersion:SERVER_PAIRED_OUTCOME_REFERENCE_VERSION,pairedCriterionEvidencePolicy:PAIRED_CRITERION_EVIDENCE_POLICY}:{}),
-    ...(serverAiPairedJsonlEnabled()?{pairedOutputTransport:quotationTemplatePolicy?PAIRED_JSONL_TEMPLATE_PROTOCOL:PAIRED_JSONL_PROTOCOL,pairedOutputGenerationVersion:SERVER_PAIRED_JSONL_GENERATION_VERSION,pairedOutputFinalTextVersion:SERVER_PAIRED_JSONL_FINAL_TEXT_VERSION}:{}),
+    ...(serverAiPairedJsonlEnabled()?{pairedOutputTransport:sourceFragmentPolicy?PAIRED_JSONL_SELECTION_PROTOCOL:quotationTemplatePolicy?PAIRED_JSONL_TEMPLATE_PROTOCOL:PAIRED_JSONL_PROTOCOL,pairedOutputGenerationVersion:SERVER_PAIRED_JSONL_GENERATION_VERSION,pairedOutputFinalTextVersion:SERVER_PAIRED_JSONL_FINAL_TEXT_VERSION}:{}),
     ...(quotationTemplatePolicy?{quotationTemplatePolicy,quotationRendererVersion:PAIRED_SOURCE_QUOTATION_RENDERER_VERSION,quotationTemplateInstructionSha256:createHash("sha256").update(PAIRED_SOURCE_QUOTATION_TEMPLATE_INSTRUCTION).digest("hex")}:{}),
+    ...(sourceFragmentPolicy?{sourceFragmentPolicy,sourceFragmentInputVersion:"paired-judge-input-v2-source-fragments",sourceFragmentInstructionSha256:createHash("sha256").update(PAIRED_SOURCE_SELECTION_INSTRUCTION).digest("hex")}:{}),
     ...(pairedOutputBudget?{pairedOutputBudget}:{}),
     ...(sourceQuotationPolicy?{sourceQuotationPolicy,sourceQuotationVersion:SERVER_PAIRED_SOURCE_QUOTATION_VERSION,
       sourceQuotationInstructionSha256:createHash("sha256").update(PAIRED_SOURCE_QUOTATION_INSTRUCTION).digest("hex")} :{}),
@@ -408,7 +411,7 @@ export function runServerAi(operation:"evaluate-population",payload:unknown):Pro
 export function runServerAi(operation:"artifact-acceptance",payload:unknown):Promise<ArtifactAcceptanceAiResult>;
 export function runServerAi(operation:"materialize",payload:unknown):Promise<MaterializeAiResult>;
 export function runServerAi(operation:"evaluate",payload:unknown):Promise<EvaluateAiResult>;
-export function runServerAi(operation:"evaluate-paired",payload:unknown):Promise<PairedEvaluationAiResult>;
+export function runServerAi(operation:"evaluate-paired",payload:unknown):Promise<PairedJudgeRawResponse>;
 export function runServerAi(operation:"problem-analysis",payload:unknown):Promise<ProblemAnalysisAiResult>;
 export function runServerAi(operation:"diagnose",payload:unknown):Promise<DiagnosisAiResult>;
 export function runServerAi(operation:"plan",payload:unknown):Promise<PlanAiResult>;

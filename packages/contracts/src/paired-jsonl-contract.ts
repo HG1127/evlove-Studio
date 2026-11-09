@@ -1,9 +1,11 @@
 import {z} from "zod";
 import {PAIRED_SOURCE_QUOTATION_POLICY,PAIRED_SOURCE_QUOTATION_TEMPLATE_POLICY,PairedSourceQuotationsSchema} from "./paired-source-quotation-contract";
 import {PairedRelativeEvidenceStatusSchema,CriterionEvidenceStatusSchema,PAIRED_CRITERION_EVIDENCE_POLICY} from "./paired-judge-contract";
+import {PAIRED_SOURCE_FRAGMENT_POLICY,SourceQuotationSelectionsSchema} from "./paired-source-fragment-contract";
 
 export const PAIRED_JSONL_PROTOCOL="paired-evaluation-jsonl-v1" as const;
 export const PAIRED_JSONL_TEMPLATE_PROTOCOL="paired-evaluation-jsonl-citation-template-v1" as const;
+export const PAIRED_JSONL_SELECTION_PROTOCOL="paired-evaluation-jsonl-source-selection-v1" as const;
 const id=z.string().min(1).max(240),slot=z.enum(["A","B","C"]);
 const score=z.number().int().min(0).max(100),strings=z.array(z.string());
 const ids=z.array(id).min(1).max(100).refine(v=>new Set(v).size===v.length);
@@ -13,10 +15,12 @@ export const PairedJsonlScopeSchema=z.object({requestFingerprint:id,
  evidenceStatusPolicy:z.literal(PAIRED_CRITERION_EVIDENCE_POLICY).optional(),
  sourceQuotationPolicy:z.literal(PAIRED_SOURCE_QUOTATION_POLICY).optional(),
  sourceQuotationTemplatePolicy:z.literal(PAIRED_SOURCE_QUOTATION_TEMPLATE_POLICY).optional(),
+ sourceFragmentPolicy:z.literal(PAIRED_SOURCE_FRAGMENT_POLICY).optional(),
 }).strict().refine(v=>new Set(v.bindings.map(b=>b.criterionId)).size===v.bindings.length)
  .refine(v=>v.relativeCriterionIds?.every(id=>v.bindings.some(b=>b.criterionId===id))??true)
  .refine(v=>!v.sourceQuotationPolicy||v.evidenceStatusPolicy===PAIRED_CRITERION_EVIDENCE_POLICY,"Source quotations require explicit criterion evidence scope")
- .refine(v=>!v.sourceQuotationTemplatePolicy||Boolean(v.sourceQuotationPolicy),"Quotation templates require source quotation scope");
+ .refine(v=>!v.sourceQuotationTemplatePolicy||Boolean(v.sourceQuotationPolicy),"Quotation templates require source quotation scope")
+ .refine(v=>!v.sourceFragmentPolicy||Boolean(v.sourceQuotationTemplatePolicy),"Source selections require explicit note templates");
 const summary=z.object({accuracy:score,evidence:score,riskCoverage:score,completeness:score,
  safety:z.enum(["PASS","REVIEW","FAIL"]),notes:strings,failures:strings,
  cases:z.array(z.object({testCaseId:id,accuracy:score,evidence:score,completeness:score,reason:z.string()}).strict()).max(100),
@@ -58,5 +62,10 @@ export const PairedJsonlQuotationGenerationRecordSchema=z.discriminatedUnion("ki
 export const PairedJsonlQuotationTemplateRecordSchema=z.discriminatedUnion("kind",[
  z.object({kind:z.literal("header"),protocol:z.literal(PAIRED_JSONL_TEMPLATE_PROTOCOL),requestFingerprint:id}).strict(),
  PairedJsonlQuotationGenerationRecordSchema.options[1],
+ PairedJsonlEvidenceRecordSchema.options[2],PairedJsonlRecordSchema.options[3],
+]);
+export const PairedJsonlSelectionRecordSchema=z.discriminatedUnion("kind",[
+ z.object({kind:z.literal("header"),protocol:z.literal(PAIRED_JSONL_SELECTION_PROTOCOL),requestFingerprint:id}).strict(),
+ z.object({kind:z.literal("summary"),slot,value:summary.extend({sourceSelections:SourceQuotationSelectionsSchema})}).strict(),
  PairedJsonlEvidenceRecordSchema.options[2],PairedJsonlRecordSchema.options[3],
 ]);

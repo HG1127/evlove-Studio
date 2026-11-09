@@ -2,10 +2,11 @@ import {PairedOrderObservationSchema,type PairedJudgeRequest} from "@evolution/c
 import {fastHash} from "@evolution/core";
 const same=(a:string[],b:string[])=>a.length===b.length&&new Set(a).size===a.length&&a.every(id=>b.includes(id));
 /** Validate stored model evidence before reuse; an occupied unknown attempt is never made fresh. */
-export function inspectPairedOrderObservation(raw:unknown,request:PairedJudgeRequest,route:string,sha256:(value:unknown)=>string){
+export function inspectPairedOrderObservation(raw:unknown,request:PairedJudgeRequest,route:string,sha256:(value:unknown)=>string,sourceFragmentManifestSha256?:string){
  const observation=PairedOrderObservationSchema.parse(raw),value=observation.response;
  if(fastHash(observation.context)!==fastHash(request.context)||observation.scoringRouteFingerprint!==route
    ||observation.resultSha256!==sha256(value))throw Error("Persisted paired order request/model/file/paper/hash differs");
+ if(observation.schemaVersion==="paired-order-observation-v3-source-selections"&&(!sourceFragmentManifestSha256||observation.sourceFragmentManifestSha256!==sourceFragmentManifestSha256))throw Error("Persisted source selection manifest or policy differs");
  for(const version of value.versions){
   if(!same(version.result.criteria.map(c=>c.criterionId),request.context.criterionIds)
     ||version.result.cases.some(c=>!request.context.testCaseIds.includes(c.testCaseId))
@@ -14,8 +15,8 @@ export function inspectPairedOrderObservation(raw:unknown,request:PairedJudgeReq
  }
  return observation;
 }
-export function recoverPairedOrderObservations(raw:unknown[],request:PairedJudgeRequest,route:string,sha256:(value:unknown)=>string){
- const observations=raw.map(row=>inspectPairedOrderObservation(row,request,route,sha256));
+export function recoverPairedOrderObservations(raw:unknown[],request:PairedJudgeRequest,route:string,sha256:(value:unknown)=>string,sourceFragmentManifestSha256?:string){
+ const observations=raw.map(row=>inspectPairedOrderObservation(row,request,route,sha256,sourceFragmentManifestSha256));
  if(observations.length>2||new Set(observations.map(o=>o.order)).size!==observations.length)
   throw Error("Persisted paired order identities are duplicated");
  const calls=observations.flatMap(o=>o.responseProvenance.map(p=>p.request.callId));

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {PairedAggregatedSourceQuotationsSchema} from "./paired-source-quotation-contract";
+import {SourceQuotationSelectionsSchema} from "./paired-source-fragment-contract";
 import {PairedJudgeContextSchema,PairedJudgeFileObservationSchema,PairedRelativeEvidenceStatusSchema,CriterionEvidenceStatusSchema,type PairedJudgeReceipt} from "./paired-judge-contract";
 import {
   AcceptanceCriterionSchema,
@@ -375,6 +376,18 @@ export const PairedEvaluationAiResultSchema=z.object({
   }
 });
 export type PairedEvaluationAiResult=z.infer<typeof PairedEvaluationAiResultSchema>;
+/** New raw DTO: model selections are retained before any runtime quote derivation. */
+export const PairedSelectionEvaluationAiResultSchema=z.object({
+  schemaVersion:z.literal("paired-selection-evaluation-v1"),requestFingerprint:z.string().min(1).max(200),
+  versions:z.array(z.object({slot:z.enum(["A","B","C"]),result:EvaluationWithIdentitiesSchema.safeExtend({
+    sourceQuotations:z.never().optional(),sourceSelections:SourceQuotationSelectionsSchema,
+  })}).strict()).length(3),
+}).strict().superRefine((value,ctx)=>{
+  if(new Set(value.versions.map(v=>v.slot)).size!==3)ctx.addIssue({code:"custom",path:["versions"],message:"All three unique slots are required"});
+  for(const [i,v] of value.versions.entries())if([v.result.accuracy,v.result.evidence,v.result.riskCoverage,v.result.completeness,...v.result.criteria.map(c=>c.score)].some(n=>!Number.isInteger(n)||n<0||n>100))ctx.addIssue({code:"custom",path:["versions",i],message:"Paired scores must be integer percentages"});
+});
+export type PairedSelectionEvaluationAiResult=z.infer<typeof PairedSelectionEvaluationAiResultSchema>;
+export type PairedJudgeRawResponse=PairedEvaluationAiResult|PairedSelectionEvaluationAiResult;
 /** Additional comparison data is added by the runtime after validating both model replies. */
 export type ServerEvidenceJudgeResult=EvaluateAiResult&{pairedComparison?:{original:EvaluateAiResult;receipt:PairedJudgeReceipt}};
 const pairedPacket=z.object({documents:z.json(),runs:z.array(z.json()).min(1).max(100),

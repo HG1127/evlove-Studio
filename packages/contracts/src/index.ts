@@ -56,4 +56,5 @@ export * from "./html-card-paragraph-evidence-contract";
 export * from "./mission-read-stream-contract";
 export * from "./mission-catalog-contract";
 export * from "./paired-source-quotation-contract";
+export * from "./paired-source-fragment-contract";
 export * from "./paired-reassessment-contract";
