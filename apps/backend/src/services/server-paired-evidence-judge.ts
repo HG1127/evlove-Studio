@@ -46,7 +46,7 @@ export async function runServerPairedEvidenceJudge(raw:unknown,ports:Ports={invo
     candidate:pairedQuotationDocuments(request.versions.candidate.documents,context.bindings.map(b=>({sourceArtifactId:b.sourceArtifactId,sha256:b.candidateSha256}))),
   }:undefined;
   const completeDocuments=sourceDocuments?[...sourceDocuments.original,...sourceDocuments.candidate]:[];
-  const fragments=fragmentPolicy?buildPairedSourceFragments(completeDocuments,shaText):undefined;
+  const fragments=fragmentPolicy?buildPairedSourceFragments(completeDocuments,shaText,fragmentPolicy):undefined;
   const recovered=recoverPairedOrderObservations(await ports.journal?.read(request,route)??[],request,route,sha,fragments?.sha256);
   if(!recovered.length)await ports.claim?.(request);
   const observations:Array<{original:EvaluateAiResult;candidate:EvaluateAiResult;controlOriginal:EvaluateAiResult;resultSha256:string;sourceQuotationRendering?:PairedJudgeReceipt["samples"][number]["sourceQuotationRendering"]}>=[];
@@ -67,7 +67,7 @@ export async function runServerPairedEvidenceJudge(raw:unknown,ports:Ports={invo
         +(context.fileMetadataPolicy?fileMetadataInstruction:"")
         +"Physical facts remain limited to their own source/hash/case scope and do not automatically prove semantic quality. Return every issued criterion with testCaseIds copied exactly from issuedCriterionCaseBindings. Criterion IDs and test case IDs are different namespaces: never add a related criterion ID to testCaseIds. Missing proof must be explained, not invented. Identical observed content must receive the same criterion score and pass decision regardless of slot. Use cases:[]; criterion-level judgments tied to the issued case IDs are authoritative, and case aggregate scores are not used.",
     }));
-    const payload=fragmentPolicy?pairedSourceFragmentModelInput(basePayload,completeDocuments,shaText):basePayload;
+    const payload=fragmentPolicy?pairedSourceFragmentModelInput(basePayload,completeDocuments,shaText,fragmentPolicy):basePayload;
     const parser=fragmentPolicy?PairedSelectionEvaluationAiResultSchema:PairedEvaluationAiResultSchema;
     const rawValue=recovered.length?recovered.find(o=>o.order===index)!.response:parser.parse(await invoke(payload));
     if((rawValue.schemaVersion==="paired-selection-evaluation-v1")!==Boolean(fragmentPolicy))throw Error("Raw paired response version differs from explicit source policy");
@@ -86,7 +86,7 @@ export async function runServerPairedEvidenceJudge(raw:unknown,ports:Ports={invo
     let value:PairedEvaluationAiResult;
     if(rawValue.schemaVersion==="paired-selection-evaluation-v1"){
       if(!sourceDocuments)throw Error("Complete source bodies unavailable for selection");
-      const selected=resolvePairedSelectionEvaluation(rawValue,sourceDocuments.original,sourceDocuments.candidate,index as 0|1,shaText);
+      const selected=resolvePairedSelectionEvaluation(rawValue,sourceDocuments.original,sourceDocuments.candidate,index as 0|1,shaText,fragmentPolicy);
       if(selected.issues.length)throw new PairedSourceQuotationError(selected.issues);
       if(!selected.value||selected.manifestSha256!==fragments?.sha256)throw Error("Source selection derivation differs");value=selected.value;
     }else value=rawValue;

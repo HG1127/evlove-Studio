@@ -1,5 +1,5 @@
 import {z,type ZodType} from "zod";
-import {PAIRED_JSONL_PROTOCOL,PAIRED_JSONL_TEMPLATE_PROTOCOL,PAIRED_JSONL_SELECTION_PROTOCOL,PAIRED_CRITERION_EVIDENCE_POLICY,PairedJsonlRecordSchema,PairedJsonlEvidenceRecordSchema,PairedJsonlQuotationGenerationRecordSchema,PairedJsonlQuotationTemplateRecordSchema,PairedJsonlSelectionRecordSchema,PairedJsonlScopeSchema} from "@evolution/contracts";
+import {PAIRED_JSONL_PROTOCOL,PAIRED_JSONL_TEMPLATE_PROTOCOL,PAIRED_JSONL_SELECTION_PROTOCOL,PAIRED_JSONL_COMPACT_SELECTION_PROTOCOL,PAIRED_COMPACT_SOURCE_FRAGMENT_POLICY,PAIRED_CRITERION_EVIDENCE_POLICY,PairedJsonlRecordSchema,PairedJsonlEvidenceRecordSchema,PairedJsonlQuotationGenerationRecordSchema,PairedJsonlQuotationTemplateRecordSchema,PairedJsonlSelectionRecordSchema,PairedJsonlCompactSelectionRecordSchema,PairedJsonlScopeSchema} from "@evolution/contracts";
 import {parsePairedJsonl,structuredAiFinalText} from "@evolution/adapters";
 import {serverPairedOutcomeReferenceCriterionIds} from "./server-paired-ai-contract";
 import {serverAiPairedOutcomeReferenceMode,serverAiPairedSourceQuotationPolicy,serverAiPairedQuotationTemplatePolicy,serverAiPairedSourceFragmentPolicy} from "./server-ai-output-policy";
@@ -12,12 +12,12 @@ export function serverPairedJsonlOutput<T>(payload:unknown,parser:ZodType<T>,ins
  const issued=z.object({requestFingerprint:z.string(),issuedCriterionCaseBindings:z.unknown()}).parse(payload);
  const relativeCriterionIds=serverPairedOutcomeReferenceCriterionIds(payload);
  const sourceQuotationPolicy=serverAiPairedSourceQuotationPolicy();
- const templatePolicy=serverAiPairedQuotationTemplatePolicy(),fragmentPolicy=serverAiPairedSourceFragmentPolicy(),protocol=fragmentPolicy?PAIRED_JSONL_SELECTION_PROTOCOL:templatePolicy?PAIRED_JSONL_TEMPLATE_PROTOCOL:PAIRED_JSONL_PROTOCOL;
+ const templatePolicy=serverAiPairedQuotationTemplatePolicy(),fragmentPolicy=serverAiPairedSourceFragmentPolicy(),protocol=fragmentPolicy===PAIRED_COMPACT_SOURCE_FRAGMENT_POLICY?PAIRED_JSONL_COMPACT_SELECTION_PROTOCOL:fragmentPolicy?PAIRED_JSONL_SELECTION_PROTOCOL:templatePolicy?PAIRED_JSONL_TEMPLATE_PROTOCOL:PAIRED_JSONL_PROTOCOL;
  const scope=PairedJsonlScopeSchema.parse({requestFingerprint:issued.requestFingerprint,bindings:issued.issuedCriterionCaseBindings,
   ...(relativeCriterionIds.length?{relativeCriterionIds}:{}),...(serverAiPairedOutcomeReferenceMode()?{evidenceStatusPolicy:PAIRED_CRITERION_EVIDENCE_POLICY}:{}),...(sourceQuotationPolicy?{sourceQuotationPolicy}:{}),...(templatePolicy?{sourceQuotationTemplatePolicy:templatePolicy}:{}),...(fragmentPolicy?{sourceFragmentPolicy:fragmentPolicy}:{})});
  const header={kind:"header",protocol,requestFingerprint:scope.requestFingerprint};
  const end={kind:"end",requestFingerprint:scope.requestFingerprint,criterionRecords:scope.bindings.length*3};
- const recordSchema=z.toJSONSchema(fragmentPolicy?PairedJsonlSelectionRecordSchema:templatePolicy?PairedJsonlQuotationTemplateRecordSchema:sourceQuotationPolicy?PairedJsonlQuotationGenerationRecordSchema:scope.evidenceStatusPolicy?PairedJsonlEvidenceRecordSchema:PairedJsonlRecordSchema);
+ const recordSchema=z.toJSONSchema(fragmentPolicy===PAIRED_COMPACT_SOURCE_FRAGMENT_POLICY?PairedJsonlCompactSelectionRecordSchema:fragmentPolicy?PairedJsonlSelectionRecordSchema:templatePolicy?PairedJsonlQuotationTemplateRecordSchema:sourceQuotationPolicy?PairedJsonlQuotationGenerationRecordSchema:scope.evidenceStatusPolicy?PairedJsonlEvidenceRecordSchema:PairedJsonlRecordSchema);
  // Only omit the grammar document's metadata, never a property from a model response.
  delete recordSchema.$schema;
  return {

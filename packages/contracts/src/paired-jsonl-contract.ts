@@ -1,11 +1,12 @@
 import {z} from "zod";
 import {PAIRED_SOURCE_QUOTATION_POLICY,PAIRED_SOURCE_QUOTATION_TEMPLATE_POLICY,PairedSourceQuotationsSchema} from "./paired-source-quotation-contract";
 import {PairedRelativeEvidenceStatusSchema,CriterionEvidenceStatusSchema,PAIRED_CRITERION_EVIDENCE_POLICY} from "./paired-judge-contract";
-import {PAIRED_SOURCE_FRAGMENT_POLICY,SourceQuotationSelectionsSchema} from "./paired-source-fragment-contract";
+import {PairedSourceFragmentPolicySchema,SourceQuotationSelectionsSchema,CompactSourceQuotationSelectionsSchema} from "./paired-source-fragment-contract";
 
 export const PAIRED_JSONL_PROTOCOL="paired-evaluation-jsonl-v1" as const;
 export const PAIRED_JSONL_TEMPLATE_PROTOCOL="paired-evaluation-jsonl-citation-template-v1" as const;
 export const PAIRED_JSONL_SELECTION_PROTOCOL="paired-evaluation-jsonl-source-selection-v1" as const;
+export const PAIRED_JSONL_COMPACT_SELECTION_PROTOCOL="paired-evaluation-jsonl-compact-selection-v2" as const;
 const id=z.string().min(1).max(240),slot=z.enum(["A","B","C"]);
 const score=z.number().int().min(0).max(100),strings=z.array(z.string());
 const ids=z.array(id).min(1).max(100).refine(v=>new Set(v).size===v.length);
@@ -15,7 +16,7 @@ export const PairedJsonlScopeSchema=z.object({requestFingerprint:id,
  evidenceStatusPolicy:z.literal(PAIRED_CRITERION_EVIDENCE_POLICY).optional(),
  sourceQuotationPolicy:z.literal(PAIRED_SOURCE_QUOTATION_POLICY).optional(),
  sourceQuotationTemplatePolicy:z.literal(PAIRED_SOURCE_QUOTATION_TEMPLATE_POLICY).optional(),
- sourceFragmentPolicy:z.literal(PAIRED_SOURCE_FRAGMENT_POLICY).optional(),
+ sourceFragmentPolicy:PairedSourceFragmentPolicySchema.optional(),
 }).strict().refine(v=>new Set(v.bindings.map(b=>b.criterionId)).size===v.bindings.length)
  .refine(v=>v.relativeCriterionIds?.every(id=>v.bindings.some(b=>b.criterionId===id))??true)
  .refine(v=>!v.sourceQuotationPolicy||v.evidenceStatusPolicy===PAIRED_CRITERION_EVIDENCE_POLICY,"Source quotations require explicit criterion evidence scope")
@@ -67,5 +68,10 @@ export const PairedJsonlQuotationTemplateRecordSchema=z.discriminatedUnion("kind
 export const PairedJsonlSelectionRecordSchema=z.discriminatedUnion("kind",[
  z.object({kind:z.literal("header"),protocol:z.literal(PAIRED_JSONL_SELECTION_PROTOCOL),requestFingerprint:id}).strict(),
  z.object({kind:z.literal("summary"),slot,value:summary.extend({sourceSelections:SourceQuotationSelectionsSchema})}).strict(),
+ PairedJsonlEvidenceRecordSchema.options[2],PairedJsonlRecordSchema.options[3],
+]);
+export const PairedJsonlCompactSelectionRecordSchema=z.discriminatedUnion("kind",[
+ z.object({kind:z.literal("header"),protocol:z.literal(PAIRED_JSONL_COMPACT_SELECTION_PROTOCOL),requestFingerprint:id}).strict(),
+ z.object({kind:z.literal("summary"),slot,value:summary.extend({sourceSelections:CompactSourceQuotationSelectionsSchema})}).strict(),
  PairedJsonlEvidenceRecordSchema.options[2],PairedJsonlRecordSchema.options[3],
 ]);

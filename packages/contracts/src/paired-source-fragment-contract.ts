@@ -1,18 +1,25 @@
 import {z} from "zod";
 export const PAIRED_SOURCE_FRAGMENT_POLICY="bound-rendered-source-fragments-v1" as const;
+export const PAIRED_COMPACT_SOURCE_FRAGMENT_POLICY="manifest-local-source-fragments-v2" as const;
+export const PairedSourceFragmentPolicySchema=z.enum([PAIRED_SOURCE_FRAGMENT_POLICY,PAIRED_COMPACT_SOURCE_FRAGMENT_POLICY]);
+export type PairedSourceFragmentPolicy=z.infer<typeof PairedSourceFragmentPolicySchema>;
 const hash=z.string().regex(/^[a-f0-9]{64}$/);
 export const SourceQuotationSelectionSchema=z.object({noteIndex:z.number().int().min(0).max(999),relation:z.enum(["present","absent"]),spanId:z.string().regex(/^q[a-f0-9]{24}$/)}).strict();
 export const SourceQuotationSelectionsSchema=z.array(SourceQuotationSelectionSchema).max(96);
+const compactId=z.string().regex(/^d(?:0|[1-9][0-9]?)s(?:0|[1-9][0-9]{0,4})$/);
+export const CompactSourceQuotationSelectionsSchema=z.array(SourceQuotationSelectionSchema.extend({spanId:compactId})).max(96);
+export const VersionedSourceQuotationSelectionsSchema=z.union([SourceQuotationSelectionsSchema,CompactSourceQuotationSelectionsSchema]);
 export const PairedSourceFragmentManifestSchema=z.object({
- policy:z.literal(PAIRED_SOURCE_FRAGMENT_POLICY),
+ policy:PairedSourceFragmentPolicySchema,
  documents:z.array(z.object({sourceArtifactId:z.string().min(1).max(240),sha256:hash,bodyTextSha256:hash,bodyUtf16Length:z.number().int().positive(),
-  fragments:z.array(z.object({id:z.string().regex(/^q[a-f0-9]{24}$/),start:z.number().int().nonnegative(),length:z.number().int().positive().max(4000),text:z.string().min(1).max(4000)}).strict()).min(1).max(20000),
+  fragments:z.array(z.object({id:z.union([SourceQuotationSelectionSchema.shape.spanId,compactId]),start:z.number().int().nonnegative(),length:z.number().int().positive().max(4000),text:z.string().min(1).max(4000)}).strict()).min(1).max(20000),
  }).strict()).min(1).max(64),
 }).strict().superRefine((manifest,ctx)=>{
  const documents=new Set<string>(),ids=new Set<string>();
  for(const [i,doc] of manifest.documents.entries()){
   const key=JSON.stringify([doc.sourceArtifactId,doc.sha256]);if(documents.has(key))ctx.addIssue({code:"custom",path:["documents",i],message:"Duplicate source identity"});documents.add(key);
   let offset=0;for(const [j,fragment] of doc.fragments.entries()){
+   if(manifest.policy===PAIRED_COMPACT_SOURCE_FRAGMENT_POLICY?fragment.id!==`d${i}s${j}`:!/^q[a-f0-9]{24}$/.test(fragment.id))ctx.addIssue({code:"custom",path:["documents",i,"fragments",j,"id"],message:"Fragment ID differs from its explicit policy"});
    if(ids.has(fragment.id)||fragment.start!==offset||fragment.length!==fragment.text.length)ctx.addIssue({code:"custom",path:["documents",i,"fragments",j],message:"Duplicate fragment or incomplete ordered coverage"});ids.add(fragment.id);offset+=fragment.length;
   }
   if(offset!==doc.bodyUtf16Length)ctx.addIssue({code:"custom",path:["documents",i],message:"Body coverage length differs"});

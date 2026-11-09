@@ -35,3 +35,9 @@ it("rejects lost native facts even when all observation positions remain",()=>{
  p.versions[0]!.observations.documents.context.nativeObservations=[];
  expect(()=>restorePairedSourceFragmentModelInput(p,sha)).toThrow("digest");
 });
+it("restores compact selectors against the complete ordered manifest including later source documents",()=>{
+ const before=input(),projected=pairedSourceFragmentModelInput(before,[original,candidate],sha,"manifest-local-source-fragments-v2");
+ expect(projected.sourceFragments.policy).toBe("manifest-local-source-fragments-v2");
+ expect(projected.sourceFragments.documents[1]!.fragments[0]!.id).toBe("d1s0");
+ expect(restorePairedSourceFragmentModelInput(projected,sha)).toEqual(before);
+});

@@ -1,4 +1,4 @@
-import {PairedEvaluationAiResultSchema,PairedSelectionEvaluationAiResultSchema,PairedJsonlRecordSchema,PairedJsonlReferenceRecordSchema,PairedJsonlEvidenceRecordSchema,PairedJsonlQuotationRecordSchema,PairedJsonlQuotationTemplateRecordSchema,PairedJsonlSelectionRecordSchema,PairedJsonlScopeSchema,type PairedJudgeRawResponse} from "@evolution/contracts";
+import {PAIRED_COMPACT_SOURCE_FRAGMENT_POLICY,PairedEvaluationAiResultSchema,PairedSelectionEvaluationAiResultSchema,PairedJsonlRecordSchema,PairedJsonlReferenceRecordSchema,PairedJsonlEvidenceRecordSchema,PairedJsonlQuotationRecordSchema,PairedJsonlQuotationTemplateRecordSchema,PairedJsonlSelectionRecordSchema,PairedJsonlCompactSelectionRecordSchema,PairedJsonlScopeSchema,type PairedJudgeRawResponse} from "@evolution/contracts";
 
 /** Strict whole-response parse. No repairs, inferred rows, filtering, or partial acceptance. */
 export function parsePairedJsonl(text:string,rawScope:unknown):PairedJudgeRawResponse{
@@ -8,7 +8,7 @@ export function parsePairedJsonl(text:string,rawScope:unknown):PairedJudgeRawRes
   if(text.length>4_000_000||text.startsWith("\uFEFF"))throw invalid();
   const lines=text.split(/\r?\n/);if(lines.at(-1)==="")lines.pop();
   if(lines.length>101||lines.some(line=>!line.trim()))throw invalid();
-  const recordSchema=scope.sourceFragmentPolicy?PairedJsonlSelectionRecordSchema:scope.sourceQuotationTemplatePolicy?PairedJsonlQuotationTemplateRecordSchema:scope.sourceQuotationPolicy?PairedJsonlQuotationRecordSchema:scope.evidenceStatusPolicy?PairedJsonlEvidenceRecordSchema:scope.relativeCriterionIds?PairedJsonlReferenceRecordSchema:PairedJsonlRecordSchema;
+  const recordSchema=scope.sourceFragmentPolicy===PAIRED_COMPACT_SOURCE_FRAGMENT_POLICY?PairedJsonlCompactSelectionRecordSchema:scope.sourceFragmentPolicy?PairedJsonlSelectionRecordSchema:scope.sourceQuotationTemplatePolicy?PairedJsonlQuotationTemplateRecordSchema:scope.sourceQuotationPolicy?PairedJsonlQuotationRecordSchema:scope.evidenceStatusPolicy?PairedJsonlEvidenceRecordSchema:scope.relativeCriterionIds?PairedJsonlReferenceRecordSchema:PairedJsonlRecordSchema;
   const records=lines.map(line=>recordSchema.parse(JSON.parse(line))),header=records[0],end=records.at(-1);
   if(header?.kind!=="header"||end?.kind!=="end"||header.requestFingerprint!==scope.requestFingerprint||end.requestFingerprint!==scope.requestFingerprint
    ||records.filter(r=>r.kind==="header").length!==1||records.filter(r=>r.kind==="end").length!==1)throw invalid();

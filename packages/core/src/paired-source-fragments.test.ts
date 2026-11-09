@@ -43,3 +43,14 @@ it("rejects literal absence when a combining mark is present before Unicode comp
  const resolved=resolvePairedSourceSelections({subjectDocuments:[subject],comparisonDocuments:[comparison],selections:[{noteIndex:0,relation:"absent",spanId:span.id}]},sha);
  expect(resolved.issues).toContainEqual({code:"unsupported-absence",noteIndex:0});expect(resolved.quotations).toBeUndefined();
 });
+it("uses short exact manifest-local aliases while the full manifest binds the source and range",()=>{
+ const policy="manifest-local-source-fragments-v2",built=buildPairedSourceFragments([candidate,original],sha,policy);
+ expect(built.manifest.policy).toBe(policy);expect(built.manifest.documents.map(d=>d.fragments[0]!.id)).toEqual(["d0s0","d1s0"]);
+ expect(buildPairedSourceFragments([original,candidate],sha,policy)).toEqual(built);
+ expect(buildPairedSourceFragments([{...original,text:original.text+"!"},candidate],sha,policy).sha256).not.toBe(built.sha256);
+ const input={subjectDocuments:[original],comparisonDocuments:[candidate],selections:[{noteIndex:0,relation:"present",spanId:"d0s0"}]};
+ expect(resolvePairedSourceSelections(input,sha,policy).quotations![0]!.quote).toBe(original.text);
+ expect(resolvePairedSourceSelections({...input,selections:[{...input.selections[0]!,spanId:"d1s0"}]},sha,policy).issues).toContainEqual({code:"foreign-present-source",noteIndex:0});
+ expect(resolvePairedSourceSelections({...input,selections:[{...input.selections[0]!,spanId:"d63s19999"}]},sha,policy).issues).toContainEqual({code:"unknown-span",noteIndex:0});
+ expect(resolvePairedSourceSelections(input,sha).issues.length).toBeGreaterThan(0);
+});

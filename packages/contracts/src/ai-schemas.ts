@@ -1,6 +1,6 @@
 import { z } from "zod";
 import {PairedAggregatedSourceQuotationsSchema} from "./paired-source-quotation-contract";
-import {SourceQuotationSelectionsSchema} from "./paired-source-fragment-contract";
+import {VersionedSourceQuotationSelectionsSchema} from "./paired-source-fragment-contract";
 import {PairedJudgeContextSchema,PairedJudgeFileObservationSchema,PairedRelativeEvidenceStatusSchema,CriterionEvidenceStatusSchema,type PairedJudgeReceipt} from "./paired-judge-contract";
 import {
   AcceptanceCriterionSchema,
@@ -380,7 +380,7 @@ export type PairedEvaluationAiResult=z.infer<typeof PairedEvaluationAiResultSche
 export const PairedSelectionEvaluationAiResultSchema=z.object({
   schemaVersion:z.literal("paired-selection-evaluation-v1"),requestFingerprint:z.string().min(1).max(200),
   versions:z.array(z.object({slot:z.enum(["A","B","C"]),result:EvaluationWithIdentitiesSchema.safeExtend({
-    sourceQuotations:z.never().optional(),sourceSelections:SourceQuotationSelectionsSchema,
+    sourceQuotations:z.never().optional(),sourceSelections:VersionedSourceQuotationSelectionsSchema,
   })}).strict()).length(3),
 }).strict().superRefine((value,ctx)=>{
   if(new Set(value.versions.map(v=>v.slot)).size!==3)ctx.addIssue({code:"custom",path:["versions"],message:"All three unique slots are required"});

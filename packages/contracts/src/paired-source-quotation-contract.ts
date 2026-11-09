@@ -1,5 +1,5 @@
 import {z} from "zod";
-import {PAIRED_SOURCE_FRAGMENT_POLICY} from "./paired-source-fragment-contract";
+import {PairedSourceFragmentPolicySchema} from "./paired-source-fragment-contract";
 
 export const PAIRED_SOURCE_QUOTATION_POLICY="measured-source-quotations-v1" as const;
 export const PAIRED_SOURCE_QUOTATION_TEMPLATE_POLICY="source-quotation-marker-template-v1" as const;
@@ -8,7 +8,7 @@ export const PairedSourceQuotationRenderingSchema=z.object({
  policy:z.literal(PAIRED_SOURCE_QUOTATION_TEMPLATE_POLICY),
  rendererVersion:z.literal(PAIRED_SOURCE_QUOTATION_RENDERER_VERSION),
  templateSha256:z.string().regex(/^[a-f0-9]{64}$/),renderedNotesSha256:z.string().regex(/^[a-f0-9]{64}$/),
- sourceSelection:z.object({policy:z.literal(PAIRED_SOURCE_FRAGMENT_POLICY),manifestSha256:z.string().regex(/^[a-f0-9]{64}$/),rawSelectionsSha256:z.string().regex(/^[a-f0-9]{64}$/),derivedQuotationsSha256:z.string().regex(/^[a-f0-9]{64}$/)}).strict().optional(),
+ sourceSelection:z.object({policy:PairedSourceFragmentPolicySchema,manifestSha256:z.string().regex(/^[a-f0-9]{64}$/),rawSelectionsSha256:z.string().regex(/^[a-f0-9]{64}$/),derivedQuotationsSha256:z.string().regex(/^[a-f0-9]{64}$/)}).strict().optional(),
 }).strict();
 const identity={sourceArtifactId:z.string().min(1).max(240),sha256:z.string().regex(/^[a-f0-9]{64}$/)};
 export const PairedSourceIdentitySchema=z.object(identity).strict();

@@ -1,6 +1,6 @@
 import {AsyncLocalStorage} from "node:async_hooks";
 import {z} from "zod";
-import {PAIRED_OUTCOME_REFERENCE_POLICY,PAIRED_SOURCE_QUOTATION_POLICY,PAIRED_SOURCE_QUOTATION_TEMPLATE_POLICY,PAIRED_SOURCE_FRAGMENT_POLICY,type AiOperation} from "@evolution/contracts";
+import {PAIRED_OUTCOME_REFERENCE_POLICY,PAIRED_SOURCE_QUOTATION_POLICY,PAIRED_SOURCE_QUOTATION_TEMPLATE_POLICY,PAIRED_SOURCE_FRAGMENT_POLICY,PAIRED_COMPACT_SOURCE_FRAGMENT_POLICY,type AiOperation} from "@evolution/contracts";
 
 const policySchema=z.object({formatCorrection:z.enum(["allow-once","forbid"]),pairedTransport:z.literal("jsonl-v1").optional()}).strict();
 const scope=new AsyncLocalStorage<z.infer<typeof policySchema>>();
@@ -10,9 +10,9 @@ export const SERVER_PAIRED_SAFETY_POLICY_VERSION="paired-safety-v1-evidence-grou
 export const SERVER_PAIRED_SOURCE_QUOTATION_VERSION="paired-source-quotation-v1-complete-range-notes";
 export function serverAiPairedSourceFragmentPolicy(){
  const raw=process.env.EVOLUTION_AI_PAIRED_SOURCE_FRAGMENTS?.trim();if(!raw)return undefined;
- if(raw!==PAIRED_SOURCE_FRAGMENT_POLICY)throw Error("Invalid source fragment selection policy");
+ if(raw!==PAIRED_SOURCE_FRAGMENT_POLICY&&raw!==PAIRED_COMPACT_SOURCE_FRAGMENT_POLICY)throw Error("Invalid source fragment selection policy");
  if(!serverAiPairedQuotationTemplatePolicy())throw Error("Source fragment selections require explicit note templates");
- return PAIRED_SOURCE_FRAGMENT_POLICY;
+ return raw;
 }
 export function serverAiPairedQuotationTemplatePolicy(){
  const raw=process.env.EVOLUTION_AI_PAIRED_QUOTATION_TEMPLATE?.trim();

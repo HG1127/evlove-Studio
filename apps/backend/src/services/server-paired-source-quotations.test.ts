@@ -43,8 +43,8 @@ function setup(change?:(response:PairedEvaluationAiResult)=>void){
  const ports={invoke,claim,routeFingerprint:async()=>"fixed-model-route",journal:{read:async()=>saved,save:async(o:PairedOrderObservation)=>{saved.push(PairedOrderObservationSchema.parse(o));}}};
  return {request,ports,saved,binding};
 }
-function selectionSetup(change?:(response:PairedSelectionEvaluationAiResult)=>void){
- vi.stubEnv("EVOLUTION_AI_PAIRED_QUOTATION_TEMPLATE",PAIRED_SOURCE_QUOTATION_TEMPLATE_POLICY);vi.stubEnv("EVOLUTION_AI_PAIRED_SOURCE_FRAGMENTS",PAIRED_SOURCE_FRAGMENT_POLICY);
+function selectionSetup(change?:(response:PairedSelectionEvaluationAiResult)=>void,policy:string=PAIRED_SOURCE_FRAGMENT_POLICY){
+ vi.stubEnv("EVOLUTION_AI_PAIRED_QUOTATION_TEMPLATE",PAIRED_SOURCE_QUOTATION_TEMPLATE_POLICY);vi.stubEnv("EVOLUTION_AI_PAIRED_SOURCE_FRAGMENTS",policy);
  const x=setup(),invoke=vi.fn(async(raw:unknown):Promise<PairedSelectionEvaluationAiResult>=>{
   const input=PairedSourceFragmentModelInputSchema.parse(raw);
   const response:PairedSelectionEvaluationAiResult={schemaVersion:"paired-selection-evaluation-v1",requestFingerprint:input.requestFingerprint,versions:input.versions.map(v=>{
@@ -58,6 +58,16 @@ function selectionSetup(change?:(response:PairedSelectionEvaluationAiResult)=>vo
  return {...x,ports:{...x.ports,invoke}};
 }
 describe("prospective source quotation enforcement",()=>{
+ it("uses a separately bound compact policy and header, journals raw selectors and rejects legacy replay",async()=>{
+  const x=selectionSetup(undefined,"manifest-local-source-fragments-v2"),value=await runServerPairedEvidenceJudge(x.request,x.ports);
+  const payload=x.ports.invoke.mock.calls[0]![0],c=serverAiPairedContract(payload),output=serverPairedJsonlOutput(payload,c.parser,c.instruction),raw=x.saved[0]!.response;
+  const records=[{kind:"header",protocol:"paired-evaluation-jsonl-compact-selection-v2",requestFingerprint:raw.requestFingerprint},...raw.versions.flatMap(v=>{const {criteria,...summary}=v.result;return [{kind:"summary",slot:v.slot,value:summary},...criteria.map(row=>({kind:"criterion",slot:v.slot,value:row}))];}),{kind:"end",requestFingerprint:raw.requestFingerprint,criterionRecords:3}];
+  expect(output.parse(records.map(r=>JSON.stringify(r)).join("\n"))).toEqual(raw);
+  expect(value.pairedComparison!.receipt.samples[0]!.sourceQuotationRendering!.sourceSelection!.policy).toBe("manifest-local-source-fragments-v2");
+  expect(await runServerPairedEvidenceJudge(x.request,x.ports)).toEqual(value);expect(x.ports.invoke).toHaveBeenCalledTimes(2);
+  vi.stubEnv("EVOLUTION_AI_PAIRED_SOURCE_FRAGMENTS",PAIRED_SOURCE_FRAGMENT_POLICY);
+  await expect(runServerPairedEvidenceJudge(x.request,x.ports)).rejects.toThrow("manifest");expect(x.ports.invoke).toHaveBeenCalledTimes(2);
+ });
  it("journals raw selections and manifest before deriving quotes, and exactly replays without another request",async()=>{
   const x=selectionSetup(),value=await runServerPairedEvidenceJudge(x.request,x.ports);
   expect(x.saved).toHaveLength(2);expect(x.saved.every(o=>o.schemaVersion==="paired-order-observation-v3-source-selections"&&o.response.schemaVersion==="paired-selection-evaluation-v1")).toBe(true);

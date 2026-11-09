@@ -7,6 +7,7 @@ import {currentServerAiUsageScope,serverAiUsageRoute} from "./server-ai-usage";
 import {resolveServerAiOperationConfig} from "./server-ai-connection";
 import {pairedJudgePhysicalScopeSha256,resolveServerPairedAttemptIdentity} from "./server-paired-judge-claim";
 import {recoverConsumedPairedIdentity,type PairedAttemptIdentity} from "./server-paired-reassessment";
+import {serverAiPairedSourceFragmentPolicy} from "./server-ai-output-policy";
 
 type Ports={scope:AiUsageScope|undefined;physicalRoutes():Promise<AiUsageRoute[]>;list(missionId:string,limit:number):Promise<EvolutionEvent[]>;append(event:EvolutionEvent):Promise<void>;now?():string;
  attemptIdentity?(request:PairedJudgeRequest,route:string,events:EvolutionEvent[]):Promise<PairedAttemptIdentity>};
@@ -21,7 +22,7 @@ function trusted(request:PairedJudgeRequest,ports:Ports){
 function sourceFragmentManifest(request:PairedJudgeRequest){
  const documents=(["original","candidate"] as const).flatMap(arm=>pairedQuotationDocuments(request.versions[arm].documents,
   request.context.bindings.map(b=>({sourceArtifactId:b.sourceArtifactId,sha256:arm==="original"?b.originalSha256:b.candidateSha256}))));
- return buildPairedSourceFragments(documents,text=>createHash("sha256").update(text).digest("hex")).sha256;
+ return buildPairedSourceFragments(documents,text=>createHash("sha256").update(text).digest("hex"),serverAiPairedSourceFragmentPolicy()).sha256;
 }
 export function createServerPairedOrderJournal(ports:Ports):PairedOrderJournalPort{
  let request:PairedJudgeRequest|undefined,route:string|undefined;
