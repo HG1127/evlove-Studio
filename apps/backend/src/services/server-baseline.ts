@@ -43,6 +43,7 @@ export async function runServerMissionBaseline(project: EvolveProject) {
   return runServerBaseline(project, {
     executeNativeHtmlBatch:executeServerHtmlNativeBatch,
     scoringRouteFingerprint: await serverAiScoringRouteFingerprint(),
+    measurementRouteFingerprint: await serverAiScoringRouteFingerprint("baseline"),
     executeSemanticBatch: async ({ project: current, testCases, artifactContext }) => runServerAi("execute-artifact-batch", {
       project: {
         name: current.name,

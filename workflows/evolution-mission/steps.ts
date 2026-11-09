@@ -839,7 +839,7 @@ async function executeServerControlAction(
     // Evidence gaps remain eligible for their separately governed frozen-run recovery.
     const executionLimit=campaignRepairLimitStopReason(campaignMission);
     if(!executionLimit&&!hasServerFrozenValidationCheckpoint(campaignMission)
-      &&!canReuseServerMissionBaseline(campaignMission,scoringRouteFingerprint)){
+      &&!canReuseServerMissionBaseline(campaignMission,await serverAiScoringRouteFingerprint("baseline"))){
       const baselineOutcome=await runServerMissionBaseline(campaignMission);
       campaignMission=baselineOutcome.project;
       await runtime.missions.save(campaignMission);

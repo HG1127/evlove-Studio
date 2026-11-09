@@ -60,6 +60,8 @@ export function canReuseServerBaseline(project: EvolveProject, routeFingerprint?
 }
 export type ServerBaselinePorts = ServerHtmlNativePort & {
   scoringRouteFingerprint?: string;
+  /** Optional ordinary-evaluate identity; the full route still governs Campaign comparisons. */
+  measurementRouteFingerprint?: string;
   executeSemanticBatch(args: {
     project: EvolveProject;
     testCases: TestCase[];
@@ -115,9 +117,10 @@ export async function runServerBaseline(
 ): Promise<ServerBaselineOutcome> {
   const now = options?.now ?? (() => new Date().toISOString());
   const startedAt = now();
+  const measurementRouteFingerprint=ports.measurementRouteFingerprint??ports.scoringRouteFingerprint;
   const experimentCheckpoint = serverExperimentRecoveryCheckpoint(inputProject) ? inputProject.campaign.checkpoint : undefined;
   const plannedRefresh = experimentCheckpoint && !inputProject.baselineRun.plannedRefresh ? undefined
-    : plannedBaselineRefresh(inputProject, ports.scoringRouteFingerprint, startedAt);
+    : plannedBaselineRefresh(inputProject, measurementRouteFingerprint, startedAt);
   const scoringBlocker = campaignScoringInputBlocker(inputProject) ?? serverCampaignScoringRouteBlocker(inputProject, ports.scoringRouteFingerprint)
     ?? plannedRefresh?.blocker;
   if (scoringBlocker) {
@@ -158,7 +161,7 @@ export async function runServerBaseline(
       runs: [],
       result: undefined,
       originalReferences:undefined,referenceOnlyCriterionIds:undefined,
-      measurementFingerprint: serverBaselineFingerprint(inputProject, ports.scoringRouteFingerprint),
+      measurementFingerprint: serverBaselineFingerprint(inputProject, measurementRouteFingerprint),
       plannedRefresh: plannedRefresh?.continuation,
     },
     stage: "baseline",

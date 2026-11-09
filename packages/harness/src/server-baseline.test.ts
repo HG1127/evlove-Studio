@@ -367,6 +367,17 @@ describe("server baseline",()=>{
     expect(canReuseServerBaseline({ ...outcome.project, targetConnection: { ...outcome.project.targetConnection, status: "error", label: "Renamed" } })).toBe(true);
     expect(canReuseServerBaseline({ ...outcome.project, baselineRun: { ...outcome.baseline, measurementFingerprint: undefined } })).toBe(false);
   });
+  it("binds Baseline reuse to ordinary measurement while preserving the full campaign scoring route",async()=>{
+    const outcome=await runServerBaseline(fixture(),{
+      scoringRouteFingerprint:"paired-current",measurementRouteFingerprint:"ordinary-stable",
+      executeSemanticBatch:async({testCases})=>({results:testCases.map(testCase=>({testCaseId:testCase.id,output:"当前说明包含安装步骤，但验证与回滚说明不足。",trace:[]}))}),
+      judge:async()=>judge(),
+    },{now:()=>"2026-09-20T13:05:00.000Z"});
+    expect(outcome.ready).toBe(true);
+    expect(canReuseServerBaseline(outcome.project,"ordinary-stable")).toBe(true);
+    expect(canReuseServerBaseline(outcome.project,"paired-current")).toBe(false);
+    expect(outcome.project.campaign.scoringRouteFingerprint).toBe("paired-current");
+  });
 
   it("defers comparison-only SYS-PAIRWISE until Candidate Holdout while preserving other hard gates",async()=>{
     const project=fixture();

@@ -1,5 +1,7 @@
 import {describe,expect,it} from "vitest";
 import type {EvolveProject,TestCase} from "@evolution/contracts";
+import {EvolveProjectSchema,TestCaseSchema} from "@evolution/contracts";
+import {acceptedPackageFixture} from "@evolution/testkit";
 import {groundedOriginalCitationDefect} from "./server-grounded-baseline-defect";
 import {executeServerCurrentArtifactSuite} from "./server-current-artifact-runner";
 
@@ -9,11 +11,14 @@ const text=[
 ].join("\n");
 function fixture(){
  const source={id:"target-1",name:"research.md",role:"target",extension:"md",size:new TextEncoder().encode(text).length,
-   inputMode:"paste",parseStatus:"ready",textContent:text,artifactKind:"document",structure:[],warnings:[]};
- const project={targetConnection:{adapter:"artifact"},evolutionCommand:"重要结论应当有可核验出处，不编造引用",
-   acceptanceRubric:[{id:"USER-PRIMARY-INTENT",source:"user-command",hardGate:true,validationMethod:"semantic-judge",requirement:"重要结论绑定可靠引用来源"}],
-   sourceArtifacts:[source]} as unknown as EvolveProject;
- const testCase={id:"H1",title:"核验原版引用能力",input:"重要结论能否附带可信出处？",expected:["来源链接"],tags:[],hidden:true,executionMode:"artifact-runtime",evidenceScope:"product-behavior",criterionIds:["USER-PRIMARY-INTENT"]} as TestCase;
+   inputMode:"paste",parseStatus:"ready",textContent:text,mimeType:"text/markdown",createdAt:"2026-10-09T02:00:00.000Z",artifactKind:"document",structure:[],warnings:[]};
+ const project=EvolveProjectSchema.parse({...acceptedPackageFixture(false).project,
+   targetConnection:{adapter:"artifact"},evolutionCommand:"重要结论应当有可核验出处，不编造引用",
+   acceptanceRubric:[{id:"USER-PRIMARY-INTENT",title:"引用来源",source:"user-command",hardGate:true,validationMethod:"semantic-judge",requirement:"重要结论绑定可靠引用来源"}],
+   sourceArtifacts:[source],baselineRun:{id:"baseline",status:"idle",suiteName:"Core",totalCases:1,runs:[]},
+   candidates:[],selectedCandidateIds:[],experimentRun:{id:"experiment",status:"idle"},
+   validationRun:{id:"validation",status:"idle"},artifactAcceptance:{id:"acceptance",status:"idle"}});
+ const testCase=TestCaseSchema.parse({id:"H1",title:"核验原版引用能力",input:"重要结论能否附带可信出处？",expected:["来源链接"],tags:[],hidden:true,executionMode:"artifact-runtime",evidenceScope:"product-behavior",criterionIds:["USER-PRIMARY-INTENT"]});
  const artifactContext=[{id:source.id,content:text,originalChars:text.length,truncated:false}];
  return {project,testCase,artifactContext};
 }

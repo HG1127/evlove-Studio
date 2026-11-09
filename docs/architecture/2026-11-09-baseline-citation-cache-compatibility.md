@@ -1,0 +1,9 @@
+# Ordinary Baseline cache and paired citation identity
+
+The already completed ordinary `evaluate` request is byte-identical with citation templates disabled, enabled, long source selectors enabled, and compact selectors enabled. Offline replay uses the existing response only; it never requests a new score. The combined scoring route nevertheless changes between all four modes, causing ordinary Baseline reuse to fail even though its model input and instructions are unchanged.
+
+The default scoring fingerprint remains the complete configured paired route. Explicit `baseline` mode omits only the two new paired-only citation representation options and their transport/instruction additions. It preserves the historical ordinary measurement identity, including model, endpoint, protocol, reasoning, semantic context and all earlier version bindings. It is a narrow compatibility repair, not a claim that every older paired-only setting has already been separated from ordinary measurement.
+
+Harness Baseline receives an optional `measurementRouteFingerprint`, with its original full-route fallback for existing callers. Only the BaselineRun measurement fingerprint uses that value. Campaign comparisons, root measurement policy and scoring-change blockers retain the full configured identity. The workflow checks reusable Baseline evidence with the same ordinary identity used when producing it. Source/rubric/case/freshness/native-proof checks remain in place.
+
+No old score, observation, claim, qualification or stored fingerprint is rewritten. Full paired route and request bytes must remain unchanged; a failed calibration cannot become qualified through this cache repair. The current MiniMax-M3/compact-selector fixed-bank trial remains rejected after its valid absolute-threshold counterexample. It cannot authorize SOP acceptance, a final holdout, business gain or transfer.

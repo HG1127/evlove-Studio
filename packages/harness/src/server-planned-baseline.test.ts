@@ -41,6 +41,18 @@ function ports() {
 }
 
 describe("Baseline refresh after committed planning", () => {
+  it("refreshes and retries the same Plan with distinct measurement and campaign routes",async()=>{
+    const p=planned(),measurementRoute="ordinary-stable",io={...ports(),measurementRouteFingerprint:measurementRoute};
+    p.baselineRun.measurementFingerprint=serverBaselineFingerprint(p,measurementRoute);
+    io.judge.mockRejectedValueOnce(rejectedRequest());
+    const failed=await runServerBaseline(p,io,{now:()=>later});
+    expect(failed.baseline.plannedRefresh?.status).toBe("retryable");
+    const retryAt=new Date(Date.parse(later)+60_000).toISOString(),retry=await runServerBaseline(failed.project,io,{now:()=>retryAt});
+    expect(retry.ready).toBe(true);expect(retry.baseline.plannedRefresh).toBeUndefined();
+    expect(retry.project.candidates).toEqual(p.candidates);expect(retry.project.finalHoldout).toEqual(p.finalHoldout);
+    expect(retry.project.campaign.checkpoint).toEqual(p.campaign.checkpoint);expect(retry.project.campaign.scoringRouteFingerprint).toBe(route);
+    expect(canReuseServerBaseline(retry.project,measurementRoute,Date.parse(retryAt)+1)).toBe(true);
+  });
   it("retains the committed Plan and paper after a definite native payment limit without a new model call",async()=>{
     const p=planned(),base=ports();p.acceptanceRubric.forEach(criterion=>{criterion.validationMethod="semantic-judge";});
     p.finalHoldout!.contractFingerprint=finalHoldoutContractFingerprint(p);p.baselineRun.measurementFingerprint=serverBaselineFingerprint(p,route);

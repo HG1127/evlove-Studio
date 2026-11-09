@@ -58,6 +58,17 @@ function selectionSetup(change?:(response:PairedSelectionEvaluationAiResult)=>vo
  return {...x,ports:{...x.ports,invoke}};
 }
 describe("prospective source quotation enforcement",()=>{
+ it("keeps ordinary Baseline identity when only the paired citation representation changes",async()=>{
+  const config={connectionId:"synthetic",label:"Synthetic",apiKey:"synthetic-key",baseUrl:"https://quotes.example.test/v1",model:"synthetic",protocol:"chat-completions" as const,responseFormat:"prompt-json" as const};
+  let baseline:string|undefined,paired:string|undefined;
+  await withExplicitServerAiConnection(config,async()=>{
+   vi.stubEnv("EVOLUTION_AI_PAIRED_QUOTATION_TEMPLATE","");vi.stubEnv("EVOLUTION_AI_PAIRED_SOURCE_FRAGMENTS","");
+   baseline=await serverAiScoringRouteFingerprint("baseline");paired=await serverAiScoringRouteFingerprint();
+   vi.stubEnv("EVOLUTION_AI_PAIRED_QUOTATION_TEMPLATE",PAIRED_SOURCE_QUOTATION_TEMPLATE_POLICY);vi.stubEnv("EVOLUTION_AI_PAIRED_SOURCE_FRAGMENTS","manifest-local-source-fragments-v2");
+   expect(await serverAiScoringRouteFingerprint("baseline")).toBe(baseline);expect(await serverAiScoringRouteFingerprint()).not.toBe(paired);
+  });
+  await withExplicitServerAiConnection({...config,model:"another-model"},async()=>expect(await serverAiScoringRouteFingerprint("baseline")).not.toBe(baseline));
+ });
  it("uses a separately bound compact policy and header, journals raw selectors and rejects legacy replay",async()=>{
   const x=selectionSetup(undefined,"manifest-local-source-fragments-v2"),value=await runServerPairedEvidenceJudge(x.request,x.ports);
   const payload=x.ports.invoke.mock.calls[0]![0],c=serverAiPairedContract(payload),output=serverPairedJsonlOutput(payload,c.parser,c.instruction),raw=x.saved[0]!.response;
