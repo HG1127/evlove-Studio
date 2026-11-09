@@ -4,7 +4,8 @@ import { createHash } from "node:crypto";
 import {serverAiRepairContract} from "./server-ai-repair-contract";
 import {serverAiBuildContract} from "./server-ai-build-contract";
 import {serverAiFormatCorrectionAllowed,serverAiPairedJsonlEnabled,serverAiPairedOutcomeReferenceMode,SERVER_PAIRED_OUTCOME_REFERENCE_VERSION,serverAiPairedSafetyPolicy,SERVER_PAIRED_SAFETY_POLICY_VERSION,serverAiPairedSourceQuotationPolicy,SERVER_PAIRED_SOURCE_QUOTATION_VERSION} from "./server-ai-output-policy";
-import {PAIRED_SOURCE_QUOTATION_INSTRUCTION} from "./server-paired-source-instruction";
+import {PAIRED_SOURCE_QUOTATION_INSTRUCTION,PAIRED_SOURCE_QUOTATION_TEMPLATE_INSTRUCTION} from "./server-paired-source-instruction";
+import {serverAiPairedQuotationTemplatePolicy} from "./server-ai-output-policy";
 import {serverPairedJsonlOutput,SERVER_PAIRED_JSONL_GENERATION_VERSION,SERVER_PAIRED_JSONL_FINAL_TEXT_VERSION} from "./server-paired-jsonl-output";
 import {ServerControlExecutionStoppedError,serverControlExecutionSignal} from "./server-control-execution";
 import {serverAiRequestPolicy} from "./server-ai-request-timeout";
@@ -14,6 +15,8 @@ import {
   AiOperationSchema,
   LessonDistillationContextSchema,
   PAIRED_JSONL_PROTOCOL,
+  PAIRED_JSONL_TEMPLATE_PROTOCOL,
+  PAIRED_SOURCE_QUOTATION_RENDERER_VERSION,
   PAIRED_CRITERION_EVIDENCE_POLICY,
   ArtifactAcceptanceAiResultSchema,
   CommandAiResultSchema,
@@ -88,9 +91,11 @@ export async function serverAiScoringRouteFingerprint(): Promise<string | undefi
   const pairedOutputBudget=serverAiPairedOutputBudgetIdentity(config);
   const pairedSafetyPolicy=serverAiPairedSafetyPolicy();
   const sourceQuotationPolicy=serverAiPairedSourceQuotationPolicy();
+  const quotationTemplatePolicy=serverAiPairedQuotationTemplatePolicy();
   return createHash("sha256").update(JSON.stringify({ route, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION,measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION,pairedGenerationSchemaVersion:SERVER_PAIRED_GENERATION_SCHEMA_VERSION,pairedInputVersion:SERVER_PAIRED_INPUT_VERSION,
     ...(outcomeReference?{pairedOutcomeReference:outcomeReference,pairedOutcomeReferenceVersion:SERVER_PAIRED_OUTCOME_REFERENCE_VERSION,pairedCriterionEvidencePolicy:PAIRED_CRITERION_EVIDENCE_POLICY}:{}),
-    ...(serverAiPairedJsonlEnabled()?{pairedOutputTransport:PAIRED_JSONL_PROTOCOL,pairedOutputGenerationVersion:SERVER_PAIRED_JSONL_GENERATION_VERSION,pairedOutputFinalTextVersion:SERVER_PAIRED_JSONL_FINAL_TEXT_VERSION}:{}),
+    ...(serverAiPairedJsonlEnabled()?{pairedOutputTransport:quotationTemplatePolicy?PAIRED_JSONL_TEMPLATE_PROTOCOL:PAIRED_JSONL_PROTOCOL,pairedOutputGenerationVersion:SERVER_PAIRED_JSONL_GENERATION_VERSION,pairedOutputFinalTextVersion:SERVER_PAIRED_JSONL_FINAL_TEXT_VERSION}:{}),
+    ...(quotationTemplatePolicy?{quotationTemplatePolicy,quotationRendererVersion:PAIRED_SOURCE_QUOTATION_RENDERER_VERSION,quotationTemplateInstructionSha256:createHash("sha256").update(PAIRED_SOURCE_QUOTATION_TEMPLATE_INSTRUCTION).digest("hex")}:{}),
     ...(pairedOutputBudget?{pairedOutputBudget}:{}),
     ...(sourceQuotationPolicy?{sourceQuotationPolicy,sourceQuotationVersion:SERVER_PAIRED_SOURCE_QUOTATION_VERSION,
       sourceQuotationInstructionSha256:createHash("sha256").update(PAIRED_SOURCE_QUOTATION_INSTRUCTION).digest("hex")} :{}),

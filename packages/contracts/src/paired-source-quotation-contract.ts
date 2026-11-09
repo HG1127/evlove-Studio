@@ -1,6 +1,13 @@
 import {z} from "zod";
 
 export const PAIRED_SOURCE_QUOTATION_POLICY="measured-source-quotations-v1" as const;
+export const PAIRED_SOURCE_QUOTATION_TEMPLATE_POLICY="source-quotation-marker-template-v1" as const;
+export const PAIRED_SOURCE_QUOTATION_RENDERER_VERSION="source-quotation-marker-render-v1" as const;
+export const PairedSourceQuotationRenderingSchema=z.object({
+ policy:z.literal(PAIRED_SOURCE_QUOTATION_TEMPLATE_POLICY),
+ rendererVersion:z.literal(PAIRED_SOURCE_QUOTATION_RENDERER_VERSION),
+ templateSha256:z.string().regex(/^[a-f0-9]{64}$/),renderedNotesSha256:z.string().regex(/^[a-f0-9]{64}$/),
+}).strict();
 const identity={sourceArtifactId:z.string().min(1).max(240),sha256:z.string().regex(/^[a-f0-9]{64}$/)};
 export const PairedSourceIdentitySchema=z.object(identity).strict();
 /** A runtime projection of a complete observed document, never raw HTML or an AI reconstruction. */

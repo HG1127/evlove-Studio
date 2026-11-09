@@ -1,11 +1,12 @@
 import {createHash} from "node:crypto";
 import {FatalError} from "workflow";
-import {serverAiPairedOutcomeReferenceMode,serverAiPairedSourceQuotationPolicy} from "./server-ai-output-policy";
+import {serverAiPairedOutcomeReferenceMode,serverAiPairedSourceQuotationPolicy,serverAiPairedQuotationTemplatePolicy} from "./server-ai-output-policy";
 import {PAIRED_JUDGE_POLICY,PAIRED_CRITERION_EVIDENCE_POLICY,PairedJudgeMetricDefinitionSchema,PairedEvaluationAiResultSchema,PairedJudgeReceiptSchema,PairedJudgeRequestSchema,type EvaluateAiResult,type PairedEvaluationAiResult,type PairedJudgeRequest,type ServerEvidenceJudgeResult,type PairedOrderJournalPort} from "@evolution/contracts";
-import {conservativePairedJudgments,fastHash,unexplainedCriterionRejections,pairedSourceQuotationIssues,type SourceQuotationIssue} from "@evolution/core";
+import {conservativePairedJudgments,fastHash,unexplainedCriterionRejections,pairedSourceQuotationIssues,renderPairedSourceQuotationTemplate,type SourceQuotationTemplateIssue} from "@evolution/core";
 import {runServerAi,serverAiScoringRouteFingerprint} from "./ai-gateway";
 import {recoverPairedOrderObservations,pairedQuotationDocuments} from "@evolution/harness";
 import {createProductionPairedOrderJournal} from "./server-paired-order-journal";
+import {PAIRED_SOURCE_QUOTATION_RENDERER_VERSION,type PairedJudgeReceipt} from "@evolution/contracts";
 import {reserveServerPairedJudgeAttempt} from "./server-paired-judge-claim";
 import {withServerAiResponseProvenance} from "./server-ai-response-provenance";
 import type {ServerAiResponseProvenance} from "@evolution/contracts";
@@ -22,7 +23,7 @@ export class PairedCriterionVerdictInconsistentError extends FatalError{
 }
 export class PairedSourceQuotationError extends FatalError{
   readonly code="AI_SOURCE_QUOTATION_UNSUPPORTED";
-  constructor(readonly issues:Array<SourceQuotationIssue&{slot:string}>){super("Source quotation support is incomplete or differs from its measured document; assessment remains unqualified");}
+  constructor(readonly issues:Array<SourceQuotationTemplateIssue&{slot:string}>){super("Source quotation support is incomplete or differs from its measured document; assessment remains unqualified");}
 }
 const summary=(value:EvaluateAiResult)=>({accuracy:value.accuracy,evidence:value.evidence,riskCoverage:value.riskCoverage,completeness:value.completeness,safety:value.safety,
   criteria:value.criteria.map(({criterionId,score,pass,testCaseIds,relativeEvidenceStatus,evidenceStatus})=>({criterionId,score,pass,testCaseIds,
@@ -37,13 +38,14 @@ export async function runServerPairedEvidenceJudge(raw:unknown,ports:Ports={invo
   const route=await ports.routeFingerprint();if(!route)throw Error("Paired scoring route identity unavailable");
   const outcomeReferencePolicy=serverAiPairedOutcomeReferenceMode();
   const sourceQuotationPolicy=serverAiPairedSourceQuotationPolicy();
+  const templatePolicy=serverAiPairedQuotationTemplatePolicy();
   const sourceDocuments=sourceQuotationPolicy?{
     original:pairedQuotationDocuments(request.versions.original.documents,context.bindings.map(b=>({sourceArtifactId:b.sourceArtifactId,sha256:b.originalSha256}))),
     candidate:pairedQuotationDocuments(request.versions.candidate.documents,context.bindings.map(b=>({sourceArtifactId:b.sourceArtifactId,sha256:b.candidateSha256}))),
   }:undefined;
   const recovered=recoverPairedOrderObservations(await ports.journal?.read(request,route)??[],request,route,sha);
   if(!recovered.length)await ports.claim?.(request);
-  const observations:Array<{original:EvaluateAiResult;candidate:EvaluateAiResult;controlOriginal:EvaluateAiResult;resultSha256:string}>=[];
+  const observations:Array<{original:EvaluateAiResult;candidate:EvaluateAiResult;controlOriginal:EvaluateAiResult;resultSha256:string;sourceQuotationRendering?:PairedJudgeReceipt["samples"][number]["sourceQuotationRendering"]}>=[];
   for(let index=0;index<2;index++){
     if(await ports.routeFingerprint()!==route)throw Error("Paired scoring route changed");
     const requestFingerprint=inputFingerprint+":"+index;
@@ -53,7 +55,7 @@ export async function runServerPairedEvidenceJudge(raw:unknown,ports:Ports={invo
       if(!ports.journal)return ports.invoke(payload);
       const captured=await withServerAiResponseProvenance(()=>ports.invoke(payload));responseProvenance=captured.observations;return captured.value;
     };
-    const value=recovered.length?recovered.find(o=>o.order===index)!.response:PairedEvaluationAiResultSchema.parse(await invoke(JSON.parse(JSON.stringify({schemaVersion:"paired-judge-input-v1",requestFingerprint,
+    const rawValue=recovered.length?recovered.find(o=>o.order===index)!.response:PairedEvaluationAiResultSchema.parse(await invoke(JSON.parse(JSON.stringify({schemaVersion:"paired-judge-input-v1",requestFingerprint,
       goal:request.goal,metrics:request.metrics,acceptanceRubric:request.criteria,testCases:request.testCases,
       issuedCriterionCaseBindings:request.criteria.map(c=>({criterionId:c.id,testCaseIds:request.testCases.filter(t=>t.criterionIds.includes(c.id)).map(t=>t.id)})),
       versions:[{slot:"A",observations:first},{slot:"B",observations:second},{slot:"C",observations:request.versions.original}],
@@ -61,33 +63,45 @@ export async function runServerPairedEvidenceJudge(raw:unknown,ports:Ports={invo
         +(context.fileMetadataPolicy?fileMetadataInstruction:"")
         +"Physical facts remain limited to their own source/hash/case scope and do not automatically prove semantic quality. Return every issued criterion with testCaseIds copied exactly from issuedCriterionCaseBindings. Criterion IDs and test case IDs are different namespaces: never add a related criterion ID to testCaseIds. Missing proof must be explained, not invented. Identical observed content must receive the same criterion score and pass decision regardless of slot. Use cases:[]; criterion-level judgments tied to the issued case IDs are authoritative, and case aggregate scores are not used.",
     }))));
-    if(value.requestFingerprint!==requestFingerprint||await ports.routeFingerprint()!==route)throw Error("Paired response or route binding differs");
-    for(const version of value.versions){
+    if(rawValue.requestFingerprint!==requestFingerprint||await ports.routeFingerprint()!==route)throw Error("Paired response or route binding differs");
+    for(const version of rawValue.versions){
       if(!same(version.result.criteria.map(c=>c.criterionId),context.criterionIds)||version.result.cases.some(c=>!context.testCaseIds.includes(c.testCaseId))
         ||version.result.criteria.some(c=>!same(c.testCaseIds,request.testCases.filter(t=>t.criterionIds.includes(c.criterionId)).map(t=>t.id))))throw Error("Paired response criterion/case coverage differs");
     }
-    if(!recovered.length&&ports.journal)await ports.journal.save({schemaVersion:"paired-order-observation-v2",context:request.context,scoringRouteFingerprint:route,order:index as 0|1,resultSha256:sha(value),response:value,responseProvenance});
+    if(!recovered.length&&ports.journal)await ports.journal.save({schemaVersion:"paired-order-observation-v2",context:request.context,scoringRouteFingerprint:route,order:index as 0|1,resultSha256:sha(rawValue),response:rawValue,responseProvenance});
+    let value=rawValue;
+    let sourceQuotationRendering:typeof observations[number]["sourceQuotationRendering"];
     if(sourceDocuments){
-      const unsupported=value.versions.flatMap(version=>{
+      const rendered=new Map<string,string[]>();
+      const unsupported=rawValue.versions.flatMap(version=>{
         const original=version.slot==="C"||(index===0?version.slot==="A":version.slot==="B");
-        return pairedSourceQuotationIssues({notes:version.result.notes,quotations:version.result.sourceQuotations,
-          subjectDocuments:sourceDocuments[original?"original":"candidate"],comparisonDocuments:sourceDocuments[original?"candidate":"original"]})
-          .map(issue=>({...issue,slot:version.slot}));
+        const input={notes:version.result.notes,quotations:version.result.sourceQuotations,
+          subjectDocuments:sourceDocuments[original?"original":"candidate"],comparisonDocuments:sourceDocuments[original?"candidate":"original"]};
+        if(!templatePolicy)return pairedSourceQuotationIssues(input).map(issue=>({...issue,slot:version.slot}));
+        const decoded=renderPairedSourceQuotationTemplate(input);
+        if(decoded.notes)rendered.set(version.slot,decoded.notes);
+        return decoded.issues.map(issue=>({...issue,slot:version.slot}));
       });
       if(unsupported.length)throw new PairedSourceQuotationError(unsupported);
+      if(templatePolicy){
+        value={...rawValue,versions:rawValue.versions.map(version=>({...version,result:{...version.result,notes:rendered.get(version.slot)!}}))};
+        sourceQuotationRendering={policy:templatePolicy,rendererVersion:PAIRED_SOURCE_QUOTATION_RENDERER_VERSION,
+          templateSha256:sha(rawValue.versions.map(v=>({slot:v.slot,notes:v.result.notes,sourceQuotations:v.result.sourceQuotations}))),
+          renderedNotesSha256:sha(value.versions.map(v=>({slot:v.slot,notes:v.result.notes})))};
+      }
     }
     // Preserve the observed rejection as evidence, never as an accepted comparison.
     const unexplained=value.versions.flatMap(version=>unexplainedCriterionRejections(request.criteria,version.result)
       .map(issue=>({...issue,slot:version.slot})));
     if(unexplained.length)throw new PairedCriterionVerdictInconsistentError(unexplained);
     const a=value.versions.find(v=>v.slot==="A")!.result,b=value.versions.find(v=>v.slot==="B")!.result;
-    observations.push({original:index===0?a:b,candidate:index===0?b:a,controlOriginal:value.versions.find(v=>v.slot==="C")!.result,resultSha256:sha(value)});
+    observations.push({original:index===0?a:b,candidate:index===0?b:a,controlOriginal:value.versions.find(v=>v.slot==="C")!.result,resultSha256:sha(rawValue),...(sourceQuotationRendering?{sourceQuotationRendering}:{})});
   }
   const receipt=PairedJudgeReceiptSchema.parse({...request.context,scoringRouteFingerprint:route,
     ...(sourceQuotationPolicy?{sourceQuotationPolicy}:{}),
     ...(outcomeReferencePolicy?{outcomeReferencePolicy,evidenceStatusPolicy:PAIRED_CRITERION_EVIDENCE_POLICY}:{}),samples:[
-    {order:"original-first",resultSha256:observations[0]!.resultSha256,original:summary(observations[0]!.original),candidate:summary(observations[0]!.candidate),controlOriginal:summary(observations[0]!.controlOriginal)},
-    {order:"candidate-first",resultSha256:observations[1]!.resultSha256,original:summary(observations[1]!.original),candidate:summary(observations[1]!.candidate),controlOriginal:summary(observations[1]!.controlOriginal)},
+    {order:"original-first",resultSha256:observations[0]!.resultSha256,original:summary(observations[0]!.original),candidate:summary(observations[0]!.candidate),controlOriginal:summary(observations[0]!.controlOriginal),...(observations[0]!.sourceQuotationRendering?{sourceQuotationRendering:observations[0]!.sourceQuotationRendering}:{})},
+    {order:"candidate-first",resultSha256:observations[1]!.resultSha256,original:summary(observations[1]!.original),candidate:summary(observations[1]!.candidate),controlOriginal:summary(observations[1]!.controlOriginal),...(observations[1]!.sourceQuotationRendering?{sourceQuotationRendering:observations[1]!.sourceQuotationRendering}:{})},
   ],limitations:["Two order-reversed paired observations are not a statistical confidence interval, human outcome or causal transfer proof.",
     "Outer slots omit preferred version roles; embedded document/physical evidence may still disclose roles. Complete blinding is not claimed.",
     "Per-criterion scores retain the less favorable observed pair; the identical Original control must agree within each response. No best-of retry, averaged pass or new physical observation is created."]});

@@ -96,3 +96,4 @@ export * from "./mission-directory-projection";
 export * from "./mission-execution-state";
 export * from "./criterion-verdict-consistency";
 export * from "./paired-source-quotations";
+export * from "./paired-source-quotation-template";

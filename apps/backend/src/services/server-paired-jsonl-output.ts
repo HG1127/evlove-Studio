@@ -1,8 +1,8 @@
 import {z,type ZodType} from "zod";
-import {PAIRED_JSONL_PROTOCOL,PAIRED_CRITERION_EVIDENCE_POLICY,PairedJsonlRecordSchema,PairedJsonlEvidenceRecordSchema,PairedJsonlQuotationGenerationRecordSchema,PairedJsonlScopeSchema} from "@evolution/contracts";
+import {PAIRED_JSONL_PROTOCOL,PAIRED_JSONL_TEMPLATE_PROTOCOL,PAIRED_CRITERION_EVIDENCE_POLICY,PairedJsonlRecordSchema,PairedJsonlEvidenceRecordSchema,PairedJsonlQuotationGenerationRecordSchema,PairedJsonlQuotationTemplateRecordSchema,PairedJsonlScopeSchema} from "@evolution/contracts";
 import {parsePairedJsonl,structuredAiFinalText} from "@evolution/adapters";
 import {serverPairedOutcomeReferenceCriterionIds} from "./server-paired-ai-contract";
-import {serverAiPairedOutcomeReferenceMode,serverAiPairedSourceQuotationPolicy} from "./server-ai-output-policy";
+import {serverAiPairedOutcomeReferenceMode,serverAiPairedSourceQuotationPolicy,serverAiPairedQuotationTemplatePolicy} from "./server-ai-output-policy";
 
 export const SERVER_PAIRED_JSONL_GENERATION_VERSION="paired-jsonl-generation-v2-explicit-records";
 export const SERVER_PAIRED_JSONL_FINAL_TEXT_VERSION="paired-jsonl-final-text-v2-ascii-separators";
@@ -12,15 +12,16 @@ export function serverPairedJsonlOutput<T>(payload:unknown,parser:ZodType<T>,ins
  const issued=z.object({requestFingerprint:z.string(),issuedCriterionCaseBindings:z.unknown()}).parse(payload);
  const relativeCriterionIds=serverPairedOutcomeReferenceCriterionIds(payload);
  const sourceQuotationPolicy=serverAiPairedSourceQuotationPolicy();
+ const templatePolicy=serverAiPairedQuotationTemplatePolicy(),protocol=templatePolicy?PAIRED_JSONL_TEMPLATE_PROTOCOL:PAIRED_JSONL_PROTOCOL;
  const scope=PairedJsonlScopeSchema.parse({requestFingerprint:issued.requestFingerprint,bindings:issued.issuedCriterionCaseBindings,
-  ...(relativeCriterionIds.length?{relativeCriterionIds}:{}),...(serverAiPairedOutcomeReferenceMode()?{evidenceStatusPolicy:PAIRED_CRITERION_EVIDENCE_POLICY}:{}),...(sourceQuotationPolicy?{sourceQuotationPolicy}:{})});
- const header={kind:"header",protocol:PAIRED_JSONL_PROTOCOL,requestFingerprint:scope.requestFingerprint};
+  ...(relativeCriterionIds.length?{relativeCriterionIds}:{}),...(serverAiPairedOutcomeReferenceMode()?{evidenceStatusPolicy:PAIRED_CRITERION_EVIDENCE_POLICY}:{}),...(sourceQuotationPolicy?{sourceQuotationPolicy}:{}),...(templatePolicy?{sourceQuotationTemplatePolicy:templatePolicy}:{})});
+ const header={kind:"header",protocol,requestFingerprint:scope.requestFingerprint};
  const end={kind:"end",requestFingerprint:scope.requestFingerprint,criterionRecords:scope.bindings.length*3};
- const recordSchema=z.toJSONSchema(sourceQuotationPolicy?PairedJsonlQuotationGenerationRecordSchema:scope.evidenceStatusPolicy?PairedJsonlEvidenceRecordSchema:PairedJsonlRecordSchema);
+ const recordSchema=z.toJSONSchema(templatePolicy?PairedJsonlQuotationTemplateRecordSchema:sourceQuotationPolicy?PairedJsonlQuotationGenerationRecordSchema:scope.evidenceStatusPolicy?PairedJsonlEvidenceRecordSchema:PairedJsonlRecordSchema);
  // Only omit the grammar document's metadata, never a property from a model response.
  delete recordSchema.$schema;
  return {
-  system:instruction+"\nOUTPUT TRANSPORT: "+PAIRED_JSONL_PROTOCOL
+  system:instruction+"\nOUTPUT TRANSPORT: "+protocol
    +". Output one complete JSON object per line. No outer array/object, fences, commentary, blank lines, or multiline objects. Escape newlines inside strings."
    +" Start with one header. Include exactly one summary for each of A, B, C and exactly one criterion record per issued criterion per slot, preserving all scores, evidence, gaps and exact testCaseIds."
    +" The first line MUST be exactly this header record:\n"+JSON.stringify(header)

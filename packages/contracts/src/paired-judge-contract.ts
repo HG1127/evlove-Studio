@@ -1,5 +1,5 @@
 import {z} from "zod";
-import {PAIRED_SOURCE_QUOTATION_POLICY} from "./paired-source-quotation-contract";
+import {PAIRED_SOURCE_QUOTATION_POLICY,PairedSourceQuotationRenderingSchema} from "./paired-source-quotation-contract";
 
 export const PAIRED_JUDGE_POLICY="paired-two-order-v1" as const;
 export const PAIRED_JUDGE_FILE_METADATA_POLICY="bound-file-reference-v1" as const;
@@ -56,11 +56,12 @@ export const PairedJudgeReceiptSchema=PairedJudgeContextSchema.extend({
   evidenceStatusPolicy:z.literal(PAIRED_CRITERION_EVIDENCE_POLICY).optional(),
   sourceQuotationPolicy:z.literal(PAIRED_SOURCE_QUOTATION_POLICY).optional(),
   samples:z.tuple([
-    z.object({order:z.literal("original-first"),resultSha256:hash,original:summary,candidate:summary,controlOriginal:summary}).strict(),
-    z.object({order:z.literal("candidate-first"),resultSha256:hash,original:summary,candidate:summary,controlOriginal:summary}).strict(),
+    z.object({order:z.literal("original-first"),resultSha256:hash,original:summary,candidate:summary,controlOriginal:summary,sourceQuotationRendering:PairedSourceQuotationRenderingSchema.optional()}).strict(),
+    z.object({order:z.literal("candidate-first"),resultSha256:hash,original:summary,candidate:summary,controlOriginal:summary,sourceQuotationRendering:PairedSourceQuotationRenderingSchema.optional()}).strict(),
   ]),
   limitations:z.array(z.string().min(1)).min(1).max(12),
 }).strict().superRefine((value,ctx)=>{
+  if(value.samples.some(s=>s.sourceQuotationRendering)&&(!value.sourceQuotationPolicy||value.samples.some(s=>!s.sourceQuotationRendering)))ctx.addIssue({code:"custom",path:["samples"],message:"Quotation rendering requires source scope and both original raw observations"});
   if(value.bindings.some(b=>Boolean(b.fileMetadata)!==Boolean(value.fileMetadataPolicy)))ctx.addIssue({code:"custom",path:["bindings"],message:"File metadata policy requires every binding; legacy receipts remain unenriched"});
   if(new Set(value.bindings.map(b=>b.sourceArtifactId)).size!==value.bindings.length)ctx.addIssue({code:"custom",path:["bindings"],message:"Duplicate source binding"});
   const expected=new Set(value.criterionIds),cases=new Set(value.testCaseIds);

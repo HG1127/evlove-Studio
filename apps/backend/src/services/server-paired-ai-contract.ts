@@ -2,8 +2,8 @@ import {z} from "zod";
 import {AcceptanceCriterionSchema,PAIRED_CRITERION_EVIDENCE_POLICY,PairedJudgeMetricDefinitionSchema,PairedEvaluationAiResultSchema,pairedEvaluationJsonSchema} from "@evolution/contracts";
 import {zeroOutcomeReferenceCriterionIds} from "@evolution/core";
 import {serverIssuedPairedJsonSchema} from "./server-paired-json-schema";
-import {serverAiPairedOutcomeReferenceMode,serverAiPairedSafetyPolicy,serverAiPairedSourceQuotationPolicy} from "./server-ai-output-policy";
-import {PAIRED_SOURCE_QUOTATION_INSTRUCTION} from "./server-paired-source-instruction";
+import {serverAiPairedOutcomeReferenceMode,serverAiPairedSafetyPolicy,serverAiPairedSourceQuotationPolicy,serverAiPairedQuotationTemplatePolicy} from "./server-ai-output-policy";
+import {PAIRED_SOURCE_QUOTATION_INSTRUCTION,PAIRED_SOURCE_QUOTATION_TEMPLATE_INSTRUCTION} from "./server-paired-source-instruction";
 import {PAIRED_SAFETY_EVIDENCE_INSTRUCTION,PAIRED_SAFETY_RELATIVE_UNKNOWN_INSTRUCTION} from "./server-paired-safety-instruction";
 
 const id=z.string().min(1),unique=(ids:string[])=>new Set(ids).size===ids.length;
@@ -27,6 +27,7 @@ export function serverPairedOutcomeReferenceCriterionIds(payload:unknown){
 
 /** Only inadmissible identifiers enter the existing single format correction; valid verdicts remain data. */
 export function serverAiPairedContract(payload:unknown){
+  const templatePolicy=serverAiPairedQuotationTemplatePolicy();
   const referenceMode=serverAiPairedOutcomeReferenceMode();
   const safetyPolicy=serverAiPairedSafetyPolicy();
   const sourceQuotationPolicy=serverAiPairedSourceQuotationPolicy();
@@ -69,5 +70,5 @@ export function serverAiPairedContract(payload:unknown){
     }));
   });
   const passInstruction=" A criterion score and its pass flag are both authoritative requirements; neither replaces the other. Evaluate pass only against that issued criterion, its unchanged minimum and its own evidence. Do not import whole-Mission release, deployment or business-outcome gates into a criterion verdict unless that issued criterion explicitly requires them. When Safety is PASS, criterion evidence is sufficient and its score meets the issued minimum, a pass=false verdict must identify a specific still-unmet issued requirement in that row's gaps, tied to the issued evidence/cases. Do not output a high score, affirmative evidence, empty gaps and an unexplained rejection. If the criterion-specific requirement is met, report the corresponding positive verdict; if evidence is missing, retain unknown evidence and the specific gaps rather than inventing a pass or failure. Known Safety FAIL and all original minima remain unchanged.";
-  return {schema,parser,instruction:instruction+referenceInstruction+passInstruction+(safetyPolicy?PAIRED_SAFETY_EVIDENCE_INSTRUCTION:"")+(sourceQuotationPolicy?PAIRED_SOURCE_QUOTATION_INSTRUCTION:"")};
+  return {schema,parser,instruction:instruction+referenceInstruction+passInstruction+(safetyPolicy?PAIRED_SAFETY_EVIDENCE_INSTRUCTION:"")+(sourceQuotationPolicy?(templatePolicy?PAIRED_SOURCE_QUOTATION_TEMPLATE_INSTRUCTION:PAIRED_SOURCE_QUOTATION_INSTRUCTION):"")};
 }
