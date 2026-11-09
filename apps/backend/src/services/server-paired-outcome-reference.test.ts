@@ -48,6 +48,7 @@ describe("server-configured paired relative outcome reference",()=>{
    const route=["openai-compatible",connection.baseUrl,connection.model,connection.protocol,connection.responseFormat];
    const expected=createHash("sha256").update(JSON.stringify({route,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION,
     pairedGenerationSchemaVersion:SERVER_PAIRED_GENERATION_SCHEMA_VERSION,pairedInputVersion:SERVER_PAIRED_INPUT_VERSION,
+    pairedCriterionVerdictReviewPolicy:"high-score-rejection-review-v1",
     pairedOutcomeReference:"zero-v1",pairedOutcomeReferenceVersion:SERVER_PAIRED_OUTCOME_REFERENCE_VERSION,pairedCriterionEvidencePolicy:PAIRED_CRITERION_EVIDENCE_POLICY,
     pairedOutputTransport:PAIRED_JSONL_PROTOCOL,pairedOutputGenerationVersion:SERVER_PAIRED_JSONL_GENERATION_VERSION,pairedOutputFinalTextVersion:SERVER_PAIRED_JSONL_FINAL_TEXT_VERSION})).digest("hex");
    expect(await serverAiScoringRouteFingerprint()).toBe(expected);expect(expected).not.toBe(legacy);

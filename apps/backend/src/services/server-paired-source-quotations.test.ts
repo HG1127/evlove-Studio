@@ -58,6 +58,25 @@ function selectionSetup(change?:(response:PairedSelectionEvaluationAiResult)=>vo
  return {...x,ports:{...x.ports,invoke}};
 }
 describe("prospective source quotation enforcement",()=>{
+ it("separates the paired verdict policy from the unchanged ordinary Baseline identity",async()=>{
+  const config={connectionId:"synthetic",label:"Synthetic",apiKey:"synthetic-key",baseUrl:"https://quotes.example.test/v1",model:"synthetic",protocol:"chat-completions" as const,responseFormat:"prompt-json" as const};
+  await withExplicitServerAiConnection(config,async()=>{
+   vi.stubEnv("EVOLUTION_AI_PAIRED_QUOTATION_TEMPLATE","");vi.stubEnv("EVOLUTION_AI_PAIRED_SOURCE_FRAGMENTS","");
+   expect(await serverAiScoringRouteFingerprint()).not.toBe(await serverAiScoringRouteFingerprint("baseline"));
+  });
+ });
+ it("retains raw nonempty high-score veto evidence and blocks qualification without another call",async()=>{
+  const x=setup(value=>Object.assign(value.versions.find(v=>v.slot==="B")!.result.criteria[0]!,{
+   score:96,pass:false,evidenceStatus:"sufficient",gaps:["The issued requirement is met; this caveat does not block acceptance"],
+  }));
+  await expect(runServerPairedEvidenceJudge(x.request,x.ports)).rejects.toMatchObject({code:"AI_CRITERION_VERDICT_REVIEW_REQUIRED"});
+  expect(x.saved).toHaveLength(1);expect(x.ports.invoke).toHaveBeenCalledOnce();
+  const raw=x.saved[0]!.response.versions.find(v=>v.slot==="B")!.result;
+  expect(raw).toMatchObject({safety:"PASS",criteria:[{score:96,pass:false,gaps:["The issued requirement is met; this caveat does not block acceptance"]}]});
+  const snapshot=structuredClone(x.saved);
+  await expect(runServerPairedEvidenceJudge(x.request,x.ports)).rejects.toThrow();
+  expect(x.saved).toEqual(snapshot);expect(x.ports.invoke).toHaveBeenCalledOnce();
+ });
  it("keeps ordinary Baseline identity when only the paired citation representation changes",async()=>{
   const config={connectionId:"synthetic",label:"Synthetic",apiKey:"synthetic-key",baseUrl:"https://quotes.example.test/v1",model:"synthetic",protocol:"chat-completions" as const,responseFormat:"prompt-json" as const};
   let baseline:string|undefined,paired:string|undefined;

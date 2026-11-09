@@ -5,6 +5,7 @@ export const PAIRED_JUDGE_POLICY="paired-two-order-v1" as const;
 export const PAIRED_JUDGE_FILE_METADATA_POLICY="bound-file-reference-v1" as const;
 export const PAIRED_OUTCOME_REFERENCE_POLICY="zero-v1" as const;
 export const PAIRED_CRITERION_EVIDENCE_POLICY="criterion-evidence-v1" as const;
+export const PAIRED_CRITERION_VERDICT_REVIEW_POLICY="high-score-rejection-review-v1" as const;
 export const CriterionEvidenceStatusSchema=z.enum(["sufficient","unknown"]);
 export const PairedRelativeEvidenceStatusSchema=z.enum(["sufficient","unknown"]);
 const hash=z.string().regex(/^[a-f0-9]{64}$/);

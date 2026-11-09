@@ -58,8 +58,12 @@ describe("server AI scoring route identity",()=> {
     const contextOnly=createHash("sha256").update(JSON.stringify({route,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION})).digest("hex");
     const previousSchemaRoute=createHash("sha256").update(JSON.stringify({route,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION})).digest("hex");
     const mutableMetricsRoute=createHash("sha256").update(JSON.stringify({route,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION,pairedGenerationSchemaVersion:SERVER_PAIRED_GENERATION_SCHEMA_VERSION})).digest("hex");
-    const expected=createHash("sha256").update(JSON.stringify({route,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION,pairedGenerationSchemaVersion:SERVER_PAIRED_GENERATION_SCHEMA_VERSION,pairedInputVersion:SERVER_PAIRED_INPUT_VERSION})).digest("hex");
+    const ordinaryIdentity={route,semanticContextVersion:SERVER_SEMANTIC_CONTEXT_VERSION,measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION,pairedGenerationSchemaVersion:SERVER_PAIRED_GENERATION_SCHEMA_VERSION,pairedInputVersion:SERVER_PAIRED_INPUT_VERSION};
+    const ordinary=createHash("sha256").update(JSON.stringify(ordinaryIdentity)).digest("hex");
+    const expected=createHash("sha256").update(JSON.stringify({...ordinaryIdentity,pairedCriterionVerdictReviewPolicy:"high-score-rejection-review-v1"})).digest("hex");
+    expect(await serverAiScoringRouteFingerprint("baseline")).toBe(ordinary);
     expect(await serverAiScoringRouteFingerprint()).toBe(expected);
+    expect(expected).not.toBe(ordinary);
     expect(await serverAiScoringRouteFingerprint()).not.toBe(legacy);
     expect(await serverAiScoringRouteFingerprint()).not.toBe(contextOnly);
     expect(await serverAiScoringRouteFingerprint()).not.toBe(previousSchemaRoute);

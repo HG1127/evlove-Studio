@@ -21,6 +21,7 @@ import {
   PAIRED_COMPACT_SOURCE_FRAGMENT_POLICY,
   PAIRED_SOURCE_QUOTATION_RENDERER_VERSION,
   PAIRED_CRITERION_EVIDENCE_POLICY,
+  PAIRED_CRITERION_VERDICT_REVIEW_POLICY,
   ArtifactAcceptanceAiResultSchema,
   CommandAiResultSchema,
   CopilotAiResultSchema,
@@ -84,7 +85,7 @@ import {serverAiOutputTokenLimit,serverAiPairedOutputBudgetIdentity} from "./ser
 
 export type ServerAiOperation=AiOperation;
 /** Default identity includes every configured paired policy. Baseline mode preserves the
- * historical ordinary-evaluate cache when only the newer paired citation representation changes.
+ * historical ordinary-evaluate cache across paired-only citation and verdict-consumption changes.
  * Model, endpoint, protocol, reasoning and all earlier version bindings remain unchanged. */
 export async function serverAiScoringRouteFingerprint(mode:"paired"|"baseline"="paired"): Promise<string | undefined> {
   const config = await resolveServerAiOperationConfig("evaluate");
@@ -99,6 +100,7 @@ export async function serverAiScoringRouteFingerprint(mode:"paired"|"baseline"="
   const quotationTemplatePolicy=mode==="paired"?serverAiPairedQuotationTemplatePolicy():undefined;
   const sourceFragmentPolicy=mode==="paired"?serverAiPairedSourceFragmentPolicy():undefined;
   return createHash("sha256").update(JSON.stringify({ route, semanticContextVersion: SERVER_SEMANTIC_CONTEXT_VERSION,measuredReviewVersion:SERVER_MEASURED_REVIEW_VERSION,pairedGenerationSchemaVersion:SERVER_PAIRED_GENERATION_SCHEMA_VERSION,pairedInputVersion:SERVER_PAIRED_INPUT_VERSION,
+    ...(mode==="paired"?{pairedCriterionVerdictReviewPolicy:PAIRED_CRITERION_VERDICT_REVIEW_POLICY}:{}),
     ...(outcomeReference?{pairedOutcomeReference:outcomeReference,pairedOutcomeReferenceVersion:SERVER_PAIRED_OUTCOME_REFERENCE_VERSION,pairedCriterionEvidencePolicy:PAIRED_CRITERION_EVIDENCE_POLICY}:{}),
     ...(serverAiPairedJsonlEnabled()?{pairedOutputTransport:sourceFragmentPolicy===PAIRED_COMPACT_SOURCE_FRAGMENT_POLICY?PAIRED_JSONL_COMPACT_SELECTION_PROTOCOL:sourceFragmentPolicy?PAIRED_JSONL_SELECTION_PROTOCOL:quotationTemplatePolicy?PAIRED_JSONL_TEMPLATE_PROTOCOL:PAIRED_JSONL_PROTOCOL,pairedOutputGenerationVersion:SERVER_PAIRED_JSONL_GENERATION_VERSION,pairedOutputFinalTextVersion:SERVER_PAIRED_JSONL_FINAL_TEXT_VERSION}:{}),
     ...(quotationTemplatePolicy?{quotationTemplatePolicy,quotationRendererVersion:PAIRED_SOURCE_QUOTATION_RENDERER_VERSION,quotationTemplateInstructionSha256:createHash("sha256").update(PAIRED_SOURCE_QUOTATION_TEMPLATE_INSTRUCTION).digest("hex")}:{}),

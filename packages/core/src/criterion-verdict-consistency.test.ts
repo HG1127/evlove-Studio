@@ -1,6 +1,6 @@
 import {describe,expect,it} from "vitest";
 import type {EvaluateAiResult} from "@evolution/contracts";
-import {unexplainedCriterionRejections} from "./criterion-verdict-consistency";
+import {unexplainedCriterionRejections,criterionRejectionsRequiringReview} from "./criterion-verdict-consistency";
 
 const criteria=[{id:"GOAL",minScore:85}];
 function judgment():Pick<EvaluateAiResult,"safety"|"criteria">{
@@ -35,5 +35,32 @@ describe("criterion rejection rationale",()=>{
   it("uses the issued minimum and leaves positive verdicts unchanged",()=>{
     const value=judgment();expect(unexplainedCriterionRejections([{id:"GOAL",minScore:97}],value)).toEqual([]);
     value.criteria[0]!.pass=true;expect(unexplainedCriterionRejections(criteria,value)).toEqual([]);
+  });
+});
+
+describe("high-score veto qualification",()=>{
+  it.each([[],[" \t"],["The issued requirement is met; the caveat is nonblocking"],["Required recovery action was not observed in V1"]].map(gaps=>({gaps})))("requires review without interpreting gap syntax: %j",({gaps})=>{
+    const value=judgment();value.criteria[0]!.gaps=gaps;const before=structuredClone(value);
+    expect(criterionRejectionsRequiringReview(criteria,value)).toEqual([{criterionId:"GOAL",score:96,minScore:85}]);
+    expect(value).toEqual(before);
+  });
+  it("uses the issued minimum including equality without inventing requirements",()=>{
+    const value=judgment();value.criteria[0]!.score=85;
+    expect(criterionRejectionsRequiringReview(criteria,value)).toEqual([{criterionId:"GOAL",score:85,minScore:85}]);
+    expect(criterionRejectionsRequiringReview([{id:"GOAL",minScore:86}],value)).toEqual([]);
+    expect(criterionRejectionsRequiringReview([{id:"OTHER",minScore:85}],value)).toEqual([]);
+  });
+  it("preserves other known negatives and leaves positive verdicts unchanged",()=>{
+    const value=judgment();value.criteria.push({...structuredClone(value.criteria[0]!),criterionId:"OTHER",score:0,gaps:["Observed required output absent"]});
+    const before=structuredClone(value);
+    expect(criterionRejectionsRequiringReview([...criteria,{id:"OTHER",minScore:85}],value)).toEqual([{criterionId:"GOAL",score:96,minScore:85}]);
+    expect(value).toEqual(before);
+    value.criteria[0]!.pass=true;expect(criterionRejectionsRequiringReview(criteria,value)).toEqual([]);
+  });
+  it("does not reclassify unknown evidence or known Safety failures",()=>{
+    for(const safety of ["FAIL","REVIEW"] as const){const value=judgment();value.safety=safety;const before=structuredClone(value);
+      expect(criterionRejectionsRequiringReview(criteria,value)).toEqual([]);expect(value).toEqual(before);}
+    for(const evidenceStatus of [undefined,"unknown"] as const){const value=judgment();value.criteria[0]!.evidenceStatus=evidenceStatus;const before=structuredClone(value);
+      expect(criterionRejectionsRequiringReview(criteria,value)).toEqual([]);expect(value).toEqual(before);}
   });
 });

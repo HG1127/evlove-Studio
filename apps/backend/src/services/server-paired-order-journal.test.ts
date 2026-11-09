@@ -65,7 +65,7 @@ describe("durable per-order recovery under the original occupied claim",()=>{
     versions:[{slot:"A",result:original},{slot:"B",result:candidate},{slot:"C",result:structuredClone(original)}]});
   });
   const ports={...x.make(),invoke};
-  await expect(runServerPairedEvidenceJudge(x.request,ports)).rejects.toMatchObject({code:"AI_CRITERION_VERDICT_INCONSISTENT"});
+  await expect(runServerPairedEvidenceJudge(x.request,ports)).rejects.toMatchObject({code:"AI_CRITERION_VERDICT_REVIEW_REQUIRED"});
   expect(invoke).toHaveBeenCalledOnce();
   const observations=[...x.events.values()].filter(e=>e.source==="server-paired-order-journal");
   expect(observations).toHaveLength(1);

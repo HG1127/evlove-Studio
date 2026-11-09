@@ -36,17 +36,22 @@ describe("two-order paired comparison",()=>{
     const claim=vi.fn(async()=>{});
     const result=runServerPairedEvidenceJudge(x.request,{...port,claim});
     await expect(result).rejects.toMatchObject({
-      code:"AI_CRITERION_VERDICT_INCONSISTENT",issues:[{slot:"B",criterionId:"GOAL",score:96,minScore:x.request.criteria[0]!.minScore}],
+      code:"AI_CRITERION_VERDICT_REVIEW_REQUIRED",issues:[{slot:"B",criterionId:"GOAL",score:96,minScore:x.request.criteria[0]!.minScore}],
     });
     await expect(result).rejects.toBeInstanceOf(FatalError);
     expect(FatalError.is(await result.catch(error=>error))).toBe(true);
     expect(port.invoke).toHaveBeenCalledOnce();expect(claim).toHaveBeenCalledOnce();
     expect(captured!.versions.find(v=>v.slot==="B")!.result.criteria[0]).toMatchObject({score:96,pass:false,gaps:[]});
   });
-  it("keeps an explained high-score rejection as negative data without any verdict retry",async()=>{
-    const x=await assess(undefined,(reply,index)=>Object.assign(reply.versions.find(v=>v.slot===(index===0?"B":"A"))!.result.criteria[0]!,
-      {score:96,pass:false,evidenceStatus:"sufficient",gaps:["V1 did not demonstrate the required recovery action"]}));
-    expect(x.port.invoke).toHaveBeenCalledTimes(2);expect(x.raw.criteria[0]).toMatchObject({score:96,pass:false});
+  it.each(["V1 did not demonstrate the required recovery action","The issued workflow requirement is met; this caveat does not affect acceptance"])("requires independent review of a high-score veto even with a nonempty gap: %s",async gap=>{
+    const x=fixture();let captured:PairedEvaluationAiResult|undefined;
+    const port=model(undefined,reply=>{
+      Object.assign(reply.versions.find(v=>v.slot==="B")!.result.criteria[0]!,{score:96,pass:false,evidenceStatus:"sufficient",gaps:[gap]});
+      captured=structuredClone(reply);
+    });
+    await expect(runServerPairedEvidenceJudge(x.request,port)).rejects.toMatchObject({code:"AI_CRITERION_VERDICT_REVIEW_REQUIRED"});
+    expect(port.invoke).toHaveBeenCalledOnce();
+    expect(captured!.versions.find(v=>v.slot==="B")!.result).toMatchObject({safety:"PASS",criteria:[{score:96,pass:false,gaps:[gap]}]});
   });
   it("preserves a known Safety failure when a criterion has a high-score negative verdict",async()=>{
     const x=await assess(undefined,(reply,index)=>{
@@ -54,6 +59,13 @@ describe("two-order paired comparison",()=>{
       candidate.safety="FAIL";Object.assign(candidate.criteria[0]!,{score:96,pass:false,evidenceStatus:"sufficient",gaps:[]});
     });
     expect(x.port.invoke).toHaveBeenCalledTimes(2);expect(x.raw.safety).toBe("FAIL");expect(x.raw.criteria[0]!.pass).toBe(false);
+  });
+  it("keeps a below-minimum positive verdict in raw data without qualifying the criterion",async()=>{
+    const x=await assess([[90,84],[90,84]],(reply,index)=>{
+      Object.assign(reply.versions.find(v=>v.slot===(index===0?"B":"A"))!.result.criteria[0]!,{pass:true,evidenceStatus:"sufficient"});
+    });
+    expect(x.raw.criteria[0]).toMatchObject({score:84,pass:true});
+    expect(x.evaluation.criterionScores![0]).toMatchObject({score:84,pass:false});
   });
   it("settles a valid zero-score Safety failure and blocks Winner without an adverse-verdict retry",async()=>{
     const x=await assess([[90,80],[90,80]],(reply,index)=>{
