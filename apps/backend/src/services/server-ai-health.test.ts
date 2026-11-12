@@ -1,7 +1,6 @@
 // @vitest-environment node
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
-import {getPassiveServerAiHealth,probeServerAiRuntime,resetServerAiRuntimeProbeCache} from "./server-ai-health";
-import {withExplicitServerAiConnection} from "./server-ai-connection";
+import {getPassiveServerAiHealth,probeServerAiRuntime,probeServerAiJudgeRuntime,resetServerAiRuntimeProbeCache} from "./server-ai-health";import {withExplicitServerAiConnection} from "./server-ai-connection";
 
 const KEYS=[
   "VERCEL","VERCEL_ENV","VERCEL_OIDC_TOKEN","EVOLUTION_AI_GATEWAY_ENABLED",
@@ -72,6 +71,15 @@ describe("Server AI runtime health",()=>{
   it("reports a missing provider without invoking the runner",async()=>{
     let calls=0;
     const health=await probeServerAiRuntime(async()=>{calls+=1;return {};});
+    expect(health).toMatchObject({configured:false,ready:false,status:"unconfigured"});
+    expect(calls).toBe(0);
+  });
+});
+
+describe("independent Judge probe safety",()=>{
+  it("reports an unconfigured Judge without calling or caching the generation model",async()=>{
+    let calls=0;
+    const health=await probeServerAiJudgeRuntime(async()=>{calls+=1;return {};});
     expect(health).toMatchObject({configured:false,ready:false,status:"unconfigured"});
     expect(calls).toBe(0);
   });

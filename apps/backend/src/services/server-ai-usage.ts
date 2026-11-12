@@ -6,6 +6,7 @@ import {AiProviderUsageObservationSchema,AiUsageLedgerRecordSchema,AiUsageReques
 import type {ServerAiConfig} from "../server-env";
 import {assertServerControlExecutionActive,serverControlExecutionSignal} from "./server-control-execution";
 import {assertServerAiResponseProvenanceReady,observeServerAiResponseProvenance} from "./server-ai-response-provenance";
+import {reserveLabAiPhysicalCall} from "./server-ai-lab-probe";
 
 const active=new AsyncLocalStorage<{scope:AiUsageScope;write:AiUsageLedgerWriter}>();
 export const currentServerAiUsageScope=()=>{const scope=active.getStore()?.scope;return scope?{...scope}:undefined;};
@@ -64,6 +65,7 @@ export async function fetchServerAiProviderUsage(config:ServerAiConfig,protocol:
   const response=await fetchAiProvider(url,{...init,signal:serverControlExecutionSignal(init.signal)},{
     beforeAttempt:async attempt=>{
       await assertServerControlExecutionActive();
+      reserveLabAiPhysicalCall();
       call=await start(serverAiUsageRoute(config,protocol,operation),attempt,"physical-http-attempt");
       await assertServerControlExecutionActive();
     },
@@ -108,6 +110,7 @@ export async function measureServerAiSdkUsage<T>(config:ServerAiConfig,operation
   // SDK transport does not expose the complete provider response body.
   assertServerAiResponseProvenanceReady(undefined,undefined);
   await assertServerControlExecutionActive();
+  reserveLabAiPhysicalCall();
   const call=await start(serverAiUsageRoute(config,"ai-sdk",operation),1,"sdk-generation");
   let recorded=false;
   try{

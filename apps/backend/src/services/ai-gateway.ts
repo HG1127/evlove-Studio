@@ -65,6 +65,7 @@ import { SERVER_SEMANTIC_CONTEXT_VERSION,SERVER_MEASURED_REVIEW_VERSION,SERVER_P
 import type { ServerAiConfig } from "../server-env";
 import {resolveServerAiOperationConfig} from "./server-ai-connection";
 import {fetchServerAiProviderUsage,measureServerAiSdkUsage} from "./server-ai-usage";
+import {limitLabAiOutputTokens} from "./server-ai-lab-probe";
 import {serverAiPlanningInstruction} from "./server-plan-contract";
 import {serverAiPairedContract} from "./server-paired-ai-contract";
 import {SERVER_PAIRED_GENERATION_SCHEMA_VERSION} from "./server-paired-json-schema";
@@ -220,8 +221,8 @@ async function callVercelGateway<T>(args:{
       schema:args.contract.parser,
       name:args.contract.schema.name,
     }),
-    maxOutputTokens:10_000,
-    abortSignal:serverControlExecutionSignal(),
+    maxOutputTokens:limitLabAiOutputTokens(10_000),
+    ...(process.env.EVOLUTION_EXPERIMENT_MODE==="isolated"?{maxRetries:0}:{}),    abortSignal:serverControlExecutionSignal(),
     timeout:args.config.timeoutMs,
   }));
   return args.contract.parser.parse(generated.output);
@@ -258,8 +259,7 @@ async function callResponses<T>(args:DirectArgs<T>){
           ...args.images.map((image)=>({type:"input_image",image_url:image.dataUrl})),
         ]},
       ],
-      max_output_tokens:10000,
-      ...(args.config.reasoningEffort?{reasoning:{effort:args.config.reasoningEffort}}:{}),
+      max_output_tokens:limitLabAiOutputTokens(10_000),      ...(args.config.reasoningEffort?{reasoning:{effort:args.config.reasoningEffort}}:{}),
       ...(!args.lineOutput&&directFormat(args.config,args.contract)?{text:{format:directFormat(args.config,args.contract)}}:{}),
     }),
   });
@@ -285,8 +285,9 @@ async function callChat<T>(args:DirectArgs<T>){
     headers:{Authorization:"Bearer "+args.config.apiKey,"Content-Type":"application/json"},
     body:JSON.stringify({
       model:args.config.model,
-      ...(isEvaluation?{max_tokens:8192}:args.operation==="evaluate-paired"?{max_tokens:16384}:{}),
-      ...(args.config.reasoningEffort?{reasoning_effort:args.config.reasoningEffort}:{}),
+      ...(process.env.EVOLUTION_EXPERIMENT_MODE==="isolated"
+        ?{max_tokens:limitLabAiOutputTokens(isEvaluation?8192:args.operation==="evaluate-paired"?16384:10000)}
+        :isEvaluation?{max_tokens:8192}:args.operation==="evaluate-paired"?{max_tokens:16384}:{}),      ...(args.config.reasoningEffort?{reasoning_effort:args.config.reasoningEffort}:{}),
       messages:[
         {role:"system",content:args.lineOutput?.system??directSystem(args.config,args.contract,args.repairFields,args.planDraftIncluded)},
         {role:"user",content:args.images.length?[

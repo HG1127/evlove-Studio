@@ -29,8 +29,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ModelCombobox } from "./model-combobox";
 import {getGenerationConnectionDisplay,synchronizeGenerationConnection} from "../ai/server-connection-sync";
-import {readServerAiConnection} from "../ai/server-connection-client";
-import {ServerAiConnectionPanel} from "./server-ai-connection-panel";
+import {probeSavedServerAiConnection,readServerAiConnection} from "../ai/server-connection-client";import {ServerAiConnectionPanel} from "./server-ai-connection-panel";
 import { Tabs, type TabItem } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { getRunnerStatus } from "../runtime/api";
@@ -111,6 +110,8 @@ export function SettingsPanel() {
   const [busyId, setBusyId] = useState<string>();
   const [batchProgress, setBatchProgress] = useState<{ id: string; done: number; total: number; current: string } | null>(null);
   const [serverSyncBusy,setServerSyncBusy]=useState(false);
+  const [backendProbeBusy,setBackendProbeBusy]=useState<"generation"|"judge">();
+  const [backendProbeStatus,setBackendProbeStatus]=useState<Partial<Record<"generation"|"judge",{ready:boolean;model?:string;message:string}>>>({});
   const serverSaveInFlight=useRef(false);
   const serverStatusSequence=useRef(0);
   const connectionEditSequence=useRef(0);
@@ -138,6 +139,19 @@ export function SettingsPanel() {
     });
     return () => { active = false; };
   }, [activeTab]);
+  async function verifySavedBackendModel(role:"generation"|"judge"){
+    if(backendProbeBusy)return;
+    setBackendProbeBusy(role);
+    try{
+      const result=await probeSavedServerAiConnection(role);
+      setBackendProbeStatus(previous=>({...previous,[role]:{ready:result.ready,model:result.model,message:result.message}}));
+    }catch(error){
+      setBackendProbeStatus(previous=>({...previous,[role]:{
+        ready:false,message:error instanceof Error?error.message:"后端真实模型验证失败",
+      }}));
+    }finally{setBackendProbeBusy(undefined);}
+  }
+
   async function checkRunner(config = runnerGateway) {
     setRunnerTesting(true);
     const result = await testRunnerGateway(config);
@@ -763,6 +777,19 @@ export function SettingsPanel() {
         </Card>
     </>)}
 
+    {activeTab === "connections" && <Card>
+      <CardHeader><CardTitle className="text-base">已保存后端模型 · 真实连通性验证</CardTitle></CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-xs text-slate-600">直接复用加密 Vault 中的生成模型和独立 Judge；不要求重新输入 API Key。以下测试会真实调用供应商，可能产生少量 Token 费用。</p>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="secondary" disabled={Boolean(backendProbeBusy)} onClick={()=>void verifySavedBackendModel("generation")}>{backendProbeBusy==="generation"?"正在验证生成模型…":"验证已保存生成模型"}</Button>
+          <Button variant="secondary" disabled={Boolean(backendProbeBusy)} onClick={()=>void verifySavedBackendModel("judge")}>{backendProbeBusy==="judge"?"正在验证独立 Judge…":"验证已保存独立 Judge"}</Button>
+        </div>
+        {(["generation","judge"] as const).map(role=>backendProbeStatus[role]&&<div key={role} role="status" className={`rounded-xl border p-3 text-xs ${backendProbeStatus[role]?.ready?"border-emerald-200 bg-emerald-50 text-emerald-800":"border-amber-200 bg-amber-50 text-amber-800"}`}>
+          <b>{role==="judge"?"独立 Judge":"生成模型"}：</b>{backendProbeStatus[role]?.model?backendProbeStatus[role]?.model+" · ":""}{backendProbeStatus[role]?.message}
+        </div>)}
+      </CardContent>
+    </Card>}
     {activeTab === "connections" && <ServerAiConnectionPanel selected={selected} role="judge" />}
     {activeTab === "routing" && (
         <Card>

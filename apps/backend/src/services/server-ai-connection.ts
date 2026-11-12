@@ -119,6 +119,15 @@ export async function withServerAiConnection<T>(work:()=>Promise<T>):Promise<T>{
   return activeConfig.run({config,judge},work);
 }
 
+/** Run a bounded connectivity probe against the saved Judge, not the generator.
+ * Missing Judge is an error, never an implicit generator fallback.
+ */
+export async function withServerAiJudgeProbe<T>(work:()=>Promise<T>):Promise<T>{
+  const judge=await readJudgeConfig();
+  if(!judge)throw Object.assign(new Error("独立 Judge 尚未配置。"),{code:"JUDGE_NOT_CONFIGURED"});
+  return activeConfig.run({config:judge,judge},work);
+}
+
 export function withExplicitServerAiConnection<T>(input:ServerAiConnectionPut,work:()=>Promise<T>):Promise<T>{
   const parsed=ServerAiConnectionPutSchema.parse(input);
   return activeConfig.run({config:directConfig(parsed)},work);

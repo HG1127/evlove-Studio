@@ -1,12 +1,23 @@
 // @vitest-environment node
 import {afterEach,describe,expect,it,vi} from "vitest";
-import {saveServerAiConnection} from "./server-connection-client";
-
+import {probeSavedServerAiConnection,saveServerAiConnection} from "./server-connection-client";
 const input={connectionId:"connection",label:"Custom",apiKey:"synthetic-secret",model:"selected-model",baseUrl:"https://provider.test/v1/chat/completions/",protocol:"chat-completions" as const,responseFormat:"prompt-json" as const};
 const saved={configured:true,storageConfigured:true,revision:4,message:"saved",connection:{...input,baseUrl:"https://provider.test/v1"}};
 const reply=(value:unknown,status=200)=>new Response(JSON.stringify(value),{status});
 afterEach(()=>vi.unstubAllGlobals());
 describe("confirming server model persistence",()=>{
+  it.each(["generation","judge"] as const)("probes the saved %s Vault role by GET without sending any API Key",async role=>{
+    const payload={checkedAt:"2026-11-12T04:00:00.000Z",codeReady:true,configured:true,
+      mode:"openai-compatible",model:role+"-model",ready:true,runtimeVerified:true,status:"ready",message:"ok"};
+    const fetch=vi.fn().mockResolvedValue(reply(payload));
+    vi.stubGlobal("fetch",fetch);
+    const result=await probeSavedServerAiConnection(role);
+    expect(result).toMatchObject({model:role+"-model",ready:true});
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0]![0]).toBe("/api/evolution/ai-health?role="+role);
+    expect(fetch.mock.calls[0]![1].method).toBeUndefined();
+    expect(JSON.stringify(fetch.mock.calls)).not.toContain(input.apiKey);
+  });
   it("never overwrites generation when an older backend ignores the judge query",async()=>{
     let generation={...saved,connection:{...saved.connection,model:"existing-generator"}};
     const fetch=vi.fn(async(url:string,init:RequestInit={})=>{

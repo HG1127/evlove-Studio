@@ -12,11 +12,10 @@ vi.mock("./server-vault",()=>({
 }));
 import {
   getServerAiConnectionStatus,resolveServerAiConfig,saveServerAiConnection,
-  withExplicitServerAiConnection,withServerAiConnection,resolveServerAiOperationConfig,
+  withExplicitServerAiConnection,withServerAiConnection,withServerAiJudgeProbe,resolveServerAiOperationConfig,
 } from "./server-ai-connection";
 
-const input={
-  connectionId:"custom-a",label:"我的自定义模型",baseUrl:"https://models.example.test/v1/chat/completions/",
+const input={  connectionId:"custom-a",label:"我的自定义模型",baseUrl:"https://models.example.test/v1/chat/completions/",
   model:"arbitrary-model-id",apiKey:"private-key-never-return",
   protocol:"chat-completions" as const,responseFormat:"json-object" as const,
 };
@@ -51,6 +50,21 @@ describe("user-selected backend AI connection",()=>{
       await withServerAiConnection(async()=>expect(await resolveServerAiOperationConfig("evaluate-paired")).toMatchObject({model:"judge-one",reasoningEffort:"high"}));
     });
     expect(await resolveServerAiOperationConfig("evaluate")).toMatchObject({model:"judge-two",reasoningEffort:"high"});
+  });
+  it("uses the saved Judge as the sole probe model and restores generator afterwards",async()=>{
+    vault.metadata.mockImplementation(async(id:string)=>id==="server-ai-judge-connection-v1"?{version:1}:undefined);
+    vault.resolve.mockImplementation(async(id:string)=>JSON.stringify({
+      ...input,model:id==="server-ai-judge-connection-v1"?"judge-probe-only":"generator",
+      version:"server-ai-connection-v1",
+    }));
+    await withServerAiJudgeProbe(async()=>{
+      expect(await resolveServerAiOperationConfig("understand")).toMatchObject({model:"judge-probe-only"});
+      expect(await resolveServerAiOperationConfig("evaluate")).toMatchObject({model:"judge-probe-only"});
+    });
+    expect(await resolveServerAiOperationConfig("understand")).toMatchObject({model:"generator"});
+  });
+  it("does not silently substitute the generator when the independent Judge is absent",async()=>{
+    await expect(withServerAiJudgeProbe(async()=>"unexpected")).rejects.toMatchObject({code:"JUDGE_NOT_CONFIGURED"});
   });
   it("stops for an unavailable configured judge and never substitutes generation",async()=>{
     vault.metadata.mockResolvedValue({version:1});

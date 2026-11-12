@@ -4,8 +4,7 @@ import {
 } from "@evolution/contracts";
 import {createHash} from "node:crypto";
 import type {ServerAiConfig} from "../server-env";
-import {resolveServerAiConfig,withServerAiConnection} from "./server-ai-connection";
-import {
+import {getServerAiConnectionStatus,resolveServerAiConfig,withServerAiConnection,withServerAiJudgeProbe} from "./server-ai-connection";import {
   runServerAi,
   serverAiUnavailableMessage,
   serverAiUnavailableReason,
@@ -56,14 +55,12 @@ export async function getPassiveServerAiHealth():Promise<ServerAiRuntimeHealth>{
 
 export async function probeServerAiRuntime(
   runner:ProbeRunner=defaultProbeRunner,
-  options:{force?:boolean;cacheMs?:number;isolated?:boolean}={},
-):Promise<ServerAiRuntimeHealth>{
+  options:{force?:boolean;cacheMs?:number;isolated?:boolean;cacheRole?:"generation"|"judge"}={},):Promise<ServerAiRuntimeHealth>{
   return withServerAiConnection(async()=>{
   const passive=await getPassiveServerAiHealth();
   const config=await resolveServerAiConfig();
   if(!config)return passive;
-  const key=probeFingerprint(config);
-  const now=Date.now();
+  const key=(options.cacheRole??"generation")+":"+probeFingerprint(config);  const now=Date.now();
   const cacheMs=Math.max(0,options.cacheMs??DEFAULT_PROBE_CACHE_MS);
 
   if(!options.isolated&&probeInFlight?.key===key)return probeInFlight.promise;
@@ -119,4 +116,17 @@ export async function probeServerAiRuntime(
     if(probeInFlight?.promise===promise)probeInFlight=undefined;
   }
   });
+}
+/** Judge connectivity uses its own encrypted Vault connection and cache partition. */
+export async function probeServerAiJudgeRuntime(
+  runner:ProbeRunner=defaultProbeRunner,
+  options:{force?:boolean;cacheMs?:number;isolated?:boolean}={},
+):Promise<ServerAiRuntimeHealth>{
+  const status=await getServerAiConnectionStatus("judge");
+  if(!status.configured)return ServerAiRuntimeHealthSchema.parse({
+    checkedAt:new Date().toISOString(),codeReady:true,configured:false,mode:"missing",
+    ready:false,runtimeVerified:false,status:"unconfigured",
+    message:"独立 Judge 尚未保存，不能用生成模型替代评测连接。",
+  });
+  return withServerAiJudgeProbe(()=>probeServerAiRuntime(runner,{...options,cacheRole:"judge"}));
 }

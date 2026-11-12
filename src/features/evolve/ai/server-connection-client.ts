@@ -39,6 +39,12 @@ export async function saveServerAiConnection(input:ServerAiConnectionPut,role:Se
   return saved;
 }
 
+/** Explicit live probe of a previously encrypted Vault connection; never resends an API Key from the browser. */
+export async function probeSavedServerAiConnection(role:ServerAiConnectionRole){
+  const selected=ServerAiConnectionRoleSchema.parse(role);
+  return ServerAiRuntimeHealthSchema.parse(await request("ai-health?role="+selected));
+}
+
 export async function testServerAiConnection(input:ServerAiConnectionPut){
   const value=ServerAiConnectionPutSchema.parse(input);
   return ServerAiRuntimeHealthSchema.parse(await request("ai-connection-test",{

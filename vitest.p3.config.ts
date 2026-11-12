@@ -4,6 +4,8 @@ import p2c from "./vitest.p2c.config";
 
 export default mergeConfig(p2c,{test:{include:[
   "apps/backend/src/isolated-lab-runtime.test.ts",
+  "apps/backend/src/services/server-ai-lab-probe.test.ts",
+  "apps/backend/src/services/server-ai-health.test.ts",
   "src/features/evolve/ai/server-connection-sync.test.ts",  "packages/contracts/src/backend-request-bounds.test.ts",  "apps/backend/src/services/server-ai-connection.test.ts",
   "apps/backend/src/services/server-ai-connection-composition.test.ts",
   "src/features/evolve/ai/server-connection-client.test.ts",

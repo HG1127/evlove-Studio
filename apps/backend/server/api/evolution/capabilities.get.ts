@@ -4,6 +4,7 @@ import { githubTargetConfigured, githubWebhookConfigured, serverSupabaseConfigur
 import {getSecurityCapabilities,requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 import {getConnectorRegistryCapabilities} from "../../../src/services/connector-registry";
 import {getPassiveServerAiHealth,probeServerAiRuntime} from "../../../src/services/server-ai-health";
+import {withAuthorizedLabAiProbe} from "../../../src/services/server-ai-lab-probe";
 
 const CONTROL_ACTIONS=["adopt-defaults","approve-contract","wait-human","complete","package"] as const;
 const AI_ACTIONS=["understand","compile-contract","build-eval","distill","next-queue"] as const;
@@ -14,8 +15,7 @@ export default defineEventHandler(async(event)=>{
   await requireGovernedEvolutionPermission(event,"data.read");
   const probeAi=String(getQuery(event).probeAi??"")==="1";
   if(probeAi)await requireGovernedEvolutionPermission(event,"ai.execute");
-  const aiHealth=probeAi?await probeServerAiRuntime():await getPassiveServerAiHealth();
-  const ai=aiHealth.configured;
+  const aiHealth=probeAi?await withAuthorizedLabAiProbe(()=>probeServerAiRuntime()):await getPassiveServerAiHealth();  const ai=aiHealth.configured;
   const aiVerified=aiHealth.ready;
   const dataPlane=serverSupabaseConfigured();
   const secureDataPlane=serverSupabaseSecureConfigured();
