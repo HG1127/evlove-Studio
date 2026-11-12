@@ -2,7 +2,7 @@ import {z} from "zod";
 import {HtmlBodyNodeEditsSchema,RepairArtifactAiResultSchema,jsonSchemas} from "@evolution/contracts";
 
 const RepairScope=z.object({failedCriteria:z.array(z.object({criterionId:z.string().min(1)})).min(1),
-  candidate:z.object({artifacts:z.array(z.object({sourceArtifactId:z.string().min(1),mutationMode:z.string().optional(),
+  candidate:z.object({id:z.string().optional(),artifacts:z.array(z.object({sourceArtifactId:z.string().min(1),mutationMode:z.string().optional(),
     htmlTextNodes:z.array(z.object({anchorId:z.string().min(1)})).max(4096).optional()}))}).optional()});
 
 /** The provider and parser share the exact allowed failed IDs, never descriptive claims or preserved criteria. */
@@ -15,7 +15,14 @@ export function serverAiRepairContract(payload:unknown){
   for(const target of targets)if(target.mutationMode==="html-body-node-edits-v1"
     &&(!target.htmlTextNodes?.length||new Set(target.htmlTextNodes.map(node=>node.anchorId)).size!==target.htmlTextNodes.length))
     throw new Error("HTML body repair requires a complete unique anchor index");
-  const parser=RepairArtifactAiResultSchema.extend({repairedCriteria:z.array(z.enum(ids as [string,...string[]])).min(1).max(ids.length)}).superRefine((value,context)=>{
+  const candidateId=scope.candidate?.id;
+  const parser=RepairArtifactAiResultSchema.extend({
+    repairedCriteria:z.array(z.enum(ids as [string,...string[]])).min(1).max(ids.length),
+    reflection:RepairArtifactAiResultSchema.shape.reflection.extend({
+      parentCandidateId:candidateId?z.literal(candidateId):z.string().min(1),
+      failureCaseIds:z.array(z.enum(ids as [string,...string[]])).min(1).max(ids.length),
+    }),
+  }).superRefine((value,context)=>{
     const seenTargets=new Set<string>();
     value.artifacts.forEach((artifact,index)=>{
       const target=byId.get(artifact.sourceArtifactId),path=["artifacts",index,"content"];
@@ -41,6 +48,11 @@ export function serverAiRepairContract(payload:unknown){
   });
   const base=jsonSchemas.repairArtifact;
   return {parser,schema:{...base,schema:{...base.schema,properties:{...base.schema.properties,
-    repairedCriteria:{type:"array",items:{type:"string",enum:ids},minItems:1,maxItems:ids.length},
-  }}},instruction:"Repair only explicitly supplied VERIFIED failed criteria on exact current Candidate artifacts. Preserve unrelated/protected behavior; never claim validation passed. repairedCriteria MUST contain only exact criterionId strings from failedCriteria: "+JSON.stringify(ids)+". Do not append descriptions, report preserved criteria, or invent additional IDs. For html-body-node-edits-v1, copy exact anchorId strings from the request-bound htmlTextNodes; never shorten, reconstruct, duplicate or guess an ID. The server owns the full parent binding."};
+    repairedCriteria:{type:"array",items:{type:"string",enum:ids},minItems:1,maxItems:ids.length},    reflection:{type:"object",additionalProperties:false,properties:{
+      parentCandidateId:candidateId?{type:"string",const:candidateId}:{type:"string"},
+      rootCause:{type:"string"},failureCaseIds:{type:"array",items:{type:"string",enum:ids},minItems:1,maxItems:ids.length},
+      mutationRationale:{type:"string"},preservedCapabilityIds:{type:"array",items:{type:"string"}},
+      antiPatternsAvoided:{type:"array",items:{type:"string"}},
+    },required:["parentCandidateId","rootCause","failureCaseIds","mutationRationale","preservedCapabilityIds","antiPatternsAvoided"]},
+  }}},instruction:"Repair only explicitly supplied VERIFIED failed criteria on exact current Candidate artifacts. Preserve unrelated/protected behavior; never claim validation passed. repairedCriteria MUST contain only exact criterionId strings from failedCriteria: "+JSON.stringify(ids)+". Do not append descriptions, report preserved criteria, or invent additional IDs. For html-body-node-edits-v1, copy exact anchorId strings from the request-bound htmlTextNodes; never shorten, reconstruct, duplicate or guess an ID. The server owns the full parent binding. Return a required reflection object with parentCandidateId copied exactly from candidate.id, rootCause grounded in supplied failedCriteria evidence/gaps, failureCaseIds containing only exact supplied failed criterion IDs, mutationRationale explaining the causal change, preservedCapabilityIds listing existing behaviors/capabilities retained, and antiPatternsAvoided listing relevant failed approaches from repairMemory. Do not claim a capability was tested merely because it is listed; independent tests determine preservation. Never mention or infer hidden holdout case contents."};
 }

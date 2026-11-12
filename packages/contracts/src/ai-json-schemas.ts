@@ -181,8 +181,14 @@ export const jsonSchemas = {
     name: "evolve_repair_artifact",
     schema: { type: "object", additionalProperties: false, properties: {
       artifacts: { type: "array", items: { type: "object", additionalProperties: false, properties: { sourceArtifactId: { type: "string" }, name: { type: "string" }, mimeType: { type: "string" }, content: { type: "string" }, notes: stringArray }, required: ["sourceArtifactId", "name", "mimeType", "content", "notes"] } },
-      repairedCriteria: stringArray, summary: { type: "string" },
-    }, required: ["artifacts", "repairedCriteria", "summary"] },
+      repairedCriteria: stringArray,
+      reflection: { type: "object", additionalProperties: false, properties: {
+        parentCandidateId: { type: "string" }, rootCause: { type: "string" },
+        failureCaseIds: stringArray, mutationRationale: { type: "string" },
+        preservedCapabilityIds: stringArray, antiPatternsAvoided: stringArray,
+      }, required: ["parentCandidateId", "rootCause", "failureCaseIds", "mutationRationale", "preservedCapabilityIds", "antiPatternsAvoided"] },
+      summary: { type: "string" },
+    }, required: ["artifacts", "repairedCriteria", "reflection", "summary"] },
   },
   executeArtifact: {
     name: "evolve_execute_artifact",

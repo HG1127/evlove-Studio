@@ -3,14 +3,15 @@ import {createError} from "nitro/h3";
 import fs from "node:fs";
 import path from "node:path";
 import {z} from "zod";
-
+import {inspectIsolatedLabRuntime} from "./isolated-lab-runtime";
 function value(...items:Array<string|undefined>) {
   return items.map((item)=>item?.trim()).find(Boolean);
 }
 
 export function getServerSupabaseConfig():SupabaseBackendConfig {
-  const url=value(process.env.SUPABASE_URL,process.env.VITE_SUPABASE_URL);
-  const secret=value(process.env.SUPABASE_SECRET_KEY,process.env.SUPABASE_SERVICE_ROLE_KEY);
+  const isolation=inspectIsolatedLabRuntime(process.env);
+  if(!isolation.ready)throw createError({statusCode:503,statusMessage:"实验数据平面隔离未通过校验",data:{code:"LAB_ISOLATION_NOT_READY",issueCodes:isolation.codes}});
+  const url=value(process.env.SUPABASE_URL,process.env.VITE_SUPABASE_URL);  const secret=value(process.env.SUPABASE_SECRET_KEY,process.env.SUPABASE_SERVICE_ROLE_KEY);
   const publishable=value(process.env.SUPABASE_PUBLISHABLE_KEY,process.env.VITE_SUPABASE_ANON_KEY);
   const allowPublishable=/^(1|true|yes|on)$/i.test(value(process.env.EVOLUTION_ALLOW_PUBLISHABLE_DATA_PLANE)??"")
     ||process.env.NODE_ENV!=="production";
@@ -38,8 +39,8 @@ export function getServerSupabaseConfig():SupabaseBackendConfig {
 }
 
 export function serverSupabaseConfigured(){
-  const url=value(process.env.SUPABASE_URL,process.env.VITE_SUPABASE_URL);
-  const secret=value(process.env.SUPABASE_SECRET_KEY,process.env.SUPABASE_SERVICE_ROLE_KEY);
+  if(!inspectIsolatedLabRuntime(process.env).ready)return false;
+  const url=value(process.env.SUPABASE_URL,process.env.VITE_SUPABASE_URL);  const secret=value(process.env.SUPABASE_SECRET_KEY,process.env.SUPABASE_SERVICE_ROLE_KEY);
   const publishable=value(process.env.SUPABASE_PUBLISHABLE_KEY,process.env.VITE_SUPABASE_ANON_KEY);
   const allowPublishable=/^(1|true|yes|on)$/i.test(value(process.env.EVOLUTION_ALLOW_PUBLISHABLE_DATA_PLANE)??"")
     ||process.env.NODE_ENV!=="production";
@@ -152,15 +153,15 @@ export function getServerSecurityConfig():ServerSecurityConfig{
   const rawIdentitySecret=value(process.env.EVOLUTION_IDENTITY_HMAC_SECRET);
   const identitySecret=rawIdentitySecret&&rawIdentitySecret.length>=32?rawIdentitySecret:undefined;
   const protectedDeploymentHost=normalizedVercelHost(process.env.VERCEL_URL);
-  const allowProtectedInternal=/^(1|true|yes|on)$/i.test(value(process.env.EVOLUTION_ALLOW_PROTECTED_DEPLOYMENT_INTERNAL_AUTH)??"")
+  const isolation=inspectIsolatedLabRuntime(process.env);
+  const allowProtectedInternal=!isolation.isolated && /^(1|true|yes|on)$/i.test(value(process.env.EVOLUTION_ALLOW_PROTECTED_DEPLOYMENT_INTERNAL_AUTH)??"")
     &&process.env.VERCEL==="1"
     &&Boolean(protectedDeploymentHost);
-  const allowInternal=/^(1|true|yes|on)$/i.test(value(process.env.EVOLUTION_ALLOW_INSECURE_INTERNAL_AUTH)??"")
-    ||process.env.NODE_ENV!=="production";
+  const allowInternal=!isolation.isolated && (/^(1|true|yes|on)$/i.test(value(process.env.EVOLUTION_ALLOW_INSECURE_INTERNAL_AUTH)??"")
+    ||process.env.NODE_ENV!=="production");
   return {
-    mode:allowProtectedInternal?"vercel-protected-internal":identitySecret?"trusted-header":allowInternal?"internal-dev":"blocked",
-    identitySecret,
-    protectedDeploymentHost,
+    mode:!isolation.ready?"blocked":allowProtectedInternal?"vercel-protected-internal":identitySecret?"trusted-header":allowInternal?"internal-dev":"blocked",
+    identitySecret,    protectedDeploymentHost,
     maxActorAgeSeconds:Math.max(60,Math.min(Number(value(process.env.EVOLUTION_IDENTITY_MAX_AGE_SECONDS)??"3600")||3600,86_400)),
     workspaceId:getEvolutionWorkspaceId(),
   };

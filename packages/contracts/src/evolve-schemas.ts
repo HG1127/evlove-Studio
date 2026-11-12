@@ -1,4 +1,5 @@
 import { z } from "zod";
+import {ArtifactWriteGovernanceSchema} from "./artifact-evolution-contract";
 import {ConfirmationMissionReferenceSchema} from "./confirmation-mission-reference";
 import {PairedJudgeReceiptSchema} from "./paired-judge-contract";
 import {ProductionGoalEvidenceSchema} from "./production-goal-evidence";
@@ -182,6 +183,8 @@ export const ParsingProfileSchema = z.object({
 export type ParsingProfile = z.infer<typeof ParsingProfileSchema>;
 
 export const SourceArtifactSchema = z.object({
+  /** Explicit, parent-bound write policy; absent on legacy sources, never inferred from AI output. */
+  mutationGovernance:ArtifactWriteGovernanceSchema.optional(),
   id: z.string(),
   name: z.string(),
   role: ArtifactRoleSchema.default("target"),
@@ -457,6 +460,39 @@ export const CandidateArtifactSnapshotSchema = z.object({
 });
 export type CandidateArtifactSnapshot = z.infer<typeof CandidateArtifactSnapshotSchema>;
 
+export const CandidateRepairReflectionSchema = z.object({
+  parentCandidateId:z.string().min(1),
+  rootCause:z.string().min(1).max(4000),
+  failureCaseIds:z.array(z.string().min(1)).min(1).max(100),
+  mutationRationale:z.string().min(1).max(4000),
+  preservedCapabilityIds:z.array(z.string().min(1).max(200)).max(200),
+  antiPatternsAvoided:z.array(z.string().min(1).max(1000)).max(50),
+});
+export type CandidateRepairReflection=z.infer<typeof CandidateRepairReflectionSchema>;
+export const RepairReflectionArchiveInputSchema=z.object({
+  version:z.literal("repair-reflection-archive-v1"),
+  missionId:z.string().min(1),
+  candidateId:z.string().min(1),
+  parentCandidateId:z.string().min(1),
+  attempt:z.number().int().positive(),
+  content:z.string().min(1),
+  sha256:z.string().regex(/^[0-9a-f]{64}$/),
+  size:z.number().int().positive().max(2*1024*1024),
+}).strict().refine(input=>new TextEncoder().encode(input.content).byteLength===input.size,
+  {message:"Repair reflection evidence UTF-8 size mismatch",path:["size"]});
+export type RepairReflectionArchiveInput=z.infer<typeof RepairReflectionArchiveInputSchema>;
+export const RepairReflectionEvidenceReferenceSchema=z.object({
+  version:z.literal("repair-reflection-reference-v1"),
+  artifactId:z.string().min(1),
+  missionId:z.string().min(1),
+  candidateId:z.string().min(1),
+  parentCandidateId:z.string().min(1),
+  attempt:z.number().int().positive(),
+  sha256:z.string().regex(/^[0-9a-f]{64}$/),
+  size:z.number().int().positive(),
+  mimeType:z.literal("application/json"),
+}).strict();
+export type RepairReflectionEvidenceReference=z.infer<typeof RepairReflectionEvidenceReferenceSchema>;
 export const CandidateSchema = z.object({
   /** Server receipt of the historical observations actually supplied to planning. */
   planningFailureObservationUse:FailureObservationUseSchema.optional(),
@@ -489,6 +525,8 @@ export const CandidateSchema = z.object({
   addressesAdvice: z.array(z.string()).default([]),
   /** 设计论证链（plan 生成的 JSON Schema 中为必填；旧项目数据缺失时保持可解析）。 */
   designRationale: CandidateDesignRationaleSchema.optional(),
+  repairReflection:CandidateRepairReflectionSchema.optional(),
+  repairReflectionEvidence:RepairReflectionEvidenceReferenceSchema.optional(),
   connectorBinding:ConnectorCandidateBindingSchema.optional(),
 });
 export type Candidate = z.infer<typeof CandidateSchema>;

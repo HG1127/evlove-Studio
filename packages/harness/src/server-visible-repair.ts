@@ -1,3 +1,4 @@
+import {repeatedRepairOutputBlocker} from "@evolution/core";
 import type {Candidate,EvolveProject,ExperimentRun,VisibleRepairAttempt,VisibleRepairFeedbackKind} from "@evolution/contracts";
 import {EvolveProjectSchema,RepairEvidenceArchiveInputSchema,RepairEvidenceReferenceSchema,VisibleRepairAttemptSchema} from "@evolution/contracts";
 import {campaignRepairLimitStopReason,estimateNextRoundCost,visibleRepairTarget,candidateFailureContextBlocker} from "@evolution/core";
@@ -125,6 +126,7 @@ export async function runServerVisibleRepair(input:EvolveProject,ports:ServerVis
     for(const snapshot of repaired.artifactSnapshots){
       if(!await ports.verifyFrozenArtifact!(snapshot))throw new Error("Repair 冻结字节回读失败。");
     }
+    const repeated=repeatedRepairOutputBlocker(project,repaired);if(repeated)throw new Error(repeated);
     const at=now();
     project={...project,candidates:[...project.candidates,repaired],selectedCandidateIds:[repaired.id],
       visibleRepairAttempts:project.visibleRepairAttempts!.map(item=>item.id===record!.id?{...item,status:"frozen",candidateId:repaired.id,

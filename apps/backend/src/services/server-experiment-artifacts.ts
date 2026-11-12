@@ -2,6 +2,9 @@ import JSZip from "jszip";
 import {z} from "zod";
 import {
   CandidateSchema,
+  ArtifactRelativePathSchema,
+  ArtifactWriteGovernanceSchema,
+  type ArtifactWriteGovernance,
   type ArtifactStorePort,
   type BuildCandidateAiResult,
   type Candidate,
@@ -10,7 +13,7 @@ import {
   type FrozenArtifact,
   type SourceArtifact,
 } from "@evolution/contracts";
-import { trustedServerBaselineChampion } from "@evolution/harness";
+import { trustedServerBaselineChampion, preflightArtifactWrite, resolveArtifactWriteGovernance, archiveArtifactWriteLineage } from "@evolution/harness";
 import { applyExactEdits, bindHtmlBuildTextEditAnchors,bindHtmlBuildBodyNodeEdits, isTextArtifactExtension, isZipArtifact,userGoalScopeContext,candidateFailureContextBlocker } from "@evolution/core";
 import { buildServerCandidateTargetContext, buildServerExactCandidateArtifacts, isServerTextEditBlueprint, requireServerCandidateOutputModes } from "./server-candidate-context";
 import { runServerAi } from "./ai-gateway";
@@ -221,7 +224,7 @@ export async function verifyServerCandidateFrozenArtifact(snapshot: CandidateArt
   }
   return true;
 }
-export async function applyServerCodebaseOverlay(baseBlob: Blob, content: string, mimeType = "application/zip") {
+export async function applyServerCodebaseOverlay(baseBlob: Blob, content: string, mimeType = "application/zip", governance?: ArtifactWriteGovernance) {
   const payload = parseCodebaseOverlay(content, true)!;
   const { files, deletions } = payload;
   const seen = new Set<string>();
@@ -234,8 +237,43 @@ export async function applyServerCodebaseOverlay(baseBlob: Blob, content: string
     if (!safeArchivePath(path) || seen.has(path) || deleted.has(path)) throw new Error(`无效、重复或冲突的删除路径：${path || "(empty)"}`);
     deleted.add(path);
   }
-  const base = await JSZip.loadAsync(new Uint8Array(await baseBlob.arrayBuffer()), { checkCRC32: true });
+  const parentBytes = new Uint8Array(await baseBlob.arrayBuffer());
+  const base = await JSZip.loadAsync(parentBytes, { checkCRC32: true });
   const originalPaths = Object.keys(base.files);
+  if (governance !== undefined) {
+    const canonical = new Map<string, string>();
+    for (const entry of Object.values(base.files)) {
+      const path = entry.dir ? entry.name.replace(/\/$/, "") : entry.name;
+      const original = (entry as typeof entry & {unsafeOriginalName?: string}).unsafeOriginalName;
+      const unixMode = typeof entry.unixPermissions === "string" ? Number.parseInt(entry.unixPermissions, 8) : Number(entry.unixPermissions ?? 0);
+      if (!ArtifactRelativePathSchema.safeParse(path).success || (original !== undefined && original !== entry.name)
+        || (unixMode & 0xf000) === 0xa000 || (canonical.has(path.toLowerCase()) && canonical.get(path.toLowerCase()) !== path)) {
+        throw new Error("ARTIFACT_WRITE_DENIED: ambiguous or unsafe parent ZIP path " + path);
+      }
+      canonical.set(path.toLowerCase(), path);
+    }
+    const proposedFiles = new Set(files.map((file) => file.path.toLowerCase()));
+    for (const path of [...files.map((file) => file.path), ...deletions]) {
+      if ((canonical.has(path.toLowerCase()) && canonical.get(path.toLowerCase()) !== path) || base.files[path]?.dir || base.files[path + "/"]?.dir) {
+        throw new Error("ARTIFACT_WRITE_DENIED: case alias or directory mutation " + path);
+      }
+      const parts = path.split("/");
+      for (let i = 1; i < parts.length; i++) {
+        const ancestor = parts.slice(0, i).join("/");
+        if (canonical.has(ancestor.toLowerCase()) && canonical.get(ancestor.toLowerCase()) !== ancestor) throw new Error("ARTIFACT_WRITE_DENIED: case alias " + path);
+        if (base.file(ancestor) || proposedFiles.has(ancestor.toLowerCase())) throw new Error("ARTIFACT_WRITE_DENIED: file/directory collision " + path);
+        canonical.set(ancestor.toLowerCase(), ancestor);
+      }
+    }
+    await preflightArtifactWrite({
+      governance, parentBytes, fingerprint: serverArtifactSha256,
+      changes: [
+        ...files.map((file) => ({path:file.path, operation:base.file(file.path)?"update" as const:"add" as const, content:file.content})),
+        ...deletions.map((path) => ({path, operation:"remove" as const})),
+      ],
+      readParentFile: async (path) => base.file(path)?.async("uint8array"),
+    });
+  }
   for (const path of deleted) {
     if (!base.files[path]) throw new Error(`Candidate 删除目标不存在：${path}`);
     base.remove(path);
@@ -259,7 +297,7 @@ export async function applyServerCodebaseOverlay(baseBlob: Blob, content: string
 
 async function materializeCodebase(project: EvolveProject, source: SourceArtifact, content: string, parentCandidate?: Candidate) {
   const baseBlob = await currentBaseBlob(project, source, parentCandidate);
-  return applyServerCodebaseOverlay(baseBlob, content, source.mimeType || "application/zip");
+  return applyServerCodebaseOverlay(baseBlob, content, source.mimeType || "application/zip", source.mutationGovernance);
 }
 
 async function materializeText(source: SourceArtifact, snapshot: CandidateArtifactSnapshot) {
@@ -342,6 +380,8 @@ export async function materializeServerCandidateArtifacts(
     throw new Error(`Server Artifact Builder 返回 ${artifacts.length} 个成果，但当前有 ${targets.length} 个 Target；禁止遗漏、重复或额外成果。`);
   }
   const prepared:Array<{source:SourceArtifact;snapshot:CandidateArtifactSnapshot;built?:{blob:Blob;checks:string[];limitations:string[]};unchanged:boolean}>=[];
+  const writeBindings=new Map<string,{approval:ArtifactWriteGovernance;actualParentSha256:string;parentCandidateId?:string}>();
+  const lineagePorts={store:getServerArtifactStore(),fingerprint:serverArtifactSha256};
   // Validate and materialize the entire set before persisting any Candidate bytes.
   for(const [index,source] of targets.entries()){
     const artifact=bySource.get(source.id)!;
@@ -353,9 +393,27 @@ export async function materializeServerCandidateArtifacts(
     const spreadsheet=source.artifactKind==="spreadsheet"||source.artifactDescriptor?.family==="spreadsheet"
       ||["csv","tsv","xlsx","xls","ods"].includes(source.extension.toLowerCase());
     const text=!code&&!spreadsheet&&isTextArtifactExtension(source.extension);
+    let governance=source.mutationGovernance===undefined?undefined:ArtifactWriteGovernanceSchema.parse(source.mutationGovernance);
+    if(governance&&(!text&&!code))throw new Error("ARTIFACT_WRITE_GOVERNANCE_FORMAT_UNSUPPORTED: "+source.name);
+    if(governance&&(artifact.name||source.name)!==source.name)throw new Error("ARTIFACT_WRITE_DENIED: unauthorized target rename");
     const parent=currentParentSnapshot(project,source.id,parentCandidate);
+    if(governance){
+      const approval=governance;
+      const parentBytes=text?new TextEncoder().encode(await readServerCandidateParentText(project,source,parentCandidate))
+        :new Uint8Array(await (await currentBaseBlob(project,source,parentCandidate)).arrayBuffer());
+      const actualParentSha256=await serverArtifactSha256(parentBytes);
+      const parentCandidateId=(parentCandidate??trustedServerBaselineChampion(project))?.id;
+      governance=await resolveArtifactWriteGovernance({approval,actualParentSha256,
+        parent:parent?.frozenArtifact&&parentCandidateId?{missionId:project.id,sourceArtifactId:source.id,name:source.name,candidateId:parentCandidateId,frozen:parent.frozenArtifact}:undefined},lineagePorts);
+      writeBindings.set(source.id,{approval,actualParentSha256,parentCandidateId});
+    }
     const keep=parseKeepParent(artifact.content);
     if(keep){
+      if(governance){
+        const approvedParent=await currentBaseBlob(project,source,parentCandidate);
+        await preflightArtifactWrite({governance,parentBytes:new Uint8Array(await approvedParent.arrayBuffer()),changes:[],
+          fingerprint:serverArtifactSha256,readParentFile:async()=>undefined});
+      }
       if(!canPreserveNativeArtifact(source)||keep.sourceArtifactId!==source.id){
         throw new Error(`${source.name} 仅允许为当前原生文件返回绑定 Source ID 的 keep-parent；不能用文字标记伪造原文件。`);
       }
@@ -400,6 +458,12 @@ export async function materializeServerCandidateArtifacts(
       throw new Error(`${source.name} Candidate 与当前父代完全相同，没有产生可验证变异。`);
     }
     if(unchanged) snapshotContent=parentText;
+    if(governance&&text){
+      const parentBytes=new TextEncoder().encode(parentText);
+      await preflightArtifactWrite({governance,parentBytes,fingerprint:serverArtifactSha256,
+        changes:unchanged?[]:[{path:source.name,operation:"update",content:snapshotContent}],
+        readParentFile:async(path)=>path===source.name?parentBytes:undefined});
+    }
     const snapshot:CandidateArtifactSnapshot={
       id:`server-candidate-${candidate.id}-${source.id}-${index}`,
       sourceArtifactId:source.id,
@@ -420,7 +484,7 @@ export async function materializeServerCandidateArtifacts(
       prepared.push({source,snapshot:{...parent,id:snapshot.id},unchanged:true});
       continue;
     }
-    const built=await buildSnapshotFile(project,source,snapshot,artifact.content,parentCandidate);
+    const built=await buildSnapshotFile(project,governance?{...source,mutationGovernance:governance}:source,snapshot,artifact.content,parentCandidate);
     built.checks.push(...protection.checks);
     built.checks.push(...derived.checks);
     built.limitations.push(...protection.limitations);
@@ -438,6 +502,13 @@ export async function materializeServerCandidateArtifacts(
   }
   if(parentCandidate&&snapshots.every((snapshot)=>snapshot.frozenArtifact?.sha256===currentParentSnapshot(project,snapshot.sourceArtifactId,parentCandidate)?.frozenArtifact?.sha256)){
     throw new Error("修复 Candidate 与当前父代完全相同，没有产生可验证变异。");
+  }
+  // Preserve all-target preflight: provenance is written only after every output is validated and frozen.
+  for(const [sourceArtifactId,binding] of writeBindings){
+    const snapshot=snapshots.find(item=>item.sourceArtifactId===sourceArtifactId)!;
+    const source=targets.find(item=>item.id===sourceArtifactId)!;
+    if(!snapshot.frozenArtifact)throw new Error("ARTIFACT_WRITE_LINEAGE_UNVERIFIED: output not frozen");
+    await archiveArtifactWriteLineage({...binding,target:{missionId:project.id,sourceArtifactId,name:source.name,candidateId:candidate.id,frozen:snapshot.frozenArtifact}},lineagePorts);
   }
   return CandidateSchema.parse({
     ...candidate,

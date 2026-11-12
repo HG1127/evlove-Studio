@@ -3,8 +3,10 @@ import {CampaignCheckpointPhaseSchema} from "./evolve-schemas";
 
 export const MAX_BINARY_ARTIFACT_BYTES=20*1024*1024;
 export const ArtifactIdSchema=z.string().min(1).max(200);
+// Lineage records are minted only by the trusted materializer, never general artifact upload APIs.
+const UploadArtifactIdSchema=ArtifactIdSchema.refine(id=>!id.toLowerCase().startsWith("artifact-write-lineage-"),"Server write-lineage namespace is reserved");
 export const BinaryArtifactUploadMetadataSchema=z.object({
-  id:ArtifactIdSchema,
+  id:UploadArtifactIdSchema,
   mimeType:z.string().min(1).max(200),
 }).strict();
 
@@ -16,10 +18,10 @@ export const ArtifactBindingSchema=z.object({
 export type ArtifactBinding=z.infer<typeof ArtifactBindingSchema>;
 
 export const ArtifactRegistrationRequestSchema=z.object({
-  id:ArtifactIdSchema,
+  id:UploadArtifactIdSchema,
   missionId:z.string().min(1).max(200).optional(),
   jobId:z.string().min(1).max(200).optional(),
-  kind:z.string().min(1).max(80).default("source"),
+  kind:z.string().min(1).max(80).default("source").refine(kind=>kind!=="candidate-write-lineage","Server write-lineage kind is reserved"),
   mimeType:z.string().min(1).max(200).default("text/plain"),
   content:z.string().max(5_242_880),
 }).strict().refine((input)=>new TextEncoder().encode(input.content).byteLength<=5_242_880,{

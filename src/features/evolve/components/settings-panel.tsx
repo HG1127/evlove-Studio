@@ -28,6 +28,8 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ModelCombobox } from "./model-combobox";
+import {getGenerationConnectionDisplay,synchronizeGenerationConnection} from "../ai/server-connection-sync";
+import {readServerAiConnection} from "../ai/server-connection-client";
 import {ServerAiConnectionPanel} from "./server-ai-connection-panel";
 import { Tabs, type TabItem } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
@@ -108,6 +110,13 @@ export function SettingsPanel() {
   const [routing, setRouting] = useState<AiRoutingPolicy>(() => getAiRoutingPolicy());
   const [busyId, setBusyId] = useState<string>();
   const [batchProgress, setBatchProgress] = useState<{ id: string; done: number; total: number; current: string } | null>(null);
+  const [serverSyncBusy,setServerSyncBusy]=useState(false);
+  const serverSaveInFlight=useRef(false);
+  const serverStatusSequence=useRef(0);
+  const connectionEditSequence=useRef(0);
+  const [serverDirtyIds,setServerDirtyIds]=useState<string[]>([]);
+  const [serverStatus,setServerStatus]=useState<Awaited<ReturnType<typeof readServerAiConnection>>>();
+  const [serverStatusError,setServerStatusError]=useState<string>();
   const [message, setMessage] = useState<string>();
   const [activeTab, setActiveTab] = useState("connections");
   const [parserConfig, setParserConfig] = useState<ParserGatewayConfig>(() => getParserGatewayConfig());
@@ -158,6 +167,18 @@ export function SettingsPanel() {
   }, []);
 
   useEffect(() => {
+    if (activeTab !== "connections" || serverSaveInFlight.current) return;
+    const sequence=++serverStatusSequence.current;
+    let active = true;
+    void readServerAiConnection("generation").then(value => {
+      if (active && sequence===serverStatusSequence.current) { setServerStatus(value); setServerStatusError(undefined); }
+    }).catch(() => {
+      if (active && sequence===serverStatusSequence.current) { setServerStatus(undefined); setServerStatusError("无法读取后端模型状态"); }
+    });
+    return () => { active = false; };
+  }, [activeTab]);
+
+  useEffect(() => {
     const nextId = connections.some((item) => item.id === selectedId) ? selectedId : connections[0]?.id;
     if (nextId === selectedId) return;
     let active = true;
@@ -166,6 +187,9 @@ export function SettingsPanel() {
   }, [connections, selectedId]);
 
   const selected = connections.find((item) => item.id === selectedId);
+  const serverConnectionDisplay=getGenerationConnectionDisplay(selected,serverStatus,{
+    error:serverStatusError,saving:serverSyncBusy,dirty:!!selected&&serverDirtyIds.includes(selected.id),
+  });
   const routeSummary = getOperationRoutingSummary();
   const evaluatorWarning = routeSummary.find((item) => item.operation === "evaluate")?.independentEvaluatorWarning;
 
@@ -176,12 +200,39 @@ export function SettingsPanel() {
     setMessage(`${saved.label} 已保存。你可以同步模型、测试连接，并在“模型路由”里指定它负责的环节。`);
   };
 
+  const saveConnectionAndSyncBackend=async(next:ProviderConnection)=>{
+    if(serverSaveInFlight.current)return;
+    if(!next.enabled){setMessage("请先启用该连接，再保存并同步到后端。");return;}
+    serverSaveInFlight.current=true;
+    const sequence=++serverStatusSequence.current,editSequence=connectionEditSequence.current;
+    setServerSyncBusy(true);setMessage("正在核对现有配置，并安全同步到后端 Vault…");
+    try{
+      // Persist the current local draft before the request; never overwrite newer edits after awaiting.
+      const local=upsertProviderConnection(next);setConnections(listProviderConnections());
+      const receipt=await synchronizeGenerationConnection(local,{confirmReplacement:(current,requested)=>
+        window.confirm(`后端当前使用 ${current.label} / ${current.model}。是否切换为 ${requested.label} / ${requested.model}？独立 Judge 不会改变。`),
+      });
+      if(sequence===serverStatusSequence.current){setServerStatus(receipt);setServerStatusError(undefined);}
+      if(editSequence===connectionEditSequence.current){
+        setServerDirtyIds(ids=>ids.filter(id=>id!==next.id));
+        setMessage(`${local.label} 已保存并完成后端回读确认，输出格式：${receipt.connection?.responseFormat}。本次未进行模型调用。`);
+      }else{
+        setMessage("本次提交已确认，但保存期间产生了新的本地编辑；新编辑尚未同步。");
+      }
+    }catch(error){
+      if(sequence===serverStatusSequence.current){setServerStatus(undefined);setServerStatusError("后端同步未确认");}
+      setMessage(error instanceof Error?error.message:"后端同步未确认，请先检查状态。");
+    }finally{serverSaveInFlight.current=false;setServerSyncBusy(false);}
+  };
   const patchSelected = (patch: Partial<ProviderConnection>) => {
     if (!selected) return;
+    if(["providerId","label","apiKey","baseUrl","defaultModel","enabled"].some(field=>field in patch)){
+      connectionEditSequence.current+=1;
+      setServerDirtyIds(ids=>ids.includes(selected.id)?ids:[...ids,selected.id]);
+    }
     const next = { ...selected, ...patch };
     saveConnection(next);
   };
-
   const addConnection = (providerId = "openai") => {
     const item = createProviderConnection(providerId);
     saveConnection(item);
@@ -698,15 +749,13 @@ export function SettingsPanel() {
                   )}
                 </div>
               )}
-              <div className="rounded-xl border bg-slate-50 p-3 text-xs leading-5 text-slate-500"><b className="text-slate-700">供应商说明：</b>{chosenPreset.note}<br/>模型列表可以从供应商 API 动态同步，也允许手动输入未出现在列表中的模型 ID。</div>
+              <div className="flex items-center justify-between gap-3 rounded-xl border bg-white px-3 py-2 text-xs"><span className="text-slate-600">后端生成模型</span><span className={serverConnectionDisplay.tone==="green"?"font-medium text-emerald-700":serverConnectionDisplay.tone==="rose"?"text-rose-700":serverConnectionDisplay.tone==="amber"?"text-amber-700":"text-slate-500"}>{serverConnectionDisplay.message}</span></div>              <div className="rounded-xl border bg-slate-50 p-3 text-xs leading-5 text-slate-500"><b className="text-slate-700">供应商说明：</b>{chosenPreset.note}<br/>模型列表可以从供应商 API 动态同步，也允许手动输入未出现在列表中的模型 ID。</div>
               <div className="flex flex-wrap items-center gap-2">
-                <Button onClick={() => saveConnection(selected)}>保存连接</Button>
+                <Button onClick={() => void saveConnectionAndSyncBackend(selected)} disabled={serverSyncBusy||Boolean(busyId)||Boolean(batchProgress)}>{serverSyncBusy?"同步后端中…":"保存连接并同步后端"}</Button>
                 <Button variant="secondary" onClick={() => void syncModels(selected)} disabled={Boolean(batchProgress) || busyId === `${selected.id}:models`}><RefreshCcw className={`size-4 ${busyId === `${selected.id}:models` ? "animate-spin" : ""}`} />同步模型</Button>
-                <Button variant="secondary" onClick={() => void testConnection(selected)} disabled={Boolean(batchProgress) || busyId === `${selected.id}:test`}><Bot className="size-4" />测试 {selected.defaultModel}</Button>
-                <Button variant="secondary" title="逐个测试全部模型，仅保留测试通过的；同步模型可恢复完整列表" onClick={() => void batchTestAndPrune(selected)} disabled={Boolean(batchProgress) || Boolean(busyId)}><ScanSearch className={`size-4 ${batchProgress?.id === selected.id ? "animate-pulse" : ""}`} />{batchProgress?.id === selected.id ? `测试中 ${Math.min(batchProgress.done + 1, batchProgress.total)}/${batchProgress.total}` : "测试并筛选模型"}</Button>
+                <Button variant="secondary" onClick={() => void testConnection(selected)} disabled={Boolean(batchProgress) || busyId === `${selected.id}:test`}><Bot className="size-4" />测试 {selected.defaultModel}</Button>                <Button variant="secondary" title="逐个测试全部模型，仅保留测试通过的；同步模型可恢复完整列表" onClick={() => void batchTestAndPrune(selected)} disabled={Boolean(batchProgress) || Boolean(busyId)}><ScanSearch className={`size-4 ${batchProgress?.id === selected.id ? "animate-pulse" : ""}`} />{batchProgress?.id === selected.id ? `测试中 ${Math.min(batchProgress.done + 1, batchProgress.total)}/${batchProgress.total}` : "测试并筛选模型"}</Button>
                 <label className="ml-auto flex items-center gap-2 text-xs text-slate-600"><input type="checkbox" checked={selected.enabled} onChange={(e) => patchSelected({ enabled: e.target.checked })} className="accent-indigo-600" />启用</label>
-                <Button variant="ghost" className="text-rose-600" onClick={() => { deleteProviderConnection(selected.id); setConnections(listProviderConnections()); }}><Trash2 className="size-4" />删除</Button>
-              </div>
+                <Button variant="ghost" className="text-rose-600" onClick={() => { deleteProviderConnection(selected.id); setConnections(listProviderConnections()); setMessage("本地连接已删除。为避免误删后台任务仍在使用的密钥，后端 Vault 中已保存的默认连接不会自动删除；如需更换后端模型，请保存另一连接并同步后端。"); }}><Trash2 className="size-4" />删除本地连接</Button>              </div>
               {batchProgress?.id === selected.id && <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-3 text-xs leading-5 text-indigo-700">正在逐个测试模型可用性：{batchProgress.current}（{Math.min(batchProgress.done + 1, batchProgress.total)}/{batchProgress.total}），完成后自动只保留可用模型…</div>}
               {selected.lastTestMessage && <div className={`rounded-xl border p-3 text-xs ${chosenStatus?.tone === "green" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-rose-200 bg-rose-50 text-rose-800"}`}>{selected.lastTestMessage}</div>}
             </div>}
@@ -714,9 +763,7 @@ export function SettingsPanel() {
         </Card>
     </>)}
 
-    {activeTab === "connections" && <ServerAiConnectionPanel selected={selected}/>}
-    {activeTab === "connections" && <ServerAiConnectionPanel selected={selected} role="judge"/>}
-
+    {activeTab === "connections" && <ServerAiConnectionPanel selected={selected} role="judge" />}
     {activeTab === "routing" && (
         <Card>
           <CardHeader><CardTitle className="flex items-center gap-2"><Route className="size-5 text-indigo-600" />模型路由 · 每个进化环节可独立选择{routeSummary.filter((item) => item.live).length > 0 && <Badge className="border-emerald-200 bg-emerald-50 text-emerald-700">{routeSummary.filter((item) => item.live).length} 个环节 已配置</Badge>}{routeSummary.some((item) => !item.live) && <Badge className="border-amber-200 bg-amber-50 text-amber-700">{routeSummary.filter((item) => !item.live).length} 个环节 Demo/未配置</Badge>}</CardTitle></CardHeader>

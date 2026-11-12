@@ -1,0 +1,5 @@
+{
+  "extends":"./tsconfig.app.json",
+  "compilerOptions":{"noEmit":true,"noUnusedLocals":false,"noUnusedParameters":false,"ignoreDeprecations":"6.0"},
+  "files":["src/features/evolve/components/settings-panel.tsx"]
+}

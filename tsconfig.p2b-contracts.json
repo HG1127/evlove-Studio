@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.p1-contracts.json",
+  "compilerOptions": {
+    "paths": {
+      "@evolution/contracts": ["packages/contracts/src/index.ts"],
+      "@evolution/core": ["packages/core/src/index.ts"]
+    }
+  },
+  "files": [
+    "packages/contracts/src/artifact-evolution-contract.ts",
+    "packages/contracts/src/evolve-schemas.ts",
+    "packages/core/src/artifact-mutation-governance.ts",
+    "packages/harness/src/artifact-write-preflight.ts"
+  ]
+}

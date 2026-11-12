@@ -1,0 +1,16 @@
+{
+  "extends":"./tsconfig.p2b-contracts.json",
+  "compilerOptions":{
+    "noEmit":true,
+    "baseUrl":".",
+    "ignoreDeprecations":"6.0",
+    "types":[]
+  },
+  "files":[
+    "packages/contracts/src/server-ai-connection-contract.ts",
+    "src/features/evolve/ai/providers/byok.ts",
+    "src/features/evolve/ai/providers/registry.ts",
+    "src/features/evolve/ai/server-connection-sync.ts",
+    "src/features/evolve/ai/server-connection-sync.test.ts"
+  ]
+}

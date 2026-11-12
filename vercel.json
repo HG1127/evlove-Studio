@@ -2,8 +2,8 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "git": {
     "deploymentEnabled": {
-      "codex/custom-backend-models": false
-    }
+      "codex/custom-backend-models": false,
+      "codex/artifact-evolution-governance-p0": false    }
   },
   "crons": [
     {

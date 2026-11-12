@@ -17,6 +17,15 @@ function fixture(mode:"relative"|"mixed"="relative"){
   return {...x,archives,ports:{fingerprint,persistProject,repairCandidate,verifyFrozenArtifacts,verifyIndependentFinal,archiveRepairEvidence}};
 }
 describe("ordinary Hidden v2 shared repair",()=>{
+  it("rejects a new identity that reproduces an earlier frozen output",async()=>{
+    const x=fixture();x.p.candidates.push({...x.prior,id:"historical-identical-bytes"});
+    bindHiddenRepairFixture(x.p,x.current);
+    const out=await runServerArtifactAcceptance(x.p,x.ports);
+    expect(out.repaired).toBe(false);expect(out.reason).toContain("REPEATED_FROZEN_OUTPUT");
+    expect(out.project.artifactAcceptance.attempts).toBe(1);expect(out.project.artifactRepairAttempts?.[0].status).toBe("failed");
+    expect(x.ports.repairCandidate).toHaveBeenCalledOnce();expect(x.ports.verifyIndependentFinal).not.toHaveBeenCalled();
+  });
+
   it.each(["relative","mixed"] as const)("archives and debits one %s scope before mutation, even if the old recommendation says release",async mode=>{
     const x=fixture(mode),expected=mode==="mixed"?["CONTENT","READABILITY"]:["READABILITY"];
     x.ports.repairCandidate.mockImplementation(async()=>{

@@ -4,6 +4,7 @@ import {
   AcceptanceCriterionSchema,
   ArtifactRoleSchema,
   CandidateArtifactSnapshotSchema,
+  CandidateRepairReflectionSchema,
   CandidateSchema,
   DiagnosisSchema,
   NextQueueItemSchema,
@@ -190,6 +191,9 @@ export const ArtifactAcceptanceAiResultSchema = z.object({
 });
 export type ArtifactAcceptanceAiResult = z.infer<typeof ArtifactAcceptanceAiResultSchema>;
 
+export const RepairArtifactReflectionSchema = CandidateRepairReflectionSchema;
+export type RepairArtifactReflection = z.infer<typeof RepairArtifactReflectionSchema>;
+
 export const RepairArtifactAiResultSchema = z.object({
   artifacts: z.array(z.object({
     sourceArtifactId: z.string(),
@@ -199,6 +203,7 @@ export const RepairArtifactAiResultSchema = z.object({
     notes: z.array(z.string()).default([]),
   })).min(1),
   repairedCriteria: z.array(z.string()).default([]),
+  reflection: RepairArtifactReflectionSchema,
   summary: z.string(),
 });
 export type RepairArtifactAiResult = z.infer<typeof RepairArtifactAiResultSchema>;

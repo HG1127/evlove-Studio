@@ -1,5 +1,5 @@
 import type {AcceptanceCriterion,Candidate,EvolveProject,FrozenArtifact,RepairArtifactAiResult} from "@evolution/contracts";
-import {campaignRepairLimitStopReason,evidenceFingerprint,htmlBuildBodyEditAnchors,htmlParagraphConstructionContext,htmlKnownSemanticComponents,htmlRepairBodyContext,htmlRepairTextNodeContext,resolveBoundHtmlBodyNodeEdits,indexUniqueById,reconcileAcceptedOfflineChampion,visibleRepairFeedbackContext,hiddenRepairFeedbackContext,userGoalScopeContext,userGoalProgress} from "@evolution/core";
+import {campaignRepairLimitStopReason,evidenceFingerprint,htmlBuildBodyEditAnchors,htmlParagraphConstructionContext,htmlKnownSemanticComponents,htmlRepairBodyContext,htmlRepairTextNodeContext,resolveBoundHtmlBodyNodeEdits,indexUniqueById,reconcileAcceptedOfflineChampion,visibleRepairFeedbackContext,hiddenRepairFeedbackContext,userGoalScopeContext,userGoalProgress,artifactReflectionEvidenceBlocker,buildArtifactRepairMemory} from "@evolution/core";
 import {isKnownHtmlNativeSubject} from "@evolution/adapters/html-native-profile";
 import {measuredDocumentObservations,measuredRepairBaselineDocuments,runServerArtifactAcceptance,runServerVisibleRepair,type ServerArtifactVerification} from "@evolution/harness";
 import {runServerAi} from "./ai-gateway";
@@ -9,7 +9,7 @@ import {materializeServerCandidateArtifacts,readServerCandidateParentText,readSe
 import {buildServerCandidateTargetContext,requireServerCandidateOutputModes} from "./server-candidate-context";
 import {verifyServerIndependentFinalHoldout} from "./server-independent-final-holdout";
 import {serverRepairMeasuredTextAuthorized} from "./server-ai-repair-consent";
-import {archiveServerRepairEvidence} from "./server-repair-evidence";
+import {archiveServerRepairEvidence,archiveServerRepairReflectionEvidence} from "./server-repair-evidence";
 import {SERVER_HTML_PARAGRAPH_CONSTRUCTION_INSTRUCTION} from "./server-html-build-context";
 import {serverCandidateConstructionCorrection} from "./server-candidate-construction-feedback";
 import {assertServerControlExecutionActive} from "./server-control-execution";
@@ -127,6 +127,7 @@ export async function repairServerArtifactCandidate(args:{
       })),
     },
     feedbackPhase:args.feedbackPhase??"hidden",
+    repairMemory:buildArtifactRepairMemory((args.project.evolutionArchive??[]).map(entry=>({round:entry.round,kind:entry.kind,score:entry.score,safety:entry.evaluation.safety,failures:entry.evaluation.failures??[],patches:entry.candidate.patches,repairReflection:entry.candidate.repairReflection}))),
     feedbackContext,
     feedbackInstruction:mixedFeedback?`This one repair combines verified absolute criterion failures with separately verified user-goal regressions against the same ${feedbackPaper} Baseline. Rows labelled relative-target-regression still PASS their original absolute minimums; restore their paired baseline quality without fabricating absolute FAIL scores. Address the entire supplied scope in this same repair, preserve other improvements and protected behavior, and rerun every original gate. No extra repair, new final paper, threshold or Winner rule is granted.`:relativeFeedback?`The requested target criteria still PASS their original absolute minimums. The measured failure is a paired target regression against the same ${feedbackPaper} Baseline, not a fabricated absolute FAIL. Improve only those verified regressed targets, preserve other improvements and all protected behavior, and rerun every original gate. A repair is not acceptance and cannot change the Winner rule.`:undefined,
     measuredCandidateDocuments:measuredDocumentObservations(authorizedBody&&visibleFeedback?visibleFeedback.runs:boundObservation?args.project.validationRun.runs:[]),
@@ -150,11 +151,13 @@ export async function repairServerArtifactCandidate(args:{
           baselineScore:comparison.baselineScore}:mixedFeedback?{feedbackKind:"absolute-criterion-failure" as const,absoluteMinimumPassed:false,currentScore:score?.score}:{}),
       };
     }),
-    instruction:"Change only the supplied criteria with VERIFIED evidence above. Preserve every other artifact behavior and protected item. Return exactly one artifact for every supplied target. For an unchanged DOCX/PPTX/XLSX/XLS/ODS/CSV/TSV/ZIP target return JSON {kind:'keep-parent',sourceArtifactId:'EXACT target id'} so the server reuses the verified frozen bytes; never reconstruct native file bytes from an excerpt. For other unchanged targets return their current content; for unchanged excerpted text targets return one exact text-edit with identical before/after. For changed DOCX targets return {kind:'document',parts:[{path:'word/document.xml',textRuns:[{index:0,text:'new text'}]}]}; for PPTX return {kind:'presentation',slides:[{number:1,textRuns:[{index:0,text:'new text'}]}]}, using only real indexed paths/slides from structuredContext. For changed spreadsheets return {kind:'spreadsheet',sheets:[{name:'Existing Sheet',cells:[{address:'A1',value:'new value'}]}]} using only real Sheet/A1 locations and preserving formulas; do not fabricate calculated formula caches. Every changed native target must have actual differences. For codebase/package targets return a JSON overlay {kind:'codebase',overlay:true,files:[{path,content}],deletions:[path]} containing only actual changes/deletions. For text artifacts with mutationMode text-edits, return content JSON {kind:'text-edits',edits:[{before,after,start?,end?}]}, anchored verbatim to current Candidate chunks without chunk markers or ellipses. The server applies edits to the complete tested Candidate, preserving untouched bytes. Do not rewrite a whole artifact from excerpts. The output becomes a NEW Candidate and must be re-tested on the full Hidden Holdout.",
+    instruction:"Change only the supplied criteria with VERIFIED evidence above. Preserve every other artifact behavior and protected item. Return exactly one artifact for every supplied target. For an unchanged DOCX/PPTX/XLSX/XLS/ODS/CSV/TSV/ZIP target return JSON {kind:'keep-parent',sourceArtifactId:'EXACT target id'} so the server reuses the verified frozen bytes; never reconstruct native file bytes from an excerpt. For other unchanged targets return their current content; for unchanged excerpted text targets return one exact text-edit with identical before/after. For changed DOCX targets return {kind:'document',parts:[{path:'word/document.xml',textRuns:[{index:0,text:'new text'}]}]}; for PPTX return {kind:'presentation',slides:[{number:1,textRuns:[{index:0,text:'new text'}]}]}, using only real indexed paths/slides from structuredContext. For changed spreadsheets return {kind:'spreadsheet',sheets:[{name:'Existing Sheet',cells:[{address:'A1',value:'new value'}]}]} using only real Sheet/A1 locations and preserving formulas; do not fabricate calculated formula caches. Every changed native target must have actual differences. For codebase/package targets return a JSON overlay {kind:'codebase',overlay:true,files:[{path,content}],deletions:[path]} containing only actual changes/deletions. For text artifacts with mutationMode text-edits, return content JSON {kind:'text-edits',edits:[{before,after,start?,end?}]}, anchored verbatim to current Candidate chunks without chunk markers or ellipses. The server applies edits to the complete tested Candidate, preserving untouched bytes. Do not rewrite a whole artifact from excerpts. The output becomes a NEW Candidate and must be re-tested on the full Hidden Holdout. Before proposing changes, inspect repairMemory and avoid repeating failed mutation families unless the new root-cause evidence materially differs. Return the required structured reflection; cite only supplied failed criterion IDs and the exact current candidate ID. Do not reveal or infer hidden holdout case contents.",
     htmlBodyInstruction:"For mutationMode html-body-node-edits-v1, artifact.content MUST be JSON {kind:'html-body-node-edits-v1',edits:[{anchorId:'EXACT supplied ID',text:'complete replacement plain text'}]}. Return only changed nodes. DO NOT include parentSha256 or any parent/hash field: the server owns that binding. Text is plain prose, never HTML markup; the server escapes it and preserves all surrounding markup/code/styles. Preserve htmlRendererComponents labels and their two paragraph slots; new text beside those slots inside their content-block would be discarded by the renderer. Do not use text-edits or rendered text as a raw HTML anchor for these targets.",
   };
   const nextId=`${args.candidate.id}-repair-${args.attempt}-${Date.now()}`;
   const construct=async(response:RepairArtifactAiResult)=>{
+    const reflectionBlocker=artifactReflectionEvidenceBlocker(response.reflection,[...failedIds],args.candidate.id);
+    if(reflectionBlocker)throw new Error("Repair reflection rejected: "+reflectionBlocker);
     const artifacts=response.artifacts.map(artifact=>{
       const parent=htmlParents.get(artifact.sourceArtifactId);
       return parent?{...artifact,content:resolveBoundHtmlBodyNodeEdits(parent.html,artifact.content,parent.sha256)}:artifact;
@@ -170,6 +173,8 @@ export async function repairServerArtifactCandidate(args:{
     }
     const next:Candidate={
       ...args.candidate,
+      repairReflection:response.reflection,
+
       id:nextId,
       name:`${args.candidate.name} · Repair ${args.attempt}`,
       title:`${args.candidate.title??args.candidate.name} · Server Repair ${args.attempt}`,
@@ -179,15 +184,18 @@ export async function repairServerArtifactCandidate(args:{
       artifactBuildSummary:undefined,
       notes:[...args.candidate.notes,`Server Targeted Repair ${args.attempt}: ${response.summary}`],
     };
-    return materializeServerCandidateArtifacts(
+    const materialized=await materializeServerCandidateArtifacts(
       args.project,
       next,
       artifacts.map((artifact)=>({...artifact,buildMode:"ai-full" as const})),
-      `Targeted Repair ${args.attempt}: ${response.summary}`,
+      "Targeted Repair "+args.attempt+": "+response.summary,
       args.candidate,
       expectedParents,
     );
-  };
+    const reflectionEvidenceContent=JSON.stringify({version:"repair-reflection-evidence-v1",missionId:args.project.id,candidateId:nextId,parentCandidateId:args.candidate.id,attempt:args.attempt,failedCriterionIds:[...failedIds],reflection:response.reflection,summary:response.summary,artifactSourceIds:response.artifacts.map(item=>item.sourceArtifactId)});
+    const reflectionEvidenceSha256=await serverArtifactSha256(new TextEncoder().encode(reflectionEvidenceContent));
+    const reflectionEvidence=await archiveServerRepairReflectionEvidence({version:"repair-reflection-archive-v1",missionId:args.project.id,candidateId:nextId,parentCandidateId:args.candidate.id,attempt:args.attempt,content:reflectionEvidenceContent,sha256:reflectionEvidenceSha256,size:new TextEncoder().encode(reflectionEvidenceContent).byteLength});
+    return {...materialized,repairReflection:response.reflection,repairReflectionEvidence:reflectionEvidence};  };
   const response=await runServerAi("repair-artifact",payload);
   try{return await construct(response);}
   catch(error){

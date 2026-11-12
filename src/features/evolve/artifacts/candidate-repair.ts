@@ -1,4 +1,4 @@
-import { fastHash } from "@evolution/core";
+import { fastHash, artifactReflectionEvidenceBlocker } from "@evolution/core";
 import { RepairArtifactAiResultSchema } from "../ai/schemas";
 import { runEvolveAi } from "../ai/service";
 import type { AcceptanceCriterion, ArtifactAcceptance, Candidate, EvolveProject } from "../schemas";
@@ -30,7 +30,7 @@ export async function repairCandidateArtifacts(project: EvolveProject, candidate
     },
     candidate: { id: candidate.id, title: candidate.title },
     failedCriteria: failed,
-    outputInstruction: "Repair only failed criteria on the supplied CURRENT Candidate. Use only target IDs or anchors actually present in the supplied current evidence. For HTML use content JSON {kind:'html-edits',edits:[{targetId,operation:'prepend'|'append'|'replace',content}]}; prepend/append contain only new children, replace retains the unique target ID. For other editable text prefer {kind:'text-edits',edits:[{before,after}]}, where before is a unique verbatim anchor from the current content/context, without excerpt markers. The program applies edits to the full current snapshot and preserves all untouched bytes. Never regenerate a whole long file from excerpts. Return only changed artifacts with their exact sourceArtifactId; omitted files are retained from the current Candidate. Native/structured formats require their complete current format blueprint, not text edits. Return concise notes and no duplicate original content.",
+    outputInstruction: "Return a required reflection object with parentCandidateId equal to the exact supplied candidate.id, rootCause grounded in failed criterion evidence, failureCaseIds containing only supplied failed criterion IDs, mutationRationale describing the causal modification, preservedCapabilityIds listing capabilities retained, and antiPatternsAvoided listing known ineffective approaches. These are attestations, not validation results. Repair only failed criteria on the supplied CURRENT Candidate. Use only target IDs or anchors actually present in the supplied current evidence. For HTML use content JSON {kind:'html-edits',edits:[{targetId,operation:'prepend'|'append'|'replace',content}]}; prepend/append contain only new children, replace retains the unique target ID. For other editable text prefer {kind:'text-edits',edits:[{before,after}]}, where before is a unique verbatim anchor from the current content/context, without excerpt markers. The program applies edits to the full current snapshot and preserves all untouched bytes. Never regenerate a whole long file from excerpts. Return only changed artifacts with their exact sourceArtifactId; omitted files are retained from the current Candidate. Native/structured formats require their complete current format blueprint, not text edits. Return concise notes and no duplicate original content.",
     artifacts: targets.map((artifact) => {
       const text = artifact.textContent;
       const bounded = supportsLocalEdits(artifact.extension) && text.length > 32_000;
@@ -40,6 +40,8 @@ export async function repairCandidateArtifacts(project: EvolveProject, candidate
         context: bounded ? retrieveTextContext(text, query, { maxChars: 18_000, maxChunks: 8 }) : undefined };
     }),
   }));
+  const reflectionBlocker=artifactReflectionEvidenceBlocker(repaired.reflection,failed.map((item)=>item.criterionId),candidate.id);
+  if(reflectionBlocker)throw new Error("Repair reflection rejected: "+reflectionBlocker);
   // Reject unknown IDs before the compatibility normalizer can guess by filename or position.
   if (repaired.artifacts.some((artifact) => !targets.some((target) => target.id === artifact.sourceArtifactId))) throw new Error("修复结果引用了未知进化对象，当前成果已保留。");
   const outputs = normalizeCandidateArtifactOutputs(targets, repaired.artifacts.map((artifact) => ({ ...artifact, buildMode: "ai-full" as const })));
@@ -52,7 +54,7 @@ export async function repairCandidateArtifacts(project: EvolveProject, candidate
   }));
   const issues = htmlCandidateGuard(project, snapshots).flatMap((report) => report.issues);
   if (issues.length) throw new Error(`HTML 修复完整性检查失败：${issues.join("；")}`);
-  return { ...candidate, name: `${candidate.name} · Repair ${acceptance.attempts + 1}`,
+  return { ...candidate, repairReflection:repaired.reflection, name: `${candidate.name} · Repair ${acceptance.attempts + 1}`,
     title: `${candidate.title || candidate.name} · Acceptance Repair`, artifactSnapshots: snapshots,
     artifactBuildStatus: "ready", artifactBuildSummary: repaired.summary,
     notes: [...candidate.notes, `Artifact Repair：${repaired.summary}`] };

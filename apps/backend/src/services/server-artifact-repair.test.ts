@@ -8,15 +8,15 @@ import {candidateWinnerDecision,evidenceFingerprint,finalHoldoutContractFingerpr
 import {acceptedPackageFixture,bindHiddenRepairFixture,hiddenRepairFixture} from "@evolution/testkit";
 import {serverAiRepairContract} from "./server-ai-repair-contract";
 
-const { blobs, ai, put } = vi.hoisted(() => ({ blobs: new Map<string, Blob>(), ai: vi.fn(), put: vi.fn() }));
-vi.mock("./artifact-runtime", () => ({ getServerArtifactStore: () => ({ get: async (id: string) => blobs.get(id), put }) }));
+const { blobs, metadata, ai, put } = vi.hoisted(() => ({ blobs: new Map<string, Blob>(), metadata: new Map<string, unknown>(), ai: vi.fn(), put: vi.fn() }));
+vi.mock("./artifact-runtime", () => ({ getServerArtifactStore: () => ({ get: async (id: string) => blobs.get(id), getMetadata: async (id: string) => metadata.get(id), put }) }));
 vi.mock("./ai-gateway", () => ({ runServerAi: ai }));
 const before = '<p id="refund-approval">主管确认退款后才进入执行。</p>';
 const after = '<p id="refund-approval">主管确认退款后才进入执行，并记录审批编号。</p>';
 const current = '<html><body><p id="prior-improvement">保留已完成的改进。</p>' + '<p>保留每个章节和原有说明。</p>'.repeat(10000) + before + '</body></html>';
 const failed = AcceptanceCriterionSchema.parse({ id: "REFUND", title: "退款审批编号", requirement: "主管确认退款后记录审批编号", artifactIds: ["source"] });
 const edits = (from = before, to = after) => JSON.stringify({ kind: "text-edits", edits: [{ before: from, after: to }] });
-const output = (content = edits()) => ({ summary: "修复退款编号", repairedCriteria: [failed.id], artifacts: [{ sourceArtifactId: "source", name: "repaired.html", mimeType: "text/html", content, notes: [] }] });
+const output = (content = edits(), parentCandidateId = "failed-tested", repairedCriteria: string[] = [failed.id]) => ({ summary: "修复退款编号", repairedCriteria, reflection: { parentCandidateId, rootCause: "缺少经证据确认的退款审批编号", failureCaseIds: repairedCriteria, mutationRationale: "在当前冻结成果物中补充审批编号记录", preservedCapabilityIds: ["existing-html-structure", "prior-improvements"], antiPatternsAvoided: [] }, artifacts: [{ sourceArtifactId: "source", name: "repaired.html", mimeType: "text/html", content, notes: [] }] });
 async function snapshot(sourceArtifactId: string, content: string, blob = new Blob([content], { type: "text/html" }), name = "tested.html"): Promise<CandidateArtifactSnapshot> {
   const sha256 = await serverArtifactSha256(await blob.arrayBuffer());
   const contentHash = await serverArtifactSha256(new TextEncoder().encode(content));
@@ -32,10 +32,17 @@ async function fixture() {
   blobs.set(source.id, new Blob(['<html><body>OLD SOURCE</body></html>'], { type: "text/html" }));
   return { project, candidate: tested, failedCriteria: [failed], attempt: 1 };
 }
-beforeEach(() => { vi.stubEnv("EVOLUTION_AI_FULL_REPAIR_TEXT_MISSIONS","");blobs.clear(); ai.mockReset(); put.mockReset(); put.mockImplementation(async (id: string, blob: Blob) => { blobs.set(id, blob); }); });
+beforeEach(() => { vi.stubEnv("EVOLUTION_AI_FULL_REPAIR_TEXT_MISSIONS","");blobs.clear();metadata.clear(); ai.mockReset(); put.mockReset(); put.mockImplementation(async (id: string, blob: Blob, options?: {missionId?:string;kind?:string}) => { blobs.set(id, blob); const digest=await serverArtifactSha256(await blob.arrayBuffer()); const at=new Date().toISOString(); metadata.set(id,{id,schemaVersion:"artifact-v1",missionId:options?.missionId,kind:options?.kind,bucket:"test",objectPath:id,mimeType:blob.type,sizeBytes:blob.size,sha256:digest,createdAt:at,updatedAt:at}); }); });
 afterEach(()=>vi.unstubAllEnvs());
 
 describe("server targeted Artifact repair", () => {
+  it("rejects reflection bound to another Candidate before writing artifacts",async()=>{
+    const args=await fixture();
+    ai.mockResolvedValue({...output(),reflection:{...output().reflection,parentCandidateId:"other-candidate"}});
+    await expect(repairServerArtifactCandidate(args)).rejects.toThrow(/reflection rejected/i);
+    expect(ai).toHaveBeenCalledOnce();
+    expect(put).not.toHaveBeenCalled();
+  });
   async function hiddenV2Fixture(){
     const x=hiddenRepairFixture("mixed"),p=x.p;
     x.current.artifactSnapshots=[await snapshot("source",'<html><body>'+before+'<script>PRIVATE_PROGRAM</script></body></html>')];
@@ -48,14 +55,14 @@ describe("server targeted Artifact repair", () => {
   it("sends v2 ordinary Hidden mixed feedback without relabeling an absolute PASS or leaking the blind paper",async()=>{
     const args=await hiddenV2Fixture();
     ai.mockImplementation(async(_op,payload)=>{
-      expect(payload.feedbackPhase).toBe("hidden");expect(payload.feedbackInstruction).toContain("ordinary Hidden Baseline");
+      expect(payload.feedbackPhase).toBe("hidden");expect(payload.feedbackInstruction).toContain("ordinary Hidden Baseline");expect(payload.repairMemory).toMatchObject({source:"non-sensitive archive aggregates only"});expect(JSON.stringify(payload.repairMemory)).not.toMatch(/ordinary hidden task|FINAL-PRIVATE-UNSEEN/);
       expect(payload.feedbackContext).toMatchObject({kind:"combined-criterion-failure",comparisons:[{criterionId:"READABILITY",baselineScore:90,currentScore:89,absoluteMinimumPassed:true}]});
       expect(payload.failedCriteria).toEqual([expect.objectContaining({criterionId:"CONTENT",feedbackKind:"absolute-criterion-failure",currentScore:70,absoluteMinimumPassed:false}),expect.objectContaining({criterionId:"READABILITY",feedbackKind:"relative-target-regression",currentScore:89,baselineScore:90,absoluteMinimumPassed:true})]);
       expect(JSON.stringify(payload)).not.toMatch(/PRIVATE_PROGRAM|FINAL-PRIVATE-UNSEEN/);
       const node=payload.candidate.artifacts[0].htmlTextNodes.find((n:{text:string})=>n.text==="主管确认退款后才进入执行。")!;
-      return {...output(JSON.stringify({kind:"html-body-node-edits-v1",edits:[{anchorId:node.anchorId,text:"主管确认退款后才进入执行，并记录审批编号。"}]})),repairedCriteria:["CONTENT","READABILITY"]};
+      return output(JSON.stringify({kind:"html-body-node-edits-v1",edits:[{anchorId:node.anchorId,text:"主管确认退款后才进入执行，并记录审批编号。"}]}),"current",["CONTENT","READABILITY"]);
     });
-    const out=await repairServerArtifactCandidate(args);expect(ai).toHaveBeenCalledOnce();expect(out.artifactSnapshots[0]!.content).toContain("并记录审批编号");
+    const out=await repairServerArtifactCandidate(args);expect(ai).toHaveBeenCalledOnce();expect(out.artifactSnapshots[0]!.content).toContain("并记录审批编号");expect(out.repairReflection?.parentCandidateId).toBe(args.candidate.id);expect(out.repairReflectionEvidence?.parentCandidateId).toBe(args.candidate.id);expect(out.repairReflectionEvidence?.sha256).toMatch(/^[0-9a-f]{64}$/);expect(metadata.has(out.repairReflectionEvidence!.artifactId)).toBe(true);
     expect(args.project.validationRun.evaluation!.criterionScores![1]!.pass).toBe(true);expect(args.project.artifactAcceptance.attempts).toBe(1);
   });
   it.each(["scope","policy","missing-claim"])("rejects a v2 Hidden %s change before reading mutation context or calling AI",async kind=>{
@@ -112,7 +119,7 @@ describe("server targeted Artifact repair", () => {
         expect.objectContaining({criterionId:relative.id,currentScore:89,baselineScore:90,feedbackKind:"relative-target-regression",absoluteMinimumPassed:true})]);
       expect(payload.feedbackInstruction).toContain("same repair");expect(JSON.stringify(payload)).not.toMatch(/PRIVATE_SCRIPT|independent final kept private/);
       const node=payload.candidate.artifacts[0].htmlTextNodes.find((n:{text:string})=>n.text==="主管确认退款后才进入执行。")!;
-      const response={...output(JSON.stringify({kind:"html-body-node-edits-v1",edits:[{anchorId:node.anchorId,text:"主管确认退款后才进入执行，并记录审批编号。"}]})),repairedCriteria:[failed.id,relative.id]};
+      const response=output(JSON.stringify({kind:"html-body-node-edits-v1",edits:[{anchorId:node.anchorId,text:"主管确认退款后才进入执行，并记录审批编号。"}]}),args.candidate.id,[failed.id,relative.id]);
       expect(serverAiRepairContract(payload).parser.safeParse({...response,repairedCriteria:["OUTSIDE"]}).success).toBe(false);
       return serverAiRepairContract(payload).parser.parse(response);
     });
@@ -313,7 +320,7 @@ describe("server targeted Artifact repair", () => {
     const repaired = await repairServerArtifactCandidate(args);
     expect(repaired.artifactSnapshots[1]!.content).toBe(current);
     expect(repaired.artifactSnapshots[1]!.frozenArtifact).toEqual(inherited.frozenArtifact);
-    expect(put).toHaveBeenCalledTimes(1);
+    expect(put).toHaveBeenCalledTimes(2);
   });
   it("repairs an HTML Target while preserving a frozen CSV Target with exact bytes",async()=>{
     const args=await fixture();
@@ -346,7 +353,7 @@ describe("server targeted Artifact repair", () => {
     expect(preserved.frozenArtifact?.blobId).toBe(csvSnapshot.frozenArtifact?.blobId);
     expect(await verifyServerCandidateFrozenArtifact(preserved)).toBe(true);
     expect(await blobs.get(preserved.frozenArtifact!.blobId)!.text()).toBe(tableText);
-    expect(put).toHaveBeenCalledTimes(1);
+    expect(put).toHaveBeenCalledTimes(2);
   });
 
   it("reindexes all frozen CSV revisions before a targeted repair",async()=>{
@@ -396,7 +403,7 @@ describe("server targeted Artifact repair", () => {
     const preserved = repaired.artifactSnapshots.find((file) => file.sourceArtifactId === other.id)!;
     expect(preserved.content).toBe(inherited.content);
     expect(preserved.frozenArtifact).toEqual(inherited.frozenArtifact);
-    expect(put).toHaveBeenCalledTimes(1);
+    expect(put).toHaveBeenCalledTimes(2);
     expect(await verifyServerCandidateFrozenArtifact(preserved)).toBe(true);
   });
 });

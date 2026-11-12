@@ -5,12 +5,19 @@ import {runServerAi} from "./ai-gateway";
 import {withExplicitServerAiConnection} from "./server-ai-connection";
 
 const scope={failedCriteria:[{criterionId:"AC-REFINE-DETAIL",requirement:"完整细化配置"}]};
-const result={summary:"细化配置",artifacts:[{sourceArtifactId:"source",name:"file.html",mimeType:"text/html",content:'{}',notes:[]}],repairedCriteria:["AC-REFINE-DETAIL"]};
+const result={summary:"细化配置",artifacts:[{sourceArtifactId:"source",name:"file.html",mimeType:"text/html",content:'{}',notes:[]}],repairedCriteria:["AC-REFINE-DETAIL"],reflection:{parentCandidateId:"candidate-1",rootCause:"缺少必要配置说明",failureCaseIds:["AC-REFINE-DETAIL"],mutationRationale:"补齐具体配置说明",preservedCapabilityIds:["existing-navigation"],antiPatternsAvoided:[]}};
 const anchorId="t17qe_17qt-eb096af64ddfe3f2";
-const bodyScope={...scope,project:{name:"Real repair payload shape"},candidate:{artifacts:[{sourceArtifactId:"source",mutationMode:"html-body-node-edits-v1",htmlTextNodes:[{anchorId}]}]}};
+const bodyScope={...scope,project:{name:"Real repair payload shape"},candidate:{id:"candidate-1",artifacts:[{sourceArtifactId:"source",mutationMode:"html-body-node-edits-v1",htmlTextNodes:[{anchorId}]}]}};
 const bodyResult=(id=anchorId)=>({...result,artifacts:[{...result.artifacts[0]!,content:JSON.stringify({kind:"html-body-node-edits-v1",edits:[{anchorId:id,text:"完整配置说明"}]})}]});
 afterEach(()=>vi.unstubAllGlobals());
-describe("request-bound repair criteria",()=>{
+describe("request-bound repair criteria",()=>{  it("binds reflection to the exact parent and failed criterion IDs",()=>{
+    const contract=serverAiRepairContract({...scope,candidate:{id:"candidate-1",artifacts:[{sourceArtifactId:"source"}]}});
+    expect(contract.parser.safeParse({...result,reflection:{...result.reflection,parentCandidateId:"other"}}).success).toBe(false);
+    expect(contract.parser.safeParse({...result,reflection:{...result.reflection,failureCaseIds:["NOT-FAILED"]}}).success).toBe(false);
+    expect(contract.parser.parse(result).reflection.parentCandidateId).toBe("candidate-1");
+    expect(contract.schema.schema.required).toContain("reflection");
+    expect(contract.schema.schema.properties.reflection.properties.failureCaseIds.items.enum).toEqual(["AC-REFINE-DETAIL"]);
+  });
   it("rejects a mistyped physical anchor inside otherwise valid repair JSON",()=>{
     const contract=serverAiRepairContract(bodyScope);
     expect(contract.parser.safeParse(bodyResult("t17qe_17qt-eb096af64dfe3f2")).success).toBe(false);

@@ -1,3 +1,4 @@
+import {repeatedRepairOutputBlocker} from "@evolution/core";
 import {EvolveProjectSchema,RepairEvidenceReferenceSchema,type ArtifactRepairAttempt,type EvolveProject} from "@evolution/contracts";
 import {artifactRepairStopReason,campaignRepairLimitStopReason,estimateNextRoundCost,hasExactFrozenArtifactSet,hiddenRepairFeedbackContext,hiddenRepairTarget,HIDDEN_REPAIR_V2,candidateFailureContextBlocker} from "@evolution/core";
 import type {ServerArtifactAcceptanceOutcome,ServerArtifactAcceptancePorts} from "./server-artifact-acceptance";
@@ -72,6 +73,7 @@ export async function runServerTargetedArtifactRepair(input:EvolveProject,ports:
     const verification=await ports.verifyFrozenArtifacts({project,candidate:repaired});
     if(verification.failed.length||verification.unavailable.length
       ||!hasExactFrozenArtifactSet(project,repaired,{...project.artifactAcceptance,frozenArtifacts:verification.verified}))throw new Error("Repair 冻结文件回读不可用或身份不一致，不能晋级。");
+    const repeated=repeatedRepairOutputBlocker(project,repaired);if(repeated)throw new Error(repeated);
     const completedAt=now();
     project={...project,candidates:[...project.candidates,repaired],selectedCandidateIds:[repaired.id],
       artifactRepairAttempts:project.artifactRepairAttempts!.map(item=>item.id===record.id?{...item,status:"frozen",candidateId:repaired.id,

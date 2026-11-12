@@ -322,7 +322,7 @@ export function runDemoAi(operation: AiOperation, payload: unknown): unknown {
       const repairText = failed.map((item) => `- ${item.criterionId}: ${item.requirement || ""} ${(item.gaps || []).join("；")}`).join("\n");
       return RepairArtifactAiResultSchema.parse({
         artifacts: artifacts.map((artifact) => ({ sourceArtifactId: artifact.sourceArtifactId || "source", name: artifact.name || "artifact.md", mimeType: artifact.mimeType || "text/markdown", content: `${artifact.content || ""}\n\n## Acceptance Repair\n\n${repairText}`, notes: ["Demo Repair Agent 根据失败验收项补强成果。"] })),
-        repairedCriteria: failed.map((item) => String(item.criterionId || "criterion")), summary: "已按失败验收项执行 Repair，需重新跑 Hidden Validation 与 Artifact Acceptance。",
+        repairedCriteria: failed.map((item) => String(item.criterionId || "criterion")), reflection: { parentCandidateId: String((p.candidate as {id?:string})?.id || "demo-candidate"), rootCause: "Demo 模式根据失败验收项生成补强内容。", failureCaseIds: failed.map((item) => String(item.criterionId || "criterion")), mutationRationale: "补充失败标准要求的内容并保留其他原始成果。", preservedCapabilityIds: ["existing-artifact-content"], antiPatternsAvoided: [] }, summary: "已按失败验收项执行 Repair，需重新跑 Hidden Validation 与 Artifact Acceptance。",
       });
     }
     case "execute-artifact": {

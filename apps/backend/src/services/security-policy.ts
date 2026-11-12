@@ -63,8 +63,7 @@ export function protectedDeploymentInternalRequestAllowed(
 
 export function resolveEvolutionActor(event:H3Event):EvolutionActor{
   const config=getServerSecurityConfig();
-  if(localDevDirectAccess(event)){
-    if(["POST","PUT","PATCH","DELETE"].includes(getMethod(event)))assertOperatorSameOrigin(event);
+  if(process.env.EVOLUTION_EXPERIMENT_MODE!=="isolated"&&localDevDirectAccess(event)){    if(["POST","PUT","PATCH","DELETE"].includes(getMethod(event)))assertOperatorSameOrigin(event);
     return EvolutionActorSchema.parse({id:"local-dev",role:"admin",workspaceId:config.workspaceId,source:"internal-dev"});
   }
   if(config.mode==="blocked")throw createError({statusCode:503,statusMessage:"Evolution identity/RBAC is not configured"});
@@ -134,9 +133,8 @@ export function requireEvolutionPermission(event:H3Event,permission:EvolutionPer
 
 export async function requireGovernedEvolutionPermission(event:H3Event,permission:EvolutionPermission){
   const actor=requireEvolutionPermission(event,permission);
-  if(permission!=="data.read"&&actor.source!=="internal-dev"
-    &&actor.source!=="vercel-protected-internal"&&actor.source!=="browser-session"){
-    try{
+  if(permission!=="data.read"&&(process.env.EVOLUTION_EXPERIMENT_MODE==="isolated"
+    ||(actor.source!=="internal-dev"&&actor.source!=="vercel-protected-internal"&&actor.source!=="browser-session"))){    try{
       await requireActiveOrganizationMember(actor);
     }catch(error){
       const code=(error as {code?:string}).code;

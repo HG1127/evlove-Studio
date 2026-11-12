@@ -1,0 +1,38 @@
+{
+  "compilerOptions": {
+    "noEmit": true,
+    "strict": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "skipLibCheck": true,
+    "baseUrl": ".",
+    "ignoreDeprecations": "6.0",
+    "paths": {
+      "@evolution/contracts": ["packages/contracts/src/index.ts"],
+      "@evolution/core": ["packages/core/src/index.ts"],
+      "@evolution/harness": ["packages/harness/src/index.ts"],
+      "@evolution/adapters/sandbox": ["packages/adapters/src/sandbox.ts"],
+      "@evolution/adapters/html-native-profile": ["packages/adapters/src/native-html/profile.ts"],
+      "@evolution/adapters/html-native-local": ["packages/adapters/src/html-native-local.ts"],
+      "@evolution/adapters/outcome-telemetry": ["packages/adapters/src/outcome-telemetry.ts"],
+      "@evolution/adapters": ["packages/adapters/src/index.ts"],
+      "@evolution/testkit": ["packages/testkit/src/index.ts"]
+    },
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"]
+  },
+  "files": [
+    "packages/contracts/src/artifact-evolution-contract.ts",
+    "packages/contracts/src/ai-schemas.ts",
+    "packages/contracts/src/ai-json-schemas.ts",
+    "packages/core/src/artifact-mutation-governance.ts",
+    "packages/core/src/artifact-mutation-governance.test.ts",
+    "apps/backend/src/services/server-ai-repair-contract.ts",
+    "apps/backend/src/services/server-ai-repair-contract.test.ts",
+    "apps/backend/src/services/server-artifact-acceptance.ts",
+    "apps/backend/src/services/server-artifact-repair.test.ts",
+    "src/features/evolve/artifacts/candidate-repair.ts",
+    "src/features/evolve/ai/demo-provider.ts"
+  ]
+}

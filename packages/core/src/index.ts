@@ -93,3 +93,5 @@ export * from "./measurement-calibration";
 export * from "./confirmation-mission-scope";
 export * from "./html-card-paragraph-diff";
 export * from "./mission-directory-projection";
+export * from "./artifact-mutation-governance";
+export * from "./artifact-repair-memory";

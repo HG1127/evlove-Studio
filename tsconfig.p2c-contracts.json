@@ -1,0 +1,10 @@
+{
+  "extends":"./tsconfig.p2b-contracts.json",
+  "files":[
+    "packages/contracts/src/artifact-evolution-contract.ts",
+    "packages/contracts/src/artifact-contract.ts",
+    "packages/core/src/artifact-mutation-governance.ts",
+    "packages/harness/src/artifact-write-preflight.ts",
+    "packages/harness/src/artifact-write-lineage.ts"
+  ]
+}

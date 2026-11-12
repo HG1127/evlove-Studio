@@ -1,4 +1,4 @@
-import {ArtifactMetadataSchema,RepairEvidenceArchiveInputSchema,RepairEvidenceReferenceSchema,RepairFeedbackEvidenceSchema,type RepairEvidenceArchiveInput} from "@evolution/contracts";
+import {ArtifactMetadataSchema,RepairEvidenceArchiveInputSchema,RepairEvidenceReferenceSchema,RepairFeedbackEvidenceSchema,RepairReflectionArchiveInputSchema,RepairReflectionEvidenceReferenceSchema,type RepairEvidenceArchiveInput,type RepairReflectionArchiveInput} from "@evolution/contracts";
 import {getServerArtifactStore} from "./artifact-runtime";
 import {serverArtifactSha256} from "./server-experiment-artifacts";
 
@@ -25,4 +25,33 @@ export async function archiveServerRepairEvidence(raw:RepairEvidenceArchiveInput
   if(!read||read.size!==input.size||await serverArtifactSha256(await read.arrayBuffer())!==input.sha256)throw new Error("Repair evidence exact-byte readback failed");
   return RepairEvidenceReferenceSchema.parse({version:"repair-evidence-reference-v1",artifactId,missionId:input.missionId,candidateId:input.candidateId,
     sha256:metadata.sha256,size:metadata.sizeBytes,mimeType:"application/json"});
+}
+
+/** Immutable reflection receipt archived separately from the pre-repair failure report. */
+export async function archiveServerRepairReflectionEvidence(raw:RepairReflectionArchiveInput){
+  const input=RepairReflectionArchiveInputSchema.parse(raw),store=getServerArtifactStore();
+  if(!store.getMetadata)throw new Error("Repair reflection metadata readback unavailable");
+  const blob=new Blob([input.content],{type:"application/json"});
+  if(await serverArtifactSha256(await blob.arrayBuffer())!==input.sha256)throw new Error("Repair reflection SHA-256 mismatch");
+  const body=JSON.parse(input.content) as {version?:string;missionId?:string;candidateId?:string;parentCandidateId?:string;attempt?:number};
+  if(body.version!=="repair-reflection-evidence-v1"||body.missionId!==input.missionId||body.candidateId!==input.candidateId
+    ||body.parentCandidateId!==input.parentCandidateId||body.attempt!==input.attempt)throw new Error("Repair reflection body binding mismatch");
+  const artifactId="candidate-repair-reflection-"+input.sha256,kind="candidate-repair-reflection";
+  const checkMetadata=(rawMetadata:unknown)=>{
+    const metadata=ArtifactMetadataSchema.parse(rawMetadata);
+    if(metadata.id!==artifactId||metadata.missionId!==input.missionId||metadata.kind!==kind
+      ||metadata.mimeType!==blob.type||metadata.sha256!==input.sha256||metadata.sizeBytes!==input.size)
+      throw new Error("Repair reflection stored binding mismatch");
+    return metadata;
+  };
+  const prior=await store.getMetadata(artifactId);
+  if(prior)checkMetadata(prior);
+  else await store.put(artifactId,blob,{missionId:input.missionId,kind});
+  const read=await store.get(artifactId),metadata=checkMetadata(await store.getMetadata(artifactId));
+  if(!read||read.size!==input.size||await serverArtifactSha256(await read.arrayBuffer())!==input.sha256)
+    throw new Error("Repair reflection exact-byte readback failed");
+  return RepairReflectionEvidenceReferenceSchema.parse({
+    version:"repair-reflection-reference-v1",artifactId,missionId:input.missionId,candidateId:input.candidateId,
+    parentCandidateId:input.parentCandidateId,attempt:input.attempt,sha256:metadata.sha256,size:metadata.sizeBytes,mimeType:"application/json",
+  });
 }
