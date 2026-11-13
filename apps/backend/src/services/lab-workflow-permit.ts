@@ -3,6 +3,7 @@ import {LabWorkflowPermitSchema,type EvolutionJob,type EvolutionWorkflowRunInput
 const isLab=()=>process.env.EVOLUTION_EXPERIMENT_MODE==="isolated";
 const armed=()=>process.env.EVOLUTION_LAB_EXPERIMENT_ARMED==="true";
 export const LAB_MAX_DURATION_MS=20*60*1000;
+export const LAB_MAX_PHYSICAL_CALLS=6;
 
 export class LabWorkflowAdmissionError extends Error {
   constructor(readonly code:string,message:string){super(message);this.name="LabWorkflowAdmissionError";}
@@ -26,7 +27,7 @@ export function createLabWorkflowPermit(missionId:string,actorId:string,at:strin
   }
   return LabWorkflowPermitSchema.parse({
     schemaVersion:"lab-synthetic-experiment-v2",missionId,approvedActorId:actorId,approvedAt:at,
-    deadlineAt:new Date(approvedAt+LAB_MAX_DURATION_MS).toISOString(),maxCalls:6,maxTokens:300_000,
+    deadlineAt:new Date(approvedAt+LAB_MAX_DURATION_MS).toISOString(),maxCalls:LAB_MAX_PHYSICAL_CALLS,maxTokens:300_000,
   });
 }
 

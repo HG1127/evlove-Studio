@@ -15,6 +15,7 @@ function fixture():LabExperimentReadinessPorts{
     inspectIdentity:vi.fn(()=>({ready:true,codes:[]})),
     inspectJobs:vi.fn(async()=>({status:"clear" as const,issues:[]})),
     inspectMission:vi.fn(async()=>({exists:true,executableHtml:true})),
+    inspectMissionCampaigns:vi.fn(async()=>({activeCount:0,truncated:false})),
     roleStatus:vi.fn(async(role)=>role==="generation"?gen:judge),
   };
 }
@@ -33,6 +34,11 @@ describe("P3-T zero-cost synthetic 3-generation Lab launch preflight",()=>{
     expect(JSON.stringify(report)).not.toContain(gen.connection.apiKey);
     expect(JSON.stringify(report)).not.toContain(judge.connection.apiKey);
     expect(ports.inspectMission).toHaveBeenCalledExactlyOnceWith(safeEnv.EVOLUTION_LAB_APPROVED_MISSION_ID);
+    expect(ports.inspectMissionCampaigns).toHaveBeenCalledExactlyOnceWith(safeEnv.EVOLUTION_LAB_APPROVED_MISSION_ID);
+    expect(report).toMatchObject({candidateScopeStatus:"reviewable",candidateActiveCampaigns:0,
+      unrelatedHistoricalOrphans:0,callFeasibility:{requestedGenerations:3,
+        minimumIndependentJudgeChecks:3,minimumVariantAndJudgeCalls:6,
+        remainingCallsForOtherStages:0,fullLifecycleWithinCallCap:"unverified"}});
   });
   it("reports an unarmed missing Mission and existing orphans without mutating state",async()=>{
     const ports=fixture();
@@ -57,6 +63,7 @@ describe("P3-T zero-cost synthetic 3-generation Lab launch preflight",()=>{
       ports.inspectMission=vi.fn(async()=>missionState);
       const report=await inspectLabThreeGenerationReadiness(safeEnv,ports,now);
       expect(report.status).toBe("blocked");
+      expect(report.candidateScopeStatus).toBe("blocked");
       expect(report.blockers).toContain(missionState.blocker);
     }
   });
@@ -104,6 +111,65 @@ describe("P3-T zero-cost synthetic 3-generation Lab launch preflight",()=>{
     expect(ports.roleStatus).not.toHaveBeenCalled();
     expect(ports.inspectMission).not.toHaveBeenCalled();
   });
+  it("separates known unrelated legacy orphans from a new candidate scope without bypassing the global block",async()=>{
+    const ports=fixture();
+    ports.inspectJobs=vi.fn(async()=>({status:"blocked" as const,
+      issues:[
+        {reason:"mission-missing",missionId:"retained-legacy-mission"},
+        {reason:"mission-missing",missionId:"retained-legacy-mission"},
+      ]}));
+    const report=await inspectLabThreeGenerationReadiness(safeEnv,ports,now);
+    expect(report).toMatchObject({status:"blocked",blockers:["LAB_ORPHAN_ACTIVE_JOBS"],
+      candidateScopeStatus:"reviewable-with-global-alert",candidateActiveCampaigns:0,
+      unrelatedHistoricalOrphans:2,orphanJobs:2,executionAllowed:false,
+      requiresSeparateModelAuthorization:true});
+    expect(ports.inspectMissionCampaigns).toHaveBeenCalledExactlyOnceWith(safeEnv.EVOLUTION_LAB_APPROVED_MISSION_ID);
+  });
+  it("blocks any orphan belonging to the target Mission, even when no active Campaign is returned",async()=>{
+    const ports=fixture();
+    ports.inspectJobs=vi.fn(async()=>({status:"blocked" as const,
+      issues:[{reason:"mission-missing",missionId:safeEnv.EVOLUTION_LAB_APPROVED_MISSION_ID}]}));
+    const report=await inspectLabThreeGenerationReadiness(safeEnv,ports,now);
+    expect(report).toMatchObject({status:"blocked",candidateScopeStatus:"blocked",
+      blockers:["LAB_ORPHAN_ACTIVE_JOBS","LAB_TARGET_MISSION_HAS_ORPHAN_JOB"],executionAllowed:false});
+  });
+  it("blocks an already-active scoped Campaign and keeps the existing Job intact",async()=>{
+    const ports=fixture();
+    ports.inspectMissionCampaigns=vi.fn(async()=>({activeCount:1,truncated:false}));
+    const report=await inspectLabThreeGenerationReadiness(safeEnv,ports,now);
+    expect(report).toMatchObject({status:"blocked",candidateScopeStatus:"blocked",candidateActiveCampaigns:1,
+      blockers:["LAB_TARGET_MISSION_ALREADY_ACTIVE"],executionAllowed:false});
+  });
+  it("does not silently accept truncated or unreachable target Campaign inventories",async()=>{
+    const ports=fixture();
+    ports.inspectMissionCampaigns=vi.fn(async()=>({activeCount:100,truncated:true}));
+    let report=await inspectLabThreeGenerationReadiness(safeEnv,ports,now);
+    expect(report).toMatchObject({status:"blocked",candidateScopeStatus:"unknown",
+      blockers:["LAB_TARGET_CAMPAIGNS_UNVERIFIED"]});
+    ports.inspectMissionCampaigns=vi.fn(async()=>{throw Error("private backend credentials");});
+    report=await inspectLabThreeGenerationReadiness(safeEnv,ports,now);
+    expect(report).toMatchObject({status:"blocked",candidateScopeStatus:"unknown",
+      blockers:["LAB_TARGET_CAMPAIGNS_UNVERIFIED"]});
+    expect(JSON.stringify(report)).not.toContain("private backend credentials");
+  });
+  it("never treats an unproven legacy anomaly as a safely unrelated orphan",async()=>{
+    const ports=fixture();
+    ports.inspectJobs=vi.fn(async()=>({status:"blocked" as const,
+      issues:[{reason:"mission-missing"}]}));
+    const report=await inspectLabThreeGenerationReadiness(safeEnv,ports,now);
+    expect(report).toMatchObject({status:"blocked",candidateScopeStatus:"unknown",
+      executionAllowed:false,unrelatedHistoricalOrphans:null});
+  });
+
+  it("treats contradictory global-clear inventory evidence as unknown, not quarantined",async()=>{
+    const ports=fixture();
+    ports.inspectJobs=vi.fn(async()=>({status:"clear" as const,
+      issues:[{reason:"mission-missing",missionId:"another"}]}));
+    const report=await inspectLabThreeGenerationReadiness(safeEnv,ports,now);
+    expect(report).toMatchObject({candidateScopeStatus:"unknown",unrelatedHistoricalOrphans:null,
+      executionAllowed:false});
+  });
+
   it("uses only injected read-only ports; never fetches MiniMax, creates Mission, or initializes budget",async()=>{
     const network=vi.fn();vi.stubGlobal("fetch",network);
     try{
