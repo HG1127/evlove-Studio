@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "p3x-synthetic-smoke-approval-request-v1",
+  "missionId": "lab-synthetic-html-task-filter-p3x-v1",
+  "status": "prepared-not-approved",
+  "userApproved": false,
+  "registeredInLab": false,
+  "labArmed": false,
+  "providerCallsPerformed": 0,
+  "source": {
+    "file": "original.html",
+    "sourceArtifactId": "source-task-board",
+    "sha256": "192abea39d167d9c0f4310fc603905905de5fa44106685fc7d6ea3d2931da8dc",
+    "sizeBytes": 2067
+  },
+  "models": {
+    "generation": "MiniMax-M3",
+    "judge": "MiniMax-M3.1-Flash",
+    "baseUrl": "https://api.minimaxi.com/v1"
+  },
+  "proposedTest": "one-generation-smoke-with-independent-judge",
+  "hardLimits": {
+    "maxPhysicalCalls": 6,
+    "maxMissionTokens": 300000,
+    "maxDurationMinutes": 20,
+    "minQuotaRemainingPercent": 50
+  },
+  "nominalCallPlan": {
+    "candidate": 1,
+    "independentJudge": 1,
+    "otherWorkflowStages": "unknown"
+  },
+  "finalHoldout": {
+    "paperHash": "aad0565-1934",
+    "contractFingerprint": "754a3c5e-4907",
+    "caseIds": [
+      "F-GAMMA",
+      "F-ZEBRA",
+      "F-IDENTITY"
+    ]
+  },
+  "pending": [
+    "Explicit approval of this exact synthetic Mission and bounded provider calls",
+    "Import Mission and source file to isolated Lab with audited API",
+    "Verify actual Chromium execution and approval for one-shot Lab run",
+    "Check fresh Subscription Key quota and persist budget before each model call"
+  ],
+  "warning": "No Mission was created, no model called; full Gate F lifecycle within 6 physical calls is unproven."
+}

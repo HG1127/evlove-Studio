@@ -1,0 +1,97 @@
+{
+  "schemaVersion": "p3x-original-html-browser-observation-v1",
+  "status": "baseline-defect-reproduced",
+  "mode": "offline-source-only",
+  "missionId": "lab-synthetic-html-task-filter-p3x-v1",
+  "sourceSha256": "192abea39d167d9c0f4310fc603905905de5fa44106685fc7d6ea3d2931da8dc",
+  "browser": "installed-chrome-headless",
+  "providerModelCalls": 0,
+  "labDatabaseWrites": 0,
+  "tests": [
+    {
+      "testCaseId": "V-PRESERVE",
+      "passed": true,
+      "assertions": [
+        {
+          "action": "text",
+          "selector": "#board-title",
+          "expected": "Lab Task Board",
+          "actual": "Lab Task Board",
+          "passed": true
+        },
+        {
+          "action": "count",
+          "selector": ".task-card",
+          "expected": 3,
+          "actual": 3,
+          "passed": true
+        },
+        {
+          "action": "visible",
+          "selector": "#task-alpha",
+          "expected": true,
+          "actual": true,
+          "passed": true
+        },
+        {
+          "action": "visible",
+          "selector": "#task-beta",
+          "expected": true,
+          "actual": true,
+          "passed": true
+        },
+        {
+          "action": "visible",
+          "selector": "#task-gamma",
+          "expected": true,
+          "actual": true,
+          "passed": true
+        }
+      ]
+    },
+    {
+      "testCaseId": "V-ALPHA",
+      "passed": false,
+      "assertions": [
+        {
+          "action": "count",
+          "selector": ".task-card:not([hidden])",
+          "expected": 1,
+          "actual": 3,
+          "passed": false
+        },
+        {
+          "action": "text",
+          "selector": "#result-count",
+          "expected": "1 task",
+          "actual": "3 tasks",
+          "passed": false
+        }
+      ]
+    },
+    {
+      "testCaseId": "V-CLEAR",
+      "passed": true,
+      "assertions": [
+        {
+          "action": "count",
+          "selector": ".task-card:not([hidden])",
+          "expected": 3,
+          "actual": 3,
+          "passed": true
+        },
+        {
+          "action": "text",
+          "selector": "#result-count",
+          "expected": "3 tasks",
+          "actual": "3 tasks",
+          "passed": true
+        }
+      ]
+    }
+  ],
+  "hiddenCasesExecuted": false,
+  "independentFinalExecuted": false,
+  "externalRequests": 0,
+  "caveat": "Only this original source file was evaluated. No AI Candidate, Judge, Hidden, independent Final, or Gate F was executed."
+}

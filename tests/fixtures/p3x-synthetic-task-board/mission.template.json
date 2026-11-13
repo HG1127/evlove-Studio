@@ -1,0 +1,572 @@
+{
+  "id": "lab-synthetic-html-task-filter-p3x-v1",
+  "name": "P3-X Synthetic HTML Task Filter",
+  "objectType": "document",
+  "department": "Isolated Lab",
+  "version": "V1",
+  "stage": "target",
+  "goal": "Add case-insensitive task search and accurate accessible live result counts to an offline synthetic HTML Task Board while preserving all original tasks and the protected header.",
+  "evolutionCommand": "Evolve original.html in place: wire #task-filter to case-insensitive matching of .task-card data-search, toggle the hidden attribute on nonmatches, and update #result-count with exact visible counts and correct singular/plural messages. Retain #board-title, #protected-header, original task IDs and headings, and all original content. Never add external network calls or claim browser tests passed without real execution evidence.",
+  "protectedItems": [
+    "#board-title exact text: Lab Task Board",
+    "#protected-header and source subtitle",
+    "#task-alpha, #task-beta, #task-gamma with original task headings",
+    "Three original cards are retained in DOM",
+    "Single-file HTML without external requests"
+  ],
+  "editableItems": [
+    "Inline script for #task-filter",
+    "Task hidden attributes",
+    "#result-count live text",
+    "Local styles without erasing original elements"
+  ],
+  "metrics": [],
+  "sourceArtifacts": [
+    {
+      "mutationGovernance": {
+        "version": "artifact-write-governance-v1",
+        "parentSha256": "192abea39d167d9c0f4310fc603905905de5fa44106685fc7d6ea3d2931da8dc",
+        "policy": {
+          "allowedPaths": [
+            "original.html"
+          ],
+          "protectedPaths": [],
+          "allowDelete": false,
+          "preserveExistingCapabilities": true,
+          "rejectNoop": true,
+          "maxChangedFiles": 5,
+          "maxFileBytes": 5242880
+        }
+      },
+      "id": "source-task-board",
+      "name": "original.html",
+      "role": "target",
+      "artifactKind": "document",
+      "mimeType": "text/html",
+      "size": 2067,
+      "extension": "html",
+      "inputMode": "paste",
+      "parseStatus": "ready",
+      "textContent": "<!doctype html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"utf-8\">\n  <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n  <title>Lab Task Board | Synthetic Fixture</title>\n  <style>\n    :root { color-scheme: light; font: 16px/1.5 system-ui,sans-serif; }\n    body { margin: 0; padding: 2rem; background: #f6f8fb; color: #17212e; }\n    main { max-width: 640px; margin: 0 auto; padding: 2rem; background: white; border: 1px solid #d9e1eb; border-radius: 14px; }\n    label { display: block; font-weight: 650; margin-top: 1.5rem; }\n    input { box-sizing: border-box; width: 100%; padding: .7rem; border: 1px solid #8698ac; border-radius: 8px; }\n    ul { list-style: none; padding: 0; }\n    .task-card { margin: .7rem 0; padding: .85rem 1rem; border: 1px solid #d9e1eb; border-radius: 8px; }\n    .task-card[hidden] { display: none !important; }\n    .task-card h2 { font-size: 1rem; margin: 0; }\n    .task-card p { margin: .2rem 0 0; }\n  </style>\n</head>\n<body>\n  <main id=\"task-board\">\n    <header id=\"protected-header\">\n      <h1 id=\"board-title\">Lab Task Board</h1>\n      <p id=\"board-subtitle\">A synthetic, offline-only accessibility benchmark.</p>\n    </header>\n    <label for=\"task-filter\">Search tasks</label>\n    <input id=\"task-filter\" name=\"task-filter\" type=\"search\" autocomplete=\"off\" aria-label=\"Search tasks\">\n    <p id=\"result-count\" role=\"status\" aria-live=\"polite\">3 tasks</p>\n    <ul id=\"task-list\">\n      <li class=\"task-card\" id=\"task-alpha\" data-search=\"alpha research\">\n        <h2>Alpha research</h2><p>Collect three facts.</p>\n      </li>\n      <li class=\"task-card\" id=\"task-beta\" data-search=\"beta review\">\n        <h2>Beta review</h2><p>Check the evidence.</p>\n      </li>\n      <li class=\"task-card\" id=\"task-gamma\" data-search=\"gamma release\">\n        <h2>Gamma release</h2><p>Prepare a handoff.</p>\n      </li>\n    </ul>\n    <!-- Intentionally absent: live, case-insensitive filtering and status count updates.\n         The AI must add this behavior without removing the protected header or tasks. -->\n  </main>\n</body>\n</html>\n",
+      "structure": [],
+      "warnings": [],
+      "createdAt": "2026-11-13T08:00:00.000Z"
+    }
+  ],
+  "acceptanceRubric": [
+    {
+      "id": "PRESERVE",
+      "title": "Retain original identity",
+      "requirement": "Do not change #board-title, #protected-header, or any original task ID and heading.",
+      "source": "user-command",
+      "weight": 30,
+      "hardGate": true,
+      "judgeType": "integrity",
+      "validationMethod": "executable-test",
+      "minScore": 100,
+      "evidenceExpected": [
+        "source-bound header and three original task identities"
+      ],
+      "protectedConstraint": true,
+      "artifactIds": [
+        "source-task-board"
+      ],
+      "category": "protected"
+    },
+    {
+      "id": "FILTER",
+      "title": "Implement accessible filtering",
+      "requirement": "Typing in #task-filter hides every nonmatching task card, case-insensitively. Clearing the field restores all task cards.",
+      "source": "user-command",
+      "weight": 45,
+      "hardGate": true,
+      "judgeType": "structural",
+      "validationMethod": "executable-test",
+      "minScore": 100,
+      "evidenceExpected": [
+        "independent browser input and visible card count"
+      ],
+      "protectedConstraint": false,
+      "artifactIds": [
+        "source-task-board"
+      ],
+      "category": "behavior"
+    },
+    {
+      "id": "COUNT",
+      "title": "Live count",
+      "requirement": "After input, #result-count announces the visible count with correct singular/plural grammar and retains role=status and aria-live=polite.",
+      "source": "user-command",
+      "weight": 25,
+      "hardGate": true,
+      "judgeType": "structural",
+      "validationMethod": "executable-test",
+      "minScore": 100,
+      "evidenceExpected": [
+        "role=status aria-live status and exact count"
+      ],
+      "protectedConstraint": false,
+      "artifactIds": [
+        "source-task-board"
+      ],
+      "category": "ux"
+    }
+  ],
+  "acceptanceRubricState": {
+    "status": "ready",
+    "summary": "Synthetic author-defined rubrics; actual browser execution not yet performed.",
+    "version": 1,
+    "weightTotal": 100,
+    "uncoveredCriterionIds": [],
+    "warnings": []
+  },
+  "evalSuite": [
+    {
+      "browserSteps": [
+        {
+          "action": "text",
+          "selector": "#board-title",
+          "value": "Lab Task Board"
+        },
+        {
+          "action": "count",
+          "selector": ".task-card",
+          "count": 3
+        },
+        {
+          "action": "visible",
+          "selector": "#task-alpha"
+        },
+        {
+          "action": "visible",
+          "selector": "#task-beta"
+        },
+        {
+          "action": "visible",
+          "selector": "#task-gamma"
+        }
+      ],
+      "id": "V-PRESERVE",
+      "title": "Original board identity",
+      "input": "Inspect header and task nodes.",
+      "expected": [
+        "Exact title and all three original task nodes remain."
+      ],
+      "tags": [
+        "synthetic-lab",
+        "offline-html"
+      ],
+      "hidden": false,
+      "criterionIds": [
+        "PRESERVE"
+      ],
+      "executionMode": "external-runner",
+      "evidenceScope": "product-behavior"
+    },
+    {
+      "browserSteps": [
+        {
+          "action": "fill",
+          "selector": "#task-filter",
+          "value": "alpha"
+        },
+        {
+          "action": "count",
+          "selector": ".task-card:not([hidden])",
+          "count": 1
+        },
+        {
+          "action": "text",
+          "selector": "#result-count",
+          "value": "1 task"
+        }
+      ],
+      "id": "V-ALPHA",
+      "title": "Search alpha",
+      "input": "Enter 'alpha' into the task filter.",
+      "expected": [
+        "Only Alpha remains; status reads 1 task."
+      ],
+      "tags": [
+        "synthetic-lab",
+        "offline-html"
+      ],
+      "hidden": false,
+      "criterionIds": [
+        "FILTER",
+        "COUNT"
+      ],
+      "executionMode": "external-runner",
+      "evidenceScope": "product-behavior"
+    },
+    {
+      "browserSteps": [
+        {
+          "action": "fill",
+          "selector": "#task-filter",
+          "value": "alpha"
+        },
+        {
+          "action": "fill",
+          "selector": "#task-filter",
+          "value": ""
+        },
+        {
+          "action": "count",
+          "selector": ".task-card:not([hidden])",
+          "count": 3
+        },
+        {
+          "action": "text",
+          "selector": "#result-count",
+          "value": "3 tasks"
+        }
+      ],
+      "id": "V-CLEAR",
+      "title": "Clear search",
+      "input": "Enter alpha then clear the filter.",
+      "expected": [
+        "All three cards return; status reads 3 tasks."
+      ],
+      "tags": [
+        "synthetic-lab",
+        "offline-html"
+      ],
+      "hidden": false,
+      "criterionIds": [
+        "FILTER",
+        "COUNT"
+      ],
+      "executionMode": "external-runner",
+      "evidenceScope": "product-behavior"
+    }
+  ],
+  "hiddenEvalSuite": [
+    {
+      "browserSteps": [
+        {
+          "action": "fill",
+          "selector": "#task-filter",
+          "value": "BETA"
+        },
+        {
+          "action": "count",
+          "selector": ".task-card:not([hidden])",
+          "count": 1
+        },
+        {
+          "action": "visible",
+          "selector": "#task-beta"
+        },
+        {
+          "action": "text",
+          "selector": "#result-count",
+          "value": "1 task"
+        }
+      ],
+      "id": "H-CASE",
+      "title": "Case-insensitive search",
+      "input": "Enter uppercase BETA.",
+      "expected": [
+        "Only Beta remains; status reads 1 task."
+      ],
+      "tags": [
+        "synthetic-lab",
+        "offline-html"
+      ],
+      "hidden": true,
+      "criterionIds": [
+        "FILTER",
+        "COUNT"
+      ],
+      "executionMode": "external-runner",
+      "evidenceScope": "product-behavior"
+    },
+    {
+      "browserSteps": [
+        {
+          "action": "fill",
+          "selector": "#task-filter",
+          "value": "no-such-task"
+        },
+        {
+          "action": "count",
+          "selector": ".task-card:not([hidden])",
+          "count": 0
+        },
+        {
+          "action": "text",
+          "selector": "#result-count",
+          "value": "0 tasks"
+        }
+      ],
+      "id": "H-ZERO",
+      "title": "No match",
+      "input": "Enter no-such-task.",
+      "expected": [
+        "No card remains visible; status reads 0 tasks."
+      ],
+      "tags": [
+        "synthetic-lab",
+        "offline-html"
+      ],
+      "hidden": true,
+      "criterionIds": [
+        "FILTER",
+        "COUNT"
+      ],
+      "executionMode": "external-runner",
+      "evidenceScope": "product-behavior"
+    },
+    {
+      "browserSteps": [
+        {
+          "action": "fill",
+          "selector": "#task-filter",
+          "value": "alpha"
+        },
+        {
+          "action": "text",
+          "selector": "#board-title",
+          "value": "Lab Task Board"
+        },
+        {
+          "action": "count",
+          "selector": ".task-card",
+          "count": 3
+        }
+      ],
+      "id": "H-PROTECT",
+      "title": "Protection after search",
+      "input": "Enter alpha; inspect original header and card identity.",
+      "expected": [
+        "Protected header and all three source cards still exist."
+      ],
+      "tags": [
+        "synthetic-lab",
+        "offline-html"
+      ],
+      "hidden": true,
+      "criterionIds": [
+        "PRESERVE"
+      ],
+      "executionMode": "external-runner",
+      "evidenceScope": "product-behavior"
+    }
+  ],
+  "gates": [
+    {
+      "id": "target-ready",
+      "label": "Target Ready",
+      "status": "ready"
+    },
+    {
+      "id": "experiment-ready",
+      "label": "Experiment Ready",
+      "status": "pending"
+    },
+    {
+      "id": "artifact-ready",
+      "label": "Artifact Ready",
+      "status": "pending"
+    },
+    {
+      "id": "release-ready",
+      "label": "Release Ready",
+      "status": "pending"
+    }
+  ],
+  "problems": [],
+  "candidates": [],
+  "experimentPolicy": {},
+  "baselineRun": {
+    "id": "baseline-p3x",
+    "status": "idle",
+    "suiteName": "P3-X visible",
+    "totalCases": 3,
+    "runs": []
+  },
+  "experimentRun": {
+    "id": "experiment-p3x",
+    "status": "idle",
+    "candidateResults": []
+  },
+  "validationRun": {
+    "id": "validation-p3x",
+    "status": "idle",
+    "runs": [],
+    "baselineRuns": [],
+    "checks": []
+  },
+  "artifactAcceptance": {
+    "id": "acceptance-p3x",
+    "status": "idle",
+    "overallScore": 0,
+    "coverageScore": 0,
+    "integrityScore": 0,
+    "pairwiseScore": 0,
+    "hardGatePass": false,
+    "results": [],
+    "attempts": 0,
+    "maxRepairAttempts": 1,
+    "summary": "Unexecuted synthetic fixture"
+  },
+  "targetConnection": {
+    "adapter": "artifact",
+    "connectionId": "artifact",
+    "status": "connected",
+    "label": "Synthetic HTML Artifact"
+  },
+  "campaign": {
+    "status": "idle",
+    "executionMode": "auto-rounds",
+    "currentRound": 0,
+    "candidateCount": 1,
+    "autoApproveOfflineExperiment": false,
+    "stopCriteria": {
+      "maxRounds": 1,
+      "patienceRounds": 1,
+      "minImprovement": 1,
+      "stopWhenAcceptanceMet": true,
+      "stopOnSafetyFailure": true,
+      "stopWhenMetricTargetsMet": false
+    },
+    "schedule": {
+      "enabled": false,
+      "mode": "manual"
+    }
+  },
+  "release": {
+    "status": "idle",
+    "history": [],
+    "evidenceMode": "none"
+  },
+  "lessons": [],
+  "updatedAt": "2026-11-13T08:00:00.000Z",
+  "finalHoldout": {
+    "round": 1,
+    "suite": [
+      {
+        "browserSteps": [
+          {
+            "action": "fill",
+            "selector": "#task-filter",
+            "value": "GaMmA"
+          },
+          {
+            "action": "count",
+            "selector": ".task-card:not([hidden])",
+            "count": 1
+          },
+          {
+            "action": "visible",
+            "selector": "#task-gamma"
+          },
+          {
+            "action": "text",
+            "selector": "#result-count",
+            "value": "1 task"
+          }
+        ],
+        "id": "F-GAMMA",
+        "title": "Fresh mixed-case final",
+        "input": "Enter GaMmA after candidate freeze.",
+        "expected": [
+          "Gamma alone remains and status is 1 task."
+        ],
+        "tags": [
+          "synthetic-lab",
+          "offline-html"
+        ],
+        "hidden": true,
+        "criterionIds": [
+          "FILTER",
+          "COUNT"
+        ],
+        "executionMode": "external-runner",
+        "evidenceScope": "product-behavior"
+      },
+      {
+        "browserSteps": [
+          {
+            "action": "fill",
+            "selector": "#task-filter",
+            "value": "zebra"
+          },
+          {
+            "action": "count",
+            "selector": ".task-card:not([hidden])",
+            "count": 0
+          },
+          {
+            "action": "text",
+            "selector": "#result-count",
+            "value": "0 tasks"
+          }
+        ],
+        "id": "F-ZEBRA",
+        "title": "Fresh independent empty search",
+        "input": "Enter zebra after candidate freeze.",
+        "expected": [
+          "No visible cards and status is 0 tasks."
+        ],
+        "tags": [
+          "synthetic-lab",
+          "offline-html"
+        ],
+        "hidden": true,
+        "criterionIds": [
+          "FILTER",
+          "COUNT"
+        ],
+        "executionMode": "external-runner",
+        "evidenceScope": "product-behavior"
+      },
+      {
+        "browserSteps": [
+          {
+            "action": "text",
+            "selector": "#board-title",
+            "value": "Lab Task Board"
+          },
+          {
+            "action": "count",
+            "selector": ".task-card",
+            "count": 3
+          },
+          {
+            "action": "visible",
+            "selector": "#task-alpha"
+          },
+          {
+            "action": "visible",
+            "selector": "#task-beta"
+          },
+          {
+            "action": "visible",
+            "selector": "#task-gamma"
+          }
+        ],
+        "id": "F-IDENTITY",
+        "title": "Fresh protected identity check",
+        "input": "Inspect original title and card identities.",
+        "expected": [
+          "Board title and three task elements still exist."
+        ],
+        "tags": [
+          "synthetic-lab",
+          "offline-html"
+        ],
+        "hidden": true,
+        "criterionIds": [
+          "PRESERVE"
+        ],
+        "executionMode": "external-runner",
+        "evidenceScope": "product-behavior"
+      }
+    ],
+    "paperHash": "aad0565-1934",
+    "contractFingerprint": "754a3c5e-4907",
+    "createdAt": "2026-11-13T08:00:00.000Z"
+  }
+}

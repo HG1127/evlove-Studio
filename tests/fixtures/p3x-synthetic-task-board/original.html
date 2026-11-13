@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Lab Task Board | Synthetic Fixture</title>
+  <style>
+    :root { color-scheme: light; font: 16px/1.5 system-ui,sans-serif; }
+    body { margin: 0; padding: 2rem; background: #f6f8fb; color: #17212e; }
+    main { max-width: 640px; margin: 0 auto; padding: 2rem; background: white; border: 1px solid #d9e1eb; border-radius: 14px; }
+    label { display: block; font-weight: 650; margin-top: 1.5rem; }
+    input { box-sizing: border-box; width: 100%; padding: .7rem; border: 1px solid #8698ac; border-radius: 8px; }
+    ul { list-style: none; padding: 0; }
+    .task-card { margin: .7rem 0; padding: .85rem 1rem; border: 1px solid #d9e1eb; border-radius: 8px; }
+    .task-card[hidden] { display: none !important; }
+    .task-card h2 { font-size: 1rem; margin: 0; }
+    .task-card p { margin: .2rem 0 0; }
+  </style>
+</head>
+<body>
+  <main id="task-board">
+    <header id="protected-header">
+      <h1 id="board-title">Lab Task Board</h1>
+      <p id="board-subtitle">A synthetic, offline-only accessibility benchmark.</p>
+    </header>
+    <label for="task-filter">Search tasks</label>
+    <input id="task-filter" name="task-filter" type="search" autocomplete="off" aria-label="Search tasks">
+    <p id="result-count" role="status" aria-live="polite">3 tasks</p>
+    <ul id="task-list">
+      <li class="task-card" id="task-alpha" data-search="alpha research">
+        <h2>Alpha research</h2><p>Collect three facts.</p>
+      </li>
+      <li class="task-card" id="task-beta" data-search="beta review">
+        <h2>Beta review</h2><p>Check the evidence.</p>
+      </li>
+      <li class="task-card" id="task-gamma" data-search="gamma release">
+        <h2>Gamma release</h2><p>Prepare a handoff.</p>
+      </li>
+    </ul>
+    <!-- Intentionally absent: live, case-insensitive filtering and status count updates.
+         The AI must add this behavior without removing the protected header or tasks. -->
+  </main>
+</body>
+</html>
