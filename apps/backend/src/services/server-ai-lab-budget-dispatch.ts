@@ -17,7 +17,7 @@ const normalized=(url:string)=>url.replace(/\/+$/,"");
 
 /** Exact provider origin and /v1 API base only: no custom host, path, query or user-info. */
 export function assertLabMiniMaxSubscriptionRoutes(routes:Array<{model:string;baseUrl:string}>){
-  const allowedOrigins=new Set(["https://api.minimax.io","https://api.minimax.cn"]);
+  const allowedOrigins=new Set(["https://api.minimax.io","https://api.minimaxi.com"]);
   if(!routes.length||routes.length>2||routes.some(route=>{
     if(!/^minimax-/i.test(route.model))return true;
     try{

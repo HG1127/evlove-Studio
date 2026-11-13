@@ -36,12 +36,13 @@ describe("MiniMax M Plan subscription quota read-only adapter",()=>{
     expect(JSON.stringify(quota)).not.toContain("video");
     expect(assertMiniMaxSubscriptionQuotaSufficient(quota)).toEqual(quota);
   });
-  it("maps the China API host without crossing regions",async()=>{
+  it("maps the official China API host to the China Token Plan endpoint without crossing regions",async()=>{
     vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(success()),{status:200})));
-    await fetchMiniMaxSubscriptionQuota({...config,baseUrl:"https://api.minimax.cn/v1"});
-    expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe("https://www.minimax.cn/v1/token_plan/remains");
-    await expect(fetchMiniMaxSubscriptionQuota({...config,baseUrl:"https://api.minimaxi.com/v1"}))
+    await fetchMiniMaxSubscriptionQuota({...config,baseUrl:"https://api.minimaxi.com/v1"});
+    expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe("https://www.minimaxi.com/v1/token_plan/remains");
+    await expect(fetchMiniMaxSubscriptionQuota({...config,baseUrl:"https://api.minimax.cn/v1"}))
       .rejects.toMatchObject({code:"LAB_MINIMAX_REGION_UNSUPPORTED"});
+    expect(fetch).toHaveBeenCalledOnce();
   });
   it("rejects unsupported providers and regions before sending a request",async()=>{
     const fetchMock=vi.fn();vi.stubGlobal("fetch",fetchMock);
@@ -51,6 +52,24 @@ describe("MiniMax M Plan subscription quota read-only adapter",()=>{
       .rejects.toMatchObject({code:"LAB_MINIMAX_REGION_UNSUPPORTED"});
     expect(fetchMock).not.toHaveBeenCalled();
   });
+  it("rejects invalid quota API base URLs before sending an existing Subscription Key anywhere",async()=>{
+    const fetchMock=vi.fn();vi.stubGlobal("fetch",fetchMock);
+    const malicious=[
+      "http://api.minimaxi.com/v1",
+      "https://api.minimaxi.com/v2",
+      "https://api.minimaxi.com/v1/chat/completions",
+      "https://api.minimaxi.com/v1?x=1",
+      "https://api.minimaxi.com/v1#fragment",
+      "https://user:password@api.minimaxi.com/v1",
+      "https://api.minimaxi.com.attacker.test/v1",
+    ];
+    for(const baseUrl of malicious){
+      await expect(fetchMiniMaxSubscriptionQuota({...config,baseUrl}))
+        .rejects.toMatchObject({code:baseUrl.includes("attacker")?"LAB_MINIMAX_REGION_UNSUPPORTED":"LAB_MINIMAX_ROUTE_INVALID"});
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("fails closed for business auth failures, missing general rows and unknown response shapes",async()=>{
     vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({base_resp:{status_code:1004,status_msg:"private provider detail"}}),{status:200})));
     await expect(fetchMiniMaxSubscriptionQuota(config)).rejects.toMatchObject({code:"LAB_MINIMAX_SUBSCRIPTION_AUTH_FAILED"});

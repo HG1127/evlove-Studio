@@ -77,6 +77,15 @@ describe("Lab physical dispatch uses M Plan quota and token accounting",()=>{
     }])).toThrowError(/API/);
     expect(()=>assertLabMiniMaxPhysicalEndpoint(config,"chat-completions",
       "https://api.minimax.io/v1/chat/completions")).not.toThrow();
+    const chinaConfig={...config,baseUrl:"https://api.minimaxi.com/v1"};
+    expect(()=>assertLabMiniMaxSubscriptionRoutes([{model:config.model,baseUrl:chinaConfig.baseUrl}]))
+      .not.toThrow();
+    expect(()=>assertLabMiniMaxPhysicalEndpoint(chinaConfig,"chat-completions",
+      "https://api.minimaxi.com/v1/chat/completions")).not.toThrow();
+    expect(()=>assertLabMiniMaxSubscriptionRoutes([{model:config.model,
+      baseUrl:"https://api.minimax.cn/v1"}])).toThrowError(/批准/);
+    expect(()=>assertLabMiniMaxSubscriptionRoutes([{model:config.model,
+      baseUrl:"https://api.minimaxi.com.attacker.example/v1"}])).toThrowError(/批准/);
   });
   it("requires exact control scope, route/model, bounded text input and output",async()=>{
     await expect(reserveLabAiDispatchAttempt({...args,scope:{...scope,jobId:"different"}}))

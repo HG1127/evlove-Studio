@@ -5,7 +5,7 @@ export const LAB_MINIMAX_MIN_REMAINING_PERCENT=50;
 const MAX_PERCENT=1000;
 const MINIMAX_QUOTA_ORIGINS:Record<string,string>={
   "api.minimax.io":"https://www.minimax.io",
-  "api.minimax.cn":"https://www.minimax.cn",
+  "api.minimaxi.com":"https://www.minimaxi.com",
 };
 const Entry=z.object({
   model_name:z.string().min(1).max(80),
@@ -40,11 +40,15 @@ export type MiniMaxSubscriptionQuota={
 
 const fail=(code:string,message:string)=>Object.assign(new Error(message),{code});
 function quotaOrigin(baseUrl:string){
-  let hostname:string;
-  try{hostname=new URL(baseUrl).hostname.toLowerCase();}catch{
+  let url:URL;
+  try{url=new URL(baseUrl);}catch{
     throw fail("LAB_MINIMAX_ROUTE_INVALID","MiniMax 模型路由地址无效。");
   }
-  const origin=MINIMAX_QUOTA_ORIGINS[hostname];
+  if(url.protocol!=="https:"||url.username||url.password||url.search||url.hash
+    ||url.pathname.replace(/\/+$/,"")!=="/v1"){
+    throw fail("LAB_MINIMAX_ROUTE_INVALID","MiniMax 模型路由必须是官方 HTTPS /v1 地址。");
+  }
+  const origin=MINIMAX_QUOTA_ORIGINS[url.hostname.toLowerCase()];
   if(!origin)throw fail("LAB_MINIMAX_REGION_UNSUPPORTED","当前 MiniMax 区域没有已核实的订阅额度查询入口。");
   return origin;
 }
