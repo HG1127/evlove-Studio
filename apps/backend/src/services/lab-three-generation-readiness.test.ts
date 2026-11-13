@@ -33,6 +33,11 @@ describe("P3-T zero-cost synthetic 3-generation Lab launch preflight",()=>{
     });
     expect(JSON.stringify(report)).not.toContain(gen.connection.apiKey);
     expect(JSON.stringify(report)).not.toContain(judge.connection.apiKey);
+    expect(report.physicalCallPlan).toMatchObject({
+      kind:"unbilled-scenario",performedProviderRequests:false,
+      nominalTotalCalls:6,remainingCalls:0,fullLifecycleProven:false,
+      recommendation:"CORE_AT_CAP_NO_RETRY_HEADROOM",
+    });
     expect(ports.inspectMission).toHaveBeenCalledExactlyOnceWith(safeEnv.EVOLUTION_LAB_APPROVED_MISSION_ID);
     expect(ports.inspectMissionCampaigns).toHaveBeenCalledExactlyOnceWith(safeEnv.EVOLUTION_LAB_APPROVED_MISSION_ID);
     expect(report).toMatchObject({candidateScopeStatus:"reviewable",candidateActiveCampaigns:0,

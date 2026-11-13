@@ -5,6 +5,7 @@ import {inspectLabJobIntegrity} from "./lab-job-integrity";
 import {getServerAiConnectionStatus} from "./server-ai-connection";
 import {assertLabMiniMaxSubscriptionRoutes,LAB_MAX_SUBSCRIPTION_MISSION_TOKENS} from "./server-ai-lab-budget-dispatch";
 import {LAB_MAX_DURATION_MS,LAB_MAX_PHYSICAL_CALLS} from "./lab-workflow-permit";
+import {assessLabPhysicalCallFeasibility} from "./lab-physical-call-feasibility";
 
 type LabRole="generation"|"judge";
 type SavedModelStatus={configured:boolean;connection?:{model:string;baseUrl:string}};
@@ -60,6 +61,7 @@ export async function inspectLabThreeGenerationReadiness(
     modelCallsPerformed:false as const,
     requiresSeparateModelAuthorization:true as const,
     providerQuotaChecked:false as const,
+    physicalCallPlan:assessLabPhysicalCallFeasibility(),
     budget:{maxPhysicalCalls:LAB_MAX_PHYSICAL_CALLS,maxMissionTokens:LAB_MAX_SUBSCRIPTION_MISSION_TOKENS,
       maxDurationMinutes:LAB_MAX_DURATION_MS/60_000,minRemainingPercent:50},
     // A 3-generation + 3 independent-Judge plan alone consumes the full

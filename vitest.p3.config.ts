@@ -15,6 +15,7 @@ export default mergeConfig(p2c,{test:{include:[
   "apps/backend/src/services/lab-workflow-admission.test.ts",
   "apps/backend/src/services/lab-three-generation-readiness.test.ts",
   "apps/backend/src/services/lab-three-generation-readiness-route.test.ts",
+  "apps/backend/src/services/lab-physical-call-feasibility.test.ts",
   "apps/backend/src/services/lab-workflow-init.test.ts",
   "apps/backend/src/services/lab-workflow-cancel.test.ts",
   "apps/backend/src/services/lab-workflow-deadline.test.ts",
