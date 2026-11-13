@@ -5,6 +5,7 @@ import {createServerMissionEnvelope} from "../../../src/services/production-runt
 import {requireGovernedEvolutionPermission} from "../../../src/services/security-policy";
 import {requireServerDataPlaneAvailable} from "../../../src/services/data-plane-guard";
 import {assertServerConfirmationAdmission} from "../../../src/services/server-confirmation-admission";
+import {assertLabSyntheticInitialSource} from "../../../src/services/lab-html-original-custody";
 
 export default defineEventHandler(async(event)=>{
   await requireGovernedEvolutionPermission(event,"mission.write");
@@ -15,6 +16,8 @@ export default defineEventHandler(async(event)=>{
   // Otherwise static evidence would fail much later at Hidden Holdout/Gate F.
   const bindingIssues=rubricTargetBindingIssues(parsed.data.acceptanceRubric,parsed.data.sourceArtifacts);
   if(bindingIssues.length)throw createError({statusCode:422,statusMessage:"Mission 验收标准引用了无效的目标文件",data:{code:"MISSION_RUBRIC_TARGET_BINDING",issues:bindingIssues}});
+  try{assertLabSyntheticInitialSource(parsed.data);}
+  catch{throw createError({statusCode:422,statusMessage:"隔离合成 Mission 的源文件必须先冻结、登记后再绑定",data:{code:"LAB_SYNTHETIC_SOURCE_PREREGISTRATION_INVALID"}});}
   await assertServerConfirmationAdmission(parsed.data,"registration");
   return createServerMissionEnvelope(parsed.data);
 });

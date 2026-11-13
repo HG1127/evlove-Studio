@@ -8,6 +8,7 @@ import {
 import {assertClientMissionMutationSafe} from "../../../../src/services/mission-mutation-policy";
 import {requireGovernedEvolutionPermission} from "../../../../src/services/security-policy";
 import {assertServerConfirmationAdmission} from "../../../../src/services/server-confirmation-admission";
+import {assertLabSyntheticInitialSource,assertLabSyntheticSourceMutation} from "../../../../src/services/lab-html-original-custody";
 
 export default defineEventHandler(async(event)=>{
   await requireGovernedEvolutionPermission(event,"mission.write");
@@ -21,7 +22,13 @@ export default defineEventHandler(async(event)=>{
   if(current){
     try{assertClientMissionMutationSafe(current.payload,envelope.payload);}
     catch(error){throw createError({statusCode:409,statusMessage:error instanceof Error?error.message:String(error)});}
-  }else await assertServerConfirmationAdmission(envelope.payload,"registration");
+    try{await assertLabSyntheticSourceMutation(current.payload,envelope.payload);}
+    catch{throw createError({statusCode:409,statusMessage:"隔离合成 Mission 的源文件绑定或物理证据无效",data:{code:"LAB_SYNTHETIC_SOURCE_BINDING_UNVERIFIED"}});}
+  }else {
+    try{assertLabSyntheticInitialSource(envelope.payload);}
+    catch{throw createError({statusCode:422,statusMessage:"隔离合成 Mission 不能以未核验文件关联直接创建",data:{code:"LAB_SYNTHETIC_SOURCE_PREREGISTRATION_INVALID"}});}
+    await assertServerConfirmationAdmission(envelope.payload,"registration");
+  }
   try{
     return await compareAndSwapServerMissionEnvelope(envelope);
   }catch(error){

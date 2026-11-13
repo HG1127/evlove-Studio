@@ -2,6 +2,7 @@ import { runVercelSandboxHtmlValidation } from "@evolution/adapters/sandbox";
 import type { Candidate, EvolveProject, SourceArtifact, TargetRunResult, TestCase } from "@evolution/contracts";
 import { trustedServerBaselineChampion } from "@evolution/harness";
 import { readServerCandidateParentText, serverArtifactSha256 } from "./server-experiment-artifacts";
+import {readLabHtmlOriginal} from "./lab-html-original-custody";
 import {resolveTestTargetArtifact as resolveServerTestTargetArtifact,fastHash} from "@evolution/core";
 import { attachServerVisualEvidence } from "./server-visual-evidence";
 import {assertServerControlExecutionActive,ServerControlExecutionStoppedError} from "./server-control-execution";
@@ -54,6 +55,7 @@ export function observedOriginalHtmlBrowserDefect(
     }],
   };
 }
+
 /** Production Baseline, Candidate and paired Hidden execution share this byte path. */
 export async function runServerHtmlArtifactBatch(project: EvolveProject, testCases: TestCase[], candidate?: Candidate): Promise<TargetRunResult[]> {
   const groups = new Map<string, { source: SourceArtifact; cases: TestCase[] }>();
@@ -71,8 +73,9 @@ export async function runServerHtmlArtifactBatch(project: EvolveProject, testCas
     try {
       const parent = candidate ?? trustedServerBaselineChampion(project);
       if (project.searchChampion && !parent) throw new Error("当前 Search Champion 没有可信冻结文件，禁止回退原 Source。");
-      const text = await readServerCandidateParentText(project, source, parent);
-      const html = new TextEncoder().encode(text);
+      const physicalOriginal=await readLabHtmlOriginal(project,source);
+      const html=!parent&&physicalOriginal?new Uint8Array(physicalOriginal)
+        :new TextEncoder().encode(await readServerCandidateParentText(project,source,parent));
       const expectedSha256 = await serverArtifactSha256(html);
       await assertServerControlExecutionActive(project.id);
       const response = await runVercelSandboxHtmlValidation({
