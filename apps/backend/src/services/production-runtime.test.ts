@@ -12,6 +12,8 @@ import {
   getServerProductionRuntime,
   getServerMissionIndex,
   getServerMissionEnvelope,
+  deleteServerMissionIfRevision,
+  MissionHasActiveJobsError,
   listServerJobPage,
   listRecentServerParseJobs,
   listServerActiveJobs,
@@ -490,6 +492,32 @@ describe("server Mission revision CAS",()=>{
         expectedRevision:6,
         currentRevision:7,
       } satisfies Partial<MissionRevisionConflictError>);
+  });
+
+  it("submits authenticated Mission delete context to the new four-argument RPC",async()=>{
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
+      expect(String(input)).toContain("/rest/v1/rpc/delete_mission_if_revision");
+      expect(JSON.parse(String(init?.body??"{}"))).toEqual({
+        p_id:demoProject.id,p_expected_revision:4,
+        p_actor_id:"operator-fixture",p_actor_role:"operator",
+      });
+      return new Response(JSON.stringify([{applied:true,current_revision:4,
+        blocked_reason:null,active_job_count:0}]),{status:200});
+    }));
+    await expect(deleteServerMissionIfRevision(demoProject.id,4,{
+      id:"operator-fixture",role:"operator",
+    })).resolves.toBeUndefined();
+  });
+
+  it("fails closed and reports active Mission-bound Jobs without retrying a deletion",async()=>{
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify([{
+      applied:false,current_revision:4,blocked_reason:"active-jobs",active_job_count:2,
+    }]),{status:200})));
+    await expect(deleteServerMissionIfRevision(demoProject.id,4,{
+      id:"operator-fixture",role:"operator",
+    })).rejects.toMatchObject({name:"MissionHasActiveJobsError",
+      code:"MISSION_HAS_ACTIVE_JOBS",activeJobCount:2} satisfies Partial<MissionHasActiveJobsError>);
+    expect(fetch).toHaveBeenCalledOnce();
   });
 
   it("creates a Job through the idempotent database RPC",async()=>{

@@ -40,6 +40,29 @@ describe("Event Evidence reconciliation",()=>{
     expect(deps.list).toHaveBeenCalledWith({missionId:"mission-1",afterId:"evt-0",limit:2});
   });
 
+  it("can reconcile a persisted MissionDeleted Event without requiring the deleted parent Mission",async()=>{
+    const deleted=createEvolutionEvent({
+      id:"mission-deleted:historical",missionId:"deleted-mission",
+      type:"MissionDeleted",source:"backend-mission-delete",
+      payload:{actorId:"unattributed-service-role",actorRole:"service",deletedRevision:2},
+    });
+    const deps=dependencies({
+      list:vi.fn(async()=>({events:[deleted]})),
+      mirror:vi.fn(async()=>({id:"event-ledger-"+deleted.id})),
+    });
+    const preview=await reconcileEventEvidence({missionId:deleted.missionId,limit:1},deps);
+    expect(preview).toMatchObject({missing:1,repaired:0,failed:0});
+    expect(deps.mirror).not.toHaveBeenCalled();
+    const repaired=await reconcileEventEvidence({
+      missionId:deleted.missionId,limit:1,repair:true,
+    },deps);
+    expect(repaired).toMatchObject({missing:0,repaired:1,failed:0});
+    expect(deps.mirror).toHaveBeenCalledWith(deleted);
+    expect(deps.list).toHaveBeenCalledWith({
+      missionId:"deleted-mission",afterId:undefined,limit:1,
+    });
+  });
+
   it("verifies an existing mirror read-only and avoids redundant repair",async()=>{
     const deps=dependencies({lookup:vi.fn(async()=>({id:"event-ledger-evt-a"}))});
     const preview=await reconcileEventEvidence({limit:2},deps);

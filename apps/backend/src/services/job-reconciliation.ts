@@ -10,11 +10,12 @@ type RunStatus=z.infer<typeof RunStatusSchema>;
 type RunInspection={exists:boolean;status?:RunStatus;result?:unknown;resultError?:string};
 export type JobReconcileIssue="unbound"|"missing-run"|"workflow-failed"|"workflow-cancelled"
   |"workflow-result-completed"|"workflow-result-failed"|"workflow-completed"|"heartbeat-stale"|"healthy"
-  |"inspection-failed";
+  |"inspection-failed"|"mission-missing"|"mission-inspection-failed";
 
 export type JobReconcileDependencies={
   list:(limit:number,missionId?:string)=>Promise<EvolutionJob[]>;
   inspect:(runId:string)=>Promise<RunInspection>;
+  readMission:(missionId:string)=>Promise<boolean>;
   transition:(id:string,status:"completed"|"failed"|"cancelled",detail:string,
     expected:{generation:number;updatedAt:string;runId?:string})=>Promise<EvolutionJob>;
 };
@@ -36,6 +37,7 @@ export async function inspectWorkflowRun(
 const defaultDependencies:JobReconcileDependencies={
   list:listServerActiveJobs,
   inspect:inspectWorkflowRun,
+  readMission:async id=>Boolean(await getServerProductionRuntime().missions.get(id)),
   transition:(id,status,detail,expected)=>transitionJob(getServerProductionRuntime(),id,status,detail,expected),
 };
 
@@ -51,10 +53,30 @@ export async function reconcileWorkflowJobs(raw:unknown,deps:JobReconcileDepende
     runStatus?:RunStatus;resultStatus?:string;repaired:boolean;detail?:string;
   }>=[];
   let repairFailures=0;
+  const missionPresence=new Map<string,boolean>();
   for(const job of jobs){
     if(!workflowBacked(job))continue;
     const ageMs=now.getTime()-Date.parse(job.updatedAt);
     if(!Number.isFinite(ageMs)||ageMs<input.minAgeSeconds*1000)continue;
+    if(job.missionId){
+      // A missing Mission is never an implicit authorization to repair a stale Job.
+      // Keep the historical Job/Event intact for explicit operator reconciliation.
+      let exists:boolean;
+      try{
+        const cached=missionPresence.get(job.missionId);
+        exists=cached===undefined?await deps.readMission(job.missionId):cached;
+        missionPresence.set(job.missionId,exists);
+      }catch{
+        results.push({jobId:job.id,generation:job.generation,issue:"mission-inspection-failed",
+          repaired:false,detail:"Mission identity lookup unavailable"});
+        continue;
+      }
+      if(!exists){
+        results.push({jobId:job.id,generation:job.generation,issue:"mission-missing",
+          repaired:false,detail:"Referenced Mission missing; manual ownership review required"});
+        continue;
+      }
+    }
     const runId=workflowRunIdForJob(job);
     let issue:JobReconcileIssue;
     let runStatus:RunStatus|undefined;
@@ -106,7 +128,8 @@ export async function reconcileWorkflowJobs(raw:unknown,deps:JobReconcileDepende
       detail:detail??resultError});
   }
   return {checkedAt:now.toISOString(),inspected:jobs.length,
-    inspectionFailures:results.filter((item)=>item.issue==="inspection-failed").length,
+    inspectionFailures:results.filter((item)=>item.issue==="inspection-failed"||item.issue==="mission-inspection-failed").length,
+    orphaned:results.filter((item)=>item.issue==="mission-missing").length,
     repairFailures,
     issues:results.filter((item)=>item.issue!=="healthy"),
     repaired:results.filter((item)=>item.repaired).length};

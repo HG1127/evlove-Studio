@@ -6,6 +6,8 @@ import {
   finalizeUnexpectedWorkflowFailureStep,
   finalizeWorkflowResultStep,
   initializeWorkflowControlStep,
+  inspectLabWorkflowDeadlineStep,
+  stopExpiredLabWorkflowStep,
   planMissionStep,
   prepareScheduledTriggerStep,
   settleScheduledManualRoundStep,
@@ -19,6 +21,10 @@ export async function evolutionMissionWorkflow(rawInput:unknown):Promise<Evoluti
   let lastIteration=0;
   try{
   await initializeWorkflowControlStep(input);
+  if(input.labExperiment){
+    const deadline=await inspectLabWorkflowDeadlineStep(input);
+    if(deadline.kind==="stop")return stopExpiredLabWorkflowStep(input,lastIteration+1);
+  }
 
   let scheduledFor=input.scheduledFor;
   let scheduledSleepMs=scheduledFor
@@ -39,9 +45,14 @@ export async function evolutionMissionWorkflow(rawInput:unknown):Promise<Evoluti
     for(let localIteration=0;localIteration<MAX_CONTROL_STEPS;localIteration+=1){
       const iteration=cycle*MAX_CONTROL_STEPS+localIteration;
       lastIteration=iteration;
+      if(input.labExperiment){
+        const deadline=await inspectLabWorkflowDeadlineStep(input);
+        if(deadline.kind==="stop")return stopExpiredLabWorkflowStep(input,iteration+1);
+      }
       const plan=await planMissionStep(input,iteration);
       const execution=await executeServerControlStep(input,plan,iteration);
-      if(execution.control==="stop"&&execution.result)return execution.result;
+      if(execution.control==="stop"&&execution.result)
+        return input.labExperiment?finalizeWorkflowResultStep(input,execution.result):execution.result;
 
       if(targetRound!==undefined){
         const settlement=await settleScheduledManualRoundStep(input,targetRound,iteration);
@@ -54,7 +65,16 @@ export async function evolutionMissionWorkflow(rawInput:unknown):Promise<Evoluti
           break;
         }
       }
-      if(execution.control==="continue"&&execution.sleepMs)await sleep(execution.sleepMs);
+      if(execution.control==="continue"&&execution.sleepMs){
+        if(!input.labExperiment)await sleep(execution.sleepMs);
+        else{
+          const deadline=await inspectLabWorkflowDeadlineStep(input,execution.sleepMs);
+          if(deadline.kind==="stop")return stopExpiredLabWorkflowStep(input,iteration+1);
+          await sleep(deadline.sleepMs);
+          const resumed=await inspectLabWorkflowDeadlineStep(input);
+          if(resumed.kind==="stop")return stopExpiredLabWorkflowStep(input,iteration+1);
+        }
+      }
     }
     if(rearmed)continue;
     return finalizeWorkflowResultStep(input,await failLoopGuardStep(input,(cycle+1)*MAX_CONTROL_STEPS));

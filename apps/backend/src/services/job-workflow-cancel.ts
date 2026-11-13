@@ -6,6 +6,8 @@ import {
 } from "@evolution/contracts";
 import type {ServerControlRuntime} from "./production-runtime";
 import {abortServerControlExecutions} from "./server-control-execution";
+import {isLabPermitJob} from "./lab-workflow-permit";
+import {cancelLabSubscriptionBudget} from "./server-ai-lab-subscription-budget";
 import {
   cancelBoundWorkflowRun,
   type WorkflowRunCancelResult,
@@ -38,6 +40,10 @@ export async function cancelServerJobWithWorkflow(
 
   const current=await runtime.jobs.get(job.id)??job;
   if(["completed","partial","failed","cancelled"].includes(current.status))abortServerControlExecutions(current);
+  if(isLabPermitJob(current)&&current.missionId
+    &&["completed","partial","failed","cancelled"].includes(current.status)){
+    await cancelLabSubscriptionBudget({missionId:current.missionId,controlJobId:current.id});
+  }
   if(job.missionId){
     await runtime.events.append(createEvolutionEvent({
       missionId:job.missionId,

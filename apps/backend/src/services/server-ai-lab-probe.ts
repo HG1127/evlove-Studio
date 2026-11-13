@@ -1,8 +1,11 @@
 import {AsyncLocalStorage} from "node:async_hooks";
 
+import {serverControlExecutionBinding} from "./server-control-execution";
+
 type ProbeScope={remainingPhysicalCalls:number;maxOutputTokens:number};
 const scope=new AsyncLocalStorage<ProbeScope>();
 const isolated=()=>process.env.EVOLUTION_EXPERIMENT_MODE==="isolated";
+export const hasAuthorizedLabAiProbe=()=>Boolean(scope.getStore());
 
 /** Only call this after application-level ai.execute/security.admin authorization. */
 export function withAuthorizedLabAiProbe<T>(work:()=>Promise<T>):Promise<T>{
@@ -22,6 +25,9 @@ export function reserveLabAiPhysicalCall(){
 export function limitLabAiOutputTokens(requested:number){
   if(!isolated())return requested;
   const current=scope.getStore();
-  if(!current)throw Object.assign(new Error("Lab 模型调用缺少授权的健康探针上下文。"),{code:"LAB_DURABLE_AI_BUDGET_REQUIRED"});
-  return Math.min(requested,current.maxOutputTokens);
+  if(current)return Math.min(requested,current.maxOutputTokens);
+  // A Mission with a verified control binding may construct its capped request.
+  // Physical dispatch still requires a separate durable reservation and price policy.
+  if(serverControlExecutionBinding())return Math.min(requested,12000);
+  throw Object.assign(new Error("Lab 模型调用缺少授权的健康探针上下文。"),{code:"LAB_DURABLE_AI_BUDGET_REQUIRED"});
 }

@@ -140,6 +140,14 @@ export class MissionRevisionConflictError extends Error{
   }
 }
 
+export class MissionHasActiveJobsError extends Error{
+  readonly code="MISSION_HAS_ACTIVE_JOBS";
+  constructor(readonly missionId:string,readonly activeJobCount:number){
+    super(`Mission ${missionId} still has ${activeJobCount} active Job(s)`);
+    this.name="MissionHasActiveJobsError";
+  }
+}
+
 export async function createServerMissionEnvelope(projectInput:unknown){
   const {request}=createRestClient();
   const envelope=missionEnvelope(EvolveProjectSchema.parse(projectInput),0);
@@ -450,13 +458,25 @@ export async function compareAndSwapServerMissionEnvelopeWithEvent(
   throw new MissionRevisionConflictError(envelope.missionId,envelope.revision,revisionValue(result?.current_revision));
 }
 
-export async function deleteServerMissionIfRevision(id:string,expectedRevision:number){
+export async function deleteServerMissionIfRevision(
+  id:string,
+  expectedRevision:number,
+  actor:{id:string;role:"admin"|"operator"|"service"}={id:"server-runtime",role:"service"},
+){
   const {request}=createRestClient();
   const rows=await request("rpc/delete_mission_if_revision",{
     method:"POST",
-    body:JSON.stringify({p_id:id,p_expected_revision:expectedRevision}),
-  }) as Array<{applied?:unknown;current_revision?:unknown}>;
+    body:JSON.stringify({
+      p_id:id,p_expected_revision:expectedRevision,
+      p_actor_id:actor.id,p_actor_role:actor.role,
+    }),
+  }) as Array<{applied?:unknown;current_revision?:unknown;blocked_reason?:unknown;active_job_count?:unknown}>;
   const result=rows?.[0];
+  if(result?.blocked_reason==="active-jobs"){
+    const count=typeof result.active_job_count==="number"&&Number.isSafeInteger(result.active_job_count)
+      ?result.active_job_count:1;
+    throw new MissionHasActiveJobsError(id,count);
+  }
   if(result?.applied===true)return;
   throw new MissionRevisionConflictError(id,expectedRevision,revisionValue(result?.current_revision));
 }
@@ -492,7 +512,7 @@ export function getServerProductionRuntime():ServerControlRuntime{
         missionRevisions.set(project.id,saved.revision);
       },
       delete:async(id)=>{
-        await deleteServerMissionIfRevision(id,missionRevisions.get(id)??0);
+        await deleteServerMissionIfRevision(id,missionRevisions.get(id)??0,{id:"workflow-runtime",role:"service"});
         missionRevisions.delete(id);
       },
       flush:async()=>undefined,

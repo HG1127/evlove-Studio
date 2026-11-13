@@ -14,10 +14,20 @@ export const EvolutionWorkflowStatusSchema = z.enum([
 ]);
 export type EvolutionWorkflowStatus = z.infer<typeof EvolutionWorkflowStatusSchema>;
 
+/** The only supported bounded synthetic Lab permit; issued server-side, never by a model. */
+export const LabWorkflowPermitSchema=z.object({
+  schemaVersion:z.literal("lab-synthetic-experiment-v2"),
+  missionId:z.string().min(1).max(200),approvedActorId:z.string().min(1).max(200),
+  approvedAt:z.iso.datetime(),deadlineAt:z.iso.datetime(),
+  maxCalls:z.literal(6),maxTokens:z.literal(300_000),
+}).strict();
+export type LabWorkflowPermit=z.infer<typeof LabWorkflowPermitSchema>;
+
 export const EvolutionWorkflowStartRequestSchema = z.object({
   missionId: z.string().min(1),
   scheduledFor: z.string().optional(),
   idempotencyKey:z.string().min(1).max(200).optional(),
+  labExperimentApproval:z.literal("explicit-synthetic-lab-v1").optional(),
 });
 export type EvolutionWorkflowStartRequest = z.infer<typeof EvolutionWorkflowStartRequestSchema>;
 
@@ -32,6 +42,7 @@ export const EvolutionWorkflowRunInputSchema = z.object({
   controlJobId: z.string().min(1),
   requestedAt: z.string(),
   scheduledFor: z.string().optional(),
+  labExperiment:LabWorkflowPermitSchema.optional(),
 });
 export type EvolutionWorkflowRunInput = z.infer<typeof EvolutionWorkflowRunInputSchema>;
 

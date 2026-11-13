@@ -103,6 +103,21 @@ async function readJudgeConfig(){
   return directConfig(parseStoredConnection(await resolveVaultSecret(JUDGE_VAULT_ID,JUDGE_VAULT_SCOPE)));
 }
 
+/** Lab admission and physical dispatch must bind to saved encrypted role records.
+ * Never fall back to environment or an explicit draft/snapshot inside isolated Lab.
+ * The returned secret is for server-side provider use only; never return it over HTTP.
+ */
+export async function resolveServerAiConfigForRole(role:ServerAiConnectionRole):Promise<ServerAiConfig|undefined>{
+  if(process.env.EVOLUTION_EXPERIMENT_MODE==="isolated"){
+    const binding=vaultBinding(ServerAiConnectionRoleSchema.parse(role));
+    if(!vaultEncryptionConfigured()||!await getVaultSecretMetadata(binding.id))return undefined;
+    return directConfig(parseStoredConnection(await resolveVaultSecret(binding.id,binding.scope)));
+  }
+  const active=activeConfig.getStore();
+  if(active)return role==="judge"?active.judge:active.config;
+  if(role==="generation")return resolveServerAiConfig();
+  return readJudgeConfig();
+}
 /** Resolve the effective operation route from the same request-local snapshot used by its fingerprint/journal. */
 export async function resolveServerAiOperationConfig(operation:AiOperation):Promise<ServerAiConfig|undefined>{
   const snapshot=activeConfig.getStore();

@@ -52,6 +52,9 @@ import {serverAiConnectionConfigured as serverAiConfigured} from "../../apps/bac
 import {appendWorkflowControlEvent} from "../../apps/backend/src/services/workflow-control-events";
 import {planWorkflowResultFinalization} from "../../apps/backend/src/services/workflow-result-finalization";
 import {assertServerConfirmationAdmission} from "../../apps/backend/src/services/server-confirmation-admission";
+import {assertLabWorkflowPermit} from "../../apps/backend/src/services/lab-workflow-permit";
+import {boundLabWorkflowSleep,decideLabWorkflowDeadline} from "../../apps/backend/src/services/lab-workflow-deadline";
+import {initializeLabSubscriptionBudget,cancelLabSubscriptionBudget} from "../../apps/backend/src/services/server-ai-lab-subscription-budget";
 
 async function assertWorkflowConfirmationAdmission(mission:Parameters<typeof assertServerConfirmationAdmission>[0]){
   try{await assertServerConfirmationAdmission(mission,"execution");}
@@ -68,12 +71,65 @@ async function controlJob(input:EvolutionWorkflowRunInput,args:WorkflowControlJo
   }
 }
 
+/** All clocks and store reads occur inside a durable Step, never inside replayed orchestration. */
+export async function inspectLabWorkflowDeadlineStep(input:EvolutionWorkflowRunInput,requestedSleepMs?:number){
+  "use step";
+  const job=await getServerProductionRuntime().jobs.get(input.controlJobId);
+  if(!job)throw new FatalError("Lab control Job no longer exists; cannot resolve its deadline");
+  const decision=decideLabWorkflowDeadline(input,job,Date.now());
+  return {...decision,sleepMs:requestedSleepMs===undefined?0:boundLabWorkflowSleep(requestedSleepMs,decision)};
+}
+
+/** Terminalize only the Job bound to this verified, expired or disarmed Lab permit.
+ * Cancel budget first: every later physical provider reservation then fails closed.
+ */
+export async function stopExpiredLabWorkflowStep(
+  input:EvolutionWorkflowRunInput,iterations:number,
+):Promise<EvolutionWorkflowResult>{
+  "use step";
+  const runtime=getServerProductionRuntime();
+  const current=await runtime.jobs.get(input.controlJobId);
+  if(!current)throw new FatalError("Lab deadline Job missing, cannot confirm cancellation");
+  const decision=decideLabWorkflowDeadline(input,current,Date.now());
+  if(decision.kind==="continue")throw new FatalError("Lab deadline not yet reached; refused early cancellation");
+  await cancelLabSubscriptionBudget({missionId:input.missionId,controlJobId:input.controlJobId});
+  const terminal=(status:string)=>["completed","partial","failed","cancelled"].includes(status);
+  if(!terminal(current.status)){
+    try{await runtime.jobs.cancel(input.controlJobId);}
+    catch(error){
+      const raced=await runtime.jobs.get(input.controlJobId);
+      // Another instance may have already settled this same immutable Job.
+      // An unbound/new-generation receipt must never count as our cancellation.
+      if(!raced||!terminal(raced.status))throw error;
+      decideLabWorkflowDeadline(input,raced,Date.now());
+    }
+  }
+  const updated=await runtime.jobs.get(input.controlJobId);
+  if(!updated||!terminal(updated.status))
+    throw new FatalError("Lab Job cancellation has not been durably confirmed");
+  decideLabWorkflowDeadline(input,updated,Date.now());
+  return {
+    missionId:input.missionId,controlJobId:input.controlJobId,status:"blocked",
+    iterations,reason:decision.reason==="deadline"?"LAB_EXPERIMENT_DEADLINE_EXPIRED"
+      :decision.reason==="disarmed"?"LAB_EXPERIMENT_DISARMED":"LAB_CONTROL_JOB_ALREADY_TERMINAL",
+  };
+}
+
 export async function initializeWorkflowControlStep(input:EvolutionWorkflowRunInput){
   "use step";
   const runtime=getServerProductionRuntime();
   const mission=await runtime.missions.get(input.missionId);
   if(!mission)throw new FatalError(`Mission 不存在：${input.missionId}`);
   await assertWorkflowConfirmationAdmission(mission);
+  try{
+    const control=await runtime.jobs.get(input.controlJobId);
+    const permit=assertLabWorkflowPermit(input,control);
+    if(permit){
+      await initializeLabSubscriptionBudget({missionId:input.missionId,controlJobId:input.controlJobId,
+        maxCalls:permit.maxCalls,maxTokens:permit.maxTokens,minIntervalRemainingPercent:50,
+        minWeeklyRemainingPercent:50,deadline:permit.deadlineAt});
+    }
+  }catch{throw new FatalError("Lab 工作流预算/审批绑定未确认，禁止执行。");}
   const startedAt=new Date().toISOString();
   const initializedJob=await controlJob(input,{
     status:input.scheduledFor?"waiting":"running",
@@ -1533,7 +1589,19 @@ export async function finalizeWorkflowResultStep(input:EvolutionWorkflowRunInput
   const runtime=getServerProductionRuntime();
   const now=new Date().toISOString();
   const current=await runtime.jobs.get(input.controlJobId);
-  const settlement=planWorkflowResultFinalization(current,result,now);
+  const lab=process.env.EVOLUTION_EXPERIMENT_MODE==="isolated"&&Boolean(input.labExperiment);
+  const labTerminal=lab&&current&&!["completed","partial","failed","cancelled"].includes(current.status)
+    ?EvolutionJobSchema.parse({...current,
+      status:Date.parse(now)>=Date.parse(input.labExperiment!.deadlineAt)?"cancelled"
+        :result.status==="completed"?"completed":"failed",
+      finishedAt:now,updatedAt:now,
+      error:result.status==="completed"?undefined:result.reason??"Lab one-shot Mission stopped",
+      progress:{percent:100,detail:result.reason??"Lab one-shot Mission finished"},
+    }):undefined;
+  const settlement=labTerminal?{job:labTerminal,write:true,
+    eventType:labTerminal.status==="completed"?"JobCompleted" as const
+      :labTerminal.status==="cancelled"?"JobProgress" as const:"JobFailed" as const}
+    :planWorkflowResultFinalization(current,result,now);
   if(settlement.write&&settlement.job)await runtime.jobs.put(settlement.job);
   await runtime.events.append(createEvolutionEvent({
     id:`evt-${input.controlJobId}-finalized`,
@@ -1543,6 +1611,7 @@ export async function finalizeWorkflowResultStep(input:EvolutionWorkflowRunInput
     source:"vercel-workflow-finalizer",
     payload:{status:result.status,jobStatus:settlement.job?.status,iterations:result.iterations,checkpointId:result.checkpointId,reason:result.reason},
   }));
+  if(lab)await cancelLabSubscriptionBudget({missionId:input.missionId,controlJobId:input.controlJobId});
   return result;
 }
 
@@ -1570,7 +1639,15 @@ export async function finalizeUnexpectedWorkflowFailureStep(
         updatedAt:now,
       }));
     }catch(error){
-      if(error instanceof ServerControlExecutionStoppedError)return result(input,{status:"blocked",iterations,reason:error.message});
+      if(error instanceof ServerControlExecutionStoppedError){
+        if(process.env.EVOLUTION_EXPERIMENT_MODE==="isolated"&&input.labExperiment){
+          const latest=await runtime.jobs.get(input.controlJobId);
+          if(latest&&!["completed","partial","failed","cancelled"].includes(latest.status))
+            await runtime.jobs.cancel(input.controlJobId);
+          await cancelLabSubscriptionBudget({missionId:input.missionId,controlJobId:input.controlJobId});
+        }
+        return result(input,{status:"blocked",iterations,reason:error.message});
+      }
       console.error("Workflow failure Mission pause could not be recorded",error);
     }
   }
@@ -1582,6 +1659,8 @@ export async function finalizeUnexpectedWorkflowFailureStep(
     jobId:input.controlJobId,type:"JobFailed",source:"vercel-workflow-finalizer",
     payload:{status:"failed",iterations,reason},
   }));
+  if(process.env.EVOLUTION_EXPERIMENT_MODE==="isolated"&&input.labExperiment)
+    await cancelLabSubscriptionBudget({missionId:input.missionId,controlJobId:input.controlJobId});
   return failed;
 }
 
@@ -1599,5 +1678,7 @@ export async function failLoopGuardStep(input:EvolutionWorkflowRunInput,iteratio
     missionId:input.missionId,jobId:input.controlJobId,
     type:"JobFailed",source:"vercel-workflow-control",payload:{iterations,error:message},
   }));
+  if(process.env.EVOLUTION_EXPERIMENT_MODE==="isolated"&&input.labExperiment)
+    await cancelLabSubscriptionBudget({missionId:input.missionId,controlJobId:input.controlJobId});
   return result(input,{status:"failed",iterations,reason:message});
 }

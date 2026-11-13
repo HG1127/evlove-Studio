@@ -25,6 +25,9 @@ import {requireGovernedEvolutionPermission} from "../../../src/services/security
 import {cancelWorkflowRunById,workflowRunIdForJob} from "../../../src/services/workflow-run-control";
 import {assertServerHtmlBrowserExecutionReady} from "../../../src/services/html-browser-preflight";
 import {assertServerConfirmationAdmission} from "../../../src/services/server-confirmation-admission";
+import {prepareLabWorkflowStart} from "../../../src/services/lab-workflow-admission";
+import {assertLabWorkflowPermit} from "../../../src/services/lab-workflow-permit";
+import {initializeLabSubscriptionBudget,cancelLabSubscriptionBudget} from "../../../src/services/server-ai-lab-subscription-budget";
 
 async function cleanupStartedRun(runId:string){
   try{return {ok:true as const,result:await cancelWorkflowRunById(runId)};}
@@ -64,6 +67,13 @@ export default defineEventHandler(async(event)=>{
 
   const requestedAt=new Date().toISOString();
   const scheduledFor=parsed.data.scheduledFor;
+  const executableHtmlTarget=requiresSandboxHtmlSourceExecution(mission);
+  const labActor=process.env.EVOLUTION_EXPERIMENT_MODE==="isolated"
+    ?await requireGovernedEvolutionPermission(event,"security.admin"):undefined;
+  const labPermit=await prepareLabWorkflowStart({
+    missionId:mission.id,actorId:labActor?.id??"",requestedAt,
+    approval:parsed.data.labExperimentApproval,scheduledFor,isExecutableHtml:executableHtmlTarget,
+  });
   if(scheduledFor){
     const schedule=mission.campaign.schedule;
     if(!schedule.enabled||schedule.nextRunAt!==scheduledFor||mission.campaign.status!=="scheduled"){
@@ -91,10 +101,19 @@ export default defineEventHandler(async(event)=>{
   // Browser health probe. Receipt lookup is read-only; the SQL create RPC
   // below remains authoritative for concurrent requests racing this lookup.
   // Historical non-HTML Missions keep the original RPC path unchanged.
-  const executableHtmlTarget=requiresSandboxHtmlSourceExecution(mission);
   if((executableHtmlTarget||mission.experimentPolicy.confirmationAdmission)&&(parsed.data.idempotencyKey||scheduledFor)){
     const prior=await getServerJobByIdempotencyKey(`workflow-control:${mission.id}:${operationKey}`);
     if(prior){
+      if(labPermit){
+        const stored=prior.metadata?.labExperiment;
+        if(!stored||typeof stored!=="object"||!("approvedAt" in stored)
+          ||!("approvedActorId" in stored)||stored.approvedActorId!==labActor?.id){
+          setResponseStatus(event,409);
+          return {code:"LAB_EXISTING_JOB_UNAUTHORIZED",error:"现有 Job 缺少持久化的 Lab 授权，禁止复用。"};
+        }
+        assertLabWorkflowPermit({missionId:mission.id,controlJobId:prior.id,
+          requestedAt:String(stored.approvedAt),labExperiment:stored as typeof labPermit},prior);
+      }
       if(prior.missionId!==mission.id||prior.type!=="campaign"){
         setResponseStatus(event,409);
         return {error:"Workflow 请求键绑定的 Mission 或 Job 类型不匹配"};
@@ -151,6 +170,7 @@ export default defineEventHandler(async(event)=>{
     controlJobId,
     requestedAt,
     ...(scheduledFor?{scheduledFor}:{}),
+    ...(labPermit?{labExperiment:labPermit}:{}),
   });
   let created;
   try{
@@ -163,6 +183,7 @@ export default defineEventHandler(async(event)=>{
       label:scheduledFor?"Evolution Durable Scheduler":"Evolution Workflow Control",
       idempotencyKey:`workflow-control:${mission.id}:${operationKey}`,
       generation:1,attempts:0,priority:70,
+       ...(labPermit?{metadata:{labExperiment:labPermit}}:{}),
       progress:{percent:0,detail:scheduledFor?`等待 Durable Scheduler 武装至 ${scheduledFor}`:"等待 Durable Workflow 启动"},
       createdAt:requestedAt,updatedAt:requestedAt,
     }),executableHtmlTarget?{kind:"html-campaign",allowSingleWaitingRetry}:undefined);
@@ -186,9 +207,38 @@ export default defineEventHandler(async(event)=>{
     throw error;
   }
   if(created.reused){
+    if(labPermit){
+      const stored=created.job.metadata?.labExperiment;
+      if(!stored||typeof stored!=="object"||!("approvedAt" in stored)
+          ||!("approvedActorId" in stored)||stored.approvedActorId!==labActor?.id){
+        setResponseStatus(event,409);
+        return {code:"LAB_EXISTING_JOB_UNAUTHORIZED",error:"现有 Job 未绑定 Lab 授权，禁止复用。"};
+      }
+      assertLabWorkflowPermit({missionId:mission.id,controlJobId:created.job.id,
+        requestedAt:String(stored.approvedAt),labExperiment:stored as typeof labPermit},created.job);
+    }
     const response=reusedStartReceipt(created.job,mission,scheduledFor);
     if("error" in response)setResponseStatus(event,409);
     return response;
+  }
+
+  if(labPermit){
+    try{
+      assertLabWorkflowPermit(input,created.job);
+      await initializeLabSubscriptionBudget({missionId:mission.id,controlJobId,
+        maxCalls:labPermit.maxCalls,maxTokens:labPermit.maxTokens,
+        minIntervalRemainingPercent:50,minWeeklyRemainingPercent:50,deadline:labPermit.deadlineAt});
+    }catch{
+      // Any unknown reservation result leaves the newly created Job inert.
+      const current=await runtime.jobs.get(controlJobId);
+      if(current){
+        const at=new Date().toISOString();
+        await runtime.jobs.put(EvolutionJobSchema.parse({...current,status:"failed",
+          error:"Lab budget admission unverified",finishedAt:at,updatedAt:at}));
+      }
+      setResponseStatus(event,503);
+      return {code:"LAB_BUDGET_ENROLLMENT_FAILED",error:"Lab 预算未获确认，未启动 Workflow。"};
+    }
   }
 
   if(scheduledFor){
@@ -220,6 +270,13 @@ export default defineEventHandler(async(event)=>{
       })).catch((writeError)=>{
         if(!isBenignJobBookkeepingConflict(writeError,current.generation))throw writeError;
       });
+    }
+    if(labPermit){
+      try{await cancelLabSubscriptionBudget({missionId:mission.id,controlJobId});}
+      catch{
+        setResponseStatus(event,503);
+        return {code:"LAB_BUDGET_CANCEL_UNVERIFIED",error:"Workflow 启动失败，实验预算取消状态尚未核实。"};
+      }
     }
     if(scheduledFor){
       const currentMission=await runtime.missions.get(mission.id);

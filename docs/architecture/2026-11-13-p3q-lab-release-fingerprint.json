@@ -1,0 +1,434 @@
+{
+  "schemaVersion": "evolve-p3q-lab-release-candidate-v1",
+  "authority": "REVIEW_ONLY_NOT_APPROVED",
+  "target": {
+    "supabaseLabProjectId": "jnlbqgpezenmpksyklme",
+    "vercelProjectId": "prj_BuJhKyI5fhoIVJRO3jEo6BzSIOhs",
+    "vercelTeamId": "team_kK5GqMJNWpI0A7NmY6nnXgIQ",
+    "environment": "preview",
+    "productionDeploymentAllowed": false
+  },
+  "source": {
+    "branch": "codex/artifact-evolution-governance-p0",
+    "baselineCommit": "2ce15c250c5bccec9f45eb732f4395823159ac1b",
+    "files": [
+      {
+        "path": "apps/backend/server/api/evolution/events-evidence-reconcile.post.ts",
+        "bytes": 1183,
+        "sha256": "941d64dd715697515ec9cd557c54883780a81da4975a1bed970ebacbe560f4bc"
+      },
+      {
+        "path": "apps/backend/server/api/evolution/jobs/reconcile-preview-scheduled.get.ts",
+        "bytes": 2966,
+        "sha256": "96eacbbc0d225d1a3d2359399bbfaafc83bce9e8b583a2cbd9e0111b30952709"
+      },
+      {
+        "path": "apps/backend/server/api/evolution/jobs/reconcile-scheduled.get.ts",
+        "bytes": 3162,
+        "sha256": "200e2ec1e9b5f9909df623ad59e3f683837d43caa43e67e47d026ecf36573023"
+      },
+      {
+        "path": "apps/backend/server/api/evolution/jobs/reconcile.post.ts",
+        "bytes": 1217,
+        "sha256": "921aae8c75cd068ead794c3fe5a9884c01dd6fb188cff4c4520fea5c44b6e2cb"
+      },
+      {
+        "path": "apps/backend/server/api/evolution/lab-job-integrity.get.ts",
+        "bytes": 975,
+        "sha256": "a66c97b0d42e1a82aaa0eb35dc9da700b8ec094d4948bbf9e03cd575a67b3fc7"
+      },
+      {
+        "path": "apps/backend/server/api/evolution/minimax-subscription-quota.get.ts",
+        "bytes": 2375,
+        "sha256": "4302612cecfa48e50996b1eba8ff0406333aaf58c319fef42e968671725250aa"
+      },
+      {
+        "path": "apps/backend/server/api/evolution/missions/[id].delete.ts",
+        "bytes": 1853,
+        "sha256": "285716fca3ee90aefe36939588c60e57bc5da0e5b7496caf5143da663487bfb2"
+      },
+      {
+        "path": "apps/backend/server/api/evolution/start.post.ts",
+        "bytes": 16455,
+        "sha256": "eeb9d71b59b6021b87b8677197325fb731611d623031205aa8331933d31c30c0"
+      },
+      {
+        "path": "apps/backend/src/services/event-evidence-reconciliation.test.ts",
+        "bytes": 5749,
+        "sha256": "a9c305d298d696df31936e52c22fcf717a21e8b16fdf0c8671394af53147650f"
+      },
+      {
+        "path": "apps/backend/src/services/events-evidence-reconcile-route.test.ts",
+        "bytes": 3752,
+        "sha256": "54ad72b1ee140d321498bfc469987c88dea943f5ab1f032f326d3085cc1810ab"
+      },
+      {
+        "path": "apps/backend/src/services/evidence-ledger.test.ts",
+        "bytes": 18358,
+        "sha256": "71076bc8e7949b64e5efefdfc481bfee121f5b77af99af5a124cb9681b18e8ba"
+      },
+      {
+        "path": "apps/backend/src/services/job-reconciliation.test.ts",
+        "bytes": 9437,
+        "sha256": "2c1b369ff5fec539cd901c56a7d969f2d0f86eefde3ade62f4ac4116cd6f0ca5"
+      },
+      {
+        "path": "apps/backend/src/services/job-reconciliation.ts",
+        "bytes": 6571,
+        "sha256": "dd407168f18ab7aa525550188260dacced7baf68d1aecf313d5a12fd4b378ab0"
+      },
+      {
+        "path": "apps/backend/src/services/job-workflow-cancel.ts",
+        "bytes": 2366,
+        "sha256": "525791674350c0587d3a6d8bc05c28939c6d691f216ce005a54bfbb01e2b966a"
+      },
+      {
+        "path": "apps/backend/src/services/jobs-reconcile-lab-guard-route.test.ts",
+        "bytes": 3673,
+        "sha256": "3cd3b3ef1886c2cc6868c228e8b1e59222e4d391d20fbeb0e4d01da96f042390"
+      },
+      {
+        "path": "apps/backend/src/services/lab-job-integrity-route.test.ts",
+        "bytes": 2265,
+        "sha256": "66b2173025bbfc9a58ac04cb5cd24190147c43a3580485c0f084b990dc44def2"
+      },
+      {
+        "path": "apps/backend/src/services/lab-job-integrity.test.ts",
+        "bytes": 3824,
+        "sha256": "7802bc771970ddb0d2f002f41cfa87c2718f5a8cdfc6d5faba5bb7a748596253"
+      },
+      {
+        "path": "apps/backend/src/services/lab-job-integrity.ts",
+        "bytes": 3231,
+        "sha256": "d414ce8b8031b53c2df6726e07d9eb8f78999a5ee61b445358a1a656637f81f7"
+      },
+      {
+        "path": "apps/backend/src/services/lab-reconciliation-preflight.test.ts",
+        "bytes": 1861,
+        "sha256": "3da3ff8cb08ff9589ed2cb97c6dcb33ba652fcd2147a3079a40809c9a8074141"
+      },
+      {
+        "path": "apps/backend/src/services/lab-reconciliation-preflight.ts",
+        "bytes": 896,
+        "sha256": "1c8c2ac42398a33ef7bac7e16f79257c0985ee532284e17c3333676537122d26"
+      },
+      {
+        "path": "apps/backend/src/services/lab-workflow-admission.test.ts",
+        "bytes": 9165,
+        "sha256": "680df2e5d260e3f0258548bb84e3ca6d686d0baf3758674b5c5f15da62109269"
+      },
+      {
+        "path": "apps/backend/src/services/lab-workflow-admission.ts",
+        "bytes": 3846,
+        "sha256": "52d1a7fcbddcd9cfd352faaff2d2bf3879e9f040b8357fe12e8276d923ce37f5"
+      },
+      {
+        "path": "apps/backend/src/services/lab-workflow-cancel.test.ts",
+        "bytes": 3281,
+        "sha256": "ac31386ad237962a7f0aec9789f54fc1c8f59ad438be9b9d17599e6fb20d19e3"
+      },
+      {
+        "path": "apps/backend/src/services/lab-workflow-deadline.test.ts",
+        "bytes": 7507,
+        "sha256": "e61fe2e7f6e251c9a794a105cda3efff99220a64cb0b31c8f9d0a6ae6f8b1c6b"
+      },
+      {
+        "path": "apps/backend/src/services/lab-workflow-deadline.ts",
+        "bytes": 1608,
+        "sha256": "cff55fdee893e30de11845923a2ecdc317e5fb851c5d0916e3837e3280be338d"
+      },
+      {
+        "path": "apps/backend/src/services/lab-workflow-durable-sleep.test.ts",
+        "bytes": 3727,
+        "sha256": "dae93e8d3e22b3b1a452dbb3c01849f6e14d8d7d4a4b8a102fb58513ae1af72c"
+      },
+      {
+        "path": "apps/backend/src/services/lab-workflow-init.test.ts",
+        "bytes": 4312,
+        "sha256": "471c260346369b6e403b5ac8829fffe8e4aa48e49334a414bfe58153f23c6ac4"
+      },
+      {
+        "path": "apps/backend/src/services/lab-workflow-permit.test.ts",
+        "bytes": 4340,
+        "sha256": "5785ede261282e746c513acd83541ecff4f7277f0238e9cd9e20e683101a3c0f"
+      },
+      {
+        "path": "apps/backend/src/services/lab-workflow-permit.ts",
+        "bytes": 3978,
+        "sha256": "b552a702babe1bff9791dc77d9baa6d229905d9df409e2311e3061116017692f"
+      },
+      {
+        "path": "apps/backend/src/services/mission-delete-audit-route.test.ts",
+        "bytes": 3504,
+        "sha256": "b1e036fa83531250b27873d148bbee0c479e7ffde37169a6de6930eb6a9a0c3c"
+      },
+      {
+        "path": "apps/backend/src/services/production-runtime.test.ts",
+        "bytes": 37331,
+        "sha256": "1f742e510b29fc2c9099c5f3002eb0c2a7e3987d28be3f3e94a6f2e165bc6ad1"
+      },
+      {
+        "path": "apps/backend/src/services/production-runtime.ts",
+        "bytes": 24468,
+        "sha256": "802c45afd7ffb4d87ecd309ac3afbbb320428dd5ed0a9ecd2db5f3c4cbedfa3c"
+      },
+      {
+        "path": "apps/backend/src/services/scheduled-reconciliation-preview.test.ts",
+        "bytes": 6156,
+        "sha256": "ccb74f26021a08d4963765db12b6eba2fbb565da1b2b1b736382605cc08334e4"
+      },
+      {
+        "path": "apps/backend/src/services/scheduled-reconciliation-route.test.ts",
+        "bytes": 4478,
+        "sha256": "4811ad4c04ade3d6e26f7fad3ee3d3a3c21b6c9e12f3eebd7ae49175f3b82003"
+      },
+      {
+        "path": "apps/backend/src/services/server-ai-connection.test.ts",
+        "bytes": 15064,
+        "sha256": "131b8a741620f1b82e231b7c226838b10679c576af3377eb96d6a1c5da540880"
+      },
+      {
+        "path": "apps/backend/src/services/server-ai-connection.ts",
+        "bytes": 8065,
+        "sha256": "4b30fddce80cc6733bf3a449e18ad5eb312118583ff17669430e86ffeaebaae3"
+      },
+      {
+        "path": "apps/backend/src/services/server-ai-lab-budget-dispatch.test.ts",
+        "bytes": 10717,
+        "sha256": "7a72b722fb914c0056c43003c0f608fa28c66e8430652422bdec7a9ade4c7bc8"
+      },
+      {
+        "path": "apps/backend/src/services/server-ai-lab-budget-dispatch.ts",
+        "bytes": 7821,
+        "sha256": "c56adea8814a49d2e29947551fe90ec830e4f848051b8959ef1eed6c62a784fe"
+      },
+      {
+        "path": "apps/backend/src/services/server-ai-lab-budget-sql.test.ts",
+        "bytes": 1955,
+        "sha256": "ef9f15abaa3da1a3175f99cf416b5d1483ede6107888c28d626147b4624ccf59"
+      },
+      {
+        "path": "apps/backend/src/services/server-ai-lab-budget.test.ts",
+        "bytes": 5242,
+        "sha256": "7ffce9454608cb533db70cb245b3d1efeec7871936d108f0e6271e22de038db3"
+      },
+      {
+        "path": "apps/backend/src/services/server-ai-lab-budget.ts",
+        "bytes": 4692,
+        "sha256": "50a77811ab872078573ee1cb8f1f9f1ceb7d2c5325576d3aebf4d10811a78afb"
+      },
+      {
+        "path": "apps/backend/src/services/server-ai-lab-dispatch-order.test.ts",
+        "bytes": 3378,
+        "sha256": "c42169addff5f14899e0246bd4808f4fb5b807df4a3f56ed35777ea69b2c9241"
+      },
+      {
+        "path": "apps/backend/src/services/server-ai-lab-probe.test.ts",
+        "bytes": 2706,
+        "sha256": "0b352645c9c171d1d87cf0e82649f743ae6ffc54ca0d776ec18bdd923ba0e6a9"
+      },
+      {
+        "path": "apps/backend/src/services/server-ai-lab-probe.ts",
+        "bytes": 1856,
+        "sha256": "8f577d0e81bee2ed60586add36a3cf338781d46222c5f97acbb36d6c760ba357"
+      },
+      {
+        "path": "apps/backend/src/services/server-ai-lab-subscription-budget.test.ts",
+        "bytes": 5234,
+        "sha256": "a19322818ade37a408d85d670bd21772120d8c9312d94b78ddf047068cb3a1fa"
+      },
+      {
+        "path": "apps/backend/src/services/server-ai-lab-subscription-budget.ts",
+        "bytes": 5311,
+        "sha256": "948876fb9d364f7244223c87f0f48b85b59a6def508435b521afa4a33fabe7db"
+      },
+      {
+        "path": "apps/backend/src/services/server-ai-minimax-subscription-quota.test.ts",
+        "bytes": 5802,
+        "sha256": "08142fcee371faacf4fcf52ccc382e044983161ea298333fd9253922c3dd6292"
+      },
+      {
+        "path": "apps/backend/src/services/server-ai-minimax-subscription-quota.ts",
+        "bytes": 5761,
+        "sha256": "18d1ceaa9ef656dcb624e8c56513aebfa79ff3b41e479d453496863e1885813c"
+      },
+      {
+        "path": "apps/backend/src/services/server-ai-usage.ts",
+        "bytes": 8643,
+        "sha256": "1520805c442ea190b57a79e339575df090134023cabd7f38bb2c27ec8586f072"
+      },
+      {
+        "path": "apps/backend/src/services/server-control-execution.ts",
+        "bytes": 4289,
+        "sha256": "8e2753113453f572b9af99d1605b0cfe9b68e478ca40f3a272bcaaeacad8ea99"
+      },
+      {
+        "path": "docs/architecture/2026-11-12-p3h-durable-lab-budget-preparation.md",
+        "bytes": 3119,
+        "sha256": "bd521942eb316532285cbb3e72048ee8ec3ca701d92ecd1b90f05c419f4426a2"
+      },
+      {
+        "path": "docs/architecture/2026-11-12-p3i-lab-dispatch-budget-acceptance.md",
+        "bytes": 7141,
+        "sha256": "c88e10b8fed3b8168f41cdb3c35687e8a8f1a3e6c1df7661558887098ece3bfa"
+      },
+      {
+        "path": "docs/architecture/2026-11-12-p3j-lab-workflow-admission-handoff.md",
+        "bytes": 7015,
+        "sha256": "81d24740c8947ac60b5008cbea63dbe2ae63f44c3ac115ea96db7ad3a866b940"
+      },
+      {
+        "path": "docs/architecture/2026-11-12-p3k-durable-lab-deadline-handoff.md",
+        "bytes": 5253,
+        "sha256": "4adc4b9d7f427cfdc7c2940d19554ec95bb4aee78bcd630280b844e0623b0514"
+      },
+      {
+        "path": "docs/architecture/2026-11-12-p3l-lab-readiness-handoff.md",
+        "bytes": 7119,
+        "sha256": "e140757360748caab5a975789871b6a31b84cb8e989f2823e8402e71eced056d"
+      },
+      {
+        "path": "docs/architecture/2026-11-13-p3m-minimax-subscription-budget-handoff.md",
+        "bytes": 7117,
+        "sha256": "0b84843ac2023e1a9e224f7fe3c167e712c384055537028ae6b594194586a50d"
+      },
+      {
+        "path": "docs/architecture/2026-11-13-p3n-lab-migration-history-reconciliation.md",
+        "bytes": 9396,
+        "sha256": "42169bf03e1240845a645a19959bf142f69038ce74b5852b64fbef85bdc82adc"
+      },
+      {
+        "path": "docs/architecture/2026-11-13-p3n-lab-migration-snapshot.json",
+        "bytes": 6797,
+        "sha256": "88d7f23ae245a7bd9895dcb9f19bcbaa70128ecc4b43b552ac452ecbe1fc3502"
+      },
+      {
+        "path": "docs/architecture/2026-11-13-p3n-lab-preview-release-gates.md",
+        "bytes": 5561,
+        "sha256": "a354c21b89044dd6be4f852a89d64f74c5054786dd35e5b30b3a681a79175793"
+      },
+      {
+        "path": "docs/architecture/2026-11-13-p3o-lab-missing-mission-fence.md",
+        "bytes": 6445,
+        "sha256": "211efc92360f9334b4fbc4746aadf7b34d202cc93a0586896261be21c01edd08"
+      },
+      {
+        "path": "docs/architecture/2026-11-13-p3p-mission-parent-delete-guard-handoff.md",
+        "bytes": 8175,
+        "sha256": "b11775e42727c68aee748dd1b6bf7ac1960e835d9ce0e0c6c3b19de66d817569"
+      },
+      {
+        "path": "docs/architecture/2026-11-13-p3q-lab-release-candidate-handoff.md",
+        "bytes": 4561,
+        "sha256": "95d4fe398125d85d54244797d395236d1d2211bfe24dc9a1b4ccc256b18fee98"
+      },
+      {
+        "path": "docs/architecture/2026-11-13-p3r-lab-reconciliation-release-readiness.md",
+        "bytes": 5562,
+        "sha256": "7ee21794431393784c3454e2d7bb855e41030252d6a11dc199bbed68518bcde2"
+      },
+      {
+        "path": "docs/architecture/2026-11-13-p3r-lab-release-readiness-handoff.md",
+        "bytes": 5797,
+        "sha256": "72e1b988aa2c2383a2884677159e1caa55e3e5f9f4208a6e4b642138ed9130e6"
+      },
+      {
+        "path": "package.json",
+        "bytes": 4427,
+        "sha256": "43fe46030dedde39e71dfdd4adc865be4cf40225f41a37b429201e9dea1f162d"
+      },
+      {
+        "path": "packages/contracts/src/event-contract.ts",
+        "bytes": 1980,
+        "sha256": "4710bdee4e26035c9a0b893e3e84f49dcd5ffe57fa3e2ab63f086ef0c234d564"
+      },
+      {
+        "path": "packages/contracts/src/workflow-contract.ts",
+        "bytes": 9220,
+        "sha256": "ce968eaadd700455ec72b6e4a7c4520056c34f878ff3bdc21d86cfcd4a16728e"
+      },
+      {
+        "path": "scripts/p3n-lab-migration-preflight.mjs",
+        "bytes": 8168,
+        "sha256": "2ec2f246289ae4af891ae4ad7d5d042bfd180391593721723c58396d7db1e7c6"
+      },
+      {
+        "path": "scripts/p3n-lab-migration-preflight.test.mjs",
+        "bytes": 5183,
+        "sha256": "d1f49c3f6d7fd8d2154fefec6fc5d09f6af6848231690f2e1c22b20cdf018fe7"
+      },
+      {
+        "path": "scripts/p3q-lab-release-fingerprint.mjs",
+        "bytes": 7542,
+        "sha256": "9a72c9b800b176220a57ce991ca76f076776c73289f1d42ac6c9c10293989a47"
+      },
+      {
+        "path": "scripts/p3q-lab-release-fingerprint.test.mjs",
+        "bytes": 4392,
+        "sha256": "c43a372fe9d43aae6d7233aa323e2c6912f54c68bd1aefddb7fa92742c07edd6"
+      },
+      {
+        "path": "supabase/migrations/20261112190000_lab_ai_budget_security_invariants.sql",
+        "bytes": 11739,
+        "sha256": "c19b1303718cf7dbc0f7a6978c20e9603e6ae2cfd2a6e04fffccb8e218ac5137"
+      },
+      {
+        "path": "supabase/migrations/20261112193500_lab_ai_unsettled_reservation_fence_security_invariants.sql",
+        "bytes": 3399,
+        "sha256": "693c312d25f17276c89324ff435e4a10ef712f2ba2fbed637f00c748e6104d6e"
+      },
+      {
+        "path": "supabase/migrations/20261112210000_lab_minimax_subscription_quota_security_invariants.sql",
+        "bytes": 15204,
+        "sha256": "fb6daf6cf875c122b5bb6170feaa37c7dcf68737c796dc24f3a14e14dbe7f723"
+      },
+      {
+        "path": "supabase/migrations/20261113103000_mission_job_parent_and_delete_audit_security_invariants.sql",
+        "bytes": 5912,
+        "sha256": "c530a9a09c931591b76d0cf9be849e770cd0093b4978518211714655c631ebe9"
+      },
+      {
+        "path": "supabase/tests/lab_ai_budget_integration.sql",
+        "bytes": 4953,
+        "sha256": "626e3ecfaf741ef5068368913abba39085e6f1726d613c7e9fdcf2bb39786c42"
+      },
+      {
+        "path": "supabase/tests/lab_minimax_subscription_budget_integration.sql",
+        "bytes": 6966,
+        "sha256": "915fe45d3e86ea09a9f310385ba0ead28fbd09d86d3f213e183aec91f0b6740a"
+      },
+      {
+        "path": "supabase/tests/lab_mission_parent_delete_guard_integration.sql",
+        "bytes": 5741,
+        "sha256": "f68c67fc37931247ce655189c355ca3919533937072f7060f4d491fa281ad1e4"
+      },
+      {
+        "path": "vitest.p3.config.ts",
+        "bytes": 3087,
+        "sha256": "12bf0d5e3072f01d47f507efb9cb842fc109fa75de5730583975851fd5018e44"
+      },
+      {
+        "path": "workflows/evolution-mission.ts",
+        "bytes": 3532,
+        "sha256": "61b693499a37b2befa4d956844d608f0141f453189ec93e7ade77413abfe841c"
+      },
+      {
+        "path": "workflows/evolution-mission/steps.ts",
+        "bytes": 84474,
+        "sha256": "635c2c869487a5b8300e7851def41ff037d61c964be13e8807cddf0ad6076860"
+      }
+    ]
+  },
+  "database": {
+    "appliedAndVerifiedMigrations": 28,
+    "pendingMigrations": [],
+    "migrationHistoryWriteAllowed": false
+  },
+  "controls": {
+    "readOnlyReview": true,
+    "sourceFingerprintVerified": true,
+    "noCommitNoPushNoDeploy": true,
+    "realMiniMaxCallsAllowed": false
+  },
+  "aggregateSha256": "56959ad900979850d8232f311738d2ce10e9d152ad172ab7e935a5ae02311d97"
+}

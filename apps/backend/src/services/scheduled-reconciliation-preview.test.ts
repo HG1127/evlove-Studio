@@ -66,6 +66,17 @@ describe("scheduled reconciliation preview",()=>{
     }));
   });
 
+  it("exposes orphan Job count as degraded read-only preview without performing repair",async()=>{
+    jobs.mockResolvedValue({checkedAt:"2026-11-13T00:00:00.000Z",inspected:1,inspectionFailures:0,
+      orphaned:1,issues:[{jobId:"old-control",issue:"mission-missing",repaired:false}],repaired:0});
+    const log=vi.spyOn(console,"info").mockImplementation(()=>undefined);
+    await expect(route(event("test-preview-cron-secret"))).rejects.toMatchObject({status:503});
+    expect(log).toHaveBeenCalledWith("Scheduled reconciliation preview",expect.objectContaining({
+      orphanedJobs:1,jobsRepaired:0,
+    }));
+    expect(blobs).toHaveBeenCalledWith({limit:50,minAgeSeconds:900,dryRun:true});
+  });
+
   it("identifies a failed Job inspection without starting Artifact inspection",async()=>{
     jobs.mockRejectedValue({data:{reason:"credential-rejected",upstreamStatus:401,service:"production-runtime"}});
     const log=vi.spyOn(console,"error").mockImplementation(()=>undefined);

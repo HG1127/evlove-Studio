@@ -2,7 +2,7 @@ import { z } from "zod";
 import { PRODUCTION_SCHEMA_VERSIONS } from "./production-contracts";
 
 export const EvolutionEventTypeSchema = z.enum([
-  "MissionCreated","MissionUpdated","ActionPlanned","ActionStarted","ActionCompleted","ActionFailed",
+  "MissionCreated","MissionUpdated","MissionDeleted","ActionPlanned","ActionStarted","ActionCompleted","ActionFailed",
   "JobQueued","JobStarted","JobProgress","JobCompleted","JobFailed","CheckpointCreated",
   "ArtifactUploaded","ArtifactRegistered","ArtifactParsed","CandidateCreated","ValidationCompleted","CheckpointAccepted","CheckpointRejected","ValidationPassed","ValidationFailed","ValidationUnverified","JobUpdated","ReleaseChanged","LessonCreated","AttentionRequired",
 ]);

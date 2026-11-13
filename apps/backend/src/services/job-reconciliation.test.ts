@@ -12,7 +12,7 @@ const base=EvolutionJobSchema.parse({
 });
 
 function deps(inspect:JobReconcileDependencies["inspect"],job=base):JobReconcileDependencies{
-  return {list:vi.fn(async()=>[job]),inspect,transition:vi.fn(async(_id,status)=>({...job,status}))};
+  return {list:vi.fn(async()=>[job]),inspect,readMission:vi.fn(async()=>true),transition:vi.fn(async(_id,status)=>({...job,status}))};
 }
 
 describe("Workflow Job reconciliation",()=>{
@@ -127,6 +127,41 @@ describe("Workflow Job reconciliation",()=>{
       {jobId:"control-2",issue:"missing-run",repaired:true},
     ]);
     expect(JSON.stringify(report)).not.toContain("private database diagnostic");
+  });
+
+  it("never inspects or automatically transitions a Job whose Mission was removed",async()=>{
+    const ports=deps(vi.fn(async()=>({exists:false})));
+    ports.readMission=vi.fn(async()=>false);
+    const report=await reconcileWorkflowJobs({repair:true},ports,now);
+    expect(report).toMatchObject({orphaned:1,repaired:0,repairFailures:0,inspectionFailures:0});
+    expect(report.issues).toMatchObject([{
+      jobId:"control-1",issue:"mission-missing",repaired:false,
+      detail:"Referenced Mission missing; manual ownership review required",
+    }]);
+    expect(ports.inspect).not.toHaveBeenCalled();
+    expect(ports.transition).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when Mission lookup fails and does not expose internal errors",async()=>{
+    const ports=deps(vi.fn());
+    ports.readMission=vi.fn(async()=>{throw new Error("private data plane diagnostic");});
+    const report=await reconcileWorkflowJobs({repair:true},ports,now);
+    expect(report).toMatchObject({inspectionFailures:1,orphaned:0,repaired:0});
+    expect(report.issues).toMatchObject([{issue:"mission-inspection-failed",repaired:false}]);
+    expect(ports.inspect).not.toHaveBeenCalled();
+    expect(ports.transition).not.toHaveBeenCalled();
+    expect(JSON.stringify(report)).not.toContain("private data plane diagnostic");
+  });
+
+  it("deduplicates Mission presence reads across multiple Jobs sharing the same Mission",async()=>{
+    const second=EvolutionJobSchema.parse({...base,id:"control-2",outputRef:"run-2"});
+    const ports=deps(vi.fn(async()=>({exists:false})));
+    ports.list=vi.fn(async()=>[base,second]);
+    ports.readMission=vi.fn(async()=>false);
+    const report=await reconcileWorkflowJobs({repair:true},ports,now);
+    expect(report).toMatchObject({orphaned:2,repaired:0});
+    expect(ports.readMission).toHaveBeenCalledOnce();
+    expect(ports.inspect).not.toHaveBeenCalled();
   });
 
   it("leaves recently updated Jobs alone",async()=>{

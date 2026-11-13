@@ -4,9 +4,10 @@ import {aiProviderTransportFailure,fetchAiProvider,observeAiProviderUsage,observ
 import {AiProviderUsageObservationSchema,AiUsageLedgerRecordSchema,AiUsageRequestStartedSchema,AiUsageScopeSchema,createEvolutionEvent,
   type AiOperation,type AiProviderUsageObservation,type AiUsageLedgerRecord,type AiUsageLedgerWriter,type AiUsageProtocol,type AiUsageRequestStarted,type AiUsageRoute,type AiUsageScope} from "@evolution/contracts";
 import type {ServerAiConfig} from "../server-env";
-import {assertServerControlExecutionActive,serverControlExecutionSignal} from "./server-control-execution";
+import {assertServerControlExecutionActive,serverControlExecutionBinding,serverControlExecutionSignal} from "./server-control-execution";
 import {assertServerAiResponseProvenanceReady,observeServerAiResponseProvenance} from "./server-ai-response-provenance";
 import {reserveLabAiPhysicalCall} from "./server-ai-lab-probe";
+import {assertLabMiniMaxPhysicalEndpoint,reserveLabAiDispatchAttempt,settleLabAiDispatchAttempt,type LabSubscriptionDispatchReservation} from "./server-ai-lab-budget-dispatch";
 
 const active=new AsyncLocalStorage<{scope:AiUsageScope;write:AiUsageLedgerWriter}>();
 export const currentServerAiUsageScope=()=>{const scope=active.getStore()?.scope;return scope?{...scope}:undefined;};
@@ -35,13 +36,13 @@ export function serverAiUsageRoute(config:ServerAiConfig,protocol:AiUsageProtoco
   ])).digest("hex")};
 }
 
-async function start(details:AiUsageRoute,attempt:number,granularity:AiUsageRequestStarted["granularity"]){
+async function start(details:AiUsageRoute,attempt:number,granularity:AiUsageRequestStarted["granularity"],callId=randomUUID(),reservation?:LabSubscriptionDispatchReservation){
   const context=active.getStore();if(!context)return undefined;
-  const request=AiUsageRequestStartedSchema.parse({schemaVersion:"ai-usage-request-v1",callId:randomUUID(),scope:context.scope,
+  const request=AiUsageRequestStartedSchema.parse({schemaVersion:"ai-usage-request-v1",callId,scope:context.scope,
     route:details,attempt,granularity,startedAt:new Date().toISOString()});
   try{await context.write({kind:"request-start",request});}
   catch{throw Object.assign(new Error("AI 请求用量起始记录未持久化；尚未发送该请求。"),{code:"AI_USAGE_START_NOT_RECORDED"});}
-  return {request,write:context.write,clock:performance.now()};
+  return {request,write:context.write,clock:performance.now(),reservation};
 }
 type ActiveCall=Awaited<ReturnType<typeof start>>;
 
@@ -56,17 +57,25 @@ async function finish(call:ActiveCall,raw:unknown,outcome:AiProviderUsageObserva
     // to repeat merely because its telemetry write failed.
     console.warn("AI_USAGE_RESULT_NOT_RECORDED",call.request.callId);
   }
+  await settleLabAiDispatchAttempt(call.reservation,observation);
 }
 
 /** Each physical connection retry gets its own durable start/result pair. */
 export async function fetchServerAiProviderUsage(config:ServerAiConfig,protocol:Exclude<AiUsageProtocol,"ai-sdk">,operation:AiOperation,url:string,init:RequestInit){
   assertServerAiResponseProvenanceReady(currentServerAiUsageScope(),init.body);
+  if(process.env.EVOLUTION_EXPERIMENT_MODE==="isolated"&&serverControlExecutionBinding()){
+    assertLabMiniMaxPhysicalEndpoint(config,protocol,url);
+  }
   let call:ActiveCall;
-  const response=await fetchAiProvider(url,{...init,signal:serverControlExecutionSignal(init.signal)},{
+  const controlledLab=process.env.EVOLUTION_EXPERIMENT_MODE==="isolated"&&Boolean(serverControlExecutionBinding());
+  const response=await fetchAiProvider(url,{...init,signal:serverControlExecutionSignal(init.signal),
+    ...(controlledLab?{redirect:"error" as const}:{})},{
     beforeAttempt:async attempt=>{
       await assertServerControlExecutionActive();
-      reserveLabAiPhysicalCall();
-      call=await start(serverAiUsageRoute(config,protocol,operation),attempt,"physical-http-attempt");
+      const route=serverAiUsageRoute(config,protocol,operation),callId=randomUUID();
+      const reservation=await reserveLabAiDispatchAttempt({callId,config,route,
+        scope:currentServerAiUsageScope(),body:init.body});
+      call=await start(route,attempt,"physical-http-attempt",callId,reservation);
       await assertServerControlExecutionActive();
     },
     failedAttempt:async(_attempt,reason)=>finish(call,undefined,"transport-error",{transportReason:reason??"unknown"}),

@@ -40,7 +40,7 @@ describe("isolated Lab AI probe fence",()=>{  it("blocks real Lab AI calls outsi
       baseUrl:"https://api.example.test/v1",timeoutMs:1000,protocol:"chat-completions" as const};
     await expect(fetchServerAiProviderUsage(config,"chat-completions","understand",
       "https://api.example.test/v1/chat/completions",{method:"POST",body:"{}"}))
-      .rejects.toMatchObject({code:"LAB_DURABLE_AI_BUDGET_REQUIRED"});
+      .rejects.toMatchObject({code:"LAB_SUBSCRIPTION_BUDGET_REQUIRED"});
     expect(fetchMock).not.toHaveBeenCalled();
   });
   it("does not transfer a spent budget into a new request context",async()=>{

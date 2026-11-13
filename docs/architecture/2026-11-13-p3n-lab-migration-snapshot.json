@@ -1,0 +1,205 @@
+{
+  "schemaVersion": "evolve-lab-migration-snapshot-v1",
+  "labProjectRef": "jnlbqgpezenmpksyklme",
+  "capturedDate": "2026-11-13",
+  "source": "Read-only Supabase schema_migrations: SHA-256 of each stored SQL statement[1] (28 applied)",
+  "securityNote": "Verified on 2026-11-13: 28 applied SQL statements. This offline snapshot is not a deploy authorization; refresh from live Lab before any further release.",
+  "migrations": [
+    {
+      "version": "20261112020957",
+      "name": "backend_foundation",
+      "statementCount": 1,
+      "bytes": 5292,
+      "sha256": "91cfb51b99e6ef5e611b69c888a6b13799b2d2483f8d3599d301bccfd0093344"
+    },
+    {
+      "version": "20261112021001",
+      "name": "enable_realtime",
+      "statementCount": 1,
+      "bytes": 702,
+      "sha256": "3491d1027afdb2a3ce4fe5435e9ad76b483c61f383b74367883346c363282376"
+    },
+    {
+      "version": "20261112021006",
+      "name": "job_metadata",
+      "statementCount": 1,
+      "bytes": 423,
+      "sha256": "fa3096b1dc05b1f02cb041ce6331d289b9304e30a5b061f4b93b65e701dd6cad"
+    },
+    {
+      "version": "20261112021010",
+      "name": "organization_capabilities",
+      "statementCount": 1,
+      "bytes": 2506,
+      "sha256": "1e3be7879b1eb86fde22fa05a29c6909f1c77a76e8f704a8e4109a73039768ec"
+    },
+    {
+      "version": "20261112021014",
+      "name": "evidence_ledger",
+      "statementCount": 1,
+      "bytes": 5526,
+      "sha256": "37861cf541f4ae8e48a7037ecce03159bd1f10a075cff5e35e1b1d0aa69a03ab"
+    },
+    {
+      "version": "20261112021019",
+      "name": "release_approval_grants",
+      "statementCount": 1,
+      "bytes": 1111,
+      "sha256": "5f70dd9897002014f1ca2436675fafb22f09f0b6d19c5708f9035c9e2d431d99"
+    },
+    {
+      "version": "20261112021023",
+      "name": "server_data_plane_security",
+      "statementCount": 1,
+      "bytes": 2402,
+      "sha256": "4fc6847258b322cd7e3321b975c13dd5a85dad509efbbdfddf6d9242b9145554"
+    },
+    {
+      "version": "20261112021027",
+      "name": "outcome_metric_samples",
+      "statementCount": 1,
+      "bytes": 1511,
+      "sha256": "3bedf980849b1972e5c3bc6d04d03ea219ba6b36ac875b8d564163f2c76e0168"
+    },
+    {
+      "version": "20261112021033",
+      "name": "capability_pgvector",
+      "statementCount": 1,
+      "bytes": 2177,
+      "sha256": "aeb38f95638b4e6bdd1e6b968fa03bad970d096ae628ef0207fc9e4227401d94"
+    },
+    {
+      "version": "20261112021126",
+      "name": "capability_sharing_rbac",
+      "statementCount": 1,
+      "bytes": 3387,
+      "sha256": "6fa9688e67dc7a09df3939983e2f4826c138c9c3582714679b6e0762ad54081c"
+    },
+    {
+      "version": "20261112021131",
+      "name": "server_vault",
+      "statementCount": 1,
+      "bytes": 1275,
+      "sha256": "12010c7debb7608ba50e6268a4f6e153d7fd34c33418110000424d6dfab6d4d1"
+    },
+    {
+      "version": "20261112021135",
+      "name": "organization_member_directory",
+      "statementCount": 1,
+      "bytes": 1281,
+      "sha256": "0781c44cc5a7f8e1cc76486f3ea95c0a6424d372f40632daf7112395259034b1"
+    },
+    {
+      "version": "20261112021205",
+      "name": "security_invariants",
+      "statementCount": 1,
+      "bytes": 6651,
+      "sha256": "79354cabc0e0addfe850b52bc78bcc65d7cb792f9cb7b1a1bb94fa75052919b4"
+    },
+    {
+      "version": "20261112021210",
+      "name": "mission_revision_cas_security_invariants",
+      "statementCount": 1,
+      "bytes": 9046,
+      "sha256": "de9fc0a3d7767586aacadf2214368a504010330d33778c2922bcbbcee27723ad"
+    },
+    {
+      "version": "20261112021216",
+      "name": "job_monotonic_security_invariants",
+      "statementCount": 1,
+      "bytes": 14775,
+      "sha256": "7e6caa543c655204f6801fb37da727abe3bafddd8e572085e07541fe628a9f13"
+    },
+    {
+      "version": "20261112021221",
+      "name": "workflow_run_binding_security_invariants",
+      "statementCount": 1,
+      "bytes": 8559,
+      "sha256": "548b11e9c45048bf3511bcabb9b3134540887a14002fa8230e63cd6b77cabe84"
+    },
+    {
+      "version": "20261112021244",
+      "name": "job_lifecycle_security_invariants",
+      "statementCount": 1,
+      "bytes": 22742,
+      "sha256": "81597b1ab950c4e8fbabb9fcc4c691c6c3a7e69da5d9b6660865d5fe292b9193"
+    },
+    {
+      "version": "20261112021248",
+      "name": "artifact_identity_security_invariants",
+      "statementCount": 1,
+      "bytes": 9704,
+      "sha256": "4a1449c63de718e2d03e2165e43b4031036f51fb3f456c15829b28816c1bbb26"
+    },
+    {
+      "version": "20261112021254",
+      "name": "artifact_evidence_retention_security_invariants",
+      "statementCount": 1,
+      "bytes": 12025,
+      "sha256": "fda43c7f1bab88679511d185defe2148dd7ef30abd45918596b0fcd766e0913a"
+    },
+    {
+      "version": "20261112021315",
+      "name": "artifact_blob_cleanup_security_invariants",
+      "statementCount": 1,
+      "bytes": 11564,
+      "sha256": "e2154b93091d2ac6a10ed083bd0a82af60e67d89a2a472fe9a4350eb9bd9399f"
+    },
+    {
+      "version": "20261112021320",
+      "name": "html_campaign_start_security_invariants",
+      "statementCount": 1,
+      "bytes": 12293,
+      "sha256": "622527886fa94ad89784882d30904c26adb177c9469bfcdaeb3afd128ee7dec8"
+    },
+    {
+      "version": "20261112021325",
+      "name": "control_mission_cancellation_fence",
+      "statementCount": 1,
+      "bytes": 2106,
+      "sha256": "0304b39c316abcaae24f06e220868ea9add156d5ad03b023aa8ee8b17960245e"
+    },
+    {
+      "version": "20261112021346",
+      "name": "bounded_mission_page_read",
+      "statementCount": 1,
+      "bytes": 1154,
+      "sha256": "f26332f41c91f2b58cefc80846d3157b63b5ce4433feda9ed0710cd63d9d23e2"
+    },
+    {
+      "version": "20261112021352",
+      "name": "bounded_mission_lookup",
+      "statementCount": 1,
+      "bytes": 870,
+      "sha256": "49d0391b7527c21cc6dd7ac445c8a4652e2462e908a9952f2c7b325e67cd543a"
+    },
+    {
+      "version": "20261112070619",
+      "name": "lab_ai_budget_security_invariants",
+      "statementCount": 1,
+      "bytes": 11739,
+      "sha256": "c19b1303718cf7dbc0f7a6978c20e9603e6ae2cfd2a6e04fffccb8e218ac5137"
+    },
+    {
+      "version": "20261112072412",
+      "name": "lab_ai_unsettled_reservation_fence_security_invariants",
+      "statementCount": 1,
+      "bytes": 3398,
+      "sha256": "7d81c255a04d53d0236c3a44027b6b0492844a787b2f3bf41dbd628554509941"
+    },
+    {
+      "version": "20261112093700",
+      "name": "lab_minimax_subscription_quota_security_invariants",
+      "statementCount": 1,
+      "bytes": 15203,
+      "sha256": "88b1ffc2770375182f24b764013a4af70009df7e13c98c90a02107817da3101e"
+    },
+    {
+      "version": "20261113040607",
+      "name": "mission_job_parent_and_delete_audit_security_invariants",
+      "statementCount": 1,
+      "bytes": 5911,
+      "sha256": "001625bff6f9af65b236b60164c41cbefc3c65ef18d4335061c8f0145bd87338"
+    }
+  ]
+}

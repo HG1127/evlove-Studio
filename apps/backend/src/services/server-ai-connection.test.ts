@@ -13,13 +13,14 @@ vi.mock("./server-vault",()=>({
 import {
   getServerAiConnectionStatus,resolveServerAiConfig,saveServerAiConnection,
   withExplicitServerAiConnection,withServerAiConnection,withServerAiJudgeProbe,resolveServerAiOperationConfig,
+  resolveServerAiConfigForRole,
 } from "./server-ai-connection";
 
 const input={  connectionId:"custom-a",label:"我的自定义模型",baseUrl:"https://models.example.test/v1/chat/completions/",
   model:"arbitrary-model-id",apiKey:"private-key-never-return",
   protocol:"chat-completions" as const,responseFormat:"json-object" as const,
 };
-const keys=["NODE_ENV","EVOLUTION_AI_API_KEY","OPENAI_API_KEY","EVOLUTION_AI_MODEL","OPENAI_MODEL","EVOLUTION_AI_BASE_URL","VERCEL","VERCEL_ENV","VERCEL_OIDC_TOKEN","EVOLUTION_AI_GATEWAY_ENABLED","EVOLUTION_AI_TIMEOUT_MS","OPENAI_TIMEOUT_MS","EVOLUTION_AI_REASONING_EFFORT","EVOLUTION_AI_JUDGE_REASONING_EFFORT"];
+const keys=["NODE_ENV","EVOLUTION_AI_API_KEY","OPENAI_API_KEY","EVOLUTION_AI_MODEL","OPENAI_MODEL","EVOLUTION_AI_BASE_URL","VERCEL","VERCEL_ENV","VERCEL_OIDC_TOKEN","EVOLUTION_AI_GATEWAY_ENABLED","EVOLUTION_AI_TIMEOUT_MS","OPENAI_TIMEOUT_MS","EVOLUTION_AI_REASONING_EFFORT","EVOLUTION_AI_JUDGE_REASONING_EFFORT","EVOLUTION_EXPERIMENT_MODE"];
 const previous=new Map<string,string|undefined>();
 beforeEach(()=>{
   for(const key of keys){previous.set(key,process.env[key]);delete process.env[key];}
@@ -130,6 +131,40 @@ describe("user-selected backend AI connection",()=>{
     expect(vault.resolve).toHaveBeenCalledWith("server-ai-default-connection-v1","ai:default-connection");
   });
 
+  it("resolves the existing generation and Judge Vault credentials server-side without exposing them in status",async()=>{
+    vault.metadata.mockImplementation(async(id:string)=>id==="server-ai-judge-connection-v1"?{version:2}:{version:4});
+    vault.resolve.mockImplementation(async(id:string)=>JSON.stringify({
+      ...input,model:id==="server-ai-judge-connection-v1"?"MiniMax-M3.1-Flash-Preview":"MiniMax-M3.1-Flash",
+      apiKey:id==="server-ai-judge-connection-v1"?"judge-subscription-secret":"generation-subscription-secret",
+      baseUrl:"https://api.minimax.io/v1",version:"server-ai-connection-v1",
+    }));
+    const [generation,judge]=await Promise.all([
+      resolveServerAiConfigForRole("generation"),resolveServerAiConfigForRole("judge"),
+    ]);
+    expect(generation).toMatchObject({model:"MiniMax-M3.1-Flash",apiKey:"generation-subscription-secret"});
+    expect(judge).toMatchObject({model:"MiniMax-M3.1-Flash-Preview",apiKey:"judge-subscription-secret"});
+    const publicJudge=await getServerAiConnectionStatus("judge");
+    expect(JSON.stringify(publicJudge)).not.toContain("judge-subscription-secret");
+    expect(JSON.stringify(publicJudge)).not.toContain("generation-subscription-secret");
+  });
+
+  it("never uses an explicit draft or environment credential instead of a saved role in isolated Lab",async()=>{
+    process.env.EVOLUTION_EXPERIMENT_MODE="isolated";
+    process.env.EVOLUTION_AI_API_KEY="ENV_FALLBACK_MUST_NOT_BE_USED";
+    const noVault=await withExplicitServerAiConnection(input,()=>resolveServerAiConfigForRole("generation"));
+    expect(noVault).toBeUndefined();
+    vault.metadata.mockImplementation(async()=>({version:4}));
+    vault.resolve.mockImplementation(async id=>JSON.stringify({...input,
+      model:id==="server-ai-judge-connection-v1"?"MiniMax-M3.1-Flash":"MiniMax-M2.7-highspeed",
+      apiKey:"SYNTHETIC_SAVED_VAULT_ONLY",version:"server-ai-connection-v1"}));
+    const saved=await withExplicitServerAiConnection(input,()=>resolveServerAiConfigForRole("generation"));
+    const judge=await withExplicitServerAiConnection(input,()=>resolveServerAiConfigForRole("judge"));
+    expect(saved).toMatchObject({model:"MiniMax-M2.7-highspeed",apiKey:"SYNTHETIC_SAVED_VAULT_ONLY"});
+    expect(judge).toMatchObject({model:"MiniMax-M3.1-Flash",apiKey:"SYNTHETIC_SAVED_VAULT_ONLY"});
+    expect(saved).not.toMatchObject({apiKey:input.apiKey});
+    expect(saved).not.toMatchObject({apiKey:"ENV_FALLBACK_MUST_NOT_BE_USED"});
+  });
+
   it("uses a saved user connection before any Gateway or environment defaults",async()=>{
     process.env.VERCEL="1";
     process.env.EVOLUTION_AI_GATEWAY_ENABLED="true";
@@ -140,7 +175,6 @@ describe("user-selected backend AI connection",()=>{
       mode:"openai-compatible",apiKey:input.apiKey,model:input.model,protocol:"chat-completions",
     });
   });
-
   it("keeps a single route pinned for a complete evaluation despite saved connection changes",async()=>{
     vault.resolve.mockResolvedValueOnce(JSON.stringify({...input,version:"server-ai-connection-v1"}))
       .mockResolvedValue(JSON.stringify({...input,model:"changed",version:"server-ai-connection-v1"}));

@@ -1,6 +1,7 @@
 import {AsyncLocalStorage} from "node:async_hooks";
 import type {EvolutionJob,EvolutionWorkflowRunInput,ProductionRuntimePorts} from "@evolution/contracts";
 import {buildWorkflowControlJobUpdate} from "@evolution/harness";
+import {assertLabWorkflowPermit} from "./lab-workflow-permit";
 
 export class ServerControlExecutionStoppedError extends Error {
   readonly code="SERVER_CONTROL_EXECUTION_STOPPED";
@@ -52,24 +53,37 @@ export async function withServerControlExecution<T>(
     check:async()=>{
       try{
         controller.signal.throwIfAborted();
-        buildWorkflowControlJobUpdate(await readJob(input.controlJobId),input,{status:"running"},new Date().toISOString());
+        const job=await readJob(input.controlJobId);
+        assertLabWorkflowPermit(input,job);
+        buildWorkflowControlJobUpdate(job,input,{status:"running"},new Date().toISOString());
       }catch{
         controller.abort(new ServerControlExecutionStoppedError());
         throw controller.signal.reason;
       }
     }};
   return active.run(execution,async()=>{
-    await assertServerControlExecutionActive();
-    executions.add(execution);
-    let checking=false;
-    const timer=setInterval(()=>{
-      if(checking||controller.signal.aborted)return;
-      checking=true;
-      void execution.check().catch(()=>undefined).finally(()=>{checking=false;});
-    },pollMs);
-    timer.unref();
-    try{return await work();}
-    finally{clearInterval(timer);executions.delete(execution);}
+    let deadlineTimer:ReturnType<typeof setTimeout>|undefined;
+    if(input.labExperiment&&process.env.EVOLUTION_EXPERIMENT_MODE==="isolated"){
+      const remaining=Date.parse(input.labExperiment.deadlineAt)-Date.now();
+      if(remaining<=0)controller.abort(new ServerControlExecutionStoppedError());
+      else{
+        deadlineTimer=setTimeout(()=>controller.abort(new ServerControlExecutionStoppedError()),remaining);
+        deadlineTimer.unref();
+      }
+    }
+    try{
+      await assertServerControlExecutionActive();
+      executions.add(execution);
+      let checking=false;
+      const timer=setInterval(()=>{
+        if(checking||controller.signal.aborted)return;
+        checking=true;
+        void execution.check().catch(()=>undefined).finally(()=>{checking=false;});
+      },pollMs);
+      timer.unref();
+      try{return await work();}
+      finally{clearInterval(timer);executions.delete(execution);}
+    }finally{if(deadlineTimer)clearTimeout(deadlineTimer);}
   });
 }
 

@@ -165,6 +165,47 @@ describe("immutable evidence ledger",()=>{
     expect(paths[1]).toContain("id=eq.event-ledger-evt-retry");
   });
 
+  it("mirrors a database MissionDeleted audit into a verifiable HMAC ledger after its Mission row is gone",async()=>{
+    configure(); // Synthetic signing key only; no real Vault access.
+    const event=createEvolutionEvent({
+      id:"mission-deleted:synthetic-audit",missionId:"deleted-mission",
+      type:"MissionDeleted",source:"backend-mission-delete",
+      payload:{actorId:"operator-fixture",actorRole:"operator",deletedRevision:3,
+        deletedAt:"2026-11-13T00:00:00.000Z"},
+      at:"2026-11-13T00:00:00.000Z",
+    });
+    const calls:string[]=[];
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
+      const url=String(input);calls.push(url);
+      expect(url).toContain("/rpc/append_evidence_ledger");
+      const payload=JSON.parse(String(init?.body??"{}")) as Record<string,unknown>;
+      expect(payload).toMatchObject({
+        p_id:"event-ledger-mission-deleted:synthetic-audit",p_mission_id:"deleted-mission",
+        p_event_id:event.id,p_decision:"MissionDeleted",
+      });
+      const contentHash=String(payload.p_content_hash),entryId=String(payload.p_id);
+      const row={
+        id:entryId,workspace_id:"workspace-test",mission_id:"deleted-mission",sequence:1,
+        kind:"event",source:"backend-mission-delete",actor:"evolution-runtime",
+        event_id:event.id,job_id:null,checkpoint_id:null,model_ref:null,
+        prompt_version:null,test_version:null,decision:"MissionDeleted",
+        payload:payload.p_payload,artifact_refs:[],content_hash:contentHash,
+        signature:payload.p_signature,signature_key_id:"test-key-v1",
+        previous_hash:null,chain_hash:chain(undefined,contentHash,1,entryId),created_at:event.at,
+      };
+      return new Response(JSON.stringify([row]),{status:200});
+    }));
+    const mirrored=await mirrorEvolutionEventToEvidenceLedger(event);
+    expect(mirrored).toMatchObject({eventId:event.id,missionId:"deleted-mission",
+      signatureKeyId:"test-key-v1"});
+    if(!mirrored)throw new Error("Expected a deletion Event signature receipt");
+    const verify=await createEventEvidenceVerifier();
+    expect(verify(event,mirrored)).toBe(true);
+    expect(verify({...event,payload:{...event.payload,actorId:"forged"}},mirrored)).toBe(false);
+    expect(verify({...event,payload:{...event.payload,deletedRevision:999}},mirrored)).toBe(false);
+    expect(calls).toHaveLength(1);
+  });
+
   it("refuses an Event mirror ID occupied by different Evidence",async()=>{
     configure();
     const event=createEvolutionEvent({

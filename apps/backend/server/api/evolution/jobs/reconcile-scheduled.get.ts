@@ -6,6 +6,7 @@ import {
 } from "../../../../src/services/scheduled-job-reconciliation";
 import {cleanupArtifactBlobs} from "../../../../src/services/artifact-blob-cleanup";
 import {serverSupabaseSecureConfigured} from "../../../../src/server-env";
+import {assertLabReconciliationReady} from "../../../../src/services/lab-reconciliation-preflight";
 
 export default defineEventHandler(async(event)=>{
   const secret=process.env.CRON_SECRET?.trim();
@@ -15,11 +16,26 @@ export default defineEventHandler(async(event)=>{
   if(!scheduledReconciliationAuthorized(getHeader(event,"authorization"),secret)){
     throw createError({statusCode:401,statusMessage:"Unauthorized"});
   }
+  // Run the isolated-Lab integrity gate BEFORE the first repair or cleanup.
+  // Checking the result afterwards cannot undo changes already made.
+  if(process.env.EVOLUTION_EXPERIMENT_MODE==="isolated"){
+    try{await assertLabReconciliationReady();}
+    catch{
+      throw createError({statusCode:503,
+        statusMessage:"Lab Mission integrity blocks automatic reconciliation"});
+    }
+  }
   let jobs:Awaited<ReturnType<typeof runScheduledJobReconciliation>>;
   try{jobs=await runScheduledJobReconciliation();}
   catch(error){
     console.error("Scheduled Job reconciliation failed",scheduledReconciliationFailureDiagnostic(error));
     throw error;
+  }
+  if(jobs.orphaned){
+    console.error("Scheduled Job reconciliation found missing Missions",{
+      orphaned:jobs.orphaned,
+    });
+    throw createError({statusCode:503,statusMessage:"Scheduled Job reconciliation requires Mission ownership review"});
   }
   if(!serverSupabaseSecureConfigured()){
     throw createError({statusCode:503,statusMessage:"Scheduled Artifact cleanup needs a server credential"});
