@@ -17,7 +17,9 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { getAiProviderStatus } from "../ai/service";
+import {ExperimentModelProvenance} from "./experiment-model-provenance";
+import {getAiProviderStatus} from "../ai/service";
+import {productionRuntimeMode} from "../runtime/production-runtime";
 import type { Candidate, EvolveProject } from "../schemas";
 import { useLocalProjects } from "../runtime/use-local-projects";
 
@@ -43,8 +45,9 @@ export function ExperimentsOverview() {
   const rows = useMemo(() => projects.filter((project) => project.candidates.length > 0 || project.experimentRun.status !== "idle" || project.roundHistory.length > 0 || Boolean(project.searchChampion)), [projects]);
   const [selectedId, setSelectedId] = useState<string | undefined>();
   const selected = rows.find((project) => project.id === selectedId) ?? rows[0];
-  const generator = getAiProviderStatus("plan", selected ? { aiProfile: selected.aiProfile } : undefined);
-  const evaluator = getAiProviderStatus("evaluate", selected ? { aiProfile: selected.aiProfile } : undefined);
+  const localPrototype=productionRuntimeMode()==="local";
+  const plannedGenerator=localPrototype&&selected?getAiProviderStatus("plan",{aiProfile:selected.aiProfile}):undefined;
+  const plannedJudge=localPrototype&&selected?getAiProviderStatus("evaluate",{aiProfile:selected.aiProfile}):undefined;
   const totalCandidates = rows.reduce((sum, project) => sum + Math.max(project.candidates.length, project.evolutionArchive.length), 0);
   const winners = rows.reduce((sum, project) => sum + project.roundHistory.filter((round) => Boolean(round.winnerCandidateId)).length, 0);
   const safetyFails = rows.reduce((sum, project) => sum + project.evolutionArchive.filter((entry) => entry.kind === "failure").length + project.candidates.filter((candidate) => candidate.safety === "FAIL").length, 0);
@@ -54,7 +57,9 @@ export function ExperimentsOverview() {
   const base = selected?.baselineRun.result;
 
   return <div className="space-y-5">
-    <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between"><div><div className="text-xs font-semibold text-indigo-600">Evidence & Experiments</div><h1 className="mt-1 text-3xl font-bold">证据与实验</h1><p className="mt-1 max-w-3xl text-sm leading-6 text-slate-500">解释“为什么系统认为这个版本更好”：统一查看 Candidate 对比、Baseline、Hidden Validation、独立评审、版本血缘与失败证据。它是审计与解释中心，不是普通用户的必经流程。</p></div><div className="flex flex-wrap gap-2"><Badge className="border-indigo-200 bg-indigo-50 text-indigo-700"><Bot className="mr-1 size-3"/>生成：{generator.provider} / {generator.model}</Badge><Badge className="border-emerald-200 bg-emerald-50 text-emerald-700"><ShieldCheck className="mr-1 size-3"/>评测：{evaluator.provider} / {evaluator.model}</Badge></div></div>
+    <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between"><div><div className="text-xs font-semibold text-indigo-600">Evidence & Experiments</div><h1 className="mt-1 text-3xl font-bold">证据与实验</h1><p className="mt-1 max-w-3xl text-sm leading-6 text-slate-500">解释“为什么系统认为这个版本更好”：统一查看 Candidate 对比、Baseline、Hidden Validation、独立评审、版本血缘与失败证据。它是审计与解释中心，不是普通用户的必经流程。</p></div><div className="flex flex-wrap gap-2"><Badge className="border-indigo-200 bg-indigo-50 text-indigo-700"><Bot className="mr-1 size-3"/>生成运行：{selected?(localPrototype&&plannedGenerator?.configured?`本地预设 ${plannedGenerator.provider} / ${plannedGenerator.model}（非运行证据）`:"身份需以 Run / Trace 核验"):"暂无实验记录"}</Badge><Badge className="border-emerald-200 bg-emerald-50 text-emerald-700"><ShieldCheck className="mr-1 size-3"/>评测运行：{selected?(localPrototype&&plannedJudge?.configured?`本地预设 ${plannedJudge.provider} / ${plannedJudge.model}（非运行证据）`:"身份需以 Judge / Trace 核验"):"暂无实验记录"}</Badge></div></div>
+
+    <ExperimentModelProvenance />
 
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <Stat label="Candidate 总数" value={totalCandidates} icon={<FlaskConical className="size-4"/>} tone="indigo" />
@@ -83,7 +88,7 @@ export function ExperimentsOverview() {
         </CardContent></Card>
 
         <div className="grid gap-4 lg:grid-cols-2">
-          <Card><CardContent className="pt-5"><div className="flex items-center gap-2 font-semibold"><TestTube2 className="size-4 text-indigo-600"/>验证协议</div><div className="mt-4 space-y-2 text-xs"><Protocol label="Sandbox / Basic" done={selected.experimentRun.status==='completed'} detail="所有 Candidate 在 Target Adapter 中隔离运行"/><Protocol label="统一 Eval" done={selected.experimentRun.status==='completed'} detail={`Independent Judge：${evaluator.provider} / ${evaluator.model}`}/><Protocol label="Hidden Holdout" done={selected.validationRun.status==='completed'} detail={`${selected.hiddenEvalSuite.length} 个 Candidate 不可见 Case`}/><Protocol label="Release Review" done={selected.validationRun.recommendation==='release'} detail={selected.validationRun.summary || '等待独立发布审查'}/></div></CardContent></Card>
+          <Card><CardContent className="pt-5"><div className="flex items-center gap-2 font-semibold"><TestTube2 className="size-4 text-indigo-600"/>验证协议</div><div className="mt-4 space-y-2 text-xs"><Protocol label="Sandbox / Basic" done={selected.experimentRun.status==='completed'} detail="所有 Candidate 在 Target Adapter 中隔离运行"/><Protocol label="统一 Eval" done={selected.experimentRun.status==='completed'} detail={localPrototype&&plannedJudge?.configured?`本地路由预设（不代表实际实验模型）：${plannedJudge.provider} / ${plannedJudge.model}`:"独立 Judge 的实际模型身份须以本次 Run / Trace / Judge 证据核验；后端保存状态不代表已执行评测。"}/><Protocol label="Hidden Holdout" done={selected.validationRun.status==='completed'} detail={`${selected.hiddenEvalSuite.length} 个 Candidate 不可见 Case`}/><Protocol label="Release Review" done={selected.validationRun.recommendation==='release'} detail={selected.validationRun.summary || '等待独立发布审查'}/></div></CardContent></Card>
           <Card><CardContent className="pt-5"><div className="flex items-center gap-2 font-semibold"><GitBranch className="size-4 text-indigo-600"/>版本血缘与实验结论</div><div className="mt-4 flex items-center gap-2 text-xs"><span className="rounded-xl border bg-slate-50 px-3 py-2 font-semibold">{selected.version}</span><ArrowRight className="size-3.5 text-slate-300"/><div className="flex flex-wrap gap-1">{selected.candidates.map((candidate)=><span key={candidate.id} title={candidate.id} className={`max-w-40 truncate rounded-xl border px-3 py-2 font-semibold ${candidate.id===winner?.id?'border-emerald-200 bg-emerald-50 text-emerald-700':'bg-white text-slate-500'}`}>{candidate.id}</span>)}</div></div><div className="mt-4 rounded-xl border bg-slate-50 p-3 text-xs leading-5 text-slate-500">{selected.experimentRun.summary || '实验尚未完成。运行后这里会记录 Winner 选择理由、Hard Gate 淘汰原因和非 Winner 的保留价值。'}</div></CardContent></Card>
         </div>
       </div>}
