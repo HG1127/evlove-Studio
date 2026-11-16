@@ -6,8 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { deleteLocalProject, markDemoRemoved, saveLocalProject } from "../runtime/local-store";
-import { composeProjects } from "../runtime/use-local-projects";
+import { deleteLocalProject, markDemoRemoved, saveLocalProject, listLocalProjects, directoryRemovedMissionIds } from "../runtime/local-store";
+import { useLocalProjects } from "../runtime/use-local-projects";
+import {useProductionSyncStatus} from "../runtime/use-production-sync-status";
 import { getLiveRun, getRunTask, shouldResumeTask, subscribeLiveRuns } from "../runtime/run-manager";
 import { EvolveProjectSchema, type EvolveProject, type Stage } from "../schemas";
 
@@ -65,13 +66,14 @@ function loadSavedFilters(): { dept: string; stage: Stage | "all"; sort: SortKey
 
 
 export function ProjectsList() {
-  const [projects, setProjects] = useState<EvolveProject[]>(composeProjects);
-  useEffect(() => {
-    const refresh = () => setProjects(composeProjects());
-    refresh();
-    window.addEventListener("evolve-projects-changed", refresh);
-    return () => window.removeEventListener("evolve-projects-changed", refresh);
-  }, []);
+  const projects=useLocalProjects();
+  const sync=useProductionSyncStatus();
+  const isHttp=sync.mode==="http";
+  const confirmed=isHttp&&sync.realtimeStatus==="http-polling";
+  // Local drafts remain recoverable but cannot be counted as server Missions.
+  const knownIds=new Set(projects.map(project=>project.id));
+  const removed=directoryRemovedMissionIds();
+  const localUnconfirmed=isHttp?listLocalProjects().filter(item=>item.id!=="demo"&&!knownIds.has(item.id)&&!removed.has(item.id)):[];
 
   // 运行状态徽标：项目卡上直接看到「正在后台运行」或「刷新被打断 · 打开自动续跑」，
   // 不用点进项目才知道有没有任务在跑。
@@ -193,6 +195,11 @@ export function ProjectsList() {
   return <div className="space-y-5">
     <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><div className="text-xs font-semibold text-indigo-600">Projects</div><h1 className="mt-1 text-3xl font-bold">我的进化项目</h1><p className="mt-1 text-sm text-slate-500">跟踪材料理解、自动改进和验收进度，随时对照原版、查看成果。</p></div><div className="flex gap-2"><Button variant="secondary" onClick={() => importInputRef.current?.click()}><Upload className="size-4" />导入项目</Button><Link to="/"><Button><Plus className="size-4" />新建项目</Button></Link></div><input ref={importInputRef} type="file" accept=".json,application/json" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) void handleImportFile(file); e.target.value = ""; }} /></div>
 
+    {isHttp&&<div role="status" className={confirmed?"rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs leading-5 text-emerald-900":"rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-900"}>
+      <b>{confirmed?"服务端项目目录已核验":"服务端 Mission 尚未完成同步核验"}</b>
+      <p>{confirmed?"本页真实项目数量只包括服务端确认身份的 Mission；浏览器历史缓存与待同步草稿单独列出。":"核验完成前不把浏览器缓存视为真实 Mission，也不把暂时的零记录解释为真实空库。"} {localUnconfirmed.length>0?`另有 ${localUnconfirmed.length} 条本地记录待核实。`:""}</p>
+    </div>}
+
     {importNote && (
       <div className={`flex items-start justify-between gap-3 rounded-2xl border px-4 py-3 text-sm ${importNote.tone === "ok" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-rose-200 bg-rose-50 text-rose-800"}`}>
         <span>{importNote.text}</span>
@@ -224,7 +231,7 @@ export function ProjectsList() {
       {hasFilter && <Button size="sm" variant="ghost" onClick={clearFilters}>清除筛选</Button>}
     </div>
 
-    {sorted.length === 0 ? <Card><CardContent className="py-12 text-center text-sm text-slate-400">没有匹配的项目，试试调整搜索词或清除筛选。</CardContent></Card> : (
+    {sorted.length === 0 ? <Card><CardContent className="py-12 text-center text-sm text-slate-400">{isHttp&&!confirmed?"正在等待服务端项目核验，尚不展示未确认项目。":isHttp&&!hasFilter?"当前没有已获服务端确认的项目；本地记录见下方独立列表。":"没有匹配的项目，试试调整搜索词或清除筛选。"}</CardContent></Card> : (
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {sorted.map((project) => {
           const updated = timeAgo(project.updatedAt);
@@ -273,6 +280,15 @@ export function ProjectsList() {
         })}
       </div>
     )}
+
+    {isHttp&&localUnconfirmed.length>0&&<section aria-label="未核实的本地记录" className="rounded-2xl border border-amber-200 bg-amber-50/40 p-4">
+      <div className="text-sm font-semibold text-amber-900">浏览器缓存／待同步草稿（{localUnconfirmed.length}）</div>
+      <p className="mt-1 text-xs leading-5 text-amber-800">这些记录尚未获得当前服务端 Mission 身份确认，不计入真实项目、问题、成果统计或全局搜索。保留在本机，支持导出备份；不要将其视为已经完成服务端注册。</p>
+      <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">{localUnconfirmed.map(project=><div key={project.id} className="flex min-w-0 items-center justify-between gap-3 rounded-xl border border-amber-100 bg-white p-3">
+        <div className="min-w-0"><div className="truncate text-xs font-semibold text-slate-800" title={project.name}>{project.name}</div><div className="mt-1 text-[11px] text-amber-700">本地记录 · 服务端未确认</div></div>
+        <Button size="sm" variant="secondary" onClick={()=>exportProject(project)}><Download className="size-3.5"/>导出</Button>
+      </div>)}</div>
+    </section>}
 
     {renameTarget && (
       <div className="fixed inset-0 z-50 grid place-items-center bg-slate-900/40 p-4" onClick={() => setRenameTarget(null)}>
