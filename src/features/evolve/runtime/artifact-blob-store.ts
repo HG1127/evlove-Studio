@@ -9,6 +9,8 @@ import {
 
 const PENDING_UPLOADS_KEY="evolve-studio:artifact-sync:uploads:v1";
 const PENDING_DELETES_KEY="evolve-studio:artifact-sync:deletes:v1";
+// A deletion replay needs proof that this app handled the user delete action.
+const APPROVED_DELETES_KEY="evolve-studio:artifact-sync:explicit-deletes:v1";
 const MAX_PENDING_IDS=2_000;
 const volatilePending=new Map<string,Set<string>>();
 
@@ -49,6 +51,8 @@ function emitArtifactSync(status:"pending"|"synced",error?:unknown){
 }
 function clearOppositeOperation(ids:string[],operation:"upload"|"delete"){
   updatePending(operation==="upload"?PENDING_DELETES_KEY:PENDING_UPLOADS_KEY,ids,false);
+  // A replacement upload revokes any older explicit-delete replay permit.
+  if(operation==="upload")updatePending(APPROVED_DELETES_KEY,ids,false);
 }
 
 export function artifactSyncStatus(){
@@ -102,9 +106,12 @@ export async function deleteArtifactBlob(id:string){
   await deleteLocalArtifactBlob(id);
   clearOppositeOperation([id],"delete");
   if(productionRuntimeMode()==="local")return;
+  // Only an actual HTTP-side delete action may create a remote-delete receipt.
+  updatePending(APPROVED_DELETES_KEY,[id],true);
   try{
     await getProductionRuntime().artifacts.delete(id);
     updatePending(PENDING_DELETES_KEY,[id],false);
+    updatePending(APPROVED_DELETES_KEY,[id],false);
     emitArtifactSync("synced");
   }catch(error){
     updatePending(PENDING_DELETES_KEY,[id],true);
@@ -136,18 +143,25 @@ export async function queueExistingLocalArtifactUploads(ids: string[]) {
   writePending(PENDING_UPLOADS_KEY,uploads);
 }
 
-export async function flushPendingArtifactSync(){
+/** Auto-replay requires the current confirmed Mission reference list.
+ * Unowned older browser outbox entries remain local for review. */
+export async function flushPendingArtifactSync(authorizedUploadIds:ReadonlySet<string>=new Set()){
   if(productionRuntimeMode()==="local")return artifactSyncStatus();
   const remote=getProductionRuntime().artifacts;
   const pendingDeletes=readPending(PENDING_DELETES_KEY);
+  const approvedDeletes=readPending(APPROVED_DELETES_KEY);
   for(const id of [...pendingDeletes]){
+    if(!approvedDeletes.has(id))continue;
     await remote.delete(id);
     pendingDeletes.delete(id);
+    approvedDeletes.delete(id);
     writePending(PENDING_DELETES_KEY,pendingDeletes);
+    writePending(APPROVED_DELETES_KEY,approvedDeletes);
   }
   const pendingUploads=readPending(PENDING_UPLOADS_KEY);
   const missingUploads:string[]=[];
   for(const id of [...pendingUploads]){
+    if(!authorizedUploadIds.has(id))continue;
     const blob=await getLocalArtifactBlob(id);
     if(!blob){
       missingUploads.push(id);
@@ -162,6 +176,7 @@ export async function flushPendingArtifactSync(){
     emitArtifactSync("pending",error);
     throw error;
   }
-  emitArtifactSync("synced");
+  // A held legacy outbox is not an all-synced state; keep its counters intact.
+  if(!pendingUploads.size&&!pendingDeletes.size)emitArtifactSync("synced");
   return artifactSyncStatus();
 }

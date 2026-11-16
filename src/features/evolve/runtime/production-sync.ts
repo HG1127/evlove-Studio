@@ -151,20 +151,41 @@ export async function flushProductionMissionSync(){
   await pushLocalProjection({failOnConflict:true});
 }
 
+/** Only a server-confirmed, non-deleted Mission authorizes legacy Artifact replay. */
+function authorizedArtifactIds(){
+  const deleted=new Set(missionSyncJournal().pendingDeleteIds);
+  return new Set(listLocalProjects()
+    .filter(project=>knownRemoteIds.has(project.id)&&!deleted.has(project.id)&&!missionConflicts.has(project.id))
+    .flatMap(missionBlobReferences));
+}
+
 async function pushLocalJobs(remoteJobsInput?:Awaited<ReturnType<typeof localProductionPorts.jobs.list>>,localJobsInput?:Awaited<ReturnType<typeof localProductionPorts.jobs.list>>){
   if(productionRuntimeMode()==="local"||applyingRemote)return;
   const remote=getProductionRuntime();
   const localJobs=localJobsInput??await localProductionPorts.jobs.list();
   const remoteJobs=remoteJobsInput??await remote.jobs.list();
   const remoteById=new Map(remoteJobs.map((job)=>[job.id,job]));
-  const newer=localJobs.filter((job)=>shouldPushLocalJob(job,remoteById.get(job.id)));
-  await Promise.all(newer.map((job)=>remote.jobs.put(job)));
+  const deleted=new Set(missionSyncJournal().pendingDeleteIds);
+  // Orphaned browser Jobs must remain local: a Job write never creates/repairs
+  // a missing parent Mission. A successfully registered offline Mission enters
+  // knownRemoteIds before this outbox is replayed.
+  const newer=localJobs.filter(job=>typeof job.missionId==="string"&&job.missionId.length>0
+    &&knownRemoteIds.has(job.missionId)&&!deleted.has(job.missionId)
+    &&(!remoteById.has(job.id)||remoteById.get(job.id)?.missionId===job.missionId)
+    &&shouldPushLocalJob(job,remoteById.get(job.id)));
+  await Promise.all(newer.map(job=>remote.jobs.put(job)));
 }
 
 async function pushLocalEvents(){
   if(productionRuntimeMode()==="local"||applyingRemote)return;
   const remote=getProductionRuntime();
+  const deleted=new Set(missionSyncJournal().pendingDeleteIds);
   for(const event of listPendingLocalEvolutionEvents()){
+    // Events with an unverified/missing Mission (or an unbound Job) remain
+    // pending locally. Jobless global audit events are allowed by the schema.
+    if(event.missionId){
+      if(!knownRemoteIds.has(event.missionId)||deleted.has(event.missionId))continue;
+    }else if(event.jobId)continue;
     await remote.events.append(event);
     markLocalEvolutionEventSynced(event.id);
   }
@@ -307,7 +328,7 @@ async function pollHttpProjection(){
     }
     if(recovering)await pushLocalJobs(jobs,localJobsBefore);
     await pushLocalEvents();
-    await flushPendingArtifactSync();
+    await flushPendingArtifactSync(authorizedArtifactIds());
     httpPollFailureCount=0;
     if(missionConflicts.size){
       nextDelay=0;
@@ -375,7 +396,7 @@ export async function initializeProductionSync(){
     const projection=await hydrateRemoteProjection();
     await pushLocalJobs(projection.jobs,projection.localJobs);
     await pushLocalEvents();
-    await flushPendingArtifactSync();
+    await flushPendingArtifactSync(authorizedArtifactIds());
     httpPollFailureCount=0;
     if(missionConflicts.size){
       scheduleHttpPoll(0);

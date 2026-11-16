@@ -113,7 +113,7 @@ describe("production sync bootstrap",()=>{
     const putJob=vi.fn(async()=>undefined);
     configureProductionRuntime({
       ...localProductionPorts,
-      missions:{...localProductionPorts.missions,list:async()=>[],save:async()=>undefined,delete:async()=>undefined},
+      missions:{...localProductionPorts.missions,list:async()=>[{...demoProject,id:"m1"}],save:async()=>undefined,delete:async()=>undefined},
       jobs:{...localProductionPorts.jobs,list:async()=>[remoteJob],put:putJob},
       events:{...localProductionPorts.events,list:async()=>[],append:async()=>undefined},
     },"http");

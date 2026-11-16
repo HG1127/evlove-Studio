@@ -2,6 +2,7 @@ import {afterEach,expect,it,vi} from "vitest";
 import {CandidateSchema,EvolveProjectSchema} from "@evolution/contracts";
 import {demoProject} from "../data/mock-project";
 import {saveLocalProject} from "./local-store";
+import {artifactSyncStatus} from "./artifact-blob-store";
 import {localProductionPorts} from "./local-production-adapters";
 import {configureProductionRuntime,resetProductionRuntime} from "./production-runtime";
 import {initializeProductionSync,productionSyncStatus,stopProductionSync} from "./production-sync";
@@ -45,4 +46,29 @@ it("uploads historical Source and frozen Candidate bytes on first server bootstr
   expect([...stored.keys()].sort()).toEqual(["frozen-byte","source-byte"]);
   expect(await stored.get("source-byte")!.text()).toBe("source original");
   expect(await stored.get("frozen-byte")!.text()).toBe("frozen");
+});
+
+it("only replays Artifact bytes referenced by a confirmed server Mission, retaining unrelated historic outbox rows",async()=>{
+  vi.useFakeTimers();window.localStorage.clear();blobs.clear();
+  const mission=structuredClone(demoProject);
+  mission.id="confirmed-artifact-parent";
+  mission.sourceArtifacts=[{...mission.sourceArtifacts[0]!,id:"owned-source",storageRef:undefined}];
+  saveLocalProject(mission);
+  blobs.set("owned-source",new Blob(["authorized original"],{type:"text/html"}));
+  blobs.set("old-unowned",new Blob(["historical backup"],{type:"text/plain"}));
+  window.localStorage.setItem("evolve-studio:artifact-sync:uploads:v1",JSON.stringify(["old-unowned","owned-source"]));
+  const put=vi.fn(async()=>undefined);
+  configureProductionRuntime({...localProductionPorts,
+    missions:{...localProductionPorts.missions,list:async()=>[mission],save:async()=>undefined,delete:async()=>undefined},
+    jobs:{...localProductionPorts.jobs,list:async()=>[],put:async()=>undefined},
+    events:{...localProductionPorts.events,list:async()=>[],append:async()=>undefined},
+    artifacts:{put,get:async()=>undefined,delete:async()=>undefined},
+  },"http");
+  await initializeProductionSync();
+  expect(put).toHaveBeenCalledWith("owned-source",expect.any(Blob));
+  expect(put).not.toHaveBeenCalledWith("old-unowned",expect.any(Blob));
+  expect(artifactSyncStatus()).toMatchObject({pendingUploads:1,pendingDeletes:0});
+  await vi.advanceTimersByTimeAsync(3_000);
+  expect(put).not.toHaveBeenCalledWith("old-unowned",expect.any(Blob));
+  expect(blobs.has("old-unowned")).toBe(true);
 });

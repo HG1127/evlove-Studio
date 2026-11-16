@@ -39,7 +39,7 @@ describe("artifact degraded sync",()=>{
 
     const recoveredPut=vi.fn(async()=>undefined);
     configureProductionRuntime(runtime({put:recoveredPut,get:async()=>undefined,delete:async()=>undefined}),"http");
-    await flushPendingArtifactSync();
+    await flushPendingArtifactSync(new Set(["artifact-1"]));
 
     expect(recoveredPut).toHaveBeenCalledWith("artifact-1",expect.any(Blob));
     expect(artifactSyncStatus()).toEqual({pendingUploads:0,pendingDeletes:0});
@@ -59,7 +59,7 @@ describe("artifact degraded sync",()=>{
 
     const recoveredDelete=vi.fn(async()=>undefined);
     configureProductionRuntime(runtime({put:async()=>undefined,get:remoteGet,delete:recoveredDelete}),"http");
-    await flushPendingArtifactSync();
+    await flushPendingArtifactSync(new Set([]));
 
     expect(recoveredDelete).toHaveBeenCalledWith("artifact-delete");
     expect(artifactSyncStatus()).toEqual({pendingUploads:0,pendingDeletes:0});
@@ -74,17 +74,85 @@ describe("artifact degraded sync",()=>{
 
     const recoveredPut=vi.fn(async()=>undefined);
     configureProductionRuntime(runtime({put:recoveredPut,get:async()=>undefined,delete:async()=>undefined}),"http");
-    await expect(flushPendingArtifactSync()).rejects.toThrow("1 pending Artifact upload(s) have no local bytes");
+    await expect(flushPendingArtifactSync(new Set(["missing","recoverable"]))).rejects.toThrow("1 pending Artifact upload(s) have no local bytes");
     expect(recoveredPut).toHaveBeenCalledWith("recoverable",expect.any(Blob));
     expect(artifactSyncStatus()).toEqual({pendingUploads:1,pendingDeletes:0});
 
     localBlobs.set("missing",new Blob(["restored"]));
-    await flushPendingArtifactSync();
+    await flushPendingArtifactSync(new Set(["missing"]));
     expect(recoveredPut).toHaveBeenCalledWith("missing",expect.any(Blob));
     expect(artifactSyncStatus()).toEqual({pendingUploads:0,pendingDeletes:0});
   });
 });
 
+
+
+it("holds an unowned historical upload and only replays it when a confirmed Mission references its ID",async()=>{
+  window.localStorage.clear();localBlobs.clear();
+  const id="legacy-unowned",blob=new Blob(["historic backup"],{type:"text/plain"});
+  localBlobs.set(id,blob);
+  window.localStorage.setItem("evolve-studio:artifact-sync:uploads:v1",JSON.stringify([id]));
+  const upload=vi.fn(async()=>undefined);
+  configureProductionRuntime(runtime({put:upload,get:async()=>undefined,delete:async()=>undefined}),"http");
+  try{
+    await flushPendingArtifactSync(new Set());
+    expect(upload).not.toHaveBeenCalled();
+    expect(artifactSyncStatus()).toMatchObject({pendingUploads:1});
+    await flushPendingArtifactSync(new Set([id]));
+    expect(upload).toHaveBeenCalledExactlyOnceWith(id,blob);
+    expect(artifactSyncStatus()).toMatchObject({pendingUploads:0});
+  }finally{resetProductionRuntime();window.localStorage.clear();localBlobs.clear();}
+});
+
+it("keeps legacy deletion tombstones without explicit operator consent",async()=>{
+  window.localStorage.clear();localBlobs.clear();
+  window.localStorage.setItem("evolve-studio:artifact-sync:deletes:v1",JSON.stringify(["old-unbound-delete"]));
+  const remove=vi.fn(async()=>undefined);
+  configureProductionRuntime(runtime({put:async()=>undefined,get:async()=>undefined,delete:remove}),"http");
+  try{
+    await flushPendingArtifactSync(new Set());
+    expect(remove).not.toHaveBeenCalled();
+    expect(artifactSyncStatus()).toMatchObject({pendingDeletes:1});
+  }finally{resetProductionRuntime();window.localStorage.clear();localBlobs.clear();}
+});
+
+
+it("revokes an obsolete delete receipt when the same artifact is re-uploaded",async()=>{
+  window.localStorage.clear();localBlobs.clear();
+  const id="replace-after-offline-delete";
+  localBlobs.set(id,new Blob(["original"]));
+  const offlineDelete=vi.fn(async()=>{throw new Error("offline");});
+  configureProductionRuntime(runtime({put:async()=>undefined,get:async()=>undefined,delete:offlineDelete}),"http");
+  await deleteArtifactBlob(id);
+  expect(artifactSyncStatus()).toMatchObject({pendingDeletes:1});
+  const remoteDelete=vi.fn(async()=>undefined);
+  configureProductionRuntime(runtime({put:async()=>undefined,get:async()=>undefined,delete:remoteDelete}),"http");
+  await putArtifactBlob(id,new Blob(["replacement"]));
+  expect(artifactSyncStatus()).toMatchObject({pendingDeletes:0});
+  // A stale legacy tombstone must not retain the prior explicit-delete permit.
+  window.localStorage.setItem("evolve-studio:artifact-sync:deletes:v1",JSON.stringify([id]));
+  await flushPendingArtifactSync(new Set([id]));
+  expect(remoteDelete).not.toHaveBeenCalled();
+  expect(await localBlobs.get(id)!.text()).toBe("replacement");
+  resetProductionRuntime();window.localStorage.clear();localBlobs.clear();
+});
+
+
+it("does not interpret a local-prototype deletion as consent to delete a remote Artifact",async()=>{
+  window.localStorage.clear();localBlobs.clear();
+  const id="old-local-only-deletion";
+  configureProductionRuntime(runtime({put:async()=>undefined,get:async()=>undefined,delete:async()=>undefined}),"local");
+  localBlobs.set(id,new Blob(["old local only"]));
+  await deleteArtifactBlob(id);
+  const remoteDelete=vi.fn(async()=>undefined);
+  configureProductionRuntime(runtime({put:async()=>undefined,get:async()=>undefined,delete:remoteDelete}),"http");
+  // A historical tombstone lacks any confirmed remote-delete receipt.
+  window.localStorage.setItem("evolve-studio:artifact-sync:deletes:v1",JSON.stringify([id]));
+  await flushPendingArtifactSync(new Set([id]));
+  expect(remoteDelete).not.toHaveBeenCalled();
+  expect(artifactSyncStatus()).toMatchObject({pendingDeletes:1});
+  resetProductionRuntime();window.localStorage.clear();localBlobs.clear();
+});
 
 it("migrates only referenced existing local bytes after switching to HTTP, without reviving deletes",async()=>{
   window.localStorage.clear();localBlobs.clear();
@@ -100,7 +168,7 @@ it("migrates only referenced existing local bytes after switching to HTTP, witho
   await queueExistingLocalArtifactUploads(["source","source","missing","deleted"]);
   expect(artifactSyncStatus()).toEqual({pendingUploads:1,pendingDeletes:1});
   configureProductionRuntime(runtime({put:upload,get:async()=>undefined,delete:async()=>undefined}),"http");
-  await flushPendingArtifactSync();
+  await flushPendingArtifactSync(new Set(["source"]));
   expect(upload).toHaveBeenCalledTimes(1);
   expect(upload).toHaveBeenCalledWith("source",source);
   expect(await localBlobs.get("source")!.text()).toBe("original\u0000bytes");
@@ -123,8 +191,8 @@ it("refuses a corrupt historical content-addressed frozen file before uploading 
 it("does not upload an authenticated remote read cache when bootstrapping historical bytes",async()=>{
  window.localStorage.clear();localBlobs.clear();const upload=vi.fn(async()=>undefined),blob=new Blob(["already stored remotely"],{type:"application/json"});
  configureProductionRuntime(runtime({put:upload,get:async()=>blob,delete:async()=>undefined}),"http");
- try{await getArtifactBlob("remote-read-before-bootstrap",{preferRemote:true});await queueExistingLocalArtifactUploads(["remote-read-before-bootstrap"]);await flushPendingArtifactSync();expect(upload).not.toHaveBeenCalled();expect(await localBlobs.get("remote-read-before-bootstrap")!.text()).toBe("already stored remotely");}
+ try{await getArtifactBlob("remote-read-before-bootstrap",{preferRemote:true});await queueExistingLocalArtifactUploads(["remote-read-before-bootstrap"]);await flushPendingArtifactSync(new Set(["remote-read-before-bootstrap"]));expect(upload).not.toHaveBeenCalled();expect(await localBlobs.get("remote-read-before-bootstrap")!.text()).toBe("already stored remotely");}
  finally{resetProductionRuntime();window.localStorage.clear();localBlobs.clear();}
 });
 
-it("uploads a genuinely edited cached file under the same identity",async()=>{window.localStorage.clear();localBlobs.clear();const upload=vi.fn(async()=>undefined);configureProductionRuntime(runtime({put:upload,get:async()=>new Blob(["remote"]),delete:async()=>undefined}),"http");try{await getArtifactBlob("read-then-local-edit",{preferRemote:true});const changed=new Blob(["local edit"]);localBlobs.set("read-then-local-edit",changed);await queueExistingLocalArtifactUploads(["read-then-local-edit"]);await flushPendingArtifactSync();expect(upload).toHaveBeenCalledWith("read-then-local-edit",changed);}finally{resetProductionRuntime();window.localStorage.clear();localBlobs.clear();}});
+it("uploads a genuinely edited cached file under the same identity",async()=>{window.localStorage.clear();localBlobs.clear();const upload=vi.fn(async()=>undefined);configureProductionRuntime(runtime({put:upload,get:async()=>new Blob(["remote"]),delete:async()=>undefined}),"http");try{await getArtifactBlob("read-then-local-edit",{preferRemote:true});const changed=new Blob(["local edit"]);localBlobs.set("read-then-local-edit",changed);await queueExistingLocalArtifactUploads(["read-then-local-edit"]);await flushPendingArtifactSync(new Set(["read-then-local-edit"]));expect(upload).toHaveBeenCalledWith("read-then-local-edit",changed);}finally{resetProductionRuntime();window.localStorage.clear();localBlobs.clear();}});
