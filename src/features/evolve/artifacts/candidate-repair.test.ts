@@ -22,7 +22,9 @@ function fixture() {
   const acceptance = { ...project.artifactAcceptance, status: "failed" as const, results: [{ criterionId: criterion.id, score: 50, pass: false, evidence: ["下一步缺失"], gaps: ["补齐下一步"], note: "已证实失败" }] };
   return { project, candidate, acceptance, criterion };
 }
-const edit = (content: string, sourceArtifactId = "html") => ({ artifacts: [{ sourceArtifactId, name: "guide.html", mimeType: "text/html", content, notes: [] }], summary: "补齐下一步" });
+const edit = (content: string, sourceArtifactId = "html") => ({ artifacts: [{ sourceArtifactId, name: "guide.html", mimeType: "text/html", content, notes: [] }], summary: "补齐下一步",
+  reflection: { parentCandidateId: "current", rootCause: "验收条件中缺少可执行的下一步", failureCaseIds: ["flow"], mutationRationale: "只修复失败的流程环节", preservedCapabilityIds: [], antiPatternsAvoided: [] },
+});
 beforeEach(() => vi.clearAllMocks());
 
 describe("candidate repair on the current artifact", () => {

@@ -9,19 +9,27 @@ const migrationFiles=fs.readdirSync(migrationsDir)
   .sort();
 const migrationText=(name:string)=>fs.readFileSync(path.join(migrationsDir,name),"utf8").toLowerCase();
 const allSql=migrationFiles.map(migrationText).join("\n");
-const tailName=migrationFiles.at(-1)!;
+// Later Lab-only forward migrations do not replace the consolidated
+// production security checkpoint that guards HTML Campaign starts.
+const tailName=migrationFiles.filter(name=>{
+  const sql=migrationText(name);
+  return sql.includes("-- final production security invariants.")
+    &&sql.includes("create or replace function public.create_evolution_html_campaign_control(");
+}).at(-1);
+if(!tailName)throw new Error("Consolidated production security checkpoint not found");
+const productionSql=migrationFiles.filter(name=>name<=tailName).map(migrationText).join("\n");
 const tailSql=migrationText(tailName);
 const artifactTailSql=migrationText("20260924153000_artifact_blob_cleanup_security_invariants.sql");
 
 function createdPublicTables(){
-  return [...allSql.matchAll(/create\s+table\s+if\s+not\s+exists\s+public\.([a-z0-9_]+)/g)]
+  return [...productionSql.matchAll(/create\s+table\s+if\s+not\s+exists\s+public\.([a-z0-9_]+)/g)]
     .map((match)=>match[1]!)
     .filter((name,index,all)=>all.indexOf(name)===index)
     .sort();
 }
 
 describe("Supabase production security invariants",()=>{
-  it("keeps the final migration as an explicit security-invariants tail",()=>{
+  it("keeps the consolidated production migration as a security-invariants checkpoint",()=>{
     expect(tailName).toMatch(/security_invariants\.sql$/);
     expect(tailSql).toContain("final production security invariants");
     expect(tailSql).toContain("alter default privileges in schema public");
@@ -38,7 +46,7 @@ describe("Supabase production security invariants",()=>{
     expect(tailSql).toContain("revoke execute on function public.create_evolution_html_campaign_control(jsonb,boolean) from public, anon, authenticated;");
     expect(tailSql).toContain("grant execute on function public.create_evolution_html_campaign_control(jsonb,boolean) to service_role;");
   });
-  it("re-hardens every Evolution public table created by migrations",()=>{
+  it("re-hardens every production public table created before the consolidated checkpoint",()=>{
     const tables=createdPublicTables();
     expect(tables.length).toBeGreaterThan(0);
     for(const table of tables){

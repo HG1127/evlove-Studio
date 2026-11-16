@@ -105,7 +105,9 @@ describe("server HTML protection before frozen Artifact writes", () => {
   it("applies the same guard to AI Artifact repair without rewriting the tested Candidate", async () => {
     const args = fixture();
     const tested = await parent(args.content);
-    ai.mockResolvedValue({ summary: "repair", repairedCriteria: ["CONTENT"], artifacts: outputs(html(section("slide-52"))) });
+    ai.mockResolvedValue({ summary: "repair", repairedCriteria: ["CONTENT"], artifacts: outputs(html(section("slide-52"))),
+      reflection: { parentCandidateId: tested.id, rootCause: "缺少失败标准 CONTENT 的具体步骤", failureCaseIds: ["CONTENT"], mutationRationale: "补齐失败步骤且保留旧页面", preservedCapabilityIds: [], antiPatternsAvoided: [] },
+    });
     await expect(repairServerArtifactCandidate({ project: args.project, candidate: tested, failedCriteria: [AcceptanceCriterionSchema.parse({ id: "CONTENT", title: "内容细化", requirement: "补充步骤", artifactIds: ["source"] })], attempt: 1 })).rejects.toThrow(/slide-51/);
     expect(tested.artifactSnapshots[0]!.content).toBe(args.content);
     expect(put).not.toHaveBeenCalled();
