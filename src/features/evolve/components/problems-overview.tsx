@@ -92,7 +92,8 @@ export function ProblemsOverview() {
   const isGroupCollapsed = (projectId: string) => (projectId in expanded ? expanded[projectId]! : !forceOpen);
   const allExpanded = grouped.length > 0 && grouped.every((group) => !isGroupCollapsed(group.project.id));
   const toggleGroup = (projectId: string) => setExpanded((current) => ({ ...current, [projectId]: !isGroupCollapsed(projectId) }));
-  const setAll = (value: boolean) => setExpanded(Object.fromEntries(grouped.map((group) => [group.project.id, value])));
+  // expanded map stores *collapsed* flags, so a request to expand must set false.
+  const setAll = (expand: boolean) => setExpanded(Object.fromEntries(grouped.map((group) => [group.project.id, !expand])));
   useEffect(() => {
     try {
       window.localStorage.setItem(GROUP_EXPANDED_STORAGE_KEY, JSON.stringify(expanded));

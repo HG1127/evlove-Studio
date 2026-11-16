@@ -2,6 +2,7 @@ import { Outlet, Link, useLocation } from "react-router-dom";
 import { AlarmClock, BookOpenCheck, ChevronsUp, CircleHelp, FlaskConical, Home, Layers3, PackageCheck, Rocket, Settings2, ShieldCheck, Waypoints } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { GlobalSearch } from "@/components/global-search";
+import { BuildIdentityBadge } from "@/components/build-identity-badge";
 
 const nav = [
   { href: "/", label: "工作台", icon: Home },
@@ -36,7 +37,7 @@ export function AppShell() {
     <div className="min-w-0 lg:pl-[220px]">
       <header className="sticky top-0 z-30 flex h-14 items-center justify-between bg-white/80 px-5 backdrop-blur-xl">
         <GlobalSearch />
-        <div className="ml-auto flex items-center gap-2"><Link to="/settings" className="grid size-9 place-items-center rounded-xl text-slate-500 hover:bg-slate-100" aria-label="帮助与连接状态"><CircleHelp className="size-4" /></Link><div className="hidden rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-600 sm:block">管理部 · Studio Workspace</div><div className="grid size-8 place-items-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-500 text-xs font-bold text-white">DZ</div></div>
+        <div className="ml-auto flex items-center gap-2"><BuildIdentityBadge /><Link to="/settings" className="grid size-9 place-items-center rounded-xl text-slate-500 hover:bg-slate-100" aria-label="帮助与连接状态"><CircleHelp className="size-4" /></Link><div className="hidden rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-600 sm:block">管理部 · Studio Workspace</div><div className="grid size-8 place-items-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-500 text-xs font-bold text-white">DZ</div></div>
       </header>
       <nav aria-label="移动端导航" className="flex gap-2 overflow-x-auto border-b bg-white px-4 py-2 lg:hidden">{[...nav, ...advancedNav].map(item => <Link key={item.href} to={item.href} aria-current={path === item.href ? "page" : undefined} className={cn("shrink-0 rounded-lg px-3 py-2 text-sm", path === item.href ? "bg-indigo-50 font-semibold text-indigo-700" : "text-slate-600")}>{item.label}</Link>)}</nav>
       <main className="studio-main mx-auto w-full min-w-0 p-4 lg:p-5"><Outlet/></main>

@@ -631,7 +631,7 @@ export function SettingsPanel() {
       icon: <Route className="size-4" />,
       badge: routeSummary.length ? (
         <Badge className={cn("ml-0.5", liveRouteCount ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700")}>
-          {liveRouteCount}/{routeSummary.length} 已配置
+          本地 {liveRouteCount}/{routeSummary.length} 已配置
         </Badge>
       ) : undefined,
     },
@@ -669,10 +669,17 @@ export function SettingsPanel() {
 
 
     {activeTab === "connections" && (<>
+    <div role="note" className="space-y-1 rounded-xl border border-indigo-100 bg-indigo-50/40 px-4 py-3 text-xs leading-5 text-slate-700">
+      <div><b>模型配置分层：</b>浏览器本地 BYOK 连接与后端加密 Vault 是不同的配置来源。本地列表为空不代表后端模型或密钥丢失；已有 Vault 配置无需重新输入 Key。</div>
+      <div><b>后端生成模型：</b>{serverStatusError ? "状态读取失败，不能推断未配置" : !serverStatus ? "读取中，尚未确认" : serverStatus.configured && serverStatus.connection
+        ? `已保存 · ${serverStatus.connection.label} · ${serverStatus.connection.model}（版本 ${serverStatus.revision ?? "待确认"}；真实调用未验证）`
+        : serverStatus.storageConfigured ? "尚未保存后端生成模型" : "后端加密存储未就绪"}</div>
+      <div>独立 Judge 的后端回读状态见下方独立验收卡片。25 个环节的本地路由需要独立配置，不能由其 0/25 状态推断服务端模型不可用。</div>
+    </div>
     <Card>
       <CardHeader><CardTitle className="flex items-center gap-2"><Layers3 className="size-5 text-indigo-600" />供应商连接{connections.length > 0 && <Badge className="border-indigo-200 bg-indigo-50 text-indigo-700">{connections.length} 个连接</Badge>}{connections.filter((item) => item.enabled).length > 0 && <Badge className="border-emerald-200 bg-emerald-50 text-emerald-700">{connections.filter((item) => item.enabled).length} 个启用</Badge>}<span className="ml-auto"><Button variant="secondary" size="sm" disabled={Boolean(batchProgress) || Boolean(busyId)} title="逐个测试每个启用连接的默认模型，刷新连接状态与测通记录" onClick={() => void testAllConnections()}><Stethoscope className={`size-3.5 ${batchProgress?.id === "__all__" ? "animate-pulse" : ""}`} />{batchProgress?.id === "__all__" ? `测试中 ${Math.min(batchProgress.done + 1, batchProgress.total)}/${batchProgress.total}` : "一键测试全部连接"}</Button></span></CardTitle></CardHeader>
       <CardContent className="space-y-3">
-          {connections.length === 0 && <div className="rounded-2xl border border-dashed p-7 text-center text-sm text-slate-400">还没有 AI 连接。添加至少一个供应商，才能启用真实进化。</div>}
+          {connections.length === 0 && <div className="rounded-2xl border border-dashed p-7 text-center text-sm text-slate-400">当前浏览器没有本地供应商连接；请先查看上方的后端 Vault 状态。此处为空不代表后端模型未保存。</div>}
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {connections.map((connection) => {
             const preset = getPreset(connection.providerId);
@@ -699,7 +706,7 @@ export function SettingsPanel() {
             {!selected || !chosenPreset ? <div className="space-y-3 py-1">
               <div className="rounded-2xl border border-dashed p-5 text-center">
                 <div className="text-sm font-semibold text-slate-600">{connections.length ? "选择左侧连接进行配置" : "还没有 AI 连接"}</div>
-                <p className="mt-1 text-xs leading-5 text-slate-400">{connections.length ? "点击左侧任意连接：编辑 Key、同步模型、测试连通，并在下方路由里指定它负责的环节。" : "添加一个供应商连接后，即可同步模型、测试连通，并让每个进化环节用上真实模型。"}</p>
+                <p className="mt-1 text-xs leading-5 text-slate-400">{connections.length ? "点击左侧任意连接：编辑 Key、同步模型、测试连通，并在下方路由里指定它负责的环节。" : "如需配置浏览器本地 BYOK，才需要添加供应商；后端 Vault 中已保存的模型不会因这里为空而删除。"}</p>
                 {!connections.length && <Button size="sm" className="mt-3" onClick={() => addConnection("openai")}><Plus className="size-4" />添加第一个连接</Button>}
               </div>
               <div className="grid gap-2 sm:grid-cols-3">
@@ -795,6 +802,7 @@ export function SettingsPanel() {
         <Card>
           <CardHeader><CardTitle className="flex items-center gap-2"><Route className="size-5 text-indigo-600" />模型路由 · 每个进化环节可独立选择{routeSummary.filter((item) => item.live).length > 0 && <Badge className="border-emerald-200 bg-emerald-50 text-emerald-700">{routeSummary.filter((item) => item.live).length} 个环节 已配置</Badge>}{routeSummary.some((item) => !item.live) && <Badge className="border-amber-200 bg-amber-50 text-amber-700">{routeSummary.filter((item) => !item.live).length} 个环节 Demo/未配置</Badge>}</CardTitle></CardHeader>
           <CardContent className="space-y-4">
+            <p role="note" className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-600">此表的 {routeSummary.filter((item)=>item.live).length}/{routeSummary.length} 是<b>浏览器本地 BYOK 环节路由</b>，不是后端 Vault 保存数量，也不是 Durable Workflow 已真实执行的证据。服务端生成和独立 Judge 的保存状态请查看「连接与模型」。未执行真实探针时应显示“未验证”。</p>
             <div className="flex flex-wrap items-center gap-2 rounded-2xl border bg-slate-50 p-3 text-xs text-slate-600">
               <GitBranch className="size-4 text-indigo-600" /><b>推荐：</b>候选生成和独立评测使用不同模型/供应商，降低“自己生成、自己打分”的偏差。
               {evaluatorWarning && <Badge className="border-amber-200 bg-amber-50 text-amber-700">当前 Evaluator 与 Generator 相同</Badge>}
@@ -883,7 +891,7 @@ export function SettingsPanel() {
         <Separator />
         <section className="space-y-2">
           <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">AI 过程留痕</div>
-      {!auditEvents.length && <div className="rounded-2xl border border-dashed p-6 text-center text-xs text-slate-400">暂无异常留痕 —— 最近 AI 连接都顺利完成了任务。</div>}
+      {!auditEvents.length && <div className="rounded-2xl border border-dashed p-6 text-center text-xs text-slate-400">暂无 AI 运行或异常记录。没有错误记录不代表已成功调用模型；成功结果请以真实 Run 与 Trace 为准。</div>}
       {(auditExpanded ? shownAuditEvents : shownAuditEvents.slice(0, 8)).map((event, index) => {
         const meta = auditKindMeta(event.kind);
         return (

@@ -102,7 +102,7 @@ export function ServerAiConnectionPanel({selected,role="generation"}:{selected?:
         </label>
         <Button disabled={busy||!input||status?.storageConfigured===false} onClick={()=>void act("save")}>{judge?"保存为独立验收模型":"保存为后端默认模型"}</Button>
         <Button variant="secondary" disabled={busy||!input} onClick={()=>void act("test")}>{judge?"测试验收模型连接":"测试后端调用"}</Button>
-      </div>:<p className="text-xs text-slate-500">请先添加或选择“自定义中转（OpenAI 格式）”连接，填写 API Key、Base URL 和模型名。</p>}
+      </div>:<p className="text-xs text-slate-500">如果需要更换后端模型，请选择或添加本地供应商连接；已保存于 Vault 的模型无需再次填写现有 API Key，且此处不执行真实调用。</p>}
       {selected&&compatible&&!input&&<p className="text-xs text-amber-700">请补齐 API Key、有效 Base URL 和完整模型 ID。</p>}
       <div className="flex flex-wrap items-center gap-2">
         {status?.storageConfigured===false&&<p className="text-xs text-amber-700">{status.message}</p>}

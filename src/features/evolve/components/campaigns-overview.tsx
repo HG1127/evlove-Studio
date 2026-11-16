@@ -6,6 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useLocalProjects } from "../runtime/use-local-projects";
 import { nextScheduledAt } from "../runtime/evolution-search";
 import { saveLocalProject } from "../runtime/local-store";
+import { productionRuntimeMode } from "../runtime/production-runtime";
 
 function formatDate(value?: string) {
   if (!value) return "未安排";
@@ -62,7 +63,7 @@ export function CampaignsOverview() {
         </CardContent></Card>;
       })}
     </div>}
-    <div className="rounded-2xl border border-sky-100 bg-sky-50/60 p-4 text-xs leading-5 text-sky-800"><b>生产部署说明：</b>当前前端原型仅在页面打开时触发本地定时器。正式系统应将 Campaign Schedule 持久化到数据库，由后端 Cron / Job Queue / Workflow Worker 负责唤醒，并使用分布式锁保证同一项目不会重复执行。</div>
+    <div className="rounded-2xl border border-sky-100 bg-sky-50/60 p-4 text-xs leading-5 text-sky-800"><b>运行模式说明：</b>{productionRuntimeMode()==="http" ? "当前为服务端 Mission/Workflow 模式。本页仅反映已加载 Campaign 的状态；后端调度、关页续跑、超时及分布式锁必须以真实 Job/Event/Checkpoint 证据单独验收，空列表不代表运行链路已通过。" : "当前为浏览器本地原型，定时唤醒依赖页面保持运行；正式的跨会话调度应由服务端 Workflow/Cron 管理。"}</div>
   </div>;
 }
 function Stat({ icon, label, value }: { icon: React.ReactNode; label: string; value: number }) { return <Card><CardContent className="flex items-center gap-3 pt-5"><div className="grid size-10 place-items-center rounded-xl bg-indigo-50 text-indigo-600">{icon}</div><div><div className="text-2xl font-bold">{value}</div><div className="text-xs text-slate-400">{label}</div></div></CardContent></Card>; }

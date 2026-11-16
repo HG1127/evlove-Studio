@@ -93,7 +93,7 @@ export function LearningsOverview(){
   },[queueFiltered]);
   const activeGroups=filter==='next-queue'?groupedQueue:groupedLessons;
   const allExpanded=activeGroups.length>0&&activeGroups.every((group)=>!isGroupCollapsed(group.project.id));
-  const setAll=(value:boolean)=>setExpanded(Object.fromEntries(activeGroups.map((group)=>[group.project.id,value])));
+  const setAll=(expand:boolean)=>setExpanded(Object.fromEntries(activeGroups.map((group)=>[group.project.id,!expand])));
 
   const applySkill=(lesson:Lesson)=>{
     window.localStorage.setItem(SKILL_SEED_KEY,JSON.stringify({title:lesson.title,summary:lesson.summary,method:lesson.method,trigger:lesson.trigger,limit:lesson.limit,effect:lesson.effect}));

@@ -138,7 +138,7 @@ export const EVOLUTION_HARNESS_COMPONENTS = [
   { id: "budget", title: "Budget / Stop Manager", responsibility: "统一轮数、成本、时间、Patience、Candidate 数量和 Agent Loop 上限。", status: "ready" },
   { id: "failure", title: "Failure Router", responsibility: "区分瞬时故障、能力缺失、输入问题、安全边界和逻辑错误，选择 Retry / Replan / Human。", status: "ready" },
   { id: "checkpoint", title: "Checkpoint / Resume", responsibility: "把现有 Project 持久化与 Run Task 恢复收敛为可复现的 Harness Checkpoint。", status: "local" },
-  { id: "observability", title: "Observability / Evidence", responsibility: "让每次执行都关联 Artifact、Trace、验证状态和下一 Gate；未来迁入不可篡改 Ledger。", status: "local" },
+  { id: "observability", title: "Observability / Evidence", responsibility: "客户端 Harness 收集 Artifact、Trace 和下一 Gate；服务端已具备独立 Evidence Ledger 接口，是否真实写入由后端回执验证。", status: "local" },
 ] as const;
 
 function stableHash(value: string) {
@@ -392,7 +392,7 @@ function toolContracts(project: EvolveProject, operation?: AiOperation): Harness
       retryPolicy: "transient-only",
       evidenceClass: "runtime",
       rollback: "checkpoint",
-      note: "当前证据持久化主要在浏览器；未来迁入 Immutable Evidence Ledger。",
+      note: "本地兼容路径维护浏览器证据；服务端 Evidence Ledger 是否持久化须看真实写入回执，本项 local 不代表服务端没有实现。",
     },
     {
       id: "state-checkpoint",

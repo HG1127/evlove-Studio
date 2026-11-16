@@ -3,22 +3,25 @@ import { useEffect, useState } from "react";
 import { demoProject } from "../data/mock-project";
 import type { EvolveProject } from "../schemas";
 import { isDemoRemoved, listLocalProjects } from "./local-store";
+import { productionRuntimeMode } from "./production-runtime";
 
 /**
- * 统一的项目列表口径：存储里的项目优先（含改名后的示例项目）；
- * 内置示例只在「从未被删除」时补位。列表页、仪表盘、全局搜索共用，
- * 保证在一个入口删掉的项目不会从另一个入口复活。
+ * 本地原型才允许展示 demo；HTTP/Production 的 Mission 集合必须剔除
+ * 内置示例（包括历史本地存储中同 ID 的副本），防止虚构问题/Trace
+ * 混入真实列表、全局搜索、统计并链接到不存在的服务端 Mission。
  */
-export function composeProjects(includeDemo = true): EvolveProject[] {
+export function composeProjects(includeDemo = productionRuntimeMode() === "local"): EvolveProject[] {
   const stored = listLocalProjects();
-  if (!includeDemo) return stored;
+  if (productionRuntimeMode() !== "local" || !includeDemo) {
+    return stored.filter((item) => item.id !== demoProject.id);
+  }
   const storedDemo = stored.find((item) => item.id === demoProject.id);
   const demoEntry = storedDemo ? [storedDemo] : isDemoRemoved() ? [] : [demoProject];
   return [...demoEntry, ...stored.filter((item) => item.id !== demoProject.id)];
 }
 
 export function useLocalProjects(options?: { includeDemo?: boolean }) {
-  const includeDemo = options?.includeDemo ?? true;
+  const includeDemo = options?.includeDemo ?? productionRuntimeMode() === "local";
   const [projects, setProjects] = useState<EvolveProject[]>(() => composeProjects(includeDemo));
 
   useEffect(() => {
