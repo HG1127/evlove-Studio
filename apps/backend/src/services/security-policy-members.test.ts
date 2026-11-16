@@ -1,5 +1,6 @@
 // @vitest-environment node
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
+import {mockEvent} from "nitro/h3";
 
 const directory=vi.hoisted(()=>({
   requireActiveOrganizationMember:vi.fn(),
@@ -15,7 +16,9 @@ const KEYS=[
 const previous=new Map<string,string|undefined>();
 
 function internalEvent(){
-  return {context:{}} as never;
+  // Use a real H3 event, not a fabricated object without request headers.
+  // A non-loopback test host exercises internal-dev RBAC, not the direct local fast path.
+  return mockEvent(new Request("https://workspace.test/api/evolution/permissions", {method:"GET"}));
 }
 
 describe("governed Evolution permission",()=>{

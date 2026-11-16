@@ -12,7 +12,7 @@ function fixture(){
    inputMode:"paste",parseStatus:"ready",textContent:text,artifactKind:"document",structure:[],warnings:[]};
  const project={targetConnection:{adapter:"artifact"},evolutionCommand:"重要结论应当有可核验出处，不编造引用",
    acceptanceRubric:[{id:"USER-PRIMARY-INTENT",source:"user-command",hardGate:true,validationMethod:"semantic-judge",requirement:"重要结论绑定可靠引用来源"}],
-   sourceArtifacts:[source]} as unknown as EvolveProject;
+   sourceArtifacts:[source],baselineRun:{originalReferences:[]}} as unknown as EvolveProject;
  const testCase={id:"H1",title:"核验原版引用能力",input:"重要结论能否附带可信出处？",expected:["来源链接"],tags:[],hidden:true,executionMode:"artifact-runtime",evidenceScope:"product-behavior",criterionIds:["USER-PRIMARY-INTENT"]} as TestCase;
  const artifactContext=[{id:source.id,content:text,originalChars:text.length,truncated:false}];
  return {project,testCase,artifactContext};

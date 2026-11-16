@@ -55,6 +55,8 @@ const mission=(extension:string)=>({
   }],
   targetConnection:{adapter:"artifact",connectionId:"audit-source",status:"connected",label:"HTML Artifact Runtime"},
   campaign:{status:"idle",schedule:{enabled:false}},
+  // Normal persisted Mission state always has ExperimentPolicySchema.
+  experimentPolicy:{confirmationAdmission:undefined},
 });
 function post(idempotencyKey?:string){
   return mockEvent(new Request("http://localhost/api/evolution/start",{
