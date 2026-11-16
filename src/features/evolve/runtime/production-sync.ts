@@ -68,7 +68,8 @@ export async function cachePointMissionProjection(id:string,remote:EvolveProject
     updateMissionSyncJournal(value=>({...value,knownRemoteIds:value.knownRemoteIds.filter(value=>value!==id)}));
   }
   await flushProjectDatabase();
-  return getLocalProject(id);
+  // An HTTP 404 cannot be promoted into a verified Mission from browser cache.
+  return remote?getLocalProject(id):undefined;
 }
 
 async function pushLocalProjection(options?:{
@@ -81,16 +82,22 @@ async function pushLocalProjection(options?:{
   let firstConflict:MissionRevisionConflictError|undefined;
 
   for(const project of projects){
-    if(missionSyncJournal().pendingDeleteIds.includes(project.id))continue;
+    const journal=missionSyncJournal();
+    if(project.id==="demo"||journal.pendingDeleteIds.includes(project.id))continue;
+    // A local cache entry never authorizes a new server Mission. Existing
+    // Missions need a fresh server identity; new Missions need an explicit outbox intent.
+    if(!knownRemoteIds.has(project.id)&&!journal.pendingCreateIds.includes(project.id))continue;
     try{
       await ports.missions.save(project);
       knownRemoteIds.add(project.id);
       updateMissionSyncJournal((current)=>({
         knownRemoteIds:[...new Set([...current.knownRemoteIds,project.id])],
+        pendingCreateIds:current.pendingCreateIds.filter(id=>id!==project.id),
         pendingDeleteIds:getLocalProject(project.id)?current.pendingDeleteIds
           :[...new Set([...current.pendingDeleteIds,project.id])],
       }));
       await flushProjectDatabase();
+      if(typeof window!=="undefined")window.dispatchEvent(new CustomEvent("evolve-mission-registration-changed",{detail:{missionId:project.id}}));
     }catch(error){
       if(error instanceof MissionRevisionConflictError){
         missionConflicts.add(error.missionId);
@@ -107,6 +114,7 @@ async function pushLocalProjection(options?:{
       knownRemoteIds.delete(id);
       updateMissionSyncJournal((current)=>({
         knownRemoteIds:current.knownRemoteIds.filter((known)=>known!==id),
+        pendingCreateIds:current.pendingCreateIds.filter((pending)=>pending!==id),
         pendingDeleteIds:current.pendingDeleteIds.filter((pending)=>pending!==id),
       }));
       await flushProjectDatabase();
@@ -134,6 +142,8 @@ async function pushLocalProjection(options?:{
 }
 
 export async function flushProductionMissionSync(){
+  if(productionRuntimeMode()==="http"&&realtimeStatus!=="http-polling")
+    throw new Error("Mission 服务端身份尚未完成同步核验，禁止直接提交；本地草稿已保留。");
   if(missionTimer){
     window.clearTimeout(missionTimer);
     missionTimer=undefined;
@@ -263,10 +273,11 @@ async function pollHttpProjection(){
     const pendingDeletes=new Set(journal.pendingDeleteIds);
     const localBefore=listLocalProjects();
     const conflictedBefore=new Set(missionConflicts);
-    const localToPush=localBefore.filter((project)=>{
-      if(conflictedBefore.has(project.id)||pendingDeletes.has(project.id))return false;
+    const createIntent=new Set(journal.pendingCreateIds);
+    const localToPush=localBefore.filter(project=>{
+      if(project.id==="demo"||conflictedBefore.has(project.id)||pendingDeletes.has(project.id))return false;
       const remote=remoteById.get(project.id);
-      return remote?project.updatedAt>remote.updatedAt:!previouslyKnown.has(project.id);
+      return remote?project.updatedAt>remote.updatedAt:createIntent.has(project.id)&&!previouslyKnown.has(project.id);
     });
     withRemoteProjection(()=>{
       for(const project of missions){
@@ -284,9 +295,10 @@ async function pollHttpProjection(){
       for(const event of [...events].reverse())cacheLocalEvolutionEvent(event);
       knownRemoteIds=remoteIds;
     });
-    updateMissionSyncJournal((current)=>({
+    updateMissionSyncJournal(current=>({...current,
       knownRemoteIds:[...remoteIds],
-      pendingDeleteIds:current.pendingDeleteIds.filter((id)=>remoteIds.has(id)),
+      pendingCreateIds:current.pendingCreateIds.filter(id=>!remoteIds.has(id)&&!pendingDeletes.has(id)&&localBefore.some(p=>p.id===id)),
+      pendingDeleteIds:current.pendingDeleteIds.filter(id=>remoteIds.has(id)),
     }));
     await flushProjectDatabase();
     for(const id of conflictedBefore)missionConflicts.delete(id);
@@ -333,10 +345,11 @@ export async function initializeProductionSync(){
     const pendingDeletes=new Set(journal.pendingDeleteIds);
     const local=listLocalProjects();
     const remoteById=new Map(remote.map((project)=>[project.id,project]));
-    const localToPush=local.filter((project)=>{
-      if(pendingDeletes.has(project.id))return false;
+    const createIntent=new Set(journal.pendingCreateIds);
+    const localToPush=local.filter(project=>{
+      if(project.id==="demo"||pendingDeletes.has(project.id))return false;
       const current=remoteById.get(project.id);
-      return current?project.updatedAt>current.updatedAt:!previouslyKnown.has(project.id);
+      return current?project.updatedAt>current.updatedAt:createIntent.has(project.id)&&!previouslyKnown.has(project.id);
     });
     const merged=new Map(remoteById);
     for(const id of pendingDeletes)merged.delete(id);
@@ -346,14 +359,15 @@ export async function initializeProductionSync(){
       for(const project of merged.values())saveLocalProject(project);
       knownRemoteIds=remoteIds;
     });
-    updateMissionSyncJournal((current)=>({
+    updateMissionSyncJournal(current=>({...current,
       knownRemoteIds:[...remoteIds],
-      pendingDeleteIds:current.pendingDeleteIds.filter((id)=>remoteIds.has(id)),
+      pendingCreateIds:current.pendingCreateIds.filter(id=>!remoteIds.has(id)&&!pendingDeletes.has(id)&&local.some(p=>p.id===id)),
+      pendingDeleteIds:current.pendingDeleteIds.filter(id=>remoteIds.has(id)),
     }));
     await flushProjectDatabase();
     // Local-mode writes predating the HTTP outbox still need their original bytes uploaded.
     // Only the merged, non-deleted Missions' references are eligible for migration.
-    await queueExistingLocalArtifactUploads(listLocalProjects().flatMap(missionBlobReferences));
+    await queueExistingLocalArtifactUploads([...merged.values()].flatMap(missionBlobReferences));
     // Seed new local Missions and replay durable deletes after a restart or outage.
     if(localToPush.length||missionSyncJournal().pendingDeleteIds.length){
       await pushLocalProjection({projects:localToPush});

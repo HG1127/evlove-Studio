@@ -6,6 +6,9 @@ import { repairLegacyFrozenCandidateIdentities } from "./legacy-frozen-identity"
 const MissionSyncJournalSchema = z.object({
   knownRemoteIds: z.array(z.string().min(1)),
   pendingDeleteIds: z.array(z.string().min(1)),
+  // Only explicit user creation carries permission to register a new server Mission.
+  // Old journals had no such field, and must fail closed rather than infer intent.
+  pendingCreateIds: z.array(z.string().min(1)).default([]),
 });
 type MissionSyncJournal = z.infer<typeof MissionSyncJournalSchema>;
 const JOURNAL_KEY = "evolve-studio:mission-sync-journal:v1";
@@ -31,18 +34,18 @@ export function databaseProjects() {
 }
 
 function readLegacyJournal(): MissionSyncJournal {
-  if (typeof window === "undefined") return { knownRemoteIds: [], pendingDeleteIds: [] };
+  if (typeof window === "undefined") return { knownRemoteIds: [], pendingDeleteIds: [], pendingCreateIds: [] };
   try {
     const raw = window.localStorage.getItem(JOURNAL_KEY);
-    return raw ? MissionSyncJournalSchema.parse(JSON.parse(raw)) : { knownRemoteIds: [], pendingDeleteIds: [] };
+    return raw ? MissionSyncJournalSchema.parse(JSON.parse(raw)) : { knownRemoteIds: [], pendingDeleteIds: [], pendingCreateIds: [] };
   } catch {
-    return { knownRemoteIds: [], pendingDeleteIds: [] };
+    return { knownRemoteIds: [], pendingDeleteIds: [], pendingCreateIds: [] };
   }
 }
 
 export function missionSyncJournal(): MissionSyncJournal {
   const current = database ? journal ?? readLegacyJournal() : readLegacyJournal();
-  return { knownRemoteIds: [...current.knownRemoteIds], pendingDeleteIds: [...current.pendingDeleteIds] };
+  return { knownRemoteIds: [...current.knownRemoteIds], pendingDeleteIds: [...current.pendingDeleteIds], pendingCreateIds: [...current.pendingCreateIds] };
 }
 
 function writeDatabase(projects: EvolveProject[], syncJournal: MissionSyncJournal) {
@@ -89,6 +92,16 @@ export function updateMissionSyncJournal(update: (current: MissionSyncJournal) =
   } else if (typeof window !== "undefined") {
     window.localStorage.setItem(JOURNAL_KEY, JSON.stringify(next));
   }
+}
+
+/** User-owned new Mission registration intent; never derived from a legacy browser cache. */
+export function markExplicitMissionCreation(id:string){
+  if(!id.trim()||id==="demo")throw new Error("Only a non-demo user-created Mission may request server registration");
+  updateMissionSyncJournal(current=>{
+    if(current.knownRemoteIds.includes(id)||current.pendingDeleteIds.includes(id))
+      throw new Error("An existing or pending-deletion Mission cannot be registered as new");
+    return {...current,pendingCreateIds:[...new Set([...current.pendingCreateIds,id])]};
+  });
 }
 
 export async function initializeProjectDatabase(legacy: EvolveProject[]) {

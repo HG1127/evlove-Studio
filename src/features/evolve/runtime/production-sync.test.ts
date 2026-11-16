@@ -2,7 +2,7 @@ import {MissionRevisionConflictError} from "@evolution/adapters";
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
 import {demoProject} from "../data/mock-project";
 import {deleteLocalProject,getLocalProject,saveLocalProject} from "./local-store";
-import {missionSyncJournal} from "./project-database";
+import {markExplicitMissionCreation,missionSyncJournal} from "./project-database";
 import {EvolutionJobSchema} from "./job-contract";
 import {createEvolutionEvent,pendingLocalEvolutionEventCount} from "./event-contract";
 import {localProductionPorts} from "./local-production-adapters";
@@ -207,6 +207,7 @@ describe("production sync bootstrap",()=>{
     vi.useFakeTimers();
     const at="2026-09-22T10:00:00.000Z";
     saveLocalProject({...demoProject,id:"local-during-outage",updatedAt:at});
+    markExplicitMissionCreation("local-during-outage"); // User intentionally created this Mission while offline.
     await localProductionPorts.jobs.put(EvolutionJobSchema.parse({
       schemaVersion:"job-v1",id:"job-during-outage",missionId:"local-during-outage",type:"parse",status:"running",label:"Pending parse",
       idempotencyKey:"parse:outage:1",generation:1,attempts:1,priority:80,metadata:{},createdAt:at,updatedAt:at,
@@ -228,6 +229,7 @@ describe("production sync bootstrap",()=>{
     },"http");
 
     await expect(initializeProductionSync()).rejects.toThrow("Production API HTTP 401");
+    expect(missionSyncJournal().pendingCreateIds).toContain("local-during-outage");
     expect(productionSyncStatus()).toMatchObject({
       mode:"http",
       initialized:true,
@@ -245,6 +247,8 @@ describe("production sync bootstrap",()=>{
 
     expect(list).toHaveBeenCalledTimes(2);
     expect(save).toHaveBeenCalledWith(expect.objectContaining({id:"local-during-outage"}));
+    expect(missionSyncJournal().pendingCreateIds).not.toContain("local-during-outage");
+    expect(missionSyncJournal().knownRemoteIds).toContain("local-during-outage");
     expect(putJob).toHaveBeenCalledWith(expect.objectContaining({id:"job-during-outage"}));
     expect(appendEvent).toHaveBeenCalledWith(expect.objectContaining({id:"event-during-outage"}));
     expect(pendingLocalEvolutionEventCount()).toBe(0);
@@ -256,6 +260,94 @@ describe("production sync bootstrap",()=>{
       failureCount:0,
     });
   });
+
+  it("does not silently register old browser cache on startup, polling or recovery",async()=>{
+    vi.useFakeTimers();
+    const ghost={...demoProject,id:"unapproved-legacy-cache",name:"Historical local backup"};
+    saveLocalProject(ghost);
+    // Old stored journals did not record any explicit creation intent.
+    window.localStorage.setItem("evolve-studio:mission-sync-journal:v1",JSON.stringify({knownRemoteIds:[],pendingDeleteIds:[]}));
+    expect(missionSyncJournal().pendingCreateIds).toEqual([]);
+    const save=vi.fn(async()=>undefined);
+    configureProductionRuntime({
+      ...localProductionPorts,
+      missions:{...localProductionPorts.missions,list:async()=>[],save,delete:async()=>undefined},
+      jobs:{...localProductionPorts.jobs,list:async()=>[]},
+      events:{...localProductionPorts.events,list:async()=>[]},
+    },"http");
+    await initializeProductionSync();
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(save).not.toHaveBeenCalled();
+    expect(getLocalProject(ghost.id)?.name).toBe(ghost.name);
+    expect(missionSyncJournal().knownRemoteIds).not.toContain(ghost.id);
+  });
+
+  it("registers only an explicitly created Mission and clears the pending-create receipt after success",async()=>{
+    vi.useFakeTimers();
+    const ghost={...demoProject,id:"cached-without-intent"};
+    const fresh={...demoProject,id:"explicitly-created",name:"User approved new Mission"};
+    saveLocalProject(ghost);
+    saveLocalProject(fresh);
+    markExplicitMissionCreation(fresh.id);
+    const save=vi.fn(async()=>undefined);
+    configureProductionRuntime({
+      ...localProductionPorts,
+      missions:{...localProductionPorts.missions,list:async()=>[],save,delete:async()=>undefined},
+      jobs:{...localProductionPorts.jobs,list:async()=>[]},
+      events:{...localProductionPorts.events,list:async()=>[]},
+    },"http");
+    await initializeProductionSync();
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({id:fresh.id}));
+    expect(missionSyncJournal().pendingCreateIds).not.toContain(fresh.id);
+    expect(missionSyncJournal().knownRemoteIds).toContain(fresh.id);
+    expect(getLocalProject(ghost.id)?.id).toBe(ghost.id);
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks a cached Mission on a direct push, but sends a newly approved draft",async()=>{
+    vi.useFakeTimers();
+    const save=vi.fn(async()=>undefined);
+    configureProductionRuntime({
+      ...localProductionPorts,
+      missions:{...localProductionPorts.missions,list:async()=>[],save,delete:async()=>undefined},
+      jobs:{...localProductionPorts.jobs,list:async()=>[]},
+      events:{...localProductionPorts.events,list:async()=>[]},
+    },"http");
+    await initializeProductionSync();
+    const project={...demoProject,id:"later-explicit-create"};
+    saveLocalProject(project);
+    await vi.advanceTimersByTimeAsync(350);
+    expect(save).not.toHaveBeenCalled();
+    markExplicitMissionCreation(project.id);
+    saveLocalProject(project);
+    await vi.advanceTimersByTimeAsync(350);
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({id:project.id}));
+    expect(missionSyncJournal().pendingCreateIds).not.toContain(project.id);
+  });
+
+  it("cancels an unsynced Mission create intent on local delete without any remote write",async()=>{
+    const project={...demoProject,id:"cancelled-local-draft"};
+    saveLocalProject(project);
+    markExplicitMissionCreation(project.id);
+    expect(missionSyncJournal().pendingCreateIds).toContain(project.id);
+    deleteLocalProject(project.id);
+    expect(missionSyncJournal().pendingCreateIds).not.toContain(project.id);
+    const save=vi.fn(async()=>undefined),remove=vi.fn(async()=>undefined);
+    configureProductionRuntime({
+      ...localProductionPorts,
+      missions:{...localProductionPorts.missions,list:async()=>[],save,delete:remove},
+      jobs:{...localProductionPorts.jobs,list:async()=>[]},
+      events:{...localProductionPorts.events,list:async()=>[]},
+    },"http");
+    await initializeProductionSync();
+    expect(save).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+    expect(getLocalProject(project.id)).toBeUndefined();
+  });
+
   it("does not resurrect a Mission deleted remotely on polling or after a restart",async()=>{
     vi.useFakeTimers();
     const project={...demoProject,id:"mission-remote-delete",updatedAt:"2026-09-22T10:00:00.000Z"};

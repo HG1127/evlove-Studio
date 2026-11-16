@@ -4,6 +4,8 @@ import {afterEach,beforeEach,expect,it,vi} from "vitest";
 import type {EvolveProject} from "../schemas";
 const records=vi.hoisted(()=>new Map<string,EvolveProject>());
 const remote=vi.hoisted(()=>({mode:"local",read:vi.fn()}));
+const pending=vi.hoisted(()=>({ids:[] as string[]}));
+vi.mock("../runtime/project-database",()=>({missionSyncJournal:()=>({pendingCreateIds:pending.ids})}));
 vi.mock("../runtime/production-runtime",()=>({productionRuntimeMode:()=>remote.mode}));
 vi.mock("../runtime/production-mission-read",()=>({readProductionMission:remote.read}));
 vi.mock("../runtime/local-store",()=>({getLocalProject:(id:string)=>records.get(id)}));
@@ -15,7 +17,7 @@ import {ProjectLoader} from "./project-loader";
 let host:HTMLDivElement,root:Root;
 beforeEach(()=>{
   (globalThis as {IS_REACT_ACT_ENVIRONMENT?:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
-  remote.mode="local";remote.read.mockReset();
+  remote.mode="local";remote.read.mockReset();pending.ids=[];
   host=document.createElement("div");document.body.append(host);root=createRoot(host);
 });
 afterEach(async()=>{await act(async()=>root.unmount());host.remove();records.clear();});
@@ -48,6 +50,20 @@ it("ignores a late read of the previous route",async()=>{
  await act(async()=>root.render(<ProjectLoader projectId="first"/>));await act(async()=>root.render(<ProjectLoader projectId="next"/>));
  await act(async()=>finish({id:"first",name:"Late first"} as EvolveProject));expect(host.textContent).toContain("Next remote");expect(host.textContent).not.toContain("Late first");
 });
+it("shows a pending new Mission until an actual server acknowledgement arrives",async()=>{
+ remote.mode="http";pending.ids=["new-draft"];
+ const project={id:"new-draft",name:"Confirmed new Mission"} as EvolveProject;
+ records.set(project.id,project);
+ remote.read.mockResolvedValueOnce(undefined).mockResolvedValueOnce(project);
+ await act(async()=>root.render(<ProjectLoader projectId={project.id}/>));
+ expect(host.textContent).toContain("正在登记新建任务");
+ expect(host.textContent).not.toContain("Confirmed new Mission");
+ pending.ids=[];
+ await act(async()=>window.dispatchEvent(new CustomEvent("evolve-mission-registration-changed",{detail:{missionId:project.id}})));
+ expect(host.textContent).toContain("Confirmed new Mission");
+ expect(remote.read).toHaveBeenCalledTimes(2);
+});
+
 it("offers retry after a failed read and confirms a real missing receipt",async()=>{
  remote.mode="http";remote.read.mockRejectedValueOnce(new Error("HTTP 503")).mockResolvedValueOnce(undefined);
  await act(async()=>root.render(<ProjectLoader projectId="missing"/>));expect(host.textContent).toContain("项目读取暂未完成");expect(host.textContent).not.toContain("项目不存在");

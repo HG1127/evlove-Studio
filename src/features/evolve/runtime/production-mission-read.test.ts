@@ -21,6 +21,6 @@ it.each(["deleted","cancelled"])("does not store a receipt after it is %s while 
 });
 it("removes a known remotely deleted record but keeps a new unsaved draft",async()=>{
  const known={...demoProject,id:"point-missing-known"},draft={...demoProject,id:"point-unsaved"};saveLocalProject(known);saveLocalProject(draft);updateMissionSyncJournal(value=>({...value,knownRemoteIds:[known.id]}));point.mockResolvedValue(undefined);
- expect(await readProductionMission(known.id)).toBeUndefined();expect(getLocalProject(known.id)).toBeUndefined();expect((await readProductionMission(draft.id))?.id).toBe(draft.id);
+ expect(await readProductionMission(known.id)).toBeUndefined();expect(getLocalProject(known.id)).toBeUndefined();expect(await readProductionMission(draft.id)).toBeUndefined();expect(getLocalProject(draft.id)?.id).toBe(draft.id);
 });
 it("rejects a point identity mismatch before caching",async()=>{point.mockResolvedValue({...demoProject,id:"wrong-point"});await expect(readProductionMission("expected-point")).rejects.toThrow("identity mismatch");expect(getLocalProject("wrong-point")).toBeUndefined();});

@@ -166,8 +166,11 @@ export function saveLocalProject(project: EvolveProject) {
 export function deleteLocalProject(id: string, options?: { fromRemote?: boolean }) {
   if(typeof window!=="undefined")directoryRemovedIds.add(id);
   const journal=missionSyncJournal();
-  if(!options?.fromRemote&&journal.knownRemoteIds.includes(id)){
-    updateMissionSyncJournal((current)=>({...current,pendingDeleteIds:[...new Set([...current.pendingDeleteIds,id])]}));
+  if(!options?.fromRemote&&(journal.knownRemoteIds.includes(id)||journal.pendingCreateIds.includes(id))){
+    updateMissionSyncJournal(current=>({...current,
+      pendingCreateIds:current.pendingCreateIds.filter(pending=>pending!==id),
+      pendingDeleteIds:journal.knownRemoteIds.includes(id)?[...new Set([...current.pendingDeleteIds,id])]:current.pendingDeleteIds,
+    }));
   }
   if (typeof window === "undefined") return;
   const next = readAll().filter((item) => item.id !== id);

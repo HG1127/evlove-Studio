@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { deleteLocalProject, markDemoRemoved, saveLocalProject, listLocalProjects, directoryRemovedMissionIds } from "../runtime/local-store";
 import { useLocalProjects } from "../runtime/use-local-projects";
 import {useProductionSyncStatus} from "../runtime/use-production-sync-status";
+import {markExplicitMissionCreation,missionSyncJournal} from "../runtime/project-database";
 import { getLiveRun, getRunTask, shouldResumeTask, subscribeLiveRuns } from "../runtime/run-manager";
 import { EvolveProjectSchema, type EvolveProject, type Stage } from "../schemas";
 
@@ -74,6 +75,7 @@ export function ProjectsList() {
   const knownIds=new Set(projects.map(project=>project.id));
   const removed=directoryRemovedMissionIds();
   const localUnconfirmed=isHttp?listLocalProjects().filter(item=>item.id!=="demo"&&!knownIds.has(item.id)&&!removed.has(item.id)):[];
+  const pendingCreates=new Set(isHttp?missionSyncJournal().pendingCreateIds:[]);
 
   // 运行状态徽标：项目卡上直接看到「正在后台运行」或「刷新被打断 · 打开自动续跑」，
   // 不用点进项目才知道有没有任务在跑。
@@ -141,16 +143,30 @@ export function ProjectsList() {
         return;
       }
       let imported = result.data;
-      const exists = projects.some((p) => p.id === imported.id);
+      // A server-filtered list cannot detect a collision with a local-only backup.
+      const exists=imported.id==="demo"||projects.some(p=>p.id===imported.id)
+        ||listLocalProjects().some(p=>p.id===imported.id)||missionSyncJournal().knownRemoteIds.includes(imported.id);
       if (exists) imported = { ...imported, id: `project-${Date.now()}` };
       saveLocalProject({ ...imported, updatedAt: new Date().toISOString() });
-      setImportNote({ tone: "ok", text: exists ? `「${imported.name}」与现有项目重名，已作为新项目导入，可用重命名区分。` : `导入成功：「${imported.name}」已加入项目列表。` });
+      setImportNote({ tone: "ok", text: isHttp?`已将「${imported.name}」恢复为浏览器本地草稿。如需登记到服务器，请在下方点击“登记为新任务”并确认。`:exists ? `「${imported.name}」与现有项目重名，已作为新项目导入，可用重命名区分。` : `导入成功：「${imported.name}」已加入项目列表。` });
     } catch {
       setImportNote({ tone: "err", text: "文件解析失败，请选择本系统导出的 JSON 备份文件。" });
     }
   };
 
   /** 搜索 + 部门筛选 + 阶段筛选 + 排序：项目多时不再靠肉眼从头翻到尾。筛选与排序选择本地记忆，回访原样恢复。 */
+  const [registerTarget,setRegisterTarget]=useState<EvolveProject|null>(null);
+  const confirmRegister=()=>{
+    if(!registerTarget)return;
+    const project=registerTarget;
+    setRegisterTarget(null);
+    if(!confirmed){setImportNote({tone:"err",text:"服务端连接尚未核验，不能登记；草稿已保留在本机。"});return;}
+    try{
+      markExplicitMissionCreation(project.id);
+      saveLocalProject(project);
+      setImportNote({tone:"ok",text:`「${project.name}」已加入待登记队列，等待服务端 Mission 成功回执；不会启动 AI 模型。`});
+    }catch(error){setImportNote({tone:"err",text:`登记请求未提交：${error instanceof Error?error.message:String(error)}`});}
+  };
   const [savedFilters] = useState(loadSavedFilters);
   const [query, setQuery] = useState("");
   const [dept, setDept] = useState<string>(() => {
@@ -286,9 +302,19 @@ export function ProjectsList() {
       <p className="mt-1 text-xs leading-5 text-amber-800">这些记录尚未获得当前服务端 Mission 身份确认，不计入真实项目、问题、成果统计或全局搜索。保留在本机，支持导出备份；不要将其视为已经完成服务端注册。</p>
       <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">{localUnconfirmed.map(project=><div key={project.id} className="flex min-w-0 items-center justify-between gap-3 rounded-xl border border-amber-100 bg-white p-3">
         <div className="min-w-0"><div className="truncate text-xs font-semibold text-slate-800" title={project.name}>{project.name}</div><div className="mt-1 text-[11px] text-amber-700">本地记录 · 服务端未确认</div></div>
-        <Button size="sm" variant="secondary" onClick={()=>exportProject(project)}><Download className="size-3.5"/>导出</Button>
+        <div className="flex shrink-0 items-center gap-2"><Button size="sm" variant="secondary" onClick={()=>exportProject(project)}><Download className="size-3.5"/>导出</Button>
+          {pendingCreates.has(project.id)?<span className="text-[11px] font-medium text-amber-800">待服务端确认</span>:confirmed?<Button size="sm" onClick={()=>setRegisterTarget(project)}>登记为新任务</Button>:null}
+        </div>
       </div>)}</div>
     </section>}
+
+    {registerTarget && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-900/40 p-4" onClick={()=>setRegisterTarget(null)}>
+      <div className="w-full max-w-md rounded-2xl border bg-white p-5 shadow-xl" onClick={event=>event.stopPropagation()}>
+        <div className="font-semibold">确认登记为新的服务端 Mission</div>
+        <p className="mt-2 text-sm leading-6 text-slate-600">「{registerTarget.name}」目前仅为浏览器本地记录。确认后会申请把这份记录保存到当前服务端，可能同步关联的源文件；不会自动调用模型或启动进化。若只是备份，请取消并使用“导出”。</p>
+        <div className="mt-4 flex justify-end gap-2"><Button variant="secondary" size="sm" onClick={()=>setRegisterTarget(null)}>取消</Button><Button size="sm" disabled={!confirmed} onClick={confirmRegister}>确认登记</Button></div>
+      </div>
+    </div>}
 
     {renameTarget && (
       <div className="fixed inset-0 z-50 grid place-items-center bg-slate-900/40 p-4" onClick={() => setRenameTarget(null)}>

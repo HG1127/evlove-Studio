@@ -45,6 +45,7 @@ import {
 import {firstReadyParse} from "../runtime/first-ready-parse";
 import { saveLocalProject } from "../runtime/local-store";
 import { productionRuntimeMode } from "../runtime/production-runtime";
+import {markExplicitMissionCreation} from "../runtime/project-database";
 import { getTemplate, recordTemplateUse } from "../runtime/template-store";
 import { assessFileReadiness } from "../sources/extract";
 import {sourceParseLabel,sourceParseState,type SourceParseState} from "../runtime/source-parse-presentation";
@@ -681,6 +682,7 @@ export function EvolutionComposer({ compact = false }: { compact?: boolean }) {
       updatedAt: new Date().toISOString(),
     };
     saveLocalProject(project);
+    if(productionRuntimeMode()==="http")markExplicitMissionCreation(project.id);
     clearComposerParseSessionId();
     clearDismissedParseArtifacts();
     if (appliedTemplate) recordTemplateUse(appliedTemplate.id);
