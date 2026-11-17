@@ -23,6 +23,7 @@ import {requiresIsolatedHtmlServerExecution} from "../runtime/server-workflow-cl
 import {useServerMissionControlStatus} from "../runtime/use-server-mission-control";
 import {ServerMissionStatusCard} from "./server-mission-status-card";
 import {P3XSourceBinding} from "./p3x-source-binding";
+import {P3XSmokeStart} from "./p3x-smoke-start";
 
 // 项目页有多个独立工作区。延后加载未打开的区域，避免材料解析、成果打包和实验控制台
 // 影响用户打开项目并确认当前进化步骤的速度。
@@ -237,6 +238,7 @@ export function ProjectStudio({ project: initialProject }: { project: EvolveProj
         <details className="mt-2 border-t border-slate-100 pt-2"><summary className="cursor-pointer text-[11px] font-medium text-slate-400">技术人员查看：内部进化节点</summary><div className="mt-2"><StageProgress busy={runtime.status.busy} active={runtime.stage} onChange={(stage)=>{runtime.setStage(stage);setView("flow");}} project={project} /></div></details>
       </section>
       <P3XSourceBinding missionId={project.id}/>
+      <P3XSmokeStart missionId={project.id}/>
       {project.id === "demo" && <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900">示例项目：预置分数与问题用于演示流程，不代表你的材料已经完成真实验证。</p>}
 
       {runtime.status.busy && (
