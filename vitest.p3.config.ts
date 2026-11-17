@@ -12,6 +12,8 @@ export default mergeConfig(p2c,{test:{include:[
   "apps/backend/src/services/server-ai-lab-subscription-budget.test.ts",
   "apps/backend/src/services/server-ai-lab-dispatch-order.test.ts",
   "apps/backend/src/services/server-ai-lab-retry-fencing.test.ts",
+  "apps/backend/src/services/lab-control-step-failure.test.ts",
+  "apps/backend/src/services/lab-provider-timeout-config.test.ts",
   "apps/backend/src/services/lab-synthetic-html-mission-fixture.test.ts",
   "apps/backend/src/services/lab-synthetic-html-registration-dryrun.test.ts",
   "apps/backend/src/services/lab-workflow-permit.test.ts",

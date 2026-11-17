@@ -26,6 +26,7 @@ import {
   type ServerHarnessPlan,
 } from "@evolution/harness";
 import { getServerProductionRuntime } from "../../apps/backend/src/services/production-runtime";
+import {fatalIsolatedLabControlError} from "./lab-control-step-failure";
 import { serverAiScoringRouteFingerprint } from "../../apps/backend/src/services/ai-gateway";
 import {withServerAiUsageScope} from "../../apps/backend/src/services/server-ai-usage";
 import {guardServerControlRuntime,ServerControlExecutionStoppedError,withServerControlExecution} from "../../apps/backend/src/services/server-control-execution";
@@ -555,6 +556,9 @@ export async function executeServerControlStep(
     if(error instanceof ServerControlExecutionStoppedError)return {control:"stop",result:result(input,{
       status:"blocked",iterations:iteration+1,nextAction:plan.decision.action,checkpointId:plan.checkpoint.id,reason:error.message,
     })};
+    // Isolated Lab is physical-call metered: never let Workflow replay an unknown-usage or failed step.
+    // Other projects keep the ordinary retry / capability-wait semantics.
+    if(input.labExperiment)throw fatalIsolatedLabControlError(error);
     if (!(error instanceof ServerControlAiUnavailableError)) throw error;
     const runtime=getServerProductionRuntime();
     const currentJob=await runtime.jobs.get(input.controlJobId);
